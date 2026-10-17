@@ -1,0 +1,221 @@
+# InkingFrontendDeveloper
+
+**一个用 SDF 形状 + 锚点定位写 UI 的 C++20 前端框架（动态链接库）。**
+
+> ## ⚠ 当前状态：**测试版本**（`0.1.0-test`）
+>
+> - 接口 / ABI / 行为在 `1.0.0` 之前**不承诺稳定**，升级请对照
+>   [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)。
+> - 只在 **Windows + MSYS2 UCRT64 + Ninja** 上构建过；Linux / macOS 未验证。
+> - **请勿使用现版本进行生产。** 正式 `1.0.0` 预计 2026 年 11 月底前推出。
+
+---
+
+## 这是什么
+
+`InkingFrontendDeveloper` 把 UI 拆成四条互不越界的层：
+
+| 层 | 回答的问题 | 关键类型 |
+| --- | --- | --- |
+| **定位** | 我在哪儿 | `InkingAnchor`（锚点公式 + 父链 + 可见性 + 倍率） |
+| **数据** | 我长什么样 | `AnchorData` / `ButtonData` / `PanelData` / `ShapeSpec` / `LayoutSpec` |
+| **树** | 我在哪棵树里、谁点得到我 | `InkingWidget` + 静态 / 动态两档 |
+| **档位** | 几何会不会自己变 | `InkingStaticWidget` / `InkingDynamicWidget` |
+| **输入契约** | 我收不收指针 / 键盘 | `InkingPointerHandler` / `InkingKeyboardTarget` |
+
+四条设计原则（读代码前先知道）：
+
+1. **位置不存，由锚点推导**。窗口左上角是 (0,0)，向右 x 增大、向下 y 增大；
+   自身锚点与上级锚点都是 0~1 的百分比。设计坐标严格等比缩放到窗口（letterbox）。
+2. **形状同时决定渲染 / 命中 / AABB**。三者从一份 SDF 定义派生，
+   所以不会出现"画的是圆角、点到的是直角"。
+3. **写入口不可重写，钩子不标脏**。`SetVisible` / `Resize` 是 `[final]`；
+   `onSizeChanged` / `onTick` 是 `[√]`。名字上就能分开。
+4. **标脏只有两档**：命中脏（几何 / 可见性 / 层级 / 父子）与重绘脏（颜色 / 文字 / 变换）。
+   动画改颜色**绝不能**标命中脏，否则每帧白重建一次命中表。
+
+---
+
+## 快速开始
+
+### 1. 依赖
+
+Windows + MSYS2（UCRT64 环境）：
+
+```bash
+pacman -S --needed \
+    mingw-w64-ucrt-x86_64-{cmake,ninja,gcc,pkgconf} \
+    mingw-w64-ucrt-x86_64-{sdl3,sdl3-image,sdl3-ttf,sdl3-mixer,ffmpeg}
+```
+
+| 依赖 | 用途 | 查找方式 |
+| --- | --- | --- |
+| CMake ≥ 3.20 | 构建 | — |
+| GCC ≥ 13（C++20）或 MSVC | 编译器 | — |
+| Ninja | 生成器（可选但推荐） | — |
+| SDL3 / SDL3_image / SDL3_ttf / SDL3_mixer | 窗口、纹理、文字、音频 | CMake config（`SDL3::SDL3` 一族） |
+| FFmpeg（libavcodec / avformat / avutil / swresample / swscale） | 视频与音频解码 | `pkg-config` |
+
+### 2. 构建
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+```
+
+### 3. 跑起来
+
+```bash
+./build/bin/inking_demo.exe            # 真窗口演示（ESC 退出，F11 全屏）
+./build/bin/inking_demo_selftest.exe   # 无头自检：dummy 视频驱动 + 软件渲染器
+```
+
+自检的输出末行是结论：
+
+```
+== 失败项：0 ==
+```
+
+**看这一行，不要只看退出码。** 当前 `0.1.0-test` 实测 **69 项通过 / 0 项失败**。
+
+```bash
+ctest --test-dir build --output-on-failure   # 若有 CXXCSS 配置，还会跑生成链路的编译自检
+```
+
+### 4. 构建选项
+
+| 选项 | 默认 | 作用 |
+| --- | --- | --- |
+| `ISMESSAGE` | `ON` | 消息队列参与编译（宏 `INK_ISMESSAGE`）；关掉时退化成空实现 |
+| `INK_BUILD_EXAMPLES` | 顶层构建时 `ON` | 构建 `examples/demo`（演示 + 自检） |
+| `INK_BUILD_TESTS` | 顶层构建时 `ON` | 注册 ctest（含 `inkgen --validate` 与生成链路编译自检） |
+| `CMAKE_BUILD_TYPE` | `Release` | — |
+
+`INK_ISLOG` / `INK_ISDEBUG` 恒为 `PUBLIC` 定义（会改公开头里 inline 函数的内容，
+消费者必须与库看到同一个值，否则是 ODR 违例）。
+
+---
+
+## 产物
+
+| 文件 | 说明 |
+| --- | --- |
+| `build/bin/libinking.dll` | **动态库本体**（Release 约 1.2 MB） |
+| `build/lib/libinking.dll.a` | 导入库（链接用） |
+| `build/bin/inkgen.exe` | `CXXCSS/*.json` → C++ 的构建期生成器（只依赖标准库） |
+| `build/bin/inking_demo.exe` | 演示程序 |
+| `build/bin/inking_demo_selftest.exe` | 无头自检 |
+| `build/inkgen/all/button_service.h` | 生成结果（看得见就能审） |
+
+导出方式：`WINDOWS_EXPORT_ALL_SYMBOLS`（CMake 生成 `.def`），当前导出 **1943** 个符号。
+**不**逐类标 `__declspec(dllexport)`，也**不**加 `-fvisibility=hidden`——两套机制混用是
+自相矛盾的（MinGW 上会让 `.def` 收不到符号）。
+
+### 发布包（`dist/`）
+
+最小的可分发包（**测试版本，不要用于生产**）：
+
+```bash
+cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release --clean-first -j
+# 组装：见下表的目录约定；包根放 BUILD.txt 记录工具链 / 校验和 / 验证结果
+```
+
+```
+inking-0.1.0-test-win64/
+├─ BUILD.txt            版本阶段、工具链、依赖版本、SHA-256、验证记录、已知限制、许可
+├─ README.md            本文件
+├─ bin/                 libinking.dll · inking_demo.exe · inking_demo_selftest.exe · inkgen.exe
+├─ lib/                 libinking.dll.a（导入库）
+├─ include/             82 个公开头（`#include <widget/InkingWidget.h>` 的搜索根）
+├─ docs/                API 文档（`API.md` + `api/`）、配置格式、变更记录
+└─ examples/CXXCSS/     配置样例（喂给 `inkgen.exe`）
+```
+
+包内**不含** SDL3 / SDL3_ttf / SDL3_image / SDL3_mixer / FFmpeg 的 DLL——它们是运行期
+依赖，请由使用方自行提供（MSYS2 UCRT64 的 `mingw-w64-ucrt-x86_64-*` 包即可）。
+包内 `bin/inking_demo_selftest.exe` 可直接跑，`失败项：0` 即说明这份 DLL 是好的。
+
+### 在自己的工程里用
+
+```cmake
+# 方式 A：作子目录引入（推荐，拿得到 inking::inking 这个别名）
+add_subdirectory(third_party/InkingFrontendDeveloper)
+target_link_libraries(my_app PRIVATE inking::inking)
+
+# 方式 B：安装后手工接
+# cmake --install build --prefix <prefix>
+# 头在 <prefix>/include，库在 <prefix>/bin（DLL）与 <prefix>/lib（导入库）
+```
+
+```cpp
+#include <window/InkingWindow.h>
+#include <scene/InkingScene.h>
+#include <button/InkingStaticButton.h>
+```
+
+`inking::inking` 会**传播** include 目录、四个 SDL 目标、FFmpeg 与三个编译宏
+（`INK_ISLOG` / `INK_ISDEBUG` / `INK_ISMESSAGE`）——所以消费方不需要自己再配一遍。
+
+---
+
+## 目录结构
+
+```
+include/            82 个公开头（按子系统分目录，与 src/ 一一对称）
+src/                54 个 .cpp + 3 个内部头
+examples/demo/      演示 + 无头自检（两个目标）
+tools/inkgen/       CXXCSS → C++ 的生成器
+CXXCSS/             UI 配置（Button / Panel / Label / Image / Text / Theme 的 .json）
+cmake/              SDL3 查找、inkgen 的构建规则
+docs/zh/            API 文档与变更记录
+dist/               发布包（`inking-<版本>-win64/` 目录 + 同名 .zip，不入库）
+build/              构建产物（不入库）
+```
+
+分层与依赖方向（单向，下层不认识上层）：
+
+```
+config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scene  →  window  →  prefab
+（纯数据/算术）        （工具）    （定位）  （树）    （具体外观） （场景）  （SDL 窗口） （组装）
+```
+
+---
+
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [`docs/zh/API.md`](docs/zh/API.md) | **从这里读起**：五分钟上手 + 模块地图 + 头文件全量索引 |
+| [`docs/zh/api/`](docs/zh/api/) | 16 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver + Anchor / ShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
+| [`CXXCSS/CXXCSS.md`](CXXCSS/CXXCSS.md) | 配置格式：目录与命名、公共骨架、形状层词汇表、Button 字段全表 |
+| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录 |
+
+---
+
+## 已知限制（测试版本）
+
+1. **没有 CMake package config / pkg-config 文件**：`cmake --install` 只装头与库，
+   `find_package(inking)` 用不了；接入按上面"方式 A"（`add_subdirectory`）或手工接头与库。
+2. **`TaskQueue` 退出收尾**：函数内静态量在 DLL 卸载（`DllMain` 持加载器锁）时析构并
+   join 管家线程。10 行探针（只 `addTask` 一次）即可复现，与业务无关；
+   属线程收尾语义，需要单列一轮。若在 CI 里遇到"进程退出挂住"，先怀疑它。
+3. **无显示 / 受限环境里的文字**：某些环境里 `SDL_IOFromFile` 对**所有**路径都失败
+   （同路径 `fopen` 正常），于是 `TTF_OpenFont` 打不开字体、文字退化成占位画法。
+   自检支持环境变量 `INK_TEST_FONT` 指定可读字体；**"没字体"不是代码缺陷**。
+4. **单行输入框**：多行、撤销 / 重做、Tab 焦点遍历、输入法候选窗定位都未做。
+5. **`AppearanceType::Image` / `Svg`**：数据面与纹理路已接，生成器那条链仍在落地中。
+6. **未做局部层级（堆叠上下文）**：z 序是全局一条，`Select` 展开靠"临时提到 z=200"。
+7. **编译警告**：`src/window/InkingWindow.cpp` 里重复 `#define NOMINMAX`
+   （C++ 标准库的 `os_defines.h` 已经定义过）。无害，但可以先判 `#ifndef` 再定义。
+
+---
+
+## 许可
+
+**未指定**。本仓库当前没有 `LICENSE` 文件，按"保留所有权利"理解；
+在明确许可之前请勿分发或商用。
+
+---
+
+> 版本 `0.1.0-test`（测试版本） · 最后更新 2026-10-17
