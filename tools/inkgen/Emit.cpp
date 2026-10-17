@@ -1362,13 +1362,27 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
 
 bool WriteFile(const std::string& path, const std::string& text,
                std::string& error) {
+    // ---------------------------------------------------------------------
+    // 产物统一带 UTF-8 BOM。
+    //
+    // 为什么：生成的头/源里全是中文注释，而**无 BOM 的 UTF-8** 会被
+    // Visual Studio / 记事本按系统 ANSI（中文 Windows 上是 GBK）打开 ——
+    // 中文全变乱码，用户第一眼就以为生成器坏了。GCC 与 MSVC 都接受 BOM，
+    // 所以带上没有编译代价。
+    //
+    // BOM 参与下面的"内容没变就不写"比较，否则每次构建都会因为
+    // "旧文件无 BOM / 新内容有 BOM"而重写一次、连带重编下游。
+    // ---------------------------------------------------------------------
+    const std::string bom = "\xEF\xBB\xBF";
+    const std::string payload = bom + text;
+
     // 只在内容真的变了时才写：产物时间戳不动，下游就不会被无谓地重新编译。
     {
         std::ifstream existing(path, std::ios::binary);
         if (existing) {
             std::ostringstream buffer;
             buffer << existing.rdbuf();
-            if (buffer.str() == text) {
+            if (buffer.str() == payload) {
                 return true;
             }
         }
@@ -1379,7 +1393,7 @@ bool WriteFile(const std::string& path, const std::string& text,
         error = "写不了文件：" + path;
         return false;
     }
-    out << text;
+    out << payload;
     if (!out) {
         error = "写入失败：" + path;
         return false;

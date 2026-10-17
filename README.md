@@ -139,30 +139,190 @@ inking-0.1.0-test-win64/
 
 ### 在自己的工程里用
 
+两种拿法：**源码内嵌**（作子目录）或**预编译包**（解压即 SDK）。后者是发布用的主路径，下面详述。
+
 ```cmake
-# 方式 A：作子目录引入（推荐，少一步安装）
+# 源码内嵌（最省事，拿得到 inking::inking 别名）
 add_subdirectory(third_party/InkingUIKit)
 target_link_libraries(my_app PRIVATE inking::inking)
-
-# 方式 B：安装后 find_package（0.1.0-test 起支持）
-#   cmake --install build --prefix <prefix>
-#   find_package(inking CONFIG REQUIRED)
-#   target_link_libraries(my_app PRIVATE inking::inking)
-# 依赖（SDL3 那四个 + FFmpeg）由导出的包配置负责重新 find，消费方不用自己写。
 ```
 
-> **运行期**：exe 需要能在 PATH 或同目录找到 `SDL3.dll` / `SDL3_image.dll` /
-> `SDL3_ttf.dll` / `SDL3_mixer.dll` 以及 FFmpeg 那几个 DLL。找不到时的表现是
-> **静默退出**（退出码 `0xC0000135`），没有报错窗口——接不起来先查这个。
+---
+
+## 用预编译包（不编译源码）
+
+把 `inking-0.1.0-test-win64.zip` 解到任意目录，那个目录就是 **SDK 根**（下文写 `<SDK>`）：
+
+```
+<SDK>/
+├─ bin/                 libinking.dll · inkgen.exe
+├─ include/             82 个公开头（#include <widget/InkingWidget.h> 的搜索根）
+├─ lib/                 libinking.dll.a · cmake/inking/（find_package 用）
+├─ docs/                API 文档
+├─ examples/CXXCSS/     配置样例（17 个 json + CXXCSS.md）
+└─ BUILD.txt · README.md · LICENSE
+```
+
+前提：装好 MSYS2 UCRT64 的
+
+```bash
+pacman -S --needed mingw-w64-ucrt-x86_64-{cmake,ninja,gcc,pkgconf} \
+    mingw-w64-ucrt-x86_64-{sdl3,sdl3-image,sdl3-ttf,sdl3-mixer,ffmpeg}
+```
+
+> ⚠ **不能用 MSVC 链接这个包**：它是 MinGW(GCC) 编译的，`.dll.a` 导入库与 MSVC 的
+> `.lib` 互不兼容，C++ ABI 也不同。在 Visual Studio 里请用"打开文件夹"（CMake 模式）
+> 并选 MinGW 工具链，别用 `.vcxproj`。
+
+### 路线 A：手写组件（最快上手）
+
+工程只要三个文件。
+
+**`CMakeLists.txt`**
+
+```cmake
+cmake_minimum_required(VERSION 3.20)
+project(MyApp LANGUAGES CXX)
+
+find_package(inking CONFIG REQUIRED)
+
+add_executable(MyApp main.cpp)
+target_link_libraries(MyApp PRIVATE inking::inking)
+
+# 把 libinking.dll 拷到 exe 旁边 —— 不拷会静默退出（0xC0000135）
+add_custom_command(TARGET MyApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:inking::inking>" "$<TARGET_FILE_DIR:MyApp>")
+```
+
+**`CMakePresets.json`**（把 `<SDK>` 换成你的解压路径，斜杠用 `/`）
+
+```json
+{
+  "version": 3,
+  "configurePresets": [{
+    "name": "mingw",
+    "generator": "Ninja",
+    "binaryDir": "${sourceDir}/build",
+    "cacheVariables": {
+      "CMAKE_BUILD_TYPE": "Release",
+      "CMAKE_C_COMPILER": "C:/msys64/ucrt64/bin/gcc.exe",
+      "CMAKE_CXX_COMPILER": "C:/msys64/ucrt64/bin/g++.exe",
+      "CMAKE_MAKE_PROGRAM": "C:/msys64/ucrt64/bin/ninja.exe",
+      "CMAKE_PREFIX_PATH": "<SDK>;C:/msys64/ucrt64"
+    },
+    "environment": { "PATH": "C:/msys64/ucrt64/bin;$penv{PATH}" }
+  }],
+  "buildPresets": [{ "name": "mingw", "configurePreset": "mingw" }]
+}
+```
+
+**`main.cpp`**
+
+```cpp
+#include <window/InkingWindow.h>
+#include <scene/InkingScene.h>
+#include <button/InkingStaticButton.h>
+
+class MyScene : public inking::InkingScene {
+public:
+    MyScene() : inking::InkingScene("main") {   // 名字给 Show() 用
+        inking::ButtonData b;
+        b.name = "hello";
+        b.width = 200;
+        b.height = 72;
+        b.label = "点我";
+        b.normal    = inking::ButtonAppearance(inking::AppearanceType::Color, 0xFF3F7FD6u);
+        b.hover     = inking::ButtonAppearance(inking::AppearanceType::Color, 0xFF5A9BF0u);
+        b.onclicked = inking::ButtonAppearance(inking::AppearanceType::Color, 0xFF2F63AAu);
+        b.hoverInheritsNormal = false;      // 不关这两条，hover/按下会被拉回 normal
+        b.onclickedInheritsNormal = false;
+        b.selfAnchor = inking::InkingChangeAnchor::Center;
+        b.traceAnchor = inking::InkingChangeAnchor::Center;
+        b.shape = inking::ShapeSpec::RoundedRect(12.0f);
+        AddChild(std::make_unique<inking::InkingStaticButton>(this, b));
+    }
+};
+
+int main() {
+    MyScene scene;
+    inking::InkingWindow::Instance().Show("main");   // 同步：跑到关窗为止
+}
+```
+
+构建运行：
+
+```bash
+cmake --preset mingw
+cmake --build --preset mingw
+./build/MyApp.exe
+```
+
+### 路线 B：CXXCSS 配置驱动（外观与逻辑分离）
+
+在路线 A 的基础上加三处。这是 Inking 的核心玩法：**外观写在 json 里，代码里一行挂上去**。
+
+**① 配置放 `CXXCSS/Button/*.json`**（格式见 `<SDK>/examples/CXXCSS/CXXCSS.md`，样例可整套拷过来）
+
+**② `CMakeLists.txt` 追加**
+
+```cmake
+include("${INKING_INKGEN_CMAKE}")     # find_package 导出的生成模块
+
+file(GLOB MY_CSS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/Button/*.json")
+
+ink_add_generated(MyApp SOURCES ${MY_CSS})
+```
+
+**③ 代码里用生成的类**（构建期产物，落在 `<build>/inkgen/button_service.h`）
+
+```cpp
+#include <inkgen/button_service.h>          // 不是手写的文件
+
+class MyScene : public inking::InkingScene {
+public:
+    MyScene() : inking::InkingScene("main") {
+        AddChild(std::make_unique<inking::cxxcss::NormalButton>(this));
+    }
+};
+```
+
+类名 = json 的 `name` 转 PascalCase（`normalButton` → `NormalButton`）。
+改外观只改 json、重新构建，**代码一行不动**。
+
+> 生成的头/源带 UTF-8 BOM，Visual Studio / 记事本打开不会乱码；它们只落构建目录，
+> 不进源码树。
+
+### 运行期 DLL
+
+`libinking.dll` 由上面 `POST_BUILD` 自动拷到 exe 旁。**SDL3 / FFmpeg 的 DLL 要自己在 PATH 里**：
+
+- 推荐：把 `C:\msys64\ucrt64\bin` 加进系统 PATH（一次性，之后所有程序都能跑）
+- 或者：只在调试时临时加
+
+找不到时的表现是**静默退出**（退出码 `0xC0000135`），没有报错窗口 —— 跑不起来先查这个。
+
+### CMake 导出了什么
+
+`find_package(inking CONFIG)` 之后可用：
+
+| 名字 | 内容 |
+| --- | --- |
+| `inking::inking` | 库目标（传播 include、四个 SDL 目标、FFmpeg、三个编译宏） |
+| `INKING_SDK_DIR` | SDK 根目录 |
+| `INKING_INKGEN` | `bin/inkgen.exe` 的绝对路径 |
+| `INKING_CXXCSS_DIR` | `examples/CXXCSS`（配置样例） |
+| `INKING_INKGEN_CMAKE` | 生成模块路径（`include()` 它才有 `ink_add_generated`） |
+
+`inking::inking` 会**传播** include 目录、四个 SDL 目标、FFmpeg 与三个编译宏
+（`INK_ISLOG` / `INK_ISDEBUG` / `INK_ISMESSAGE`）——所以消费方不需要自己再配一遍。
 
 ```cpp
 #include <window/InkingWindow.h>
 #include <scene/InkingScene.h>
 #include <button/InkingStaticButton.h>
 ```
-
-`inking::inking` 会**传播** include 目录、四个 SDL 目标、FFmpeg 与三个编译宏
-（`INK_ISLOG` / `INK_ISDEBUG` / `INK_ISMESSAGE`）——所以消费方不需要自己再配一遍。
 
 ---
 

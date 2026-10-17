@@ -347,3 +347,16 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/inkingConfig.cmake"
     "${CMAKE_CURRENT_BINARY_DIR}/inkingConfigVersion.cmake"
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/inking)
+
+# CXXCSS 生成规则：**面向预编译 SDK**（只调 bin/inkgen.exe，不需要源码）。
+# 随包装出去，消费方 include 一下就能 `ink_add_generated(...)` —— 没有它，
+# 包里那个 inkgen.exe 只是躺在磁盘上的一个 exe，谁也接不上。
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/inking-inkgen.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/inking)
+
+# **生成器本体也要装**：走 CXXCSS 路线的消费方靠 bin/inkgen.exe 干活。
+# 之前漏了这条，于是 `cmake --install` 永远不会更新包里的 inkgen.exe ——
+# 打包只能靠"手工从 build 目录复制"，而手工复制正是之前漏掉 cmake 配置的根源。
+# 让 install 一并管掉，打包就只剩一条命令。
+install(TARGETS inkgen RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
