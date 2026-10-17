@@ -76,7 +76,8 @@ cmake --build build -j
 == 失败项：0 ==
 ```
 
-**看这一行，不要只看退出码。** 当前 `0.1.0-test` 实测 **69 项通过 / 0 项失败**。
+**看这一行，不要只看退出码。** 当前 `0.1.0-test` 实测 **73 项通过 / 0 项失败**
+（退出码也等于失败项数，可以直接用）。
 
 ```bash
 ctest --test-dir build --output-on-failure   # 若有 CXXCSS 配置，还会跑生成链路的编译自检
@@ -139,14 +140,20 @@ inking-0.1.0-test-win64/
 ### 在自己的工程里用
 
 ```cmake
-# 方式 A：作子目录引入（推荐，拿得到 inking::inking 这个别名）
-add_subdirectory(third_party/InkingFrontendDeveloper)
+# 方式 A：作子目录引入（推荐，少一步安装）
+add_subdirectory(third_party/InkingUIKit)
 target_link_libraries(my_app PRIVATE inking::inking)
 
-# 方式 B：安装后手工接
-# cmake --install build --prefix <prefix>
-# 头在 <prefix>/include，库在 <prefix>/bin（DLL）与 <prefix>/lib（导入库）
+# 方式 B：安装后 find_package（0.1.0-test 起支持）
+#   cmake --install build --prefix <prefix>
+#   find_package(inking CONFIG REQUIRED)
+#   target_link_libraries(my_app PRIVATE inking::inking)
+# 依赖（SDL3 那四个 + FFmpeg）由导出的包配置负责重新 find，消费方不用自己写。
 ```
+
+> **运行期**：exe 需要能在 PATH 或同目录找到 `SDL3.dll` / `SDL3_image.dll` /
+> `SDL3_ttf.dll` / `SDL3_mixer.dll` 以及 FFmpeg 那几个 DLL。找不到时的表现是
+> **静默退出**（退出码 `0xC0000135`），没有报错窗口——接不起来先查这个。
 
 ```cpp
 #include <window/InkingWindow.h>
@@ -195,26 +202,40 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 
 ## 已知限制（测试版本）
 
-1. **没有 CMake package config / pkg-config 文件**：`cmake --install` 只装头与库，
-   `find_package(inking)` 用不了；接入按上面"方式 A"（`add_subdirectory`）或手工接头与库。
-2. **`TaskQueue` 退出收尾**：函数内静态量在 DLL 卸载（`DllMain` 持加载器锁）时析构并
-   join 管家线程。10 行探针（只 `addTask` 一次）即可复现，与业务无关；
-   属线程收尾语义，需要单列一轮。若在 CI 里遇到"进程退出挂住"，先怀疑它。
-3. **无显示 / 受限环境里的文字**：某些环境里 `SDL_IOFromFile` 对**所有**路径都失败
+1. **无显示 / 受限环境里的文字**：某些环境里 `SDL_IOFromFile` 对**所有**路径都失败
    （同路径 `fopen` 正常），于是 `TTF_OpenFont` 打不开字体、文字退化成占位画法。
    自检支持环境变量 `INK_TEST_FONT` 指定可读字体；**"没字体"不是代码缺陷**。
-4. **单行输入框**：多行、撤销 / 重做、Tab 焦点遍历、输入法候选窗定位都未做。
-5. **`AppearanceType::Image` / `Svg`**：数据面与纹理路已接，生成器那条链仍在落地中。
-6. **未做局部层级（堆叠上下文）**：z 序是全局一条，`Select` 展开靠"临时提到 z=200"。
-7. **编译警告**：`src/window/InkingWindow.cpp` 里重复 `#define NOMINMAX`
+2. **单行输入框**：多行、撤销 / 重做、Tab 焦点遍历、输入法候选窗定位都未做。
+3. **`AppearanceType::Svg` 没有画法**：配置里能写，运行期**静默退回纯色 `color`**
+   ——不报错、只是看不到图。（`Image` 已落地：`detail::PaintImage` 按形状裁剪后画进按钮。）
+4. **未做局部层级（堆叠上下文）**：z 序是全局一条，`Select` 展开靠"临时提到 z=200"。
+5. **音频需要显式 `AudioInit()`**：窗口层只在 `Show()` 之后每帧调 `AudioTick`、
+   关窗时调 `AudioShutdown`，**不会**替你初始化。不调时整层空转、`AudioReady()` 为 false，
+   而且不报错（`AudioInit()` 返回 false 通常意味着构建期漏了 `INK_HAS_SDL3_MIXER`）。
+6. **编译警告**：`src/window/InkingWindow.cpp` 里重复 `#define NOMINMAX`
    （C++ 标准库的 `os_defines.h` 已经定义过）。无害，但可以先判 `#ifndef` 再定义。
+
+> **`0.1.0-test` 期间已修掉的两条历史限制**：
+> ① `TaskQueue` 退出时 join 管家线程的死锁（以前进程"打印完失败项就不返回"，
+> 现在 1 秒退出、退出码 = 失败项数）；
+> ② 缺 CMake package config（`find_package(inking CONFIG)` 现在可用）。
 
 ---
 
 ## 许可
 
-**未指定**。本仓库当前没有 `LICENSE` 文件，按"保留所有权利"理解；
-在明确许可之前请勿分发或商用。
+本仓库的**自身代码**按 **MIT** 授权，全文见 [`LICENSE`](LICENSE)。
+
+> **第三方依赖的许可要一并遵守**（分发二进制时尤其要注意）：
+>
+> | 依赖 | 许可 | 对你的要求 |
+> | --- | --- | --- |
+> | SDL3 / SDL3_image / SDL3_ttf / SDL3_mixer | zlib | 保留版权声明即可 |
+> | FFmpeg | **LGPL-2.1+**（MSYS2 包默认是动态链接的 LGPL 版） | **必须动态链接**，并随分发提供其许可与源码获取方式 |
+>
+> 若改用**静态链接**或 GPL 配置的 FFmpeg，整个作品的许可约束会跟着变：LGPL 静态
+> 链接要求提供可重链接的目标文件，GPL 版则要求衍生作品也采用 GPL。MIT 只覆盖
+> 本仓库自己的代码，不改变这些依赖的许可。
 
 ---
 
