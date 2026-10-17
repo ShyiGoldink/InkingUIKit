@@ -1,0 +1,60 @@
+{
+    "$comment": [
+        "预制件 C1「选项栏」的**默认项外观**（TaskGuide C1：『默认按钮外观给一份 json，用户也可换成自己的』）。",
+        "它不是给某个场景直接用的按钮，而是一份**项模板**：OptionBar 用它当每项的 ButtonData，",
+        "并把 width / height / 文字换成那一项自己的（所以这里写的尺寸只是兜底）。",
+        "",
+        "这一版是**亮色 + 紫**的：白底 + 1px 浅紫灰描边 + 深灰紫文字，悬停是**浅紫底**。",
+        "主色取自用户那份 Godot（D:\\Lya）里 'White Purple' 预设的强调色 #9380C2",
+        "（那是那台引擎里唯一一套『亮色 + 紫』的配色）；圆角 12。",
+        "同一套值在代码里也有一份（include/prefab/PrefabTheme.h）——改设计时两边一起改，",
+        "或者干脆只用其中一边（代码那份还管着菜单栏 / 列表 / 下拉 / 文件选择）。",
+        "",
+        "用法（预制件那边一行）：",
+        "    ink::prefab::OptionBarStyle style = ink::prefab::OptionBarStyle::MakeDefault();",
+        "    style.itemLook = inking::cxxcss::OptionItem::Data();   // ← 这份配置生成出来的类",
+        "    style.textColor = ink::prefab::theme::kTextPrimary; // ← json 里没有文字色，要补",
+        "    ink::prefab::OptionBar bar(&scene, style);",
+        "",
+        "想换成自己的外观：把你的 json 放在你自己的配置目录里，用那个类名生成的 Data() 传进去即可，",
+        "生成器不用改一行（这就是『外观可配置 = 默认 json + 用户覆盖』那条约定）。",
+        "",
+        "三态在这里**各配各的**（transition 写在状态自己身上，见 CXXCSS.md §4.1.2）：",
+        "进 hover 0.12s、离开 0.2s——鼠标扫过一列选项时不该有一点粘滞感。",
+        "不配文字：文字是运行期数据（多语言），由 OptionBar::SetItems 的每一项给。"
+    ],
+    "name": "optionItem",
+    "width": "200",
+    "height": "40",
+    "normal": {
+        "type": "color",
+        "source": "1|1|1|1",
+        "transition": { "duration": 0.2, "easing": "easeOut" }
+    },
+    "hover": {
+        "type": "color",
+        "source": "0.929|0.906|0.973|1",
+        "transition": { "duration": 0.12, "easing": "easeOut" }
+    },
+    "onclicked": {
+        "type": "color",
+        "source": "0.875|0.839|0.949|1"
+    },
+    "shape": {
+        "type": "roundedRect",
+        "radius": 12
+    },
+    "stroke": {
+        "width": 1,
+        "color": "0.906|0.886|0.941|1"
+    },
+    "text": {
+        "fontSize": 16,
+        "leftSpace": 14,
+        "alignV": "middle"
+    },
+    "selfAnchorX": 0,
+    "selfAnchorY": 0,
+    "traceAnchorX": 0,
+    "traceAnchorY": 0
+}

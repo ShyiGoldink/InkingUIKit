@@ -1,0 +1,37 @@
+{
+    "$comment": [
+        "标签演示板（A7）：一个竖排容器，里面放 CXXCSS/Label/*.json 那几个标签。",
+        "它同时是 A6 那条「label 按文字自己撑高」的现场：容器只声明规则（一列、",
+        "间距 10、内缩 16、交叉轴拉满），高度由每个标签自己报（MeasureLayout）——",
+        "没有任何一处手算 offsetY。",
+        "被 examples/panel_demo 使用：按 L 键（或点「中/EN」按钮）切语言时，",
+        "这里会整体换字并重新排版（标签的排版缓存键里带着语言版本号）。"
+    ],
+    "name": "labelBoard",
+    "width": 400,
+    "height": 250,
+
+    "closed": {
+        "type": "color",
+        "source": "$panelSurface"
+    },
+    "clipChildren": true,
+
+    "selfAnchorX": 0, "selfAnchorY": 0,
+    "traceAnchorX": 0, "traceAnchorY": 0,
+    "offsetX": 420, "offsetY": 40,
+
+    "zIndex": 1,
+    "visible": true,
+
+    "shape": { "type": "roundedRect", "radius": 14 },
+
+    "layout": {
+        "kind": "stack",
+        "axis": "vertical",
+        "gap": 10,
+        "padding": 16,
+        "justify": "start",
+        "align": "stretch"
+    }
+}

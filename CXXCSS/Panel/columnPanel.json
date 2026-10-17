@@ -1,0 +1,32 @@
+{
+    "$comment": [
+        "A6 的布局示例：一个竖排容器（一列内容，间距 12、内缩 20、子项交叉轴拉满）。",
+        "规则写在**容器**上（layout），孩子那边写的是 layoutItem（margin / fillMain / min-max / selfAlign）。",
+        "有了它，孩子不用再手算 offsetY —— 谁在谁下面、隔多少，由布局算。",
+        "生成器只烘**规则**（不是算好的结果）：结果在运行期由 detail::layout::Solve 解出来，",
+        "写进子节点的运行期几何，然后标结构脏让命中表重烘（TaskGuide A6）。",
+        "排布输入变了（改内容 / 改尺寸）之后，在组件里调一次 Relayout() 即可，它幂等。"
+    ],
+    "name": "columnPanel",
+    "width": 400,
+    "height": 600,
+    "closed": {
+        "type": "color",
+        "source": "$panelSurfaceAlt"
+    },
+    "open": {
+        "type": "color",
+        "source": "$panelSurfaceOpenAlt",
+        "transition": { "duration": 0.18, "easing": "easeOut" }
+    },
+    "clipChildren": true,
+
+    "layout": {
+        "kind": "stack",
+        "axis": "vertical",
+        "gap": 12,
+        "padding": { "left": 20, "top": 20, "right": 20, "bottom": 20 },
+        "justify": "start",
+        "align": "stretch"
+    }
+}

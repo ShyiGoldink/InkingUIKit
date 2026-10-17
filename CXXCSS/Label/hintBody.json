@@ -1,0 +1,17 @@
+{
+    "$comment": [
+        "自动换行的示范（A7）：宽度是布局给的，断行与行距由 text 段决定。",
+        "wrap 缺省就是 word：英文整词不切开、CJK 字与字之间可断；",
+        "一个词自己就超宽时会退化成逐码点硬切（不然会溢出去，那是更糟的结果）。",
+        "高度不写：字号 × 行距 × 行数由排版算出来，容器按它让位给下一个标签。"
+    ],
+    "name": "hintBody",
+    "width": 368,
+    "text": {
+        "content": "hint.long",
+        "fontSize": "$body",
+        "lineSpacing": 1.35,
+        "align": "left",
+        "color": "$textBody"
+    }
+}

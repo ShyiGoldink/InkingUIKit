@@ -1,0 +1,20 @@
+{
+    "$comment": [
+        "静态标签（A7）：一段只读文字，按内容撑高——A6 的 MeasureLayout 报的就是它。",
+        "组件类型由**目录名**决定（Label）——见 CXXCSS.md §1 与 §3.8。",
+        "width 是**换行的依据**（必填）；height 省略 = 0 = 完全由内容撑高。",
+        "text.content 是**占位符**（也可以直接写字面量）：运行期交给 ResolveText 查",
+        "CXXCSS/Text/ui.json 那张表——换语言只要切表，标签自己会重新排版。",
+        "它默认不吃点击（标签常压在按钮 / 图片上）。"
+    ],
+    "name": "menuTitle",
+    "width": 368,
+    "text": {
+        "content": "menu.title",
+        "fontSize": "$title",
+        "lineSpacing": 1.2,
+        "align": "center",
+        "color": "$textPrimary"
+    },
+    "layoutItem": { "margin": { "bottom": 2 } }
+}

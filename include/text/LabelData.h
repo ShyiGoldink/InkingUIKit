@@ -1,0 +1,50 @@
+#pragma once
+
+// 静态标签（A7）的**数据面**：一段文字 + 它怎么排。
+//
+// 与按钮上的文字有什么区别：按钮的文字是"贴在按钮上的一行"，而标签是
+// **独立的组件**——它按内容撑大自己、参与 A6 的布局、可以被换行与省略。
+// 两者共用同一个文字层（`MeasureText` / `PaintText`），所以观感一致。
+
+#include <dataStruct/InkingAnchorData.h>
+#include <dataStruct/InkingLayout.h>
+#include <dataStruct/InkingTextLayout.h>
+
+#include <cstdint>
+#include <string>
+
+namespace inking {
+
+/// 标签的数据面。
+struct LabelData {
+    std::string name;
+    int width = 0;    ///< 配置的宽高：参与布局时会被布局改写，否则就是它
+    int height = 0;
+
+    AnchorPoint selfAnchor{};
+    AnchorPoint traceAnchor{};
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+
+    int zIndex = 0;
+    bool visible = true;
+
+    /// 布局（A6）：`layoutItem` 决定它在父容器里怎么排；
+    /// **撑高**由 `InkingStaticLabel::MeasureLayout` 报告，不需要额外开关。
+    LayoutSpec layout{};
+    LayoutItem layoutItem{};
+
+    // ---------------- 文本 ----------------
+    std::string text;              ///< 源串（UTF-8）
+    TextStyle style{};             ///< 字号 / 行距 / 字体 / 对齐 / 内缩
+    std::uint32_t color = 0xFFFFFFFFu;  ///< 文字色 0xAARRGGBB
+
+    /// 排版的三个开关（见 `InkingTextLayout.h`）。
+    TextWrap wrap = TextWrap::Word;
+    TextOverflow overflow = TextOverflow::Clip;
+    int maxLines = 0;              ///< 0 = 不限
+
+    bool Empty() const noexcept { return text.empty(); }
+};
+
+}  // namespace inking

@@ -1,0 +1,43 @@
+{
+    "$comment": [
+        "面板（Panel）配置示例——**这个文件不参与生成**（.example.json 的约定，CXXCSS.md §1 第 3 条）。",
+        "想看参与生成的真实配置：同目录的 drawerPanel.json。",
+        "",
+        "面板与按钮的差别：它是**容器**，开合是内容状态（业务调 SetOpen / Toggle），",
+        "不是指针三态——所以没有 hover / onclicked / text / img / svg / dynamic。",
+        "它的变换作用在**整棵子树**上：子节点不用各自知道自己在动，",
+        "而子孙也不进命中表（抽屉来回拉，命中表条目数一条不变）。",
+        "",
+        "过渡写在**进入的那个状态**上：关→开用 open 的时长与曲线，反过来用 closed 的。",
+        "startOpen 省略 = false（构造时关着）。",
+        "clipChildren 省略 = false（不剪子孙）；打开之后子孙超出本体的部分",
+        "画出来被剪、点起来也被剪，而子节点自己一个字都不用改。"
+    ],
+    "name": "panel.example",
+    "width": "400",
+    "height": "900",
+
+    "closed": {
+        "type": "color",
+        "source": "0.1|0.14|0.19|1",
+        "transition": { "duration": 0.32, "easing": "easeInOut" },
+        "transform": { "translateX": -420 }
+    },
+    "open": {
+        "type": "color",
+        "source": "0.14|0.19|0.25|1",
+        "transition": { "duration": 0.18, "easing": "easeOut" }
+    },
+
+    "startOpen": false,
+    "clipChildren": false,
+
+    "selfAnchorX": 0, "selfAnchorY": 0,
+    "traceAnchorX": 0, "traceAnchorY": 0,
+    "offsetX": 0, "offsetY": 90,
+
+    "zIndex": 0,
+    "visible": true,
+
+    "shape": { "type": "roundedRect", "radius": 20 }
+}

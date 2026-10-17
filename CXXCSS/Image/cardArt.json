@@ -1,0 +1,21 @@
+{
+    "$comment": [
+        "静态图片（A11）：不是按钮，是「没有 onClicked 的 button」——只有一态、没有回调。",
+        "组件类型由**目录名**决定（Image）——见 CXXCSS.md §1 与 §3.10。",
+        "\"runtime\": true ⇒ source 是**相对资源根**的路径（默认 exe 旁的 assets/），",
+        "字节在运行期由 ink::AssetLoad 读进来：**换图不用重编**，exe 也不随图片数量膨胀。",
+        "省略 runtime 时 source 要写绝对路径，生成器把文件字节烘进产物（老路）。",
+        "被 examples/panel_demo 使用：那个示例把 assets/ 拷到 exe 旁边（见它的 CMakeLists）。"
+    ],
+    "name": "cardArt",
+    "width": 200,
+    "height": 120,
+    "runtime": true,
+    "normal": { "type": "img", "source": "card.png", "fit": "cover" },
+    "selfAnchorX": 0, "selfAnchorY": 0,
+    "traceAnchorX": 0, "traceAnchorY": 0,
+    "offsetX": 840, "offsetY": 60,
+    "zIndex": 1,
+    "visible": true,
+    "shape": { "type": "roundedRect", "radius": 12 }
+}

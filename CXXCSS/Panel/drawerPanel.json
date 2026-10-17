@@ -1,0 +1,33 @@
+{
+    "$comment": [
+        "抽屉面板：关着时整块挪出父级左边，拉开时回到原位。",
+        "组件类型由**目录名**决定（Panel）——见 CXXCSS.md §1 与 §4.4。",
+        "被 examples/panel_demo 使用：那里直接用生成的类 inking::cxxcss::DrawerPanel。"
+    ],
+    "name": "drawerPanel",
+    "width": 400,
+    "height": 900,
+
+    "closed": {
+        "type": "color",
+        "source": "$drawerSurface",
+        "transition": { "duration": 0.32, "easing": "easeInOut" },
+        "transform": { "translateX": -420 }
+    },
+    "open": {
+        "type": "color",
+        "source": "$drawerSurfaceOpen",
+        "transition": { "duration": 0.18, "easing": "easeOut" }
+    },
+
+    "startOpen": false,
+
+    "selfAnchorX": 0, "selfAnchorY": 0,
+    "traceAnchorX": 0, "traceAnchorY": 0,
+    "offsetX": 0, "offsetY": 90,
+
+    "zIndex": 0,
+    "visible": true,
+
+    "shape": { "type": "roundedRect", "radius": 20 }
+}

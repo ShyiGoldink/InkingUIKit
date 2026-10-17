@@ -1,0 +1,18 @@
+{
+    "$comment": [
+        "省略号的示范（A7）：noWrap 不自动换行，overflow = ellipsis 让放不下的部分",
+        "用「…」收尾（而且是**先回退字符再补省略号**——不然加完还是超出）。",
+        "maxLines = 1 是行数上限；它和 overflow 一起决定「多出来的内容怎么消失」。"
+    ],
+    "name": "ellipsisNote",
+    "width": 368,
+    "text": {
+        "content": "note.long",
+        "fontSize": "$body",
+        "lineSpacing": 1.3,
+        "wrap": "noWrap",
+        "overflow": "ellipsis",
+        "maxLines": 1,
+        "color": "$textMuted"
+    }
+}

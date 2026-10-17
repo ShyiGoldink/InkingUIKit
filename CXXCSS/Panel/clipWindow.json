@@ -1,0 +1,26 @@
+{
+    "$comment": [
+        "裁剪窗口（A5）：一个**会溢出**的容器——子孙超出本体的部分被剪掉，",
+        "而且画出来被剪、点起来也被剪（两边同源，见 docs/UsageReport.md §6.5）。",
+        "被 examples/panel_demo 使用：里面那块宽色块比窗口宽，右边一截应该是断的。",
+        "组件类型由**目录名**决定（Panel）——见 CXXCSS.md §1 与 §4.4。"
+    ],
+    "name": "clipWindow",
+    "width": 320,
+    "height": 180,
+    "clipChildren": true,
+
+    "closed": {
+        "type": "color",
+        "source": "$clipSurface"
+    },
+
+    "selfAnchorX": 0, "selfAnchorY": 0,
+    "traceAnchorX": 0, "traceAnchorY": 0,
+    "offsetX": 820, "offsetY": 440,
+
+    "zIndex": 1,
+    "visible": true,
+
+    "shape": { "type": "roundedRect", "radius": 12 }
+}

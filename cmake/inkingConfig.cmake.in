@@ -1,0 +1,23 @@
+@PACKAGE_INIT@
+
+# inking 的 CMake 包配置：让 `find_package(inking CONFIG)` 能直接用。
+#
+# 依赖必须在这里重新 find：导出的 target 带 INTERFACE 链接项，
+# 消费方缺任何一个都会在链接期才报错，那时已经离现场很远了。
+include(CMakeFindDependencyMacro)
+
+find_dependency(SDL3 CONFIG)
+find_dependency(SDL3_image CONFIG)
+find_dependency(SDL3_ttf CONFIG)
+find_dependency(SDL3_mixer CONFIG)
+find_dependency(Threads)
+
+# FFmpeg 只有 pkg-config（没有 CMake config），所以这里走 PkgConfig 的宏。
+# `IMPORTED_TARGET` 生成的 `PkgConfig::FFMPEG` 正是导出接口引用的那个名字。
+find_dependency(PkgConfig)
+pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
+    libavcodec libavformat libavutil libswresample libswscale)
+
+include("${CMAKE_CURRENT_LIST_DIR}/inkingTargets.cmake")
+
+check_required_components(inking)

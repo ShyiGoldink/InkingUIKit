@@ -1,0 +1,31 @@
+{
+    "$comment": [
+        "语言表（A7）：占位符 → 各语言的串。**它不是组件**，是一张全局表。",
+        "组件类型由**目录名**决定（Text）——见 CXXCSS.md §1 与 §3.8。",
+        "只允许一份：安装的语义是「替换整张表」，两张只有一张生效，所以生成期直接报错。",
+        "第 i 个串对应 languages 里第 i 门语言（位置就是对应关系，长度不一致会报错）；",
+        "空串表示这门语言没有译文——运行期原样显示 key，而不是显示空白。",
+        "被 examples/panel_demo 使用：那里按 L 键（或点「中/EN」按钮）在 zh / en 之间切。"
+    ],
+    "name": "ui",
+    "languages": ["zh", "en"],
+    "default": "zh",
+    "entries": {
+        "menu.title": [
+            "星轨之下 · 文本演示",
+            "Under the Stars · Text Demo"
+        ],
+        "hint.long": [
+            "这段文字用来演示自动换行：容器给了多宽，它就在多宽里断行——中文按字断、英文按词断，行距由 lineSpacing 决定。",
+            "This paragraph demonstrates wrapping: it breaks inside whatever width the container gives it, with the line spacing set by lineSpacing."
+        ],
+        "note.long": [
+            "这一条故意写得很长很长，而且配了 noWrap + ellipsis，所以放不下的部分会被省略号收掉，而不是换到第二行去。",
+            "This one is deliberately long and uses noWrap + ellipsis, so whatever does not fit is trimmed with an ellipsis instead of wrapping."
+        ],
+        "lang.badge": [
+            "当前语言：中文（zh）",
+            "Current language: English (en)"
+        ]
+    }
+}

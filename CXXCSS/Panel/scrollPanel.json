@@ -1,0 +1,30 @@
+{
+    "$comment": [
+        "B12 的滚动容器示例：内容超出的面板——滚轮 / 拖滚动条 / 点轨道都能滚。",
+        "滚动是**容器的一种能力**（和 clipChildren 同一族），不是新组件类型：配了 scroll 段就能滚，",
+        "几何规则全在 include/ink/dataStruct/InkingScroll.h 的那几个纯函数里（轨道 / 滑块 / 点轨道跳到哪）。",
+        "步长是**设计像素**（wheelStep = 一格滚多少），这一版没有「视口比例」那一档；",
+        "也不做缓动：滚轮与点轨道都瞬时到位（要缓动就是第二版的事）。",
+        "两条轴的显示策略：auto（默认，内容超出才出条）/ always / never（不画条但仍然能滚）。",
+        "barRadius：0 = **胶囊**（取短边的一半，默认观感）；写大于 0 的数就是指定的圆角半径。",
+        "别忘了 clipChildren：滚动容器不配裁剪，内容会画到框外（两个字段配合使用）。"
+    ],
+    "name": "scrollPanel",
+    "width": 300,
+    "height": 240,
+    "closed": {
+        "type": "color",
+        "source": "$panelSurface"
+    },
+    "clipChildren": true,
+    "scroll": {
+        "axes": "both",
+        "wheelStep": 48,
+        "verticalBar": "auto",
+        "horizontalBar": "auto",
+        "barWidth": 8,
+        "barInset": 4,
+        "minThumbLength": 28,
+        "barRadius": 0
+    }
+}

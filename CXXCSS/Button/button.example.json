@@ -1,0 +1,60 @@
+{
+    "$comment": [
+        "这里是注释，代码生成器不会读这一部分，只作为介绍向你介绍Button中的各个用法",
+        "作为实例，这里提供的是一个【正常状态下为0.75透明度的黑色按钮，hover状态时透明度提高到0.85，按下后透明度恢复0.75，四角圆角半径为10px的圆角矩形按钮】",
+        "name：这里是你的按钮的名称，需要与你在代码中使用的按钮名称，以及你的CXXCSS配置json的名称完全一致",
+        "width:你的设计宽度。设计宽度是指：对于你的场景来说，你们设计稿的大小。",
+        "height :你的设计高度。",
+        "normal:指的是按钮在通常状态下的情况。type指的是按钮的种类，分为svg，img和color",
+        "对于svg你需要在source中提供svg代码；如果是img，你需要在souce中提供图像的绝对路径，我们将其直接转换成代码中的二进制纹理；如果是color，你需要在source中提供rgba使用|做分隔",
+        "text:你可以在button上提供text，text我们会按照纹理进行渲染。",
+        "对于fontSize你需要提供字体大小；对于leftSpace你需要提供设计稿上距离左侧的大小；对于topSpace你需要提供设计稿上距离顶部的距离",
+        "对于content你需要提供文字内容，normal代表正常状态下的文字，hover代表hover状态下的文字，onClicked代表按下时的文字",
+        "对于path你需要提供字体的绝对路径，为空我们会使用机器的默认字体",
+        "但是，我们不建议直接在按钮中配置文字！这些文字最后会渲染为纹理，这会导致按钮本身不支持多语言！",
+        "hover，onclicked：与normal一致",
+        "transition：可选，写在**状态自己**身上，表示『进入这个状态时』的过渡。只认两个字段：",
+        "  duration（秒，必须>0）与 easing（缓动曲线，可选：linear/easeIn/easeOut/easeInOut，缺省 linear）。",
+        "进 hover 用 hover 那一份，离开 hover 回 normal 用 normal 那一份——时长与曲线两边都可以不一样",
+        "（这里进 0.15s + easeOut、退 0.3s + easeInOut；写 easing 就必须写 duration，否则报错）。",
+        "曲线只改变进度，不改时长、起点、终点：0 和 1 两端永远精确对齐。",
+        "不写 transition 就是瞬间切换（比如这里的 onclicked：按下要立刻有反馈）。",
+        "过渡只插值**颜色与透明度**，绝不碰几何——所以按钮仍然是静态组件，命中区域不会因为动画而改变。",
+        "（变换 transform 也走同一段过渡，见 CXXCSS.md §4.1.2。）",
+        "SelfAnchorX/SelfAnchorY:自身锚点x和y",
+        "TraceAnchorX/TraceAnchorY:追踪父类的x和y锚点。锚点可以是任意浮点数。但请最好保证位于区间[0,1],我们不能保证超大浮点数是否会造成未定义问题",
+        "shape:形状层。type选形状，其余字段是它的参数。这里是圆角矩形，radius=10（设计坐标像素）。",
+        "shape 决定的不只是画出来的样子，也决定命中区域——两者用的是同一份定义，详见 CXXCSS.md",
+        "stroke:描边。与 shape 平级（不要把宽度写进 shape 里）。width 是设计坐标宽度，颜色写 rgba。",
+        "  描边有一半在形状外、一半在内；圆角形状的描边也跟着圆。它不参与命中。",
+        "shadow:阴影。与 shape 平级。offsetX/offsetY 是设计坐标偏移，color 是 rgba。",
+        "  现在画的是『形状的偏移实心副本』——没有模糊（写 blur 会报错，模糊还没做）。它也不参与命中。"
+    ],
+    "name": "button.example",
+    "width": "200",
+    "height": "100",
+    "normal": {
+        "type": "color",
+        "source": "0|0|0|0.75",
+        "transition": { "duration": 0.3, "easing": "easeInOut" }
+    },
+    "hover": {
+        "type": "color",
+        "source": "0|0|0|0.85",
+        "transition": { "duration": 0.15, "easing": "easeOut" }
+    },
+    "onclicked": {
+        "type": "color",
+        "source": "0|0|0|0.75"
+    },
+    "selfAnchorX": 0.5,
+    "selfAnchorY": 0.5,
+    "traceAnchorX": 0,
+    "traceAnchorY": 0,
+    "shape": {
+        "type": "roundedRect",
+        "radius": 10
+    },
+    "stroke": { "width": 2, "color": "1|1|1|0.35" },
+    "shadow": { "offsetX": 0, "offsetY": 4, "color": "0|0|0|0.45" }
+}

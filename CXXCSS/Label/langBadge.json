@@ -1,0 +1,16 @@
+{
+    "$comment": [
+        "右对齐的示范（A7）：align 是**行内**水平对齐，在文本框里生效；",
+        "它在容器布局里被 stretch 拉满宽度（layout.align = stretch），所以右对齐看得出来。",
+        "换语言时这一条会跟着变（占位符 lang.badge 在两个语言下是不同的串）。"
+    ],
+    "name": "langBadge",
+    "width": 368,
+    "text": {
+        "content": "lang.badge",
+        "fontSize": "$caption",
+        "lineSpacing": 1.2,
+        "align": "right",
+        "color": "$accent"
+    }
+}
