@@ -81,6 +81,10 @@ MenuBarStyle MenuBarStyle::MakeDefault() {
     // 菜单栏 / 工具栏该在内容之上：默认给一层 100（普通内容是 0）。
     // 下拉展开那一档用 200（`SelectStyle::expandedZIndex`），所以下拉能盖住
     // 内容、又盖不住菜单栏——正好是桌面应用该有的层次。
+    //
+    // A8b（局部层级）之后补一句：z 只在**兄弟之间**生效，所以这里的 100 仍然是
+    // "我这层压住内容"，而下拉是菜单栏的子孙、天然在它之上；200 那档自此只是
+    // "在菜单栏内部排最后"，不会再有跨级效果（无害，别再指望它压住别的兄弟）。
     style.panel.zIndex = 100;
     style.panel.shape = ShapeSpec::Rect();  // 顶部通栏，不做圆角
     style.panel.closed.color = theme::kSurface;

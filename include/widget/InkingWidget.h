@@ -185,6 +185,7 @@ public:
 
     // ---------------- 只读查询：层级与展示 ----------------
 
+    /// 本节点在**兄弟之间**的层级（局部层级，不是全局）。见 `IsAbove`。
     int GetZIndex() const noexcept;
     int GetRegisterOrder() const noexcept;  ///< 只在 z 相同时决定先后
 
@@ -499,7 +500,9 @@ public:
     /// 连带影响绘制顺序，所以按骨架变化处理——标脏 + 通知场景重排。
     bool SetVisible(bool visible) noexcept;
 
-    bool ChangeZIndex(int zIndex) noexcept;  ///< 层级变化是要标脏的四件事之一
+    /// 改本节点在**兄弟之间**的层级（局部层级：与父级的兄弟无关）。
+    /// 层级变化是要标脏的四件事之一。
+    bool ChangeZIndex(int zIndex) noexcept;
     bool SetParent(InkingWidget* parent) noexcept;
 
     void SetMagnification(float magnification) noexcept;  ///< 窗口层写，不标脏
@@ -568,14 +571,24 @@ public:
     /// 被拒绝了几次（组件没声明支持时调的）。可断言，不静默。
     std::uint64_t GetDisplayTransformRejectedCount() const noexcept;
 
-    /// a 是否盖在 b 上面：同场景内全局比 zindex，z 相同时晚注册的在上。
+    /// a 是否盖在 b 上面：**按树序 + 兄弟内 z** 比较（局部层级）。
+    ///
+    /// 规则三条：① 父容器先于自己的子孙画（底色永远在下）；② `zIndex` 只在
+    /// **兄弟之间**生效，与父级的兄弟无关；③ 同 z 时晚注册的在上。
+    /// 等价于"从根到自己的 (z, 注册序号) 序列按字典序比较"，前缀短者（祖先）在前。
     ///
     /// 规则只能有一条，跨子树 / 跨簇 / 溢出桶才好统一比较（docs/InputDesign.md
-    /// §1、§15）。将来要做局部层级（堆叠上下文），把这里换成"从根向下的 z 序列
-    /// 按字典序比较"即可，调用方不用改。
+    /// §1、§15）。这条仍是**严格全序**，所以四处调用方可以继续共用它。
     ///
     /// **渲染顺序和命中顺序必须共用这一个比较器**，否则会出现"画的是 A、
     /// 点到的是 B"——两边单独看都对，合起来才错。
+    ///
+    /// 代价与边界（写清楚免得下一个人以为是漏了）：
+    ///   - 子节点的 z 再大也盖不过**父级的兄弟**（真正的逃逸要"提升到根层"的
+    ///     portal，尚未提供）。所以"展开的下拉要压住别的内容"应该抬高**容器
+    ///     自己**（`Select` 展开时正是这么做的），而不是抬孙子。
+    ///   - 容器的自绘只有一笔（底色+描边一起提交），它整体在子孙之下；想让
+    ///     描边压在子孙之上需要拆成背景笔 / 前景笔，暂不支持。
     static bool IsAbove(const InkingWidget& a, const InkingWidget& b) noexcept;
 
     /// 标记自己"变了"。写入口内部已经调过，子类不要自己调。
@@ -800,7 +813,7 @@ protected:
     /// 因为组件没声明支持而被拒了几次（`GetDisplayTransformRejectedCount()`）。
     std::uint64_t _displayTransformRejected = 0;
 
-    int _zIndex = 0;        ///< 层级：z 越高渲染越靠后（越靠上）
+    int _zIndex = 0;        ///< 兄弟间层级：同父下 z 越高画得越晚（越靠上）
     int _registerOrder = 0; ///< 注册序号，构造时自动赋；只在 z 相同时决定先后
 
     /// 命中后让不让过（三态里的 PassThrough）。默认 Block。

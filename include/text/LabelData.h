@@ -39,6 +39,14 @@ struct LabelData {
     TextStyle style{};             ///< 字号 / 行距 / 字体 / 对齐 / 内缩
     std::uint32_t color = 0xFFFFFFFFu;  ///< 文字色 0xAARRGGBB
 
+    /**
+     * 文字色来自哪个**主题 token**（不带 `$`）；`nullptr` = 不是语义色。
+     *
+     * `color` 是生成期按默认主题烘好的字面量，token 名留给运行期换肤重查。
+     * **必须指向静态生命周期的串**（生成器发的是字面量）。
+     */
+    const char* colorToken = nullptr;
+
     /// 排版的三个开关（见 `InkingTextLayout.h`）。
     TextWrap wrap = TextWrap::Word;
     TextOverflow overflow = TextOverflow::Clip;

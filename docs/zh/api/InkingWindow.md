@@ -125,11 +125,39 @@ using ExitConfirmHandler = std::function<bool()>;
 >**config/window_config.h**
 
 ```C++
-inline constexpr int kDesignWidth  = 1280;
-inline constexpr int kDesignHeight = 720;
+inline constexpr int kDefaultDesignWidth  = 1280;   // 默认值，不随 SetDesignSize 变
+inline constexpr int kDefaultDesignHeight = 720;
+int  DesignWidth() noexcept;                        // 运行期**实际值**
+int  DesignHeight() noexcept;
+void GetDesignSize(int& width, int& height) noexcept;
+bool SetDesignSize(int width, int height);          // 必须在构造场景 / 窗口之前
 ```
 
-**编译期常量**，改设计尺寸要重新编译（将来由 `inkgen` 从 CXXCSS 生成）。
+设计尺寸是**运行期**的（`CXXCSS/config.json` 的 `design` 段决定的），库内一律读访问器。
+`kDesignWidth` / `kDesignHeight` 仍保留为**默认值别名**，只为源码兼容——它们永远不随
+`SetDesignSize` 变化，别拿它当"当前设计尺寸"用。
+
+`SetDesignSize` 在窗口或场景**已经按旧尺寸定型**之后会拒绝改动（返回 false + ERROR），
+不做"一半新一半旧"的半生效。详细理由见 `CXXCSS.md` §3.11。
+
+>**window/WindowConfig.h**
+
+```C++
+struct WindowConfig {                 // 每一项都是 std::optional：空 = 不动
+    std::optional<bool>          borderless;
+    std::optional<bool>          roundedCorners;
+    std::optional<std::uint32_t> background;     // 0xAARRGGBB
+    std::optional<bool>          fullscreen;
+};
+int ApplyWindowConfig(const WindowConfig& config);   // 返回没生效的字段数
+```
+
+**启动配置 + 回读校验**。为什么不自己连调 `SetBorderless` 那四个：它们的返回值是"真的变了
+没有"，幂等调用返回 false，和失败长得一样；`SetBackgroundColor` 干脆是 void。所以判据只能
+是"读完再比"——这件事收在这一个函数里，失败逐条打 ERROR。
+
+它**会构造窗口单例**，所以要排在 `SetDesignSize()` 之后（窗口根锚点按设计尺寸定型）。
+`CXXCSS/config.json` 的 `window` 段就是它；生成的 `ApplyConfig()` 已经把顺序写死了。
 
 ## APIS
 
@@ -269,6 +297,33 @@ bool HasWindow() const noexcept;
 真窗口建起来了没有（`Show()` 之后 true、释放之后 false）。自检用它区分
 "跑在真窗口上"与"只有逻辑、没有窗口"两种场合。
 
+>**RequestCapture(path) / Capture(path) / HasPendingCapture()**
+
+```c++
+bool RequestCapture(const std::string& path);   // 排到本帧末（Present 前）
+bool Capture(const std::string& path);          // 立即读当前渲染目标
+bool HasPendingCapture() const noexcept;
+```
+
+把画面存成图片。**落在窗口层**的理由只有两条：渲染器是窗口建的、随窗口销毁；
+"这一帧画完了没有"也只有窗口知道。业务侧要截图不该绕 `ImmediateDraw` 去抓
+渲染器，更不该手写 BMP 编码。
+
+| 方法 | 什么时候读像素 | 用在哪 |
+| --- | --- | --- |
+| `RequestCapture` | 本帧末、`Present` **之前** | **推荐**。按钮回调、快捷键、逻辑步里随便调 |
+| `Capture` | 立刻 | 只有"画完还没 Present"的调用点有意义（自检 / 工具）；`Present` 之后内容未定义 |
+
+格式**按扩展名定**：`.png` 走 `SDL_SavePNG`（要求 SDL ≥ 3.4，本仓库是 3.4.16）；
+其它（含不带扩展名）走 `SDL_SaveBMP`。**不引 SDL3_image**——截图不该给可选依赖
+新增必需项。
+
+三条边界：
+
+- 截的是**整个窗口帧缓冲**（含 letterbox 黑边），不是逻辑画布那一块；
+- **不含指针小方块**（那一笔调试脚手架画在截图之后）；
+- 没有渲染器时**当场返回 false 并报错**，不留一个永远不落盘的排队请求。
+
 >**GetShortcuts()**
 
 ```C++
@@ -280,6 +335,14 @@ const ShortcutRegistry& GetShortcuts() const noexcept;
 挂着已死的 `this` 就是悬垂。详见 [InkingInput.md](InkingInput.md)。
 
 ### 自由函数
+
+>**ApplyWindowConfig(const WindowConfig&)**
+
+```C++
+int ApplyWindowConfig(const WindowConfig& config);   // namespace inking
+```
+
+见上面「用到的数据结构 → window/WindowConfig.h」。返回**没生效的字段数**（0 = 全部生效）。
 
 >**GetLastRenderedScene()**
 
@@ -296,6 +359,13 @@ InkingScene* GetLastRenderedScene() noexcept;   // namespace inking
 | --- | --- |
 | `INK_AUTOQUIT` | 设了就自动退出（跑 `inking_demo` 做冒烟测试用），时长由内部常量决定 |
 | `INK_TEST_FONT` | 自检指定一个可读字体路径（沙箱里 `SDL_IOFromFile` 可能失败） |
+| `INK_CAPTURE` | **零代码截图**：设成图片路径，启动后的**第一帧**就落一张（`.png` / `.bmp`）。排错时"先看一眼画面"比加日志快得多 |
+
+`INK_CAPTURE` 的典型用法（无头也能跑，dummy 视频驱动 + 软件渲染器）：
+
+```bash
+SDL_VIDEO_DRIVER=dummy INK_CAPTURE=/tmp/shot.png INK_AUTOQUIT=1 ./inking_demo.exe
+```
 
 ## 常见坑
 
@@ -305,6 +375,9 @@ InkingScene* GetLastRenderedScene() noexcept;   // namespace inking
 3. **自己 `exit()` 而不走 `RequestExit()`**：跳过帧末析构与纹理释放。
 4. **在 `Show()` 之前依赖 `HasWindow()`**：还没建窗口时它一直是 false。
 5. **指望全屏下 `SetZoom` 生效**：全屏下是空操作。
+6. **在按钮回调里调 `Capture()`**：那一刻后缓冲里是上一帧、甚至未定义的内容
+   （`Present` 之后不保证保留）。回调里请用 `RequestCapture()`。
+7. **以为截图只截逻辑画布**：截的是整个窗口帧缓冲，含 letterbox 黑边。
 
 ---
 

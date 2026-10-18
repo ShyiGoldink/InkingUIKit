@@ -41,6 +41,14 @@ struct PanelAppearance {
     std::uint32_t color = 0xFF000000u;  ///< 0xAARRGGBB，alpha 参与合成
 
     /**
+     * 这个颜色来自哪个**主题 token**（不带 `$`）；`nullptr` = 不是语义色。
+     *
+     * `color` 是生成期烘好的字面量（默认主题），token 名留着给运行期换肤用。
+     * **必须指向静态生命周期的串**（生成器发的是字面量）。
+     */
+    const char* themeColor = nullptr;
+
+    /**
      * **进入这个状态时**的过渡时长（秒）。0 = 瞬间切换（配置里没写 `transition`）。
      *
      * 写在状态自己身上：`TaskGuide.md` 的 D-1 定了"过场段各自带时长"——
@@ -149,6 +157,9 @@ struct PanelData {
             // "开到位的目标"，继承 closed 那份等于"开了跟没开一样"；
             // 时长与曲线更是必须各配各的（D-1「过场段各自带一份」）。
             open.color = closed.color;
+            // token 也要跟着走：只抄颜色的话，换主题时"开着的面板"还用旧色
+            // ——而且不报错，只是那一块颜色不跟着变。
+            open.themeColor = closed.themeColor;
         }
         // 两个状态都是纯透明的话，这个面板在任何情况下都看不见——那多半是配置
         // 写漏了（例如颜色串写成了 "0|0|0"）。给个不透明的黑兜底，至少看得见。
@@ -157,6 +168,10 @@ struct PanelData {
         if (ColorAlpha(closed.color) == 0u && ColorAlpha(open.color) == 0u) {
             closed.color = 0xFF000000u;
             open.color = 0xFF000000u;
+            // 兜底色不再是语义色了：token 必须清掉，否则换主题时它又会把
+            // 这个兜底黑盖回去（"配了个透明面板，换肤后突然不透明了"）。
+            closed.themeColor = nullptr;
+            open.themeColor = nullptr;
         }
     }
 };

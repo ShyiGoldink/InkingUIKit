@@ -294,6 +294,40 @@ public:
 > 生成的头/源带 UTF-8 BOM，Visual Studio / 记事本打开不会乱码；它们只落构建目录，
 > 不进源码树。
 
+**④ 全局配置（可选）**：设计画布尺寸 + 窗口启动设置，都写在 `CXXCSS/config.json` 里：
+
+```jsonc
+{
+    "design": { "width": 1600, "height": 900 },
+    "window": {
+        "borderless": false,
+        "roundedCorners": true,
+        "background": "0.11|0.11|0.14|1",   // 或 "$token"（走主题表）
+        "fullscreen": false,
+        "startScene": "main"
+    }
+}
+```
+
+```cmake
+file(GLOB MY_CSS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/*.json"          # ← 根下的 config.json
+    "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/Button/*.json")
+```
+
+```cpp
+int main() {
+    inking::cxxcss::ApplyConfig();                        // ← 第一行：早于任何场景 / 窗口
+    MyScene scene;
+    inking::InkingWindow::Instance().Show(inking::cxxcss::kStartScene);
+}
+```
+
+不建这个文件就用默认值（1280×720 + 库的窗口默认）。这些设置是**运行期**生效的（预编译
+DLL 里的常量与窗口标志改不到），所以漏调不会静默失效：`ApplyConfig()` 返回 false 并打
+ERROR 日志，具体哪一项没生效写得清清楚楚（回读校验在库那边做——窗口 setter 的返回值
+分不清"幂等"和"失败"）。`window` 里没写的字段 = 不动库的默认值。
+
 ### 运行期 DLL
 
 `libinking.dll` 由上面 `POST_BUILD` 自动拷到 exe 旁。**SDL3 / FFmpeg 的 DLL 要自己在 PATH 里**：
@@ -333,7 +367,7 @@ include/            82 个公开头（按子系统分目录，与 src/ 一一对
 src/                54 个 .cpp + 3 个内部头
 examples/demo/      演示 + 无头自检（两个目标）
 tools/inkgen/       CXXCSS → C++ 的生成器
-CXXCSS/             UI 配置（Button / Panel / Label / Image / Text / Theme 的 .json）
+CXXCSS/             UI 配置（Button / Panel / Label / Image / Text / Theme + 根下的 config.json）
 cmake/              SDL3 查找、inkgen 的构建规则
 docs/zh/            API 文档与变更记录
 dist/               发布包（`inking-<版本>-win64/` 目录 + 同名 .zip，不入库）
@@ -353,6 +387,7 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 
 | 文档 | 内容 |
 | --- | --- |
+| [`docs/zh/UsageGuide.md`](docs/zh/UsageGuide.md) | **手把手教程**：从设计大小、第一个场景、第一个组件（图片）到 CMake 与编译运行，CXXCSS / API 两条路线并行 |
 | [`docs/zh/API.md`](docs/zh/API.md) | **从这里读起**：五分钟上手 + 模块地图 + 头文件全量索引 |
 | [`docs/zh/api/`](docs/zh/api/) | 16 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver + Anchor / ShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
 | [`CXXCSS/CXXCSS.md`](CXXCSS/CXXCSS.md) | 配置格式：目录与命名、公共骨架、形状层词汇表、Button 字段全表 |
@@ -368,7 +403,9 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 2. **单行输入框**：多行、撤销 / 重做、Tab 焦点遍历、输入法候选窗定位都未做。
 3. **`AppearanceType::Svg` 没有画法**：配置里能写，运行期**静默退回纯色 `color`**
    ——不报错、只是看不到图。（`Image` 已落地：`detail::PaintImage` 按形状裁剪后画进按钮。）
-4. **未做局部层级（堆叠上下文）**：z 序是全局一条，`Select` 展开靠"临时提到 z=200"。
+4. **没有 portal（子节点逃不出父级）**：层级是局部的（树序 + 兄弟内 z，见 A8b），
+   `zIndex` 只在兄弟之间生效、父容器永远在子孙之下。但"子节点盖住**父级的兄弟**"
+   需要"提升到根层"的 portal 层，尚未提供——所以 `Select` 展开靠抬**自己**到 z=200。
 5. **音频需要显式 `AudioInit()`**：窗口层只在 `Show()` 之后每帧调 `AudioTick`、
    关窗时调 `AudioShutdown`，**不会**替你初始化。不调时整层空转、`AudioReady()` 为 false，
    而且不报错（`AudioInit()` 返回 false 通常意味着构建期漏了 `INK_HAS_SDL3_MIXER`）。

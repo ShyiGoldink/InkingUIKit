@@ -5,6 +5,69 @@
 
 ---
 
+## 未发布 —— 局部层级（A8b）
+
+### 变更
+
+- **`zIndex` 的语义从"全场景一条"改为"兄弟之间"**（局部层级）。`InkingWidget::IsAbove`
+  现在按"树序 + 兄弟内 z"比较：① 父容器先于自己的子孙画；② `zIndex` 只在同一父下生效；
+  ③ 同 z 仍看注册序号。
+- **修复一类静默失效**：以前"面板 `zIndex:20`、里面的标签 `zIndex:1`"会让面板底色
+  盖住整块内容，且不报任何错（外部使用方实测：面板区最大亮度 38，调完 z 才回到 255）。
+  现在子的 z 再小也在父之上。
+- 仍是**一个严格全序**，所以绘制、命中表、面板子树仲裁、动静合并四处共用同一个比较器，
+  "画的是 A、点到的是 B"这条不变量没变。
+
+### 新增
+
+- **运行期主题（颜色）**：`theme/InkingTheme.h`（`InstallThemeTable` / `SetActiveTheme` /
+  `ThemeVersion` / `ResolveThemeColor` / `ThemeStatsSnapshot` / `ClearThemeTables`）。
+  生成期仍按**烘焙主题**把 `$token` 换成字面量（= 默认色），同时把 token 名留在
+  `ButtonAppearance::themeColor` / `PanelAppearance::themeColor` / `LabelData::colorToken`
+  里，运行期按当前主题重查 ⇒ `SetActiveTheme("light")` 一句话换肤。
+- **多份主题**：`CXXCSS/Theme/*.json` 可以有多份，`"default": true` 指定烘焙主题
+  （都没标则按文件名排序取第一份，并打一条警告）；生成物多出
+  `InstallGeneratedThemes()` / `kDefaultThemeName` / `kThemeCount`，启动期自动安装。
+- 生成期新增**跨表校验**：每份主题都必须覆盖组件用到的全部颜色 token——少一个的表现是
+  "切过去那一处还是旧色"，在构建期就报错。
+- 自检新增「运行期主题」18 项：装两张表 / 切表 / 切失败不动版本 / **真渲染像素**在
+  蓝→红→蓝之间切换 / 缺 token 用兜底色并记 miss / 清空回到字面量。
+- `inking_demo_selftest` 的「层级」段（19 项）：父子 / 兄弟 / 跨子树三种关系、绘制列表
+  顺序与 `IsAbove` 同源、中心点命中子面板、**真渲染一帧后读回中心像素**。
+- **截图能力（P2-6）**：`InkingWindow::RequestCapture(path)` / `Capture(path)` /
+  `HasPendingCapture()`。`.png` 走 `SDL_SavePNG`（SDL ≥ 3.4）、其它走 `SDL_SaveBMP`，
+  **不新增 SDL3_image 依赖**。`RequestCapture` 排队到本帧末（`Present` 前）执行，
+  所以在按钮回调里也能用；`Capture` 立即读当前渲染目标。
+- **环境变量 `INK_CAPTURE=<路径>`**：启动后第一帧零代码落一张图。排错时"先看一眼画面"
+  比加日志快——外部使用方当初为此自写了 `SDL_RenderReadPixels` + 纯 Python 的 BMP→PNG。
+- 自检新增「截图：失败路径」4 项：空路径 / 无渲染器都必须返回 false，
+  且**不许留下永远不落盘的排队请求**。
+
+### 修复
+
+- **标签 `height` 写 `0` 被判"必须大于 0"**：`CXXCSS.md` 两处都写着"可省：省略 = 0 = 完全由
+  内容撑高"，但生成器的 `ReadSize` 对 `< 1` 一刀切报错——照文档写 `0` 的人在构建期被拒
+  （外部使用方正是这么踩的）。现在标签的 `height` 收 `0`（与省略完全等价，产物里都不写
+  这一行）；**宽度仍然必填且 > 0**（它是换行的依据），负数的文案改成"不能是负数"。
+
+### 文档
+
+- `CXXCSS.md` 新增 §2.3「层级」：`zIndex` 只在同级生效、要压住别的内容就抬容器自己。
+- `InputDesign.md` §1/§10.5、`TaskGuide.md` A8b/T-4、`UsageReport.md`、
+  `README.md`「已知限制」、`api/InkingWidget.md` / `InkingScene.md` / `InkingAnchor.md`
+  同步改口径。
+
+### 已知限制
+
+- **portal 未做**：子节点的 z 再大也盖不过**父级的兄弟**。"展开的下拉要压住同一容器
+  之外的内容"目前靠抬高**容器自己**（`Select` 的 `expandedZIndex` 就是这么用的）。
+  引入 portal 之后，`§10.5 规则 4` 的跨簇条目仲裁才需要补回来。
+- **运行期换肤只覆盖颜色，且只覆盖三处**：按钮三态、面板两态、标签文字色。
+  `image` / `canvas` / 滚动条的颜色，以及 `stroke` / `shadow` 的颜色 token，仍在生成期定。
+- **字号 token 是编译期的**：那是几何（重排 + 重烘命中表 + 重烘字图集），改字号要重新生成。
+
+---
+
 ## 0.1.0-test —— 2026-10-17（**当前：测试版本**）
 
 首个"可构建、可运行、文档齐"的测试版本。功能面来自此前的分层重构与

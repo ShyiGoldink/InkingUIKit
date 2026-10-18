@@ -16,6 +16,8 @@
 
 #include <button/ButtonData.h>
 
+#include <theme/InkingTheme.h>
+
 #include <cstdint>
 #include <functional>
 
@@ -123,7 +125,8 @@ struct ButtonLook {
         hovered = false;
         pressed = false;
         state = ButtonState::Normal;
-        displayColor = normal.color;
+        // 颜色统一走 `TargetColor`：配了 token 就查运行期主题，没配就是烘好的字面量。
+        displayColor = TargetColor(ButtonState::Normal);
         displayTransform = normal.transform;
         displayWidth = EffectiveWidth(ButtonState::Normal);
         displayHeight = EffectiveHeight(ButtonState::Normal);
@@ -135,7 +138,22 @@ struct ButtonLook {
         duration = 0.0f;
         _pendingRepaint = false;
         _pendingHit = false;
+        _themeVersion = ThemeVersion();
     }
+
+    /**
+     * 某个状态**真正要画**的颜色。
+     *
+     * 配置写了 `$token` 时 `appearance.color` 只是"默认主题下的值"，
+     * 真正的颜色要在运行期按当前主题重查（`theme/InkingTheme.h`）；
+     * 没写 token 就是那个字面量本身。**颜色只在这里取**——三态、过渡、收尾
+     * 全走这一个入口，否则"换肤后一部分对、一部分还是旧色"。
+     */
+    std::uint32_t TargetColor(ButtonState which) const noexcept {
+        const ButtonAppearance& appearance = For(which);
+        return ResolveThemeColor(appearance.themeColor, appearance.color);
+    }
+
 
     /// 某个状态下的生效尺寸：状态里写了就用它，没写就用组件自己的。
     int EffectiveWidth(ButtonState which) const noexcept {
@@ -298,6 +316,24 @@ struct ButtonLook {
         _pendingRepaint = false;
         _pendingHit = false;
 
+        // 主题变了：三态的颜色要按新表重算，而且**当场落到当前状态**。
+        // 位置必须在下面那个 `duration <= 0` 的提前返回**之前**——没配过渡的
+        // 按钮 duration 恒为 0，放在后面就永远刷不到（画面会一直是旧配色，
+        // 但没有任何报错）。
+        //
+        // 不做"跨主题的颜色过渡"：那会让人看见深色→浅色的中间灰，而主题切换
+        // 在用户眼里是瞬时的。所以这里直接把 duration 清零。
+        const std::uint64_t themeVersion = ThemeVersion();
+        if (_themeVersion != themeVersion) {
+            _themeVersion = themeVersion;
+            const std::uint32_t before = displayColor;
+            displayColor = TargetColor(state);
+            fromColor = displayColor;
+            duration = 0.0f;
+            elapsed = 0.0f;
+            result.repaint = result.repaint || (displayColor != before);
+        }
+
         if (duration <= 0.0f) {
             return result;
         }
@@ -320,14 +356,14 @@ struct ButtonLook {
         // 分成两段动画只会让人配两次时长、还可能对不齐。
         if (finished) {
             // 收尾：直接落到目标值，免掉插值的最后一点浮点误差。
-            displayColor = For(state).color;
+            displayColor = TargetColor(state);
             displayTransform = For(state).transform;
             displayWidth = static_cast<float>(EffectiveWidth(state));
             displayHeight = static_cast<float>(EffectiveHeight(state));
             duration = 0.0f;
             elapsed = 0.0f;
         } else {
-            displayColor = MixColor(fromColor, For(state).color, k);
+            displayColor = MixColor(fromColor, TargetColor(state), k);
             displayTransform = LerpTransform(fromTransform, For(state).transform, k);
             // 尺寸与颜色/变换**同一个进度**：T-5 之后它也是"这个状态的样子"的一部分。
             displayWidth = fromWidth
@@ -370,7 +406,7 @@ private:
         fromWidth = displayWidth;
         fromHeight = displayHeight;
 
-        const std::uint32_t targetColor = For(state).color;
+        const std::uint32_t targetColor = TargetColor(state);
         const TransformSpec targetTransform = For(state).transform;
         const float targetWidth = static_cast<float>(EffectiveWidth(state));
         const float targetHeight = static_cast<float>(EffectiveHeight(state));
@@ -405,6 +441,14 @@ private:
     /// "显示值被当场换掉了、还没报告出去"的那笔账（见 BeginTransition）。
     bool _pendingRepaint = false;
     bool _pendingHit = false;
+
+    /**
+     * 颜色是按哪个主题版本算出来的。
+     *
+     * `Advance` 拿它和 `ThemeVersion()` 比：不一样就说明装了表 / 切了主题 /
+     * 清了表，三态颜色要重算。**稳态成本 = 一次 uint64 比较**，不查表。
+     */
+    std::uint64_t _themeVersion = 0;
 };
 
 }  // namespace inking

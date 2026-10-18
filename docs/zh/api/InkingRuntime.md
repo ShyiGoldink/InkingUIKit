@@ -321,6 +321,46 @@ bool HitTestLocalRect(const InkingWidget& node, const ShapeBounds& bounds,
 > 渲染侧的矩形会按包含式取整成整数像素，所以"边界那一像素"两边可能差一格——
 > 自检别贴着边界写断言。
 
+## 十、主题：运行期换颜色（`theme/InkingTheme.h`）
+
+颜色在生成期被换成字面量（**烘焙主题**），token 名同时留在组件数据里；运行期按
+名字重查，所以能换肤。**只覆盖颜色**——字号 token 改的是几何，仍在生成期替换。
+
+```c++
+bool InstallThemeTable(ThemeTable table);       // 装一张（同名替换；不切换）
+bool SetActiveTheme(const std::string& name);   // 切（没装过 → false，版本不动）
+const std::string& ActiveThemeName() noexcept;
+std::uint64_t ThemeVersion() noexcept;          // 装 / 切 / 清空都 +1
+std::uint32_t ResolveThemeColor(const char* token, std::uint32_t fallback);
+ThemeStats ThemeStatsSnapshot();                // hits / misses / version
+void ClearThemeTables() noexcept;               // 回到"全用字面量"
+```
+
+>**ThemeTable**
+
+```c++
+struct ThemeColorEntry { std::string token; std::uint32_t color; };
+struct ThemeTable { std::string name; std::vector<ThemeColorEntry> colors; };
+```
+
+三个要点：
+
+1. **不装表 = 零成本**。`ResolveThemeColor` 先判空指针（这个颜色位不是语义色），
+   再判"一张表都没装"，两条都在进表之前返回 `fallback`（生成期烘的字面量）。
+2. **版本号是"切换时机"**（和语言表同一套）。组件把版本放进缓存：`ButtonLook` /
+   `PanelLook` 在 `Advance` 里比一次 `ThemeVersion()`，标签在 `EffectiveTextColor`
+   里比一次。**不要"遍历场景通知所有组件"**——漏一个就是"有的组件还是旧配色"。
+3. **查不到不报错、不空白**：用兜底色，并记一次 miss（`ThemeStatsSnapshot` 看得见）。
+
+生成物里的入口是 `InstallGeneratedThemes()`（启动期已自动调过一次），
+`kDefaultThemeName` 是烘焙主题名。切主题只需要：
+
+```c++
+inking::SetActiveTheme("light");
+```
+
+`CXXCSS.md` §3.9 讲配置侧（多份主题、`"default": true`、跨表 token 覆盖校验）。
+
 ## 常见坑
 
 1. **在 `TaskQueue` 回调里碰 UI 状态**：那是管家线程。交付回 UI 只有"帧首消费"那条路。

@@ -24,6 +24,8 @@
 
 #include <panel/PanelData.h>
 
+#include <theme/InkingTheme.h>
+
 #include <cstdint>
 
 namespace inking {
@@ -67,7 +69,8 @@ struct PanelLook {
         closed = data.closed;
         open = data.open;
         state = data.startOpen ? PanelState::Open : PanelState::Closed;
-        displayColor = For(state).color;
+        // 颜色统一走 `TargetColor`：配了 token 就查运行期主题，没配就是烘好的字面量。
+        displayColor = TargetColor(state);
         displayTransform = For(state).transform;
         fromColor = displayColor;
         fromTransform = displayTransform;
@@ -75,6 +78,19 @@ struct PanelLook {
         duration = 0.0f;
         _pendingRepaint = false;
         _pendingHit = false;
+        _themeVersion = ThemeVersion();
+    }
+
+    /**
+     * 某个状态**真正要画**的颜色。
+     *
+     * 配置写了 `$token` 时 `appearance.color` 只是"默认主题下的值"，真正的颜色
+     * 要在运行期按当前主题重查（`theme/InkingTheme.h`）。两态、过渡、收尾全走
+     * 这一个入口——分头取色就会出现"换肤后一半对、一半还是旧色"。
+     */
+    std::uint32_t TargetColor(PanelState which) const noexcept {
+        const PanelAppearance& appearance = For(which);
+        return ResolveThemeColor(appearance.themeColor, appearance.color);
     }
 
     /// 某一个状态对应的外观。
@@ -142,6 +158,21 @@ struct PanelLook {
         _pendingRepaint = false;
         _pendingHit = false;
 
+        // 主题变了：两态颜色按新表重算，并当场落到当前状态。必须在下面那个
+        // `duration <= 0` 的提前返回**之前**——没配过渡的面板 duration 恒 0。
+        // 不做跨主题的颜色过渡（那会看见深色→浅色的中间灰）；这里由 `syncBaseColor`
+        // 之后的 `Advance` 报出一笔重绘账。
+        const std::uint64_t themeVersion = ThemeVersion();
+        if (_themeVersion != themeVersion) {
+            _themeVersion = themeVersion;
+            const std::uint32_t before = displayColor;
+            displayColor = TargetColor(state);
+            fromColor = displayColor;
+            duration = 0.0f;
+            elapsed = 0.0f;
+            result.repaint = result.repaint || (displayColor != before);
+        }
+
         if (duration <= 0.0f) {
             return result;
         }
@@ -157,12 +188,12 @@ struct PanelLook {
 
         if (finished) {
             // 收尾直接落目标值，免掉插值的最后一点浮点误差。
-            displayColor = For(state).color;
+            displayColor = TargetColor(state);
             displayTransform = For(state).transform;
             duration = 0.0f;
             elapsed = 0.0f;
         } else {
-            displayColor = MixColor(fromColor, For(state).color, k);
+            displayColor = MixColor(fromColor, TargetColor(state), k);
             displayTransform = LerpTransform(fromTransform, For(state).transform, k);
         }
 
@@ -189,7 +220,7 @@ private:
         fromColor = displayColor;
         fromTransform = displayTransform;
 
-        const std::uint32_t targetColor = For(state).color;
+        const std::uint32_t targetColor = TargetColor(state);
         const TransformSpec targetTransform = For(state).transform;
         if (seconds <= 0.0f
             || (fromColor == targetColor
@@ -215,6 +246,10 @@ private:
     /// "显示值被当场换掉了、还没报告出去"的那笔账（见 BeginTransition）。
     bool _pendingRepaint = false;
     bool _pendingHit = false;
+
+    /// 颜色是按哪个主题版本算的；`Advance` 拿它和 `ThemeVersion()` 比。
+    /// 稳态成本 = 一次 uint64 比较。
+    std::uint64_t _themeVersion = 0;
 };
 
 }  // namespace inking

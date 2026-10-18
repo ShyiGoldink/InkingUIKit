@@ -41,7 +41,7 @@ struct AnchorData {
     int width = 0;   ///< 自身尺寸，设计坐标
     int height = 0;
 
-    int zIndex = 0;   ///< 越大越靠上，同场景内全局比较
+    int zIndex = 0;   ///< 越大越靠上，**只在兄弟之间**比较（局部层级）
     bool visible = true;  ///< 可见性；不可见连命中都不必问
     std::uint32_t color = 0xFF569CD6u;  ///< 占位填充色 0xAARRGGBB（样式层接手）
     LayoutSpec layout{};

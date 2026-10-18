@@ -56,6 +56,17 @@ struct ButtonAppearance {
     std::string source;                 ///< 原样的配置串，留给纹理层用
 
     /**
+     * 这个颜色来自哪个**主题 token**（不带 `$`）；`nullptr` = 不是语义色。
+     *
+     * `color` 是生成期按主题表烘好的字面量，也就是**默认主题**下的值；这里留下
+     * token 名，运行期换主题时才有可能重查（`theme/InkingTheme.h`）。
+     *
+     * **必须指向静态生命周期的串**：生成器发的是字符串字面量，手写时也请直接写
+     * `"panelSurface"` 这种字面量。它不进 `Look` 的所有权，也不被拷贝管理。
+     */
+    const char* themeColor = nullptr;
+
+    /**
      * `type == Image` 时的**图像字节**（T-4）。
      *
      * 这里只是**借一个视图**，不拥有：真正的存储是生成代码里那个静态数组
@@ -263,6 +274,11 @@ struct ButtonData {
             normal.color = 0xFF000000u;
             hover.color = 0xFF000000u;
             onclicked.color = 0xFF000000u;
+            // 兜底色不再是语义色了：token 必须清掉，否则换主题时它又会把
+            // 这个兜底黑盖回去。
+            normal.themeColor = nullptr;
+            hover.themeColor = nullptr;
+            onclicked.themeColor = nullptr;
         }
     }
 

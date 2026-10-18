@@ -1,9 +1,15 @@
 #include "Cxxcss.h"
 
+// 设计尺寸的**上限**只有一份定义：它住在公开头里（运行期也用它夹参数），
+// 生成器这边直接引用，免得两个数字各自演化（`AGENTS.md` §6 那条
+// "同一件事两份定义迟早分叉"）。
+#include <config/window_config.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -1041,8 +1047,16 @@ protected:
         return value.number;
     }
 
-    /// 尺寸：数字或数字字符串（历史遗留写法，CXXCSS.md §2.1 两种都收）。
-    int ReadSize(const JsonValue& value, const std::string& field) {
+    /**
+     * 尺寸：数字或数字字符串（历史遗留写法，CXXCSS.md §2.1 两种都收）。
+     *
+     * `allowZero` 是给**标签的高度**开的口子：`0` 表示"高度由内容撑"，
+     * 与"省略这个字段"是同一件事（`CXXCSS.md` §3.8 就是这么写的）。
+     * 别的尺寸写 0 仍然报错——宽度 0 没有意义（它是换行的依据），
+     * 容器高 0 只会让人觉得"内容凭空消失了"。
+     */
+    int ReadSize(const JsonValue& value, const std::string& field,
+                 bool allowZero = false) {
         double number = 0.0;
         if (value.IsNumber()) {
             number = value.number;
@@ -1059,9 +1073,10 @@ protected:
             return 0;
         }
 
-        if (number < 1.0) {
-            Error(value, field + " 必须大于 0（现在是 "
-                             + std::to_string(number) + "）");
+        if (allowZero ? (number < 0.0) : (number < 1.0)) {
+            Error(value,
+                  field + (allowZero ? " 不能是负数（现在是 " : " 必须大于 0（现在是 ")
+                      + std::to_string(number) + "）");
             return 0;
         }
         return static_cast<int>(number + 0.5);
@@ -1139,18 +1154,45 @@ protected:
         return *color;
     }
 
+    /**
+     * 把一个 token 名驻留进来并记账。
+     *
+     * 为什么要驻留：生成的 `themeColor` 是 `const char*`，发的是**字符串字面量**；
+     * 而这里拿到的是 JSON 里的 `std::string`，生命周期不保证覆盖发射阶段。
+     * 存进 `LoadResult::internedTokens`（`deque`，扩容不失效）就有了稳定地址。
+     * 顺便去重记账，供"每张主题表都得有这些 token"的校验用。
+     */
+    const char* InternColorToken(const std::string& token) {
+        if (std::find(_result.usedColorTokens.begin(),
+                      _result.usedColorTokens.end(), token)
+            == _result.usedColorTokens.end()) {
+            _result.usedColorTokens.push_back(token);
+        }
+        _result.internedTokens.push_back(token);
+        return _result.internedTokens.back().c_str();
+    }
+
     /// `"0|0|0|0.75"` → 0xAARRGGBB，或 `"$surface"` → 主题里的颜色（B8）。
     std::uint32_t ReadColorSource(const JsonValue& value,
-                                  const std::string& field) {
+                                  const std::string& field,
+                                  bool isSourceField = true,
+                                  const char** tokenOut = nullptr) {
+        // 报错文案里的位置名：组件外观写的是 `normal.source`，全局配置写的是
+        // `window.background`（那里没有 `.source` 这一层）。
+        const std::string label = field + (isSourceField ? ".source" : "");
         if (!value.IsString()) {
-            Error(value, field + ".source 必须是字符串，这里是"
-                             + value.KindName());
+            Error(value, label + " 必须是字符串，这里是" + value.KindName());
             return 0;
         }
 
         // 语义色：`$` 开头的那一串走主题表（其余照旧是 `r|g|b|a`）。
         if (!value.text.empty() && value.text[0] == '$') {
-            return ResolveColorToken(value, field, value.text.substr(1));
+            const std::string token = value.text.substr(1);
+            if (tokenOut != nullptr) {
+                // 名字留下来，运行期换肤才有得查（`theme/InkingTheme.h`）。
+                *tokenOut = InternColorToken(token);
+            }
+            return ResolveColorToken(value, label, token);
         }
 
         std::vector<double> parts;
@@ -1159,15 +1201,14 @@ protected:
         for (std::size_t i = 0; i <= text.size(); ++i) {
             if (i == text.size() || text[i] == '|') {
                 if (token.empty()) {
-                    Error(value, field + ".source \"" + text
-                                     + "\" 里有空的通道");
+                    Error(value, label + " 里有空的通道（\"" + text + "\"）");
                     return 0;
                 }
                 char* end = nullptr;
                 const double parsed = std::strtod(token.c_str(), &end);
                 if (end == nullptr || *end != '\0') {
-                    Error(value, field + ".source \"" + text
-                                     + "\" 里的 \"" + token + "\" 不是数字");
+                    Error(value, label + " 里的 \"" + token + "\" 不是数字（\""
+                                     + text + "\"）");
                     return 0;
                 }
                 parts.push_back(parsed);
@@ -1178,7 +1219,7 @@ protected:
         }
 
         if (parts.size() != 3 && parts.size() != 4) {
-            Error(value, field + ".source \"" + text + "\" 要有 3 或 4 个通道"
+            Error(value, label + " \"" + text + "\" 要有 3 或 4 个通道"
                              "（r|g|b 或 r|g|b|a），现在有 "
                              + std::to_string(parts.size()) + " 个");
             return 0;
@@ -1186,7 +1227,7 @@ protected:
 
         for (double part : parts) {
             if (part < 0.0 || part > 1.0) {
-                Warn(field + ".source 里的通道 " + std::to_string(part)
+                Warn(label + " 里的通道 " + std::to_string(part)
                      + " 落在 [0,1] 之外，会被夹住");
             }
         }
@@ -2395,7 +2436,7 @@ private:
                 Error(value, field + " 缺少 source（color 要写 \"r|g|b|a\"）");
                 return;
             }
-            out.color = ReadColorSource(*source, field);
+            out.color = ReadColorSource(*source, field, true, &out.themeColor);
             out.source = source->IsString() ? source->text : std::string();
         } else if (typeName == "img") {
             out.type = inking::AppearanceType::Image;
@@ -2822,7 +2863,7 @@ private:
             Error(value, field + " 缺少 source（color 要写 \"r|g|b|a\"）");
             return;
         }
-        out.color = ReadColorSource(*source, field);
+        out.color = ReadColorSource(*source, field, true, &out.themeColor);
 
         // 过渡与变换：与按钮同两个读取器（"进这个状态用多久 / 朝哪儿走"）。
         if (const JsonValue* transition = value.Find("transition")) {
@@ -2950,7 +2991,11 @@ public:
                 _sawWidth = true;
             } else if (key == "height") {
                 // 可省：0 就是"高度由内容撑"（A6 的 MeasureLayout 报内容尺寸）。
-                _config.data.height = ReadSize(value, "height");
+                // **写 0 和省略等价**——文档一直这么写，所以这里必须收 0；
+                // 以前 `ReadSize` 一刀切要 > 0，照文档写的人会在构建期被拒
+                // （外部使用方就踩了这条：文档说"省略 = 0"，他写了 0）。
+                _config.data.height =
+                    ReadSize(value, "height", /*allowZero=*/true);
                 _sawHeight = true;
             } else if (key == "text") {
                 ReadTextSegment(value);
@@ -3058,7 +3103,8 @@ private:
             } else if (key == "padding") {
                 ReadSpacing(child, "text.padding", _config.data.style.padding);
             } else if (key == "color") {
-                _config.data.color = ReadColorSource(child, "text.color");
+                _config.data.color = ReadColorSource(
+                    child, "text.color", true, &_config.data.colorToken);
             } else if (key == "wrap") {
                 int parsed = 0;
                 if (ReadEnum(child, "text.wrap",
@@ -3726,7 +3772,7 @@ private:
 
 /// 主题表配置认的字段（CXXCSS.md §3.9）。
 const char* const kKnownThemeFields[] = {
-    "$comment", "name", "colors", "fontSizes",
+    "$comment", "name", "colors", "fontSizes", "default",
 };
 
 /**
@@ -3734,11 +3780,15 @@ const char* const kKnownThemeFields[] = {
  *
  * 它是**生成器的输入**，不是组件：`colors` / `fontSizes` 两张表，组件配置里的
  * `"$surface"` / `"$body"` 在**生成期**被换成这里的值（见 `ReadColorSource` /
- * `ReadFontSize`）。所以产物里没有主题类，也没有运行期查表——换主题 = 换这份
- * 表之后**重新生成**（取舍写在 `CXXCSS.md` §3.9）。
+ * `ReadFontSize`）。
  *
- * 三条规矩：
- *   1. **只允许一份**（同语言表）：两份主题只有一份生效；
+ * **可以有很多份**（2026-10-18 起）：颜色 token 的名字会跟着组件数据发出去，
+ * 运行期换肤按名字重查（`theme/InkingTheme.h`）。其中一份是**烘焙主题**——
+ * `$token` 按它解析成字面量，也就是不切主题时看到的颜色；标 `"default": true`
+ * 的就是它，没标则按文件名排序取第一份。
+ *
+ * 四条规矩：
+ *   1. **每份都要覆盖组件用到的全部颜色 token**（跨表校验在 `LoadConfigs` 收尾）；
  *   2. 主题里的值**必须是字面量**——写 `"$other"` 是间接引用，直接报错
  *      （"token 指向 token"迟早绕成环）；
  *   3. 没被任何组件用到的 token 不算错；组件用了**主题里没有**的 token 才算错，
@@ -3788,6 +3838,13 @@ public:
                 ReadColors(value);
             } else if (key == "fontSizes") {
                 ReadFontSizes(value);
+            } else if (key == "default") {
+                // 多份主题时用它指定"烘焙主题"（`$token` 按它解析成字面量）。
+                if (value.IsBool()) {
+                    _config.isDefault = value.boolean;
+                } else {
+                    Error(value, "default 必须是 true / false");
+                }
             }
         }
 
@@ -3881,21 +3938,267 @@ private:
             _failed = true;
         }
 
-        if (!_failed && !_result.themes.empty()) {
-            _result.errors.push_back(CxxcssError{
-                _path, 0,
-                "主题表只能有一份（这一批里已经有 "
-                    + _result.themes.front().filePath
-                    + " 了）。换主题请改那一份的内容，或者在构建脚本里挑一份"
-                      "传进来"});
-            _failed = true;
-        }
+        // 允许多份主题：**第一份是烘焙主题**（`$token` 按它解析成字面量），
+        // 其余几份供运行期换肤用。跨表校验（每张都得有组件用到的 token）
+        // 在 `LoadConfigs` 收尾做——那时才知道"到底用了哪些 token"。
 
         _config.warnings = std::move(_warnings);
         _result.claimedNames.push_back({_config.name, _path});
 
         if (!_failed) {
             _result.themes.push_back(std::move(_config));
+        }
+    }
+};
+
+// ---------------------------------------------------------------------------
+// 全局配置（Config）：设计画布尺寸 + 窗口启动设置
+// ---------------------------------------------------------------------------
+
+/// 全局配置认的字段（CXXCSS.md §3.11）。
+const char* const kKnownConfigFields[] = {
+    "$comment", "name", "design", "window",
+};
+
+/// `design` 段认的字段。
+const char* const kKnownDesignFields[] = {
+    "$comment", "width", "height",
+};
+
+/// `window` 段认的字段。每一项都对应库里一对**有 getter 的** setter：
+/// 没有回读口的设置不收——"写了不生效"没法自证，就是新的静默失效。
+const char* const kKnownWindowFields[] = {
+    "$comment", "borderless", "roundedCorners", "background", "fullscreen",
+    "startScene",
+};
+
+/**
+ * @brief 全局配置的加载器（`CXXCSS/config.json`）。
+ *
+ * 两个段：
+ *   - `design`（**必填**）：设计画布宽高 → 生成一对常量 + `SetDesignSize`；
+ *   - `window`（可选）：窗口启动设置 → 生成常量 + `ApplyWindowConfig`。
+ *
+ * 产物是一个 `ApplyConfig()`（见 `Emit.cpp`），**不是**类、**不是**运行期查表。
+ *
+ * 五条规矩：
+ *   1. `design` **必填**——一份什么都不设的配置没有存在意义（那和"没有配置"
+ *      无法区分，而两者想要的效果可能正好相反）；
+ *   2. `width` / `height` 都要有，且是 **1..kMaxDesignSize 的整数**：
+ *      设计坐标是整数格，写 1280.5 只会让"一眼看出对齐没对齐"这件事失效；
+ *   3. `window` 里的每一项**都是可选的**，没写 = 不动库里的默认值（生成器
+ *      不抄一份默认值，抄了就是第二份真相）；
+ *   4. **只允许一份**（同语言表 / 主题表）：两份配置只有一份生效，
+ *      与其让人猜哪份赢，不如生成期报错；
+ *   5. `name` 不参与任何检查——它不生成符号、不是查找键，写不写都行
+ *      （收它只是为了让"照抄其他配置的模板"不会平白报一条错）。
+ */
+class ConfigLoader : public ConfigReader {
+public:
+    ConfigLoader(std::string path, LoadResult& result)
+        : ConfigReader(std::move(path), result) {
+        _config.filePath = _path;
+    }
+
+    void Run(const JsonValue& root) {
+        if (!root.IsObject()) {
+            Error(root, std::string("顶层必须是对象，这里是") + root.KindName());
+            _failed = true;
+            Finish();
+            return;
+        }
+
+        for (const auto& field : root.fields) {
+            const std::string& key = field.first;
+            const JsonValue& value = field.second;
+
+            if (key == "$comment" || key == "name") {
+                continue;
+            }
+            if (!IsKnownField(kKnownConfigFields, std::size(kKnownConfigFields),
+                              key)) {
+                Error(value,
+                      "字段 \"" + key + "\" 不认识（全局配置认的字段："
+                          + JoinKnownFields(kKnownConfigFields,
+                                            std::size(kKnownConfigFields))
+                          + "；它只管设计画布与窗口设置，没有锚点 / 组件外观）");
+                continue;
+            }
+            if (key == "design") {
+                ReadDesign(value);
+            } else if (key == "window") {
+                ReadWindow(value);
+            }
+        }
+
+        Finish();
+    }
+
+private:
+    GlobalConfig _config;
+    bool _sawDesign = false;
+
+    /// `"design": { "width": 1280, "height": 720 }`
+    void ReadDesign(const JsonValue& value) {
+        if (!value.IsObject() || value.fields.empty()) {
+            Error(value, "design 必须是**非空**对象："
+                         "形如 {\"width\":1280,\"height\":720}");
+            return;
+        }
+        if (_sawDesign) {
+            // 重复键由 JSON 解析器拦（Json.h 顶上那条），这里只是防御：
+            // 万一以后允许数组写法，也别悄悄保留后一份。
+            Error(value, "design 只能写一次");
+            return;
+        }
+        _sawDesign = true;
+
+        bool sawWidth = false;
+        bool sawHeight = false;
+        for (const auto& entry : value.fields) {
+            const std::string& key = entry.first;
+            const JsonValue& child = entry.second;
+            if (key == "$comment") {
+                continue;
+            }
+            if (!IsKnownField(kKnownDesignFields, std::size(kKnownDesignFields),
+                              key)) {
+                Error(child,
+                      "design 里的字段 \"" + key
+                          + "\" 不认识（认的字段："
+                          + JoinKnownFields(kKnownDesignFields,
+                                            std::size(kKnownDesignFields))
+                          + "；letterbox 模式 / DPI 策略等扩展位还没有实装，"
+                            "写了也不会生效，所以不收）");
+                continue;
+            }
+            if (key == "width") {
+                sawWidth = true;
+                _config.width = ReadSide(child, "design.width");
+            } else {
+                sawHeight = true;
+                _config.height = ReadSide(child, "design.height");
+            }
+        }
+
+        if (!sawWidth) {
+            Error(value, "design 缺少 width（设计坐标，必须大于 0）");
+        }
+        if (!sawHeight) {
+            Error(value, "design 缺少 height（设计坐标，必须大于 0）");
+        }
+    }
+
+    /// 一条边：整数、1..`inking::kMaxDesignSize`。上限与运行期同源，不另立一份。
+    int ReadSide(const JsonValue& value, const std::string& field) {
+        const double number = ReadNumber(value, field);
+        if (number < 1.0 || number > static_cast<double>(inking::kMaxDesignSize)) {
+            Error(value, field + " 必须在 1.."
+                             + std::to_string(inking::kMaxDesignSize)
+                             + " 之间（现在是 " + NumberText(number) + "）");
+            return 0;
+        }
+        const int rounded = static_cast<int>(number + 0.5);
+        if (number != static_cast<double>(rounded)) {
+            Error(value, field + " 必须是整数（现在是 " + NumberText(number)
+                             + "）：设计坐标按整像素对位");
+            return 0;
+        }
+        return rounded;
+    }
+
+    /// 报错里的数字：整数就不带小数点（`std::to_string` 会写成 `720.500000`）。
+    static std::string NumberText(double number) {
+        char buffer[64];
+        std::snprintf(buffer, sizeof(buffer), "%g", number);
+        return buffer;
+    }
+
+    /// JSON 布尔。**只认 true / false**：字符串 "true" 一律报错——
+    /// 这里的每个字段最后都会变成一个 C++ 字面量，含糊的写法会一路含糊到产物里。
+    bool ReadBool(const JsonValue& value, const std::string& field) {
+        if (!value.IsBool()) {
+            Error(value, field + " 必须是 true / false（不要加引号），这里是"
+                             + value.KindName());
+            return false;
+        }
+        return value.boolean;
+    }
+
+    /**
+     * `"window": { "borderless": true, "background": "$surface", "startScene": "main" }`
+     *
+     * 每一项都是**可选的**：没写就不进产物、运行期也就不碰它（保持库默认值）。
+     * 这条和"生成器不抄一份默认值"是一件事——抄了就是第二份真相。
+     */
+    void ReadWindow(const JsonValue& value) {
+        if (!value.IsObject() || value.fields.empty()) {
+            Error(value, "window 必须是**非空**对象：形如 {\"borderless\":true}");
+            return;
+        }
+
+        for (const auto& entry : value.fields) {
+            const std::string& key = entry.first;
+            const JsonValue& child = entry.second;
+            if (key == "$comment") {
+                continue;
+            }
+            if (!IsKnownField(kKnownWindowFields,
+                              std::size(kKnownWindowFields), key)) {
+                Error(child,
+                      "window 里的字段 \"" + key
+                          + "\" 不认识（认的字段："
+                          + JoinKnownFields(kKnownWindowFields,
+                                            std::size(kKnownWindowFields))
+                          + "。**没有回读口的设置不收**：写了不生效没法自证，"
+                            "那就是新的静默失效——要加新字段，先给窗口补 getter）");
+                continue;
+            }
+            if (key == "borderless") {
+                _config.borderless = ReadBool(child, "window.borderless");
+            } else if (key == "roundedCorners") {
+                _config.roundedCorners
+                    = ReadBool(child, "window.roundedCorners");
+            } else if (key == "fullscreen") {
+                _config.fullscreen = ReadBool(child, "window.fullscreen");
+            } else if (key == "background") {
+                // 与组件外观同一个解析器：`"r|g|b|a"`（0..1 浮点）或 `"$token"`。
+                _config.background = ReadColorSource(child, "window.background",
+                                                    /*isSourceField=*/false);
+            } else if (key == "startScene") {
+                if (!child.IsString() || child.text.empty()) {
+                    Error(child, "window.startScene 必须是非空字符串（场景名）");
+                } else {
+                    _config.startScene = child.text;
+                }
+            }
+        }
+    }
+
+    /// 收尾：`design` 必填 + 只允许一份。
+    void Finish() {
+        if (!_sawDesign && !_failed) {
+            _result.errors.push_back(CxxcssError{
+                _path, 0,
+                "全局配置是空的：design 段没写。设计画布没有默认以外的东西可设——"
+                "要改尺寸就写 {\"design\":{\"width\":...,\"height\":...}}，"
+                "不想改就别建这个文件"});
+            _failed = true;
+        }
+
+        if (!_failed && !_result.configs.empty()) {
+            _result.errors.push_back(CxxcssError{
+                _path, 0,
+                "全局配置只能有一份（这一批里已经有 "
+                    + _result.configs.front().filePath
+                    + " 了）。换设计尺寸 / 窗口设置请改那一份"});
+            _failed = true;
+        }
+
+        _config.warnings = std::move(_warnings);
+
+        if (!_failed) {
+            _result.configs.push_back(std::move(_config));
         }
     }
 };
@@ -3979,6 +4282,8 @@ const char* ComponentKindName(ComponentKind kind) {
             return "语言表";
         case ComponentKind::Theme:
             return "主题表";
+        case ComponentKind::Config:
+            return "全局配置";
         case ComponentKind::Button:
         default:
             return "按钮";
@@ -4036,6 +4341,14 @@ bool TryComponentKindFromPath(const std::string& path, ComponentKind& out) {
         key.push_back(
             static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
     }
+
+    // `CXXCSS` 根下的文件：**在削复数 s 之前**判，因为 `cxxcss` 结尾本身就是
+    // 两个 s，削完变成 `cxxc`（踩过一次：根下的 config.json 认不出来）。
+    if (key == "cxxcss") {
+        out = ComponentKind::Config;
+        return true;
+    }
+
     while (!key.empty() && key.back() == 's') {
         key.pop_back();
     }
@@ -4070,6 +4383,11 @@ bool TryComponentKindFromPath(const std::string& path, ComponentKind& out) {
         out = ComponentKind::Theme;
         return true;
     }
+    // `Config` / `configs` → **全局配置**：设计画布尺寸。也不是组件。
+    if (key == "config") {
+        out = ComponentKind::Config;
+        return true;
+    }
     return false;
 }
 
@@ -4090,7 +4408,9 @@ void LoadConfigInto(const std::string& path, LoadResult& result) {
             "认不出这个配置属于哪种组件：**目录名决定组件类型**"
             "（CXXCSS.md §1 第 1 条），认得的写法是 Button / buttons、"
             "Panel / panels、Label / labels、Image / images（静态图片）、"
-            "Text / texts（语言表）、Theme / themes（主题表）；这个文件的目录名是 \""
+            "Text / texts（语言表）、Theme / themes（主题表）、"
+            "Config / configs（全局配置，也可以直接放在 CXXCSS/ 根下）；"
+            "这个文件的目录名是 \""
                 + LeafDirectory(path) + "\""});
         return;
     }
@@ -4126,6 +4446,11 @@ void LoadConfigInto(const std::string& path, LoadResult& result) {
         }
         case ComponentKind::Theme: {
             ThemeLoader loader(path, result);
+            loader.Run(parsed.value);
+            break;
+        }
+        case ComponentKind::Config: {
+            ConfigLoader loader(path, result);
             loader.Run(parsed.value);
             break;
         }
@@ -4180,6 +4505,59 @@ LoadResult LoadConfigs(const std::vector<std::string>& paths) {
         // 逐个往**同一个** result 上追加：重名检查要看到前面所有文件的认领
         // （而且是**跨组件类型**的——名字是运行期的全局查找键）。
         LoadConfigInto(path, result);
+    }
+
+    // ---- 主题表的收尾：定"烘焙主题" + 跨表校验 ----
+    //
+    // 多份主题时 `$token` 按**烘焙主题**解析成字面量（产物里的默认值）。
+    // 标记 `"default": true` 的那份就是它；没标就按文件名排序取第一份
+    // （文件已经排过序，所以是确定的）。
+    if (result.themes.size() > 1) {
+        std::size_t marked = result.themes.size();
+        for (std::size_t i = 0; i < result.themes.size(); ++i) {
+            if (!result.themes[i].isDefault) {
+                continue;
+            }
+            if (marked != result.themes.size()) {
+                result.errors.push_back(CxxcssError{
+                    result.themes[i].filePath, 0,
+                    "有两份主题都写了 \"default\": true——烘焙主题只能有一个"});
+                break;
+            }
+            marked = i;
+        }
+        if (marked < result.themes.size() && marked != 0) {
+            std::rotate(result.themes.begin(),
+                        result.themes.begin()
+                            + static_cast<std::ptrdiff_t>(marked),
+                        result.themes.end());
+        }
+        if (marked == result.themes.size()) {
+            // 没标 default：按文件名排序取第一份。这是**确定的**，但很容易
+            // 出乎意料（改个文件名就换了默认配色），所以提示一句。
+            result.themes.front().warnings.push_back(
+                "有 " + std::to_string(result.themes.size())
+                + " 份主题但都没写 \"default\": true——烘焙主题（$token 按它烘成"
+                  "字面量）按文件名排序取了 \""
+                + result.themes.front().name
+                + "\"。想固定下来就给那份加一行 \"default\": true");
+        }
+    }
+
+    // 每张主题表都必须定义组件用到的**每一个**颜色 token。
+    //
+    // 少一个的表现是"切到那张主题后，这一处还是旧色"——生成期能抓，就别留到
+    // 运行期（那边查不到只会用兜底色，不报错）。
+    for (const ThemeConfig& theme : result.themes) {
+        for (const std::string& token : result.usedColorTokens) {
+            if (theme.FindColor(token) == nullptr) {
+                result.errors.push_back(CxxcssError{
+                    theme.filePath, 0,
+                    "主题 \"" + theme.name + "\" 里没有颜色 token \"$" + token
+                        + "\"，但组件用到了它（多份主题必须覆盖同一套 token，"
+                          "否则切过去那一处还是旧色）"});
+            }
+        }
     }
 
     return result;

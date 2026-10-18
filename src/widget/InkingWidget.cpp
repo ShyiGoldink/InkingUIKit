@@ -46,6 +46,24 @@ int clampZIndex(int zIndex) {
     return zIndex < InkingZIndex::background ? InkingZIndex::background : zIndex;
 }
 
+/**
+ * 一条父链有多长（自己是根时为 0）。
+ *
+ * `IsAbove` 要做"从根到自己的 z 序列按字典序比较"，第一步就是把两个节点
+ * 抬到同一深度——只有同深度的两个节点才可能在某一层成为兄弟。深度这里现算：
+ * 每次比较多两次上溯，但排序只在骨架脏的那一帧跑一次（1000 个节点约一万次
+ * 比较、深度 3~5，量级 100 µs），比给每个节点多维护一个 `_treeDepth` 字段、
+ * 还要在换父级时递归重算，代价小得多。
+ */
+int ChainDepth(const InkingWidget& node) noexcept {
+    int depth = 0;
+    for (const InkingWidget* p = node.GetParent(); p != nullptr;
+         p = p->GetParent()) {
+        ++depth;
+    }
+    return depth;
+}
+
 }  // namespace
 
 // `detail::FillDefaultRect`（第 0 层渲染：一块实心矩形）的定义在
@@ -351,10 +369,76 @@ InkingScene* InkingWidget::GetSceneAncestor() noexcept {
 
 bool InkingWidget::IsAbove(const InkingWidget& a,
                            const InkingWidget& b) noexcept {
-    if (a._zIndex != b._zIndex) {
-        return a._zIndex > b._zIndex;
+    if (&a == &b) {
+        return false;
     }
-    return a._registerOrder > b._registerOrder;
+
+    // 「谁在上面」= 从根到自己的 (z, 注册序号) 序列按**字典序**比较。
+    //
+    // 以前这里是全局一条 z（z 优先、同 z 看注册序），于是"面板 z=20、里面
+    // 的标签 z=1"会让标签先画、面板底色后画、整块内容被背景盖掉——而且不报错。
+    // 改成按路径比较之后，z 只在**兄弟之间**生效，父容器永远先于自己的子孙
+    // 画（底色在下），子孙的 z 与父级的兄弟再无关系。这就是各家用"层级只在
+    // 同级生效"的那套语义，也是本头文件原注释里预留的那条路（"换成从根向下的
+    // z 序列按字典序比较，调用方不用改"）。
+    //
+    // 实现不真的去拼两个序列（那样每次比较都要申请内存），而是：
+    //   ① 先把两个节点抬到同一深度；
+    //   ② 一起上溯，找到**分叉点**——分叉处的两个节点才是兄弟，只有它们需要
+    //      比 z；分叉之前的部分两条链完全一样，比了也没意义；
+    //   ③ 若一路上去就是同一个节点，说明一个是另一个的祖先：祖先先画，
+    //      所以**深的那个在上面**（前缀短者在前，字典序也是这个规矩）。
+    //
+    // 这仍然是**一个严格全序**（只有一条规则，跨子树 / 跨簇都可比），所以
+    // 绘制、命中表、面板子树仲裁、动静合并四处可以继续共用它，不会出现
+    // "画的是 A、点到的是 B"。
+
+    const int depthA = ChainDepth(a);
+    const int depthB = ChainDepth(b);
+
+    const InkingWidget* pa = &a;
+    const InkingWidget* pb = &b;
+    int da = depthA;
+    int db = depthB;
+
+    // ① 对齐深度。
+    while (da > db) {
+        pa = pa->GetParent();
+        --da;
+    }
+    while (db > da) {
+        pb = pb->GetParent();
+        --db;
+    }
+
+    // ③ 祖孙关系：深的（后代）画得晚，所以在上面。
+    if (pa == pb) {
+        return depthA > depthB;
+    }
+
+    // ② 同步上溯到分叉点。
+    for (;;) {
+        const InkingWidget* qa = pa->GetParent();
+        const InkingWidget* qb = pb->GetParent();
+        if (qa == qb) {
+            break;  // 分叉：pa / pb 是兄弟（两个根时同为 nullptr，也走这里）
+        }
+        if (qa == nullptr || qb == nullptr) {
+            // 两个节点不在同一棵树里（跨场景 / 父链被手工截断）。正常路径
+            // 到不了这里；到了就退化成"整个根的全局比较"，至少不读空指针。
+            return (pa->_zIndex != pb->_zIndex)
+                ? pa->_zIndex > pb->_zIndex
+                : pa->_registerOrder > pb->_registerOrder;
+        }
+        pa = qa;
+        pb = qb;
+    }
+
+    // ④ 兄弟之间：z 大的在上；同 z 看注册序号（后挂的在上）。
+    if (pa->_zIndex != pb->_zIndex) {
+        return pa->_zIndex > pb->_zIndex;
+    }
+    return pa->_registerOrder > pb->_registerOrder;
 }
 
 void InkingWidget::MarkDirty() noexcept {

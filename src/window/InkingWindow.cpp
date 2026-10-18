@@ -9,6 +9,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <string>
@@ -175,11 +176,18 @@ std::chrono::milliseconds AutoQuitDuration() {
     return std::chrono::milliseconds{value};
 }
 
-/// 根锚点的尺寸 = 设计画布，不是窗口像素：子组件的锚点是相对设计空间算的。
+/**
+ * 根锚点的尺寸 = 设计画布，不是窗口像素：子组件的锚点是相对设计空间算的。
+ *
+ * 这里读的是**运行期实际值**（`DesignWidth()`，由 `CXXCSS/config.json` 决定），
+ * 并且顺手把"设计尺寸已被定型"记一笔——窗口是第一批按它对几何的地方之一，
+ * 从这一刻起 `SetDesignSize` 就该拒绝改动了（`config/window_config.h`）。
+ */
 AnchorData rootAnchorData() {
     AnchorData data;
-    data.width  = inking::kDesignWidth;
-    data.height = inking::kDesignHeight;
+    data.width  = inking::DesignWidth();
+    data.height = inking::DesignHeight();
+    inking::detail::NoteDesignSizeTaken();
     return data;
 }
 
@@ -200,9 +208,9 @@ float letterboxMagnification(SDL_Window* window) {
     }
 
     const float scaleX = static_cast<float>(pixelWidth)
-                       / static_cast<float>(inking::kDesignWidth);
+                       / static_cast<float>(inking::DesignWidth());
     const float scaleY = static_cast<float>(pixelHeight)
-                       / static_cast<float>(inking::kDesignHeight);
+                       / static_cast<float>(inking::DesignHeight());
     return scaleX < scaleY ? scaleX : scaleY;
 }
 
@@ -261,7 +269,7 @@ void releaseWindow(WindowState& s) {
  * 窗口坐标 → 设计坐标。
  *
  * letterbox 之下这是两套坐标：SDL 给的是窗口像素，场景认的是设计空间
- * （kDesignWidth × kDesignHeight）。换算是渲染器的职责，所以只在这里做一次，
+ * （DesignWidth() × DesignHeight()）。换算是渲染器的职责，所以只在这里做一次，
  * 交给场景层的永远是设计坐标。
  *
  * 必须走渲染器换算，不能拿展示倍率乘除：letterbox 下设计画面只占窗口中间一块，
@@ -497,6 +505,75 @@ InkingScene*& lastRenderedScene() {
 }
 
 /**
+ * 排队中的截图请求（空 = 没有）。
+ *
+ * 住函数内静态量而不是窗口成员：`drawFrame` 是自由函数、只拿得到
+ * `WindowState`，而"这一帧要不要截图"属于进程唯一的窗口状态，和
+ * `lastRenderedScene()` 同族（`AGENTS.md` §2 那条"进程唯一槽位必须落 .cpp"）。
+ */
+std::string& pendingCapturePath() {
+    static std::string path;
+    return path;
+}
+
+/** 扩展名是不是 `.png`（大小写不敏感）。 */
+bool hasPngExtension(const std::string& path) {
+    if (path.size() < 4) {
+        return false;
+    }
+    std::string ext = path.substr(path.size() - 4);
+    for (char& c : ext) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return ext == ".png";
+}
+
+/**
+ * 把渲染器当前的输出存成图片。
+ *
+ * PNG 只有 SDL ≥ 3.4 的核心库才有（`SDL_SavePNG`）。这里**故意不引
+ * SDL3_image 的 `IMG_SavePNG`**：截图是排错手段，不该因为一个可选依赖没开
+ * 就"能用 / 不能用"取决于构建配置。老 SDL 上请用 `.bmp`。
+ *
+ * 读到的是**整个窗口帧缓冲**（`rect = nullptr`），含 letterbox 黑边——那正是
+ * "窗口长什么样"的答案。
+ */
+bool writeRendererImage(SDL_Renderer* renderer, const std::string& path) {
+    if (renderer == nullptr || path.empty()) {
+        return false;
+    }
+
+    SDL_Surface* shot = SDL_RenderReadPixels(renderer, nullptr);
+    if (shot == nullptr) {
+        INK_LOG_ERROR(kModuleName,
+                      "截图失败（读像素）：" + std::string(SDL_GetError()));
+        return false;
+    }
+
+    bool saved = false;
+    if (hasPngExtension(path)) {
+#if SDL_VERSION_ATLEAST(3, 4, 0)
+        saved = SDL_SavePNG(shot, path.c_str());
+#else
+        INK_LOG_ERROR(kModuleName,
+                      "这个 SDL 版本没有 PNG 保存能力（需要 3.4+），请改用 .bmp："
+                          + path);
+        SDL_DestroySurface(shot);
+        return false;
+#endif
+    } else {
+        saved = SDL_SaveBMP(shot, path.c_str());
+    }
+
+    if (!saved) {
+        INK_LOG_ERROR(kModuleName,
+                      "截图保存失败：" + path + "：" + std::string(SDL_GetError()));
+    }
+    SDL_DestroySurface(shot);
+    return saved;
+}
+
+/**
  * 绘制这一帧：底色 → 当前场景的绘制列表 → 指针标记。
  *
  * 场景那一笔是真正的渲染路径：`InkingScene::Render` 在内部把顺序重建到最新
@@ -533,6 +610,16 @@ void drawFrame(WindowState& s, const MouseInput& mouse,
     // 一个落点，将来上合批时提交层也落在这里。没有活跃场景时返回 false。
     SceneLibrary::RenderScene(renderer);
 
+    // 截图（P2-6）：就落在这里——场景画完、`Present` 还没发生，后缓冲里
+    // 正好是这一帧。**必须在指针小方块之前**，否则截图会带上那个调试方块。
+    if (!pendingCapturePath().empty()) {
+        const std::string path = pendingCapturePath();
+        pendingCapturePath().clear();
+        if (writeRendererImage(renderer, path)) {
+            INK_LOG_INFO(kModuleName, "已截图：" + path);
+        }
+    }
+
     if (s.rendererReady) {
         const MousePoint& point = mouse.GetState().design;
         constexpr float kCursorSize = 16.0f;
@@ -556,6 +643,15 @@ void runLoop(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
              InkingWindow& window) {
     const bool autoQuit = SDL_getenv("INK_AUTOQUIT") != nullptr;
     const auto start = std::chrono::steady_clock::now();
+
+    // 零代码截图（P2-6）：`INK_CAPTURE=<路径>` 让**第一帧**落一张图。
+    // 和 `INK_AUTOQUIT` 同一族——排错时"先看一眼画面"比加日志快得多，
+    // 而此刻改业务代码往往是最不方便的事。只截一次，之后照常跑。
+    if (const char* capturePath = SDL_getenv("INK_CAPTURE")) {
+        if (capturePath[0] != '\0' && s.renderer != nullptr) {
+            pendingCapturePath() = capturePath;
+        }
+    }
 
     // 整个 UI 的唯一时间源。逻辑步长取默认的 1/50s。
     Timeline timeline;
@@ -888,9 +984,9 @@ float InkingWindow::maxUsableZoom() const noexcept {
     }
 
     const float byWidth =
-        static_cast<float>(usable.w) / static_cast<float>(kDesignWidth);
+        static_cast<float>(usable.w) / static_cast<float>(DesignWidth());
     const float byHeight =
-        static_cast<float>(usable.h) / static_cast<float>(kDesignHeight);
+        static_cast<float>(usable.h) / static_cast<float>(DesignHeight());
     const float fit = byWidth < byHeight ? byWidth : byHeight;
     return fit < kMaxZoom ? fit : kMaxZoom;
 }
@@ -918,9 +1014,9 @@ float InkingWindow::effectiveZoom() const noexcept {
     if (s.window != nullptr && SDL_GetWindowSize(s.window, &width, &height)
         && width > 0 && height > 0) {
         const float sx = static_cast<float>(width)
-                       / static_cast<float>(kDesignWidth);
+                       / static_cast<float>(DesignWidth());
         const float sy = static_cast<float>(height)
-                       / static_cast<float>(kDesignHeight);
+                       / static_cast<float>(DesignHeight());
         return sx < sy ? sx : sy;
     }
     return _zoom;
@@ -930,9 +1026,9 @@ void InkingWindow::applyZoom(float zoom) {
     _zoom = zoom;
 
     const int newWidth =
-        static_cast<int>(std::lround(static_cast<float>(kDesignWidth) * zoom));
+        static_cast<int>(std::lround(static_cast<float>(DesignWidth()) * zoom));
     const int newHeight =
-        static_cast<int>(std::lround(static_cast<float>(kDesignHeight) * zoom));
+        static_cast<int>(std::lround(static_cast<float>(DesignHeight()) * zoom));
     const int safeWidth = newWidth > 0 ? newWidth : 1;
     const int safeHeight = newHeight > 0 ? newHeight : 1;
 
@@ -1012,9 +1108,9 @@ bool InkingWindow::SetZoom(float zoom) {
 
     WindowState& s = state();
     const int expectedWidth =
-        static_cast<int>(std::lround(static_cast<float>(kDesignWidth) * target));
+        static_cast<int>(std::lround(static_cast<float>(DesignWidth()) * target));
     const int expectedHeight = static_cast<int>(
-        std::lround(static_cast<float>(kDesignHeight) * target));
+        std::lround(static_cast<float>(DesignHeight()) * target));
 
     bool sameAsRecorded = std::fabs(target - _zoom) < 1e-4f;
     if (s.window != nullptr) {
@@ -1093,7 +1189,49 @@ bool InkingWindow::IsRoundedCornersApplied() const noexcept {
     return _roundedCornersApplied;
 }
 
+bool InkingWindow::IsRoundedCornersRequested() const noexcept {
+    return _roundedCorners;
+}
+
 bool InkingWindow::HasWindow() const noexcept { return state().window != nullptr; }
+
+// ---------------------------------------------------------------------------
+// 截图（P2-6）
+// ---------------------------------------------------------------------------
+
+bool InkingWindow::RequestCapture(const std::string& path) {
+    if (path.empty()) {
+        INK_LOG_ERROR(kModuleName, "截图路径为空");
+        return false;
+    }
+    // 没有渲染器就没有"当前帧"，排队也永远不会被执行——**当场报错**，
+    // 不要留下一个"排进去了但永远不落盘"的请求（那正是最难查的一类）。
+    if (state().renderer == nullptr) {
+        INK_LOG_ERROR(kModuleName,
+                      "没有渲染器（窗口没打开或已关闭），无法截图：" + path);
+        return false;
+    }
+    pendingCapturePath() = path;
+    return true;
+}
+
+bool InkingWindow::Capture(const std::string& path) {
+    if (path.empty()) {
+        INK_LOG_ERROR(kModuleName, "截图路径为空");
+        return false;
+    }
+    if (state().renderer == nullptr) {
+        INK_LOG_ERROR(kModuleName,
+                      "没有渲染器（窗口没打开或已关闭），无法截图：" + path);
+        return false;
+    }
+    return writeRendererImage(state().renderer, path);
+}
+
+bool InkingWindow::HasPendingCapture() const noexcept {
+    return !pendingCapturePath().empty();
+}
+
 
 /**
  * 按名字把某个场景设为活跃；找不到 / 名字为空时返回 false。
@@ -1225,8 +1363,8 @@ void InkingWindow::Show(const std::string& sceneName) {
         // letterbox 保证任何窗口比例下 UI 都不变形，多余空间留黑边。
         SDL_SetRenderLogicalPresentation(
             s.renderer,
-            inking::kDesignWidth,
-            inking::kDesignHeight,
+            inking::DesignWidth(),
+            inking::DesignHeight(),
             SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
         // -------------------------------------------------------------------
@@ -1276,8 +1414,8 @@ void InkingWindow::Show(const std::string& sceneName) {
     INK_LOG_PASS(kModuleName,
                  "窗口已打开 " + std::to_string(_windowWidth) + "x"
                      + std::to_string(_windowHeight)
-                     + "，设计尺寸 " + std::to_string(inking::kDesignWidth) + "x"
-                     + std::to_string(inking::kDesignHeight)
+                     + "，设计尺寸 " + std::to_string(inking::DesignWidth()) + "x"
+                     + std::to_string(inking::DesignHeight())
                      + "，展示倍率 " + std::to_string(GetMagnification())
                      + "，场景：" + sceneName);
 

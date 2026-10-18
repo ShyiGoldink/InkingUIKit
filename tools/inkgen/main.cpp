@@ -47,6 +47,8 @@ void PrintUsage() {
         "（它不是组件，是「占位符 → 各语言的串」那张全局表，只允许一份），\n"
         "Theme/themes → 主题表（语义色 / 语义字号，是**生成器的输入**，\n"
         "配置里的 $token 在生成期就换成具体值——换主题要重新生成）；\n"
+        "Config/configs → 全局配置（设计画布尺寸，只允许一份；也可以直接\n"
+        "放在 CXXCSS/ 根下当 config.json）；\n"
         "别的目录名会报错。\n"
         "退出码：0 全部成功；1 有错误（错误逐条打印）。\n"
         "注意：*.example.json 按约定不参与生成。\n");
@@ -196,6 +198,31 @@ int main(int argc, char** argv) {
         }
     }
 
+    for (const inkgen::GlobalConfig& config : loaded.configs) {
+        std::printf("[配置] 全局：设计画布 %dx%d（%s）\n", config.width,
+                    config.height, config.filePath.c_str());
+        if (config.borderless.has_value()) {
+            std::printf("        无边框=%s", *config.borderless ? "是" : "否");
+        }
+        if (config.roundedCorners.has_value()) {
+            std::printf("  圆角=%s", *config.roundedCorners ? "请求" : "关闭");
+        }
+        if (config.fullscreen.has_value()) {
+            std::printf("  启动全屏=%s", *config.fullscreen ? "是" : "否");
+        }
+        if (config.background.has_value()) {
+            std::printf("  清底色=0x%08X", *config.background);
+        }
+        if (config.startScene.has_value()) {
+            std::printf("  起始场景=\"%s\"", config.startScene->c_str());
+        }
+        std::printf("\n");
+        for (const std::string& warning : config.warnings) {
+            std::printf("[警告] %s：%s\n", config.filePath.c_str(),
+                        warning.c_str());
+        }
+    }
+
     for (const inkgen::CxxcssError& error : loaded.errors) {
         std::fprintf(stderr, "[错误] %s\n", error.Format().c_str());
     }
@@ -208,10 +235,10 @@ int main(int argc, char** argv) {
 
     if (validateOnly) {
         std::printf("[完成] 校验通过：%zu 个按钮 + %zu 个面板 + %zu 个标签 + "
-                    "%zu 张语言表 + %zu 份主题表，未写文件\n",
+                    "%zu 张语言表 + %zu 份主题表 + %zu 份全局配置，未写文件\n",
                     loaded.buttons.size(), loaded.panels.size(),
                     loaded.labels.size(), loaded.textTables.size(),
-                    loaded.themes.size());
+                    loaded.themes.size(), loaded.configs.size());
         return 0;
     }
 
@@ -222,10 +249,11 @@ int main(int argc, char** argv) {
     }
 
     std::printf("[完成] 生成 %zu 个按钮 + %zu 个面板 + %zu 个标签 + %zu 张语言表"
-                "（主题表 %zu 份，$token 已在生成期替换）：\n  %s\n  %s\n",
+                "（主题表 %zu 份，$token 已在生成期替换；全局配置 %zu 份）：\n"
+                "  %s\n  %s\n",
                 loaded.buttons.size(), loaded.panels.size(),
                 loaded.labels.size(), loaded.textTables.size(),
-                loaded.themes.size(), emitted.headerPath.c_str(),
-                emitted.sourcePath.c_str());
+                loaded.themes.size(), loaded.configs.size(),
+                emitted.headerPath.c_str(), emitted.sourcePath.c_str());
     return 0;
 }

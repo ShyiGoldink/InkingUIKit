@@ -20,7 +20,8 @@ class InkingScene;
  *
  * 两套尺寸要分清：
  *   - 基类那对（GetWidth / GetHeight）是"根锚点的尺寸"，也就是设计画布
- *     大小（kDesignWidth × kDesignHeight），编译期定型、构造之后不动；
+ *     大小（运行期由 `CXXCSS/config.json` 决定，默认 1280×720；
+ *     见 `config/window_config.h`），窗口构造那一刻定型、之后不动；
  *   - 自己那对（GetWindowWidth / GetWindowHeight）是**窗口像素尺寸**，
  *     运行期可调。
  *
@@ -172,9 +173,10 @@ public:
     // 来源是"窗口像素比 ≠ 设计像素比"。要让黑边消失，只能让窗口比例等于设计
     // 比例——那就是等比改窗口尺寸。改内容倍率只会把黑边换成裁剪或拉伸。
     //
-    // 档位（`GetZoomLadder`）是**运行时生成**的：设计尺寸由 `window_config.h`
-    // 决定（将来由 inkgen 生成），所以"能不能到 2 倍"取决于**当前显示器**装不装得下
-    // 1280×2 × 720×2。写死一张表在换设计尺寸 / 换小屏的那天就会错。
+    // 档位（`GetZoomLadder`）是**运行时生成**的：设计尺寸由 `CXXCSS/config.json`
+    // 决定（运行期落在 `config/window_config.h` 的 `DesignWidth()` 上），所以
+    // "能不能到 2 倍"取决于**当前显示器**装不装得下（设计尺寸 × 2）。
+    // 写死一张表在换设计尺寸 / 换小屏的那天就会错。
 
     /// 最小缩放（再小就看不清了，且窗口会有 0 尺寸风险）。
     static constexpr float kMinZoom = 0.25f;
@@ -244,9 +246,47 @@ public:
     /// 读回的答案：系统是不是真的按圆角处理（Win10 / 非 Windows 恒 false）。
     bool IsRoundedCornersApplied() const noexcept;
 
+    /**
+     * **请求值**（我们让系统做什么），与"系统是否照做"分开。
+     *
+     * 为什么两个都要：`IsRoundedCornersApplied` 在 Win10 上恒为 false，那是
+     * **系统不支持**，不是"配置没应用"。`window/WindowConfig.h` 的回读校验比的
+     * 是这一个——拿 `Applied` 去比会把"系统不支持"误报成"配置没生效"。
+     */
+    bool IsRoundedCornersRequested() const noexcept;
+
     /// 真窗口建起来了没有（`Show()` 之后为 true、`Release()` 之后为 false）。
     /// 自检用它区分"跑在真窗口上"与"只有逻辑、没有窗口"两种场合。
     bool HasWindow() const noexcept;
+
+    // ---------------- 截图（P2-6） ----------------
+    //
+    // **为什么落在窗口层**：只有它知道渲染器在哪（`SDL_Renderer` 在 `Show()` 里
+    // 建、随窗口销毁），也只有它知道"这一帧画完了没有"。业务侧要截图不该自己
+    // 去绕 `ImmediateDraw` 抓渲染器，更不该手写 BMP 编码。
+    //
+    // 两种调用姿势，差别只有一个：**什么时候读像素**。
+    //   - `RequestCapture()`（推荐）：排队到本帧末、`Present` **之前**执行。
+    //     按钮回调、快捷键处理、逻辑步里随便调都安全——那些时刻后缓冲里
+    //     是上一帧甚至未定义的内容；
+    //   - `Capture()`：立即读**当前**渲染目标。只有"一帧画完、还没 Present"
+    //     的调用点才有意义（自检 / 工具链）。`Present` 之后读到的内容未定义。
+    //
+    // 格式按扩展名定：`.png` 走 `SDL_SavePNG`（要求 SDL ≥ 3.4，本仓库当前是
+    // 3.4.16）；其它（含省略）走 `SDL_SaveBMP`。**不引 SDL3_image**——截图不该
+    // 给一个可选依赖新增必需项。
+    //
+    // 截的是**整个窗口帧缓冲**（含 letterbox 黑边），不是逻辑画布那块；
+    // 也不含指针小方块（那一笔画在截图之后）。
+
+    /// 把**下一帧**存成图片（本帧末、`Present` 前）。返回"已排队"。
+    bool RequestCapture(const std::string& path);
+
+    /// 立即把当前渲染目标存成图片。返回是否真的写成功。
+    bool Capture(const std::string& path);
+
+    /// 有没有排着队的截图请求（观测口；自检与工具用来判断这一帧会不会落盘）。
+    bool HasPendingCapture() const noexcept;
 
     // ---------------- 全局快捷键 ----------------
     //
@@ -273,8 +313,8 @@ private:
     float maxUsableZoom() const noexcept;
 
 
-    int _windowWidth  = inking::kDesignWidth;
-    int _windowHeight = inking::kDesignHeight;
+    int _windowWidth  = inking::DesignWidth();
+    int _windowHeight = inking::DesignHeight();
 
     /// 无边框开关（C2）。`Show()` 之前设置就是"建窗口时带上标志"。
     bool _borderless = false;

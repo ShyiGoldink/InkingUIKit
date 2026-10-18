@@ -175,9 +175,12 @@ InkingWidget* InkingStaticPanel::HitTestNode(float worldX,
 
     // ① 子树优先：子节点画在容器之上，所以它们先答。
     //
-    //    按 `IsAbove` 取**最上面那个 Block**（规则只有一份：z 优先、同 z 看
-    //    注册序号）。`PassThrough` 的（标签之类）记下来但不算数——按契约
-    //    返回 nullptr，让调用方保留"容器自己"那份答案。
+    //    按 `IsAbove` 取**最上面那个 Block**（规则只有一份：树序 + 兄弟内 z）。
+    //    注意 `hit` 常常是深层后代而不是直接子节点，但 `IsAbove` 比的是
+    //    "从根到自己的路径"，深层后代与另一个子树的节点照样可比，而且
+    //    "同一个子树里更深的那支在上面"这件事天然成立。
+    //    `PassThrough` 的（标签之类）记下来但不算数——按契约返回 nullptr，
+    //    让调用方保留"容器自己"那份答案。
     InkingWidget* block = nullptr;
     if (insideClip) {
         for (InkingWidget* child : GetChildren()) {

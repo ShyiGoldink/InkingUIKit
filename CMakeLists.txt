@@ -272,6 +272,7 @@ endfunction()
 # 想看生成结果：build/inkgen/all/button_service.h（+ *_register.cpp）。
 # ---------------------------------------------------------------------------
 file(GLOB INK_ALL_CSS_CONFIGS CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/*.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/Button/*.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/Panel/*.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/Label/*.json"

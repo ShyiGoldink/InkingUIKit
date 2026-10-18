@@ -9,6 +9,7 @@
 #include <render/InkingDraw.h>
 #include <render/InkingText.h>
 #include <text/InkingTextTable.h>
+#include <theme/InkingTheme.h>
 
 #include <SDL3/SDL.h>
 
@@ -93,9 +94,25 @@ bool InkingStaticLabel::SetTextColor(std::uint32_t color) noexcept {
         return false;
     }
     _data.color = color;
+    // 手动设色 = 这个颜色**不再是语义色**：不清掉 token 的话，下一帧主题
+    // 版本的比较会把用户刚设的颜色盖回去（界面表现为"设了没用"）。
+    _data.colorToken = nullptr;
+    _themeColor = color;
+    _themeVersion = ThemeVersion();
+    _themeColorValid = true;
     // 颜色走纹理调制（纹理烘成白字），所以**不用**让排版缓存失效。
     MarkRepaintDirty();
     return true;
+}
+
+std::uint32_t InkingStaticLabel::EffectiveTextColor() const noexcept {
+    const std::uint64_t version = ThemeVersion();
+    if (!_themeColorValid || _themeVersion != version) {
+        _themeVersion = version;
+        _themeColor = ResolveThemeColor(_data.colorToken, _data.color);
+        _themeColorValid = true;
+    }
+    return _themeColor;
 }
 
 bool InkingStaticLabel::CacheMatches(float available) const noexcept {
@@ -187,6 +204,9 @@ void InkingStaticLabel::onRender(float pixelX, float pixelY) const {
         return;
     }
     const float magnification = GetMagnification();
+    // 文字色：配了 `$token` 就按当前主题重查（运行期换肤），否则就是烘好的字面量。
+    // 一次解析、整段复用——逐行解析只会让主题版本的比较白做几十遍。
+    const std::uint32_t textColor = EffectiveTextColor();
 
     for (const TextLine& line : laid.lines) {
         if (line.begin >= line.end || line.end > resolved.size()) {
@@ -200,7 +220,7 @@ void InkingStaticLabel::onRender(float pixelX, float pixelY) const {
         request.fontSize = _data.style.fontSize > 0.0f ? _data.style.fontSize
                                                       : 16.0f;
         request.fontPath = _data.style.fontPath;
-        request.color = _data.color;
+        request.color = textColor;
         request.offsetX = line.x;
         request.offsetY = line.y;
         // A13：外部显示变换（如果有人设过）叠在文字这一笔上。文字这一侧只有

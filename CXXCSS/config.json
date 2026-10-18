@@ -1,0 +1,22 @@
+{
+  "$comment": [
+    "全局配置（Config）：设计画布 + 窗口启动设置（CXXCSS.md §3.11）。",
+    "**只允许一份**；等价位置是 CXXCSS/Config/config.json。",
+    "生成物是一组常量 + ApplyConfig()，必须在构造任何场景 / 窗口之前调用一次。",
+    "design 必填：letterbox 的逻辑坐标系，所有锚点 / 尺寸 / 字号都按它写。",
+    "window 全部可选：**没写就不动库的默认值**（生成器不抄默认值，避免第二份真相）。",
+    "window 里的每一项都有对应的 getter —— 没有回读口的设置不收。"
+  ],
+  "design": {
+    "width": 1280,
+    "height": 720
+  },
+  "window": {
+    "$comment": "颜色写法与主题一致：\"r|g|b|a\"（0..1 浮点）或 \"$token\"。",
+    "borderless": true,
+    "roundedCorners": true,
+    "background": "0.11|0.11|0.14|1",
+    "fullscreen": false,
+    "startScene": "main"
+  }
+}

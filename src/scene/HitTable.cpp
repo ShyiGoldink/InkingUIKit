@@ -118,9 +118,10 @@ void HitTable::Build() noexcept {
         return;
     }
 
-    // ① 全局按 z 降序。这一步定下了后面所有顺序：格子的候选也是这个顺序，
-    //    于是查询时"第一个真正命中的"就是最上面那个（§10.2）。
-    //    用 stable_sort：z 相同时保持调用方给的顺序（场景那边已经是注册序号序）。
+    // ① 按层级降序（`IsAbove`：树序 + 兄弟内 z）。这一步定下了后面所有顺序：
+    //    格子的候选也是这个顺序，于是查询时"第一个真正命中的"就是最上面那个
+    //    （§10.2）。用 stable_sort：Z 相同时保持调用方给的顺序（场景那边已经
+    //    是注册序号序）。
     std::stable_sort(_entries.begin(), _entries.end(),
                      [](const Entry& a, const Entry& b) {
                          return InkingWidget::IsAbove(*a.node, *b.node);
@@ -129,8 +130,9 @@ void HitTable::Build() noexcept {
     // ② 按粗块分组。**一个条目可以进多个粗块**：大面板横跨几个粗块时，
     //    每个粗块都得收它，否则"从另一侧点进去"就查不到了。
     //    （注意这与 §10.5 规则 4 说的"跨簇条目"不是一回事：那说的是
-    //    局部层级下"同一个条目登记在多个簇、谁在上面"的仲裁；我们只有
-    //    全局一条 z 序，索引层面重复登记只是为了查得到。）
+    //    局部层级下"同一个条目登记在多个簇、谁在上面"的仲裁；我们的层级虽然
+    //    是局部的（树序 + 兄弟内 z），但仍是**全序**，不存在"说不清谁在上面"
+    //    的两个条目，所以索引层面重复登记只是为了查得到。）
     std::vector<BlockBucket> buckets;
     const auto findBucket = [&buckets](int blockX, int blockY) -> BlockBucket& {
         for (BlockBucket& bucket : buckets) {

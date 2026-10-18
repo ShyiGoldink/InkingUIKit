@@ -104,8 +104,23 @@ private:
     /// 缓存键是否还匹配（逐字段比，见 `LayoutCache` 的注释）。
     bool CacheMatches(float available) const noexcept;
 
+    /**
+     * 文字色**真正要画**的值。
+     *
+     * `_data.color` 是生成期按默认主题烘好的字面量；`_data.colorToken` 非空时
+     * 说明它是语义色，要在运行期按当前主题重查（`theme/InkingTheme.h`）。
+     * 结果按 `ThemeVersion()` 缓存——稳态只比一次版本号，不查表、不分配。
+     */
+    std::uint32_t EffectiveTextColor() const noexcept;
+
     LabelData _data;
     mutable LayoutCache _cache;
+
+    /// 上一次解析文字色时的主题版本与结果（和 `LayoutCache` 分开：颜色变不改排版）。
+    /// `_themeColorValid` 区分"还没算过"与"算出来正好是版本 0"。
+    mutable bool _themeColorValid = false;
+    mutable std::uint64_t _themeVersion = 0;
+    mutable std::uint32_t _themeColor = 0xFFFFFFFFu;
 };
 
 }  // namespace inking

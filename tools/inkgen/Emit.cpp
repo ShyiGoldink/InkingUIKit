@@ -328,6 +328,12 @@ std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
             << ";\n";
         out << indent << "data." << field << ".color = " << Color(value.color)
             << ";\n";
+        // 语义色的 token 名：`color` 是**烘焙主题**下的字面量，这个名字留给
+        // 运行期换肤重查（`theme/InkingTheme.h`）。非语义色就不写。
+        if (value.themeColor != nullptr && value.themeColor[0] != '\0') {
+            out << indent << "data." << field << ".themeColor = "
+                << Quote(value.themeColor) << ";\n";
+        }
         if (!value.source.empty()) {
             out << indent << "data." << field << ".source = "
                 << Quote(value.source) << ";\n";
@@ -610,6 +616,12 @@ std::string PanelBody(const PanelConfig& panel, const std::string& indent) {
                                 const inking::PanelAppearance& value) {
         out << indent << "data." << field << ".color = " << Color(value.color)
             << ";\n";
+        // 语义色的 token 名：`color` 是**烘焙主题**下的字面量，这个名字留给
+        // 运行期换肤重查（`theme/InkingTheme.h`）。非语义色就不写。
+        if (value.themeColor != nullptr && value.themeColor[0] != '\0') {
+            out << indent << "data." << field << ".themeColor = "
+                << Quote(value.themeColor) << ";\n";
+        }
         // 过渡时长 / 曲线：只写真配了的（0 与 linear 就是缺省值）。
         if (value.transitionSeconds > 0.0f) {
             out << indent << "data." << field << ".transitionSeconds = "
@@ -727,6 +739,12 @@ std::string LabelBody(const LabelConfig& label, const std::string& indent) {
     // 文字色：缺省是白，只在不同时写一行。
     if (data.color != inking::LabelData{}.color) {
         out << indent << "data.color = " << Color(data.color) << ";\n";
+    }
+    // token 与颜色**分开写**：即使颜色恰好等于缺省白，只要它是语义色，
+    // 这个名字也得留下来（否则换肤时这一处不跟着变）。
+    if (data.colorToken != nullptr && data.colorToken[0] != '\0') {
+        out << indent << "data.colorToken = " << Quote(data.colorToken)
+            << ";\n";
     }
 
     // 排版样式：与 TextStyle 的默认值不同的才写（默认值不占产物篇幅）。
@@ -849,13 +867,19 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
     out << "// 本文件由 inkgen 生成，不要手改。\n";
     out << "// 来源：CXXCSS/<组件类型>/*.json（本次 " << buttons.size()
         << " 个按钮 + " << panels.size() << " 个面板 + " << labels.size()
-        << " 个标签 + " << textTables.size() << " 张语言表）\n";
+        << " 个标签 + " << textTables.size() << " 张语言表";
+    if (!loaded.configs.empty()) {
+        out << " + 1 份全局配置";
+    }
+    out << "）\n";
     if (!loaded.themes.empty()) {
-        // 主题只留一条来源注释：它是**生成器的输入**——`$token` 在生成期就换成了
-        // 具体值，所以产物里没有主题类（换主题要重新生成，见 CXXCSS.md §3.9）。
-        out << "// 主题：" << loaded.themes.front().name << "（"
-            << loaded.themes.front().filePath
-            << "）—— 配置里的 $token 已在生成期换成具体值\n";
+        out << "// 主题：" << loaded.themes.front().name << "（烘焙主题，"
+            << loaded.themes.front().filePath << "）";
+        if (loaded.themes.size() > 1) {
+            out << " + " << (loaded.themes.size() - 1) << " 份备用主题";
+        }
+        out << "—— $token 已按烘焙主题换成字面量；token 名留在数据里，"
+               "运行期可换肤\n";
     }
     out << "// 改配置请改 json；改生成规则请改 tools/inkgen/Emit.cpp。\n";
     out << "#pragma once\n\n";
@@ -879,8 +903,107 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
     if (!textTables.empty()) {
         out << "#include <text/InkingTextTable.h>\n";
     }
-    out << "\n#include <cstddef>\n\n";
+    if (!loaded.configs.empty()) {
+        const GlobalConfig& config = loaded.configs.front();
+        const bool hasWindow = config.borderless.has_value()
+                            || config.roundedCorners.has_value()
+                            || config.background.has_value()
+                            || config.fullscreen.has_value()
+                            || config.startScene.has_value();
+        out << "#include <config/window_config.h>\n";
+        if (hasWindow) {
+            out << "#include <window/WindowConfig.h>\n";
+        }
+        out << "#include <cstdint>\n";
+    }
+
     out << OpenNamespaces(parts);
+
+    if (!loaded.configs.empty()) {
+        const GlobalConfig& config = loaded.configs.front();
+        const bool hasWindow = config.borderless.has_value()
+                            || config.roundedCorners.has_value()
+                            || config.background.has_value()
+                            || config.fullscreen.has_value()
+                            || config.startScene.has_value();
+        out << "\n// ---------------------------------------------------------------------------\n";
+        out << "// 全局配置（来自 " << config.filePath << "）\n";
+        out << "//\n";
+        out << "// 两块：设计画布（letterbox 的逻辑坐标系）+ 窗口启动设置。\n";
+        out << "//\n";
+        out << "// **必须在构造任何场景 / 窗口之前调一次 `ApplyConfig()`**（放在 main 的\n";
+        out << "// 第一行）。库是预编译 DLL，根锚点 / logical presentation / 缩放档位 /\n";
+        out << "// 窗口标志都烘在它自己那一侧，所以这件事只能由**运行期**一个调用完成——\n";
+        out << "// 下面那些常量只把配置值带出来，本身不产生任何效果。\n";
+        out << "// 晚了调不会静默失效：`SetDesignSize` / `ApplyWindowConfig` 会报错。\n";
+        out << "// ---------------------------------------------------------------------------\n";
+        out << "\n/// 设计画布宽（= json 的 design.width 字段）。\n";
+        out << "inline constexpr int kDesignWidth = " << config.width << ";\n";
+        out << "\n/// 设计画布高（= json 的 design.height 字段）。\n";
+        out << "inline constexpr int kDesignHeight = " << config.height << ";\n";
+        if (config.borderless.has_value()) {
+            out << "\n/// 无边框（= json 的 window.borderless 字段）。\n";
+            out << "inline constexpr bool kBorderless = "
+                << (*config.borderless ? "true" : "false") << ";\n";
+        }
+        if (config.roundedCorners.has_value()) {
+            out << "\n/// 请求系统圆角（= json 的 window.roundedCorners 字段）。\n";
+            out << "inline constexpr bool kRoundedCorners = "
+                << (*config.roundedCorners ? "true" : "false") << ";\n";
+        }
+        if (config.background.has_value()) {
+            out << "\n/// 窗口清屏色（= json 的 window.background 字段）。\n";
+            out << "inline constexpr std::uint32_t kBackground = "
+                << Color(*config.background) << ";\n";
+        }
+        if (config.fullscreen.has_value()) {
+            out << "\n/// 启动即全屏（= json 的 window.fullscreen 字段）。\n";
+            out << "inline constexpr bool kStartFullscreen = "
+                << (*config.fullscreen ? "true" : "false") << ";\n";
+        }
+        if (config.startScene.has_value()) {
+            out << "\n/// 起始场景名（= json 的 window.startScene 字段）。\n";
+            out << "///\n";
+            out << "/// 它只是**常量**：`Show()` 还是要自己调，传这个值就行——\n";
+            out << "/// `window.Show(inking::cxxcss::kStartScene);`\n";
+            out << "inline constexpr const char* kStartScene = "
+                << Quote(*config.startScene) << ";\n";
+        }
+        out << "\n/**\n";
+        out << " * 把配置交给运行期。返回 false = 有字段没生效（读 ERROR 日志看是哪一项）。\n";
+        out << " *\n";
+        out << " * **顺序写死在这里，别拆开自己调**：设计尺寸必须最先落地——窗口第一次\n";
+        out << " * 构造时就按它定型，顺序反了 `SetDesignSize` 会被拒绝（是报错，\n";
+        out << " * 不是静默半生效）。\n";
+        out << " *\n";
+        out << " * 幂等：同一个值调多次没有副作用，所以不存在\"该不该再调一次\"的问题。\n";
+        out << " */\n";
+        out << "inline bool ApplyConfig() {\n";
+        out << "    bool ok = inking::SetDesignSize(kDesignWidth, kDesignHeight);\n";
+        if (hasWindow) {
+            out << "\n    // json 里没写的字段留空 = 不动库里的默认值。\n";
+            out << "    inking::WindowConfig window;\n";
+            if (config.borderless.has_value()) {
+                out << "    window.borderless = kBorderless;\n";
+            }
+            if (config.roundedCorners.has_value()) {
+                out << "    window.roundedCorners = kRoundedCorners;\n";
+            }
+            if (config.background.has_value()) {
+                out << "    window.background = kBackground;\n";
+            }
+            if (config.fullscreen.has_value()) {
+                out << "    window.fullscreen = kStartFullscreen;\n";
+            }
+            out << "    // 回读校验在库那边：窗口 setter 的返回值分不清\"幂等\"和\"失败\"。\n";
+            out << "    ok = (inking::ApplyWindowConfig(window) == 0) && ok;\n";
+        }
+        out << "    return ok;\n";
+        out << "}\n";
+        out << "\n/// 旧名字（当初只有设计尺寸时留下的），等价于 `ApplyConfig()`。\n";
+        out << "inline bool ApplyDesignConfig() { return ApplyConfig(); }\n";
+    }
+
     if (!buttons.empty()) {
         out << "\n// ---------------------------------------------------------------------------\n";
         out << "// 每个按钮一个独立的类：数据直接烘在类里（不是运行期查表）\n";
@@ -1049,6 +1172,30 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "void InstallGeneratedTextTable();\n";
     }
 
+    if (!loaded.themes.empty()) {
+        const ThemeConfig& baked = loaded.themes.front();
+        out << "\n// ---------------------------------------------------------------------------\n";
+        out << "// 主题（Theme）：运行期多主题，**只覆盖颜色**\n";
+        out << "//\n";
+        out << "// 生成期做了两件事：`$token` 按烘焙主题换成字面量（= 不切主题时的默认色）、\n";
+        out << "// 把 token 名留在组件数据里。运行期换肤就是按名字重查，所以：\n";
+        out << "//\n";
+        out << "//     inking::SetActiveTheme(\"light\");   // 切（启动期已装好全部主题表）\n";
+        out << "//\n";
+        out << "// **颜色变不改几何**：换肤只让颜色重查，不重排、不重烘命中表；顶点缓存\n";
+        out << "// 的键里带颜色，所以换的那一帧重算一次、之后照旧复用。\n";
+        out << "// **字号 token 不在此列**：那是几何，仍在生成期替换（改了要重排 + 重烘字图集）。\n";
+        out << "// ---------------------------------------------------------------------------\n";
+        out << "\n/// 烘焙主题（`$token` 按它解析；也是启动后的活跃主题）。\n";
+        out << "inline constexpr const char* kDefaultThemeName = "
+            << Quote(baked.name) << ";\n";
+        out << "\n/// 本次生成装了几张主题表。\n";
+        out << "inline constexpr std::size_t kThemeCount = "
+            << loaded.themes.size() << ";\n";
+        out << "\n/// 把全部主题表装进运行期并激活烘焙主题；启动期已自动调过一次。\n";
+        out << "void InstallGeneratedThemes();\n";
+    }
+
     out << "\n/// 本次生成里有多少个按钮。\n";
     out << "inline constexpr std::size_t kButtonCount = " << buttons.size()
         << ";\n";
@@ -1078,6 +1225,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
     const std::vector<LabelConfig>& labels = loaded.labels;
     const std::vector<ImageConfig>& images = loaded.images;
     const std::vector<TextConfig>& textTables = loaded.textTables;
+    const std::vector<ThemeConfig>& themes = loaded.themes;
     const std::vector<std::string> parts = SplitNamespace(options.nameSpace);
     const std::string registerAll = Qualified(options.nameSpace,
                                               "RegisterAllButtons");
@@ -1087,6 +1235,9 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
     out << "#include <" << options.headerName << ">\n\n";
     if (!buttons.empty()) {
         out << "#include <button/ButtonLibrary.h>\n\n";
+    }
+    if (!themes.empty()) {
+        out << "#include <theme/InkingTheme.h>\n\n";
     }
 
     // ---- 每个组件一个 Build()（内部链接，不导出符号） ----
@@ -1300,6 +1451,41 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
         out << "}\n";
     }
 
+    // 主题表（可以多份）：每份一个 BuildThemeN()，再加一个安装入口。
+    //
+    // 生成期只做两件事：`$token` 按**烘焙主题**换成字面量（默认颜色）、把 token
+    // 名留在组件数据里。运行期换肤靠这些人查表（`theme/InkingTheme.h`）。
+    if (!themes.empty()) {
+        // Build 函数放匿名命名空间：它们是产物内部细节，不该出现在导出符号里
+        // （和按钮的 Build 同一个理由）。
+        out << "\nnamespace {\n\n";
+        for (std::size_t i = 0; i < themes.size(); ++i) {
+            const ThemeConfig& theme = themes[i];
+            out << "inking::ThemeTable BuildTheme" << i << "() {\n";
+            out << "    inking::ThemeTable table;\n";
+            out << "    table.name = " << Quote(theme.name) << ";\n";
+            for (const auto& entry : theme.colors) {
+                out << "    table.colors.push_back({"
+                    << Quote(entry.first) << ", " << Color(entry.second)
+                    << "});\n";
+            }
+            out << "    return table;\n";
+            out << "}\n\n";
+        }
+        out << "}  // namespace\n";
+
+        out << "\nvoid InstallGeneratedThemes() {\n";
+        out << "    // 装全部主题表（同名整张替换），再把**烘焙主题**设为活跃：\n";
+        out << "    // 生成出来的那份就是默认，切到别的主题只要 SetActiveTheme()。\n";
+        for (std::size_t i = 0; i < themes.size(); ++i) {
+            out << "    inking::InstallThemeTable(BuildTheme" << i
+                << "());\n";
+        }
+        out << "    inking::SetActiveTheme(" << Quote(themes.front().name)
+            << ");\n";
+        out << "}\n";
+    }
+
     out << "\nvoid RegisterAllButtons() {\n";
     if (buttons.empty()) {
         out << "    // 本次生成里没有按钮配置，这个入口是空的。\n";
@@ -1331,21 +1517,26 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
 
     out << CloseNamespaces(parts);
 
-    if (buttons.empty() && textTables.empty()) {
-        // 既没有"按名字查的表"要预热，也没有语言表要装，收工。
+    if (buttons.empty() && textTables.empty() && themes.empty()) {
+        // 既没有"按名字查的表"要预热，也没有语言表 / 主题表要装，收工。
         return out.str();
     }
 
     out << "\nnamespace {\n\n";
     out << "/**\n";
-    out << " * 启动期把生成出来的东西接到运行期上：按钮配置登记进按名字查的表、\n";
-    out << " * 语言表装进 `inking::InstallTextTable`。\n";
+    out << " * 启动期把生成出来的东西接到运行期上：主题表装进 `InstallThemeTable`、\n";
+    out << " * 按钮配置登记进按名字查的表、语言表装进 `InstallTextTable`。\n";
     out << " *\n";
-    out << " * 依赖静态初始化顺序的写法在这里是**安全**的：那两处用的都是函数内\n";
+    out << " * 依赖静态初始化顺序的写法在这里是**安全**的：那几处用的都是函数内\n";
     out << " * 静态量，谁先碰它谁把它拉起来，所以这个对象的构造一定发生在库可用之后。\n";
     out << " */\n";
     out << "struct StartupRegistration {\n";
     out << "    StartupRegistration() {\n";
+    if (!themes.empty()) {
+        out << "        "
+            << Qualified(options.nameSpace, "InstallGeneratedThemes")
+            << "();\n";
+    }
     if (!buttons.empty()) {
         out << "        " << registerAll << "();\n";
     }

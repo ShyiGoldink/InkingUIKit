@@ -390,11 +390,16 @@ AnchorData InkingScene::sceneRootAnchorData() {
     // （自身左上角对上窗口左上角）。
     //
     // 这里**不会**改成"由 CXXCSS/Scene/*.json 驱动"：场景不交给生成器
-    // （评估结论见 CXXCSS/CXXCSS.md §7.2）。尺寸跟随窗口、锚点按设计画布，
-    // 就是它该有的样子，没有可配的东西。
+    // （评估结论见 CXXCSS/CXXCSS.md §7.2）。尺寸跟随**设计画布**（运行期值，
+    // 来自 CXXCSS/config.json），锚点按设计画布，就是它该有的样子，
+    // 没有可配的东西。
+    //
+    // 顺手把"设计尺寸已定型"记一笔：场景构造是第二个按它对几何的地方，
+    // 从这一刻起 `SetDesignSize` 就该拒绝改动。
     AnchorData data;
-    data.width  = inking::kDesignWidth;
-    data.height = inking::kDesignHeight;
+    data.width  = inking::DesignWidth();
+    data.height = inking::DesignHeight();
+    inking::detail::NoteDesignSizeTaken();
     return data;
 }
 
@@ -570,12 +575,11 @@ void InkingScene::sortDrawList() {
         }
     }
 
-    // 稳定排序，**按 z 从小到大**：z 小的先画（在底下），z 大的后画（盖在上面）。
+    // 稳定排序，用 `IsAbove` 的**反序**：这个比较器回答"谁在上面"，而提交
+    // 要的是"谁先画"。反过来的结果是**树序（父先于子）+ 兄弟内 z 从小到大**——
+    // 容器的底色总在它的子孙之前画出去，所以再也不会盖住自己的内容。
     //
-    // 这里不能直接用 InkingWidget::IsAbove——那个回答的是"谁在上面"，
-    // 是命中要问的问题（从高到低找第一个挡住点的）。绘制的提交顺序恰好相反，
-    // 所以这里自己写比较器，但**用的规则和 IsAbove 完全一致**（z 优先，
-    // z 相同看注册序号），只是反过来排。两边规则必须一致，否则会出现
+    // 必须复用同一个比较器（连同"同 z 看注册序号"的尾规则），否则会出现
     // "画的是 A、点到的是 B"。
     std::stable_sort(_drawList.begin(), _drawList.end(),
                      [](const DrawItem& a, const DrawItem& b) {
@@ -909,7 +913,7 @@ HitResult InkingScene::QueryHit(float designX, float designY) noexcept {
         return staticResult;
     }
 
-    // 静态与动态**按全局 z 序合并**（§6）。动态组件压在静态组件上面时，
+    // 静态与动态**按同一套层级规则合并**（§6）。动态组件压在静态组件上面时，
     // 静态表仍会算出它自己那一份答案，所以这一步不能省。
     if (staticResult.target == nullptr
         || InkingWidget::IsAbove(*dynamicHit, *staticResult.target)) {
@@ -969,7 +973,7 @@ void InkingScene::DispatchPointer() {
 
     // ---- 1. 命中：谁是"指针下最上面那个" ----
     // 命中走**烘焙好的表**（T-4）：静态层查表，动态层自判，
-    // 两者按全局 z 序合并（`QueryHit` 里做的事）。
+    // 两者按同一套层级规则合并（`QueryHit` 里做的事）。
     // 这一步的**语义与之前完全一样**——换的是实现，不是规则。
     const HitResult hit =
         _pointerInside ? QueryHit(_pointerX, _pointerY) : HitResult{};
