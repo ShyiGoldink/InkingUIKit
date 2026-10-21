@@ -14,7 +14,7 @@
 | `thread/TaskQueue.h` | 单例任务队列（含延迟任务） |
 | `timeline/Timeline.h` | **整个 UI 的唯一时间源**（逻辑步 / 每帧 / 自定义频率） |
 | `asset/InkingAsset.h` | 资源根 + 轻量混淆 + 加载 |
-| `detail/InkLog.h` | 日志（写 `Log.html`，编译期可整体去掉） |
+| `detail/InkLog.h` | 日志（纯文本 `.log` + 按需 HTML 报告，编译期可整体去掉） |
 | `detail/MessageQueue.h` | 跨线程消息队列（生产者任意线程，消费者 UI 线程） |
 | `detail/InkingGeometry.h` | 几何工具（祖先仿射、包络、裁剪） |
 | `detail/InkingHit.h` | 命中工具（形状 / 矩形） |
@@ -228,32 +228,69 @@ void AssetResetStats();
 
 ## 七、日志：InkLog
 
+与 InkingBackendFramework 的 `ShineLog` 保持同一套设计：**纯文本是唯一事实源，HTML 是按需派生产物**。
+
 ```C++
 class InkLog {
 public:
-    static void info(const std::string& moduleName, const std::string& message);
-    static void pass / warn / error / debug(...);
-    static std::filesystem::path logFilePath();
+    static void info / pass / warn / error / debug(module, msg, site = current());
+    static void mark(text, site = current());       // 伪级别 MARK，不受阈值影响
+    static std::filesystem::path logFilePath();     // LOG/<日期>/run-<时分秒>-<pid>.log
+    static std::filesystem::path logDirectory();    // LOG/
+    static void setLevel(LogLevel);  static LogLevel level();
+    static bool parseLevel(std::string_view, LogLevel&);
+    static std::vector<std::string> tail(std::size_t count);
+    static std::vector<std::string> grep(pattern, module);
+    static std::string statistics();
+    static std::filesystem::path report();          // .log -> 自包含 HTML 报告
 };
 
-#define INK_LOG_INFO(module, msg)
-#define INK_LOG_PASS(module, msg)
-#define INK_LOG_WARN(module, msg)
-#define INK_LOG_ERROR(module, msg)
+#define INK_LOG_INFO / PASS / WARN / ERROR(module, msg)
 #define INK_LOG_DEBUG(module, msg)     // 只在 INK_ISDEBUG 下存在
+#define INK_LOG_MARK(text)             // 复现起点锚点
 #define INK_DEBUG_CHECK(cond, msg)     // debug 下断言 + 记日志
 ```
 
-- 输出是**可执行文件同级目录下的 `Log.html`**，按「天」和「程序启动会话」分组，写入加锁。
-- **编译期开关**（CMake → 宏）：
+**输出位置**
 
-  | 选项 | 宏 | 效果 |
-  | --- | --- | --- |
-  | `-DISLOG=ON` | `INK_ISLOG` | 日志参与编译，输出 `Log.html` |
-  | `-DISDEBUG=ON` | `INK_ISDEBUG` | 调试级日志与调试断言生效 |
+- `LOG/<YYYY-MM-DD>/run-<HHMMSS>-<pid>.log`，可执行文件同级；`LOG/latest.txt` 指向最近一次运行。
+- 一次运行一个文件；跨零点继续写同一个文件，只插一行日期标记。
 
-  关闭时 `INK_LOG_*` 展开成 `((void)0)`：**参数不求值、字符串不拼接**、日志代码完全不进
-  二进制。"关掉日志"是真的把代码去掉，不是运行时判断一下再跳过。
+**每行 7 段，自带定位**
+
+```text
+20:11:51.978 | WARN  | Scene:-- | #000003 | T-01 | InkingScene.cpp:144 | 场景未登记
+   时间         级别    模块:阶段   序号     线程    文件:行              消息
+```
+
+第 3 段固定写成 `模块:--`：前端没有阶段编号，保留这一列是为了和框架端共用同一套解析与报告工具。
+第 6 段由宏把 `std::source_location::current()` 传下来，所以它指向**业务代码**，不是 `InkLog.cpp` 这个转发点。
+
+**降噪**
+
+| 机制 | 行为 |
+| --- | --- |
+| 折叠 | 连续相同的记录只落一条，随后补一行 `FOLD`，带重复次数与起止时间 |
+| 限流 | 同一个键每秒最多 5 条，其余只计数（`statistics()` 与报告页脚可见） |
+| 失败 | `ERROR` 不折叠，一条一行 |
+| 阈值 | 运行时 `INK_LOG_LEVEL` 或 `setLevel()`；`MARK` 永远落盘 |
+
+**查看**
+
+- 直接读 `.log`（`grep` / `tail` / 编辑器）；或 `tail()` / `grep()` / `statistics()` 读内存环形缓冲（最近 2000 行）。
+- 需要浏览器视图：`InkLog::report()` 生成 `report-<run>.html`，自包含单文件、双击即开。
+- 运行期**不写 HTML**，热路径上没有 CSS/JS 模板。
+
+**编译期开关**（CMake → 宏）：
+
+| 选项 | 宏 | 效果 |
+| --- | --- | --- |
+| `INK_ISLOG` | `INK_ISLOG` | 日志参与编译，输出 `.log` |
+| `INK_ISDEBUG` | `INK_ISDEBUG` | 调试级日志与调试断言生效 |
+
+当前两者都在 `CMakeLists.txt` 的 `target_compile_definitions(inking PUBLIC ...)` 里直接打开。
+关闭 `INK_ISLOG` 时 `INK_LOG_*` 展开成 `((void)0)`：**参数不求值、字符串不拼接**、日志代码完全不进
+二进制。"关掉日志"是真的把代码去掉，不是运行时判断一下再跳过。
 
 > 库本身**不往 stderr 打调试输出**：`InkingBatch.cpp` 里那些 `fprintf` 已经清掉了。
 

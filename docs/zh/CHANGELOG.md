@@ -17,6 +17,19 @@
   现在子的 z 再小也在父之上。
 - 仍是**一个严格全序**，所以绘制、命中表、面板子树仲裁、动静合并四处共用同一个比较器，
   "画的是 A、点到的是 B"这条不变量没变。
+- **日志改为纯文本事实源**（与 InkingBackendFramework 的 `ShineLog` 同步）：
+  - 运行期只写 `LOG/<日期>/run-<时分秒>-<pid>.log`，一次运行一个文件，`LOG/latest.txt`
+    指向最近一次；**不再写 `Log.html`**，热路径上不再有 CSS/JS 模板。
+  - 每行 7 段自带定位：`时间 | 级别 | 模块:阶段 | 序号 | 线程 | 文件:行 | 消息`；
+    第 3 段固定为 `模块:--`（前端无阶段概念，保留该列以便与框架端共用解析/报告工具）。
+  - 连续相同记录折叠成一行 `FOLD`（带重复次数与起止时间）；同一个键每秒最多 5 条；
+    `ERROR` 不折叠，一条一行。
+  - 浏览器视图改由 `InkLog::report()` 按需把 `.log` 渲染成自包含 HTML（双击即开）。
+  - `InkLog::logFilePath()` 现在返回**当前 `.log` 路径**（首次调用会创建文件与目录）；
+    新增 `logDirectory()` / `tail()` / `grep()` / `statistics()` / `setLevel()` /
+    `parseLevel()` / `mark()`，以及 `INK_LOG_MARK` 宏（伪级别 MARK，不受阈值影响）。
+  - `INK_LOG_*` 宏改为把 `std::source_location::current()` 传下去，日志里的"文件:行"
+    指向业务代码而不是 `InkLog.cpp`。
 
 ### 新增
 
@@ -56,6 +69,9 @@
 - `InputDesign.md` §1/§10.5、`TaskGuide.md` A8b/T-4、`UsageReport.md`、
   `README.md`「已知限制」、`api/InkingWidget.md` / `InkingScene.md` / `InkingAnchor.md`
   同步改口径。
+- `api/InkingRuntime.md` §七「日志：InkLog」按新实现重写：输出位置、7 段行格式、
+  折叠/限流规则、查看方式（`.log` / `tail` / `grep` / `report()`）、编译期开关的实际取值
+  （原先写的 `-DISLOG=ON` 选项并不存在，实际情况是 `CMakeLists.txt` 里直接打开）。
 
 ### 已知限制
 
