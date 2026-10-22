@@ -38,6 +38,66 @@ std::uint32_t VisibleTextColor(std::uint32_t color) {
 
 }  // namespace
 
+// ---------------------------------------------------------------------------
+// 「形状表面」三笔的公共件（0.2.0 T-07）
+//
+// 从 `PaintButtonAppearance` 整段搬出，**顺序不变**：阴影 → 填充 → 描边。
+// 搬完画面必须一模一样——这条由自检的像素断言锁着（button_paint_unchanged）。
+// ---------------------------------------------------------------------------
+
+void PaintSurfaceShadow(SDL_Renderer* renderer, const InkingAnchor& node,
+                        const ShapeSpec& shape, const ShadowSpec& shadow,
+                        const TransformSpec& transform, float pixelX,
+                        float pixelY) {
+    // ① 阴影：形状的**偏移实心副本**（没有模糊，见 InkingDecoration.h）。
+    // 先画它，后面两笔才盖在上面。它跟变换一起走（旋转的组件，阴影也转）。
+    if (renderer == nullptr || !shadow.Visible()) {
+        return;
+    }
+    const float mag = Magnify(node);
+    fillShape(renderer, shape, node.GetWidth(), node.GetHeight(), mag,
+              pixelX + shadow.offsetX * mag, pixelY + shadow.offsetY * mag,
+              transform, shadow.color);
+}
+
+void PaintSurfaceFill(SDL_Renderer* renderer, const InkingAnchor& node,
+                      const ShapeSpec& shape, std::uint32_t fillColor,
+                      const TransformSpec& transform, float pixelX,
+                      float pixelY) {
+    // ② 填充：形状怎么变成像素（三角化 + 边缘羽化 + 顶点过变换）在
+    // `detail::fillShape` 里，按钮 / 面板 / 基类默认矩形共用同一份实现。
+    if (renderer == nullptr) {
+        return;
+    }
+    fillShape(renderer, shape, node.GetWidth(), node.GetHeight(), Magnify(node),
+              pixelX, pixelY, transform, fillColor);
+}
+
+void PaintSurfaceStroke(SDL_Renderer* renderer, const InkingAnchor& node,
+                        const ShapeSpec& shape, const StrokeSpec& stroke,
+                        const TransformSpec& transform, float pixelX,
+                        float pixelY) {
+    // ③ 描边：宽度一半在形状外、一半在内。最后画，才能压在填充/图片的边缘上
+    // （描边外半圈本来就该盖住底下那点像素）。
+    if (renderer == nullptr || !stroke.Visible()) {
+        return;
+    }
+    strokeShape(renderer, shape, node.GetWidth(), node.GetHeight(),
+                Magnify(node), pixelX, pixelY, transform, stroke.width,
+                stroke.color);
+}
+
+void PaintSurface(SDL_Renderer* renderer, const InkingAnchor& node,
+                  const ShapeSpec& shape, const StrokeSpec& stroke,
+                  const ShadowSpec& shadow, std::uint32_t fillColor,
+                  const TransformSpec& transform, float pixelX, float pixelY) {
+    PaintSurfaceShadow(renderer, node, shape, shadow, transform, pixelX, pixelY);
+    PaintSurfaceFill(renderer, node, shape, fillColor, transform, pixelX,
+                     pixelY);
+    PaintSurfaceStroke(renderer, node, shape, stroke, transform, pixelX,
+                       pixelY);
+}
+
 void PaintButtonAppearance(const InkingAnchor& node, const ShapeSpec& shape,
                            const ButtonAppearance& appearance,
                            const StrokeSpec& stroke, const ShadowSpec& shadow,
@@ -48,25 +108,23 @@ void PaintButtonAppearance(const InkingAnchor& node, const ShapeSpec& shape,
     // 类型：img 画一张纹理），形状与尺寸完全不动——这正是静态按钮能一边有动画、
     // 一边继续待在"进命中表"那一档的原因（变换不改表，见 InputDesign.md §11）。
     //
-    // 形状怎么变成像素（三角化 + 边缘羽化 + 顶点过变换）在 `detail::fillShape` 里，
-    // 静态按钮、动态按钮、以及基类那份默认矩形共用同一份实现。
+    // 三笔已经抽成公共件（T-07）：纯色路径整段走 `PaintSurface`；
+    // 图片路径只换中间那笔（填充 → 纹理），顺序仍是阴影 → 填充/图片 → 描边。
     SDL_Renderer* renderer = currentRenderer();
-    const float mag = Magnify(node);
-    const int width = node.GetWidth();
-    const int height = node.GetHeight();
-
-    // ---- ① 阴影：形状的**偏移实心副本**（没有模糊，见 InkingDecoration.h）----
-    // 先画它，后面两笔才盖在上面。它跟变换一起走（旋转的按钮，阴影也转）。
-    if (shadow.Visible()) {
-        fillShape(renderer, shape, width, height, mag,
-                  pixelX + shadow.offsetX * mag, pixelY + shadow.offsetY * mag,
-                  transform, shadow.color);
+    const bool hasImage = appearance.type == AppearanceType::Image
+        && appearance.imageBytes != nullptr && appearance.imageSize > 0;
+    if (!hasImage) {
+        PaintSurface(renderer, node, shape, stroke, shadow, displayColor,
+                     transform, pixelX, pixelY);
+        return;
     }
 
-    // ---- ② 填充 / 图片 ----
+    PaintSurfaceShadow(renderer, node, shape, shadow, transform, pixelX,
+                       pixelY);
+
+    // ---- ② 图片（中间那笔换成纹理） ----
     bool painted = false;
-    if (appearance.type == AppearanceType::Image
-        && appearance.imageBytes != nullptr && appearance.imageSize > 0) {
+    {
         const ImageBytes image{appearance.imageBytes, appearance.imageSize,
                                appearance.source};
         // ⚠️ 图片的调制色**固定为白**，不是 `displayColor`。
@@ -78,23 +136,20 @@ void PaintButtonAppearance(const InkingAnchor& node, const ShapeSpec& shape,
         // 而 `imageBytes` 明明非空（实测：出图 11 KB 全黑 vs 旧版 738 KB 正常）。
         // 白 = 不改动原图；三态之间的"淡入淡出"走 `transition` 那条通道。
         const std::uint32_t tint = 0xFFFFFFFFu;
-        if (PaintImage(renderer, image, shape, width, height, mag, pixelX,
-                       pixelY, transform, appearance.imageFit, tint)) {
+        if (PaintImage(renderer, image, shape, node.GetWidth(),
+                       node.GetHeight(), Magnify(node), pixelX, pixelY,
+                       transform, appearance.imageFit, tint)) {
             painted = true;  // 图片画上了，就走不到"按颜色填"
         }
         // 解不出来：落回"按颜色填"（按钮还是个按钮，不是个洞）。
     }
     if (!painted) {
-        fillShape(renderer, shape, width, height, mag, pixelX, pixelY,
-                  transform, displayColor);
+        PaintSurfaceFill(renderer, node, shape, displayColor, transform, pixelX,
+                         pixelY);
     }
 
-    // ---- ③ 描边：宽度一半在形状外、一半在内 ----
-    // 最后画，才能压在填充/图片的边缘上（描边外半圈本来就该盖住底下那点像素）。
-    if (stroke.Visible()) {
-        strokeShape(renderer, shape, width, height, mag, pixelX, pixelY,
-                    transform, stroke.width, stroke.color);
-    }
+    PaintSurfaceStroke(renderer, node, shape, stroke, transform, pixelX,
+                       pixelY);
 }
 
 ShapeBounds ButtonHitEnvelope(const ButtonData& data, const ShapeSpec& shape,
@@ -190,6 +245,7 @@ Point2 ButtonTextOffset(const InkingAnchor& node, const ButtonData& data) {
     probe.fontSize = data.text.fontSize > 0.0f ? data.text.fontSize
                                                : kDefaultFontSize;
     probe.fontPath = data.text.path;
+    probe.fontPaths = data.text.paths;
     const TextMetrics metrics = MeasureText(probe);
     if (metrics.width <= 0.0f && metrics.height <= 0.0f) {
         return configured;  // 量不出来就退回配置值，别硬算出一个怪位置
@@ -245,6 +301,7 @@ void PaintButtonText(const InkingAnchor& node, const ButtonData& data,
     request.fontSize =
         data.text.fontSize > 0.0f ? data.text.fontSize : kDefaultFontSize;
     request.fontPath = data.text.path;
+    request.fontPaths = data.text.paths;
     request.color = VisibleTextColor(data.textColor);
     // 位置：`align` / `alignV` 为默认值时就是配置里的 leftSpace / topSpace；
     // 写了居中 / 右对齐 / 贴底时先量一遍文字块再算（见 `ButtonTextOffset`）。

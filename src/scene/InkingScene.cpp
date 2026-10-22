@@ -544,35 +544,53 @@ std::size_t InkingScene::GetDrawItemCount() noexcept {
     return _drawList.size();
 }
 
+void InkingScene::collectDrawList(InkingWidget* node) {
+    if (node == nullptr) {
+        return;
+    }
+
+    // 场景根自己不是绘制项（它没有可画的一笔），但它的子孙都是。
+    if (node != this) {
+        // 树是唯一真相源：扫到就认领。以前这里依赖"构造时沿父链登记"，
+        // 于是"先建子树、后挂进场景"的节点永远进不了列表（A2/A3）。
+        if (node->GetScene() != this) {
+            node->AdoptIntoScene(this);
+        }
+        DrawItem item;
+        item.node = node;
+        item.parent = node->GetParent();
+        item.absX = node->GetAbsX();
+        item.absY = node->GetAbsY();
+        _drawList.push_back(item);
+    }
+
+    // 先序 ⇒ 与 `IsAbove` 的树序一致；兄弟之间的 z 由后面的稳定排序处理。
+    // 复制一份子表再走：布局 / 回调里改子表不会让这里迭代失效。
+    const std::vector<InkingWidget*> children = node->GetChildren();
+    for (InkingWidget* child : children) {
+        collectDrawList(child);
+    }
+}
+
 void InkingScene::sortDrawList() {
     if (!_contentDirty && !_orderDirty) {
         return;
     }
 
     if (_contentDirty) {
-        // 内容重建只剔除两类**真的不该在列表里**的条目：
-        // (1) 已经不属于本场景的（换父级跨了场景）；
-        // (2) 空指针。
+        // **整表按树重建**（A2/A3/A5）：不再"剔除失效项 + 补登记"。
+        //
+        // 旧做法有两处洞：
+        //   ① 构造时父级还没进场景 ⇒ 子树根本没登记过，之后没人补；
+        //   ② 列表一旦丢掉某个节点（换父级 / 跨场景），只有它自己会回来，
+        //      它的子孙不回。
+        // 两处的症状一样：节点在、`IsVisibleInTree()` 为真、就是不渲染。
         //
         // **不按可见性剔除**：可见性是可逆的，而"可见"这条信息只有节点自己
-        // 知道。列表一旦把隐藏的节点丢掉，就再也没人把它加回来——构造函数
-        // 只跑一次，于是"隐藏过的节点永远回不来"。可见性留给提交时判断
-        // （见 Render）：那里 IsVisibleInTree 会顺带把整棵隐藏子树短路掉。
-        const auto stale = std::remove_if(
-            _drawList.begin(), _drawList.end(), [this](const DrawItem& item) {
-                return item.node == nullptr || item.node->GetScene() != this;
-            });
-        _drawList.erase(stale, _drawList.end());
-
-        // 重算绝对坐标：列表里的快照可能是构造那一刻的，而父级之后挪过地方。
-        // 动态节点每帧提交时现算，这里的值只当基准。
-        for (DrawItem& item : _drawList) {
-            if (item.node != nullptr) {
-                item.parent = item.node->GetParent();
-                item.absX = item.node->GetAbsX();
-                item.absY = item.node->GetAbsY();
-            }
-        }
+        // 知道。列表把隐藏的节点丢掉，就再也没人把它加回来；可见性留给提交时
+        // 判断（见 Render）：那里 IsVisibleInTree 会顺带把整棵隐藏子树短路掉。
+        _drawList.clear();
+        collectDrawList(this);
     }
 
     // 稳定排序，用 `IsAbove` 的**反序**：这个比较器回答"谁在上面"，而提交
@@ -596,6 +614,49 @@ void InkingScene::sortDrawList() {
     // **变换不在这里**：组件上报的是"所有可能变换"的保守包络（它不动），
     // 精判用当前变换。所以动画期间表一次都不用重建（§11「变换通道不改表」）。
     rebuildHitTable();
+}
+
+std::size_t InkingScene::RebuildRenderList() {
+    // 先标脏再消费：外部调它的时候树可能刚被改过（甚至是绕过 SetParent 改的），
+    // 标脏是"我要求重建"，不是"我猜有没有变"。
+    NotifyStructureChanged();
+    sortDrawList();
+    return _drawList.size();
+}
+
+std::size_t InkingScene::RebuildHitTable() {
+    sortDrawList();  // 表挂在列表上，列表不新就谈不上表新
+    return _hitTable.GetEntryCount();
+}
+
+InkingWidget* InkingScene::FindByName(const std::string& name) noexcept {
+    const auto search = [&name](auto&& self, InkingWidget* node)
+        -> InkingWidget* {
+        if (node == nullptr) {
+            return nullptr;
+        }
+        for (InkingWidget* child : node->GetChildren()) {
+            if (child == nullptr) {
+                continue;
+            }
+            if (child->GetName() == name) {
+                return child;
+            }
+            if (InkingWidget* deep = self(self, child)) {
+                return deep;
+            }
+        }
+        return nullptr;
+    };
+    return search(search, this);
+}
+
+bool InkingScene::Activate(const std::string& name) noexcept {
+    InkingWidget* node = FindByName(name);
+    if (node == nullptr) {
+        return false;
+    }
+    return node->Activate();
 }
 
 // ---------------------------------------------------------------------------
@@ -1168,11 +1229,72 @@ void InkingScene::Render(SDL_Renderer* renderer) {
     bool clipActive = false;
     ShapeBounds activeClip{};
 
+    // ------------------------------------------------------------------
+    // 装饰笔的待落栈（0.2.0 T-07）
+    //
+    // 装饰笔（描边）要画在**整棵子树之后、上层兄弟之前**。绘制列表按
+    // "从根的 (z, 注册序) 序列字典序"排，等价 DFS 先序 ⇒ 每棵子树在列表里
+    // 是**连续一段**。于是不用全局第二趟（那会让描边越界压到**上层兄弟**
+    // 头上），只要在遍历时记住"待落的装饰笔"，发现当前节点已经不在
+    // 装饰者的子树里（父链上溯查不到它），就先把它落掉再画当前节点。
+    // ------------------------------------------------------------------
+    struct PendingDecoration {
+        InkingWidget* node;
+        float absX;
+        float absY;
+    };
+    std::vector<PendingDecoration> pendingDecorations;
+
+    const auto flushDecorations = [&](const InkingWidget* current) {
+        while (!pendingDecorations.empty()) {
+            const PendingDecoration& back = pendingDecorations.back();
+            if (current != nullptr) {
+                // current 还在装饰者的子树里（含装饰者自己）⇒ 还不到落笔的时候。
+                bool inside = current == back.node;
+                for (const InkingWidget* p = current->GetParent();
+                     !inside && p != nullptr; p = p->GetParent()) {
+                    inside = p == back.node;
+                }
+                if (inside) {
+                    break;
+                }
+            }
+            // 落笔用的是**装饰者自己的祖先裁剪**（裁剪只剪子孙，装饰笔是
+            // 装饰者自己的一笔，不被它自己的裁剪区剪）。
+            ShapeBounds decorationClip{};
+            const bool wantClip =
+                detail::AncestorClipInDevice(*back.node, decorationClip);
+            const bool clipChanged =
+                wantClip != clipActive
+                || (wantClip
+                    && (decorationClip.x != activeClip.x
+                        || decorationClip.y != activeClip.y
+                        || decorationClip.width != activeClip.width
+                        || decorationClip.height != activeClip.height));
+            if (clipChanged) {
+                if (wantClip) {
+                    detail::SetClipRect(renderer, decorationClip);
+                } else {
+                    detail::ClearClipRect(renderer);
+                }
+                clipActive = wantClip;
+                activeClip = decorationClip;
+            }
+            back.node->SubmitDecorationToRenderer(renderer, back.absX,
+                                                  back.absY);
+            pendingDecorations.pop_back();
+        }
+    };
+
     for (const DrawItem& item : _drawList) {
         InkingWidget* node = item.node;
         if (node == nullptr) {
             continue;
         }
+
+        // 子树结束 ⇒ 先把待落的装饰笔落掉（它们必须压在当前节点**之下**）。
+        // 不可见的节点也要参与这个判断：它仍在父链上，子树边界不因可见性移动。
+        flushDecorations(node);
 
         // 可见性在提交时才判断：隐藏的节点留在列表里（这样"再显示出来"
         // 不需要谁把它加回去），但不提交给渲染器。
@@ -1213,7 +1335,15 @@ void InkingScene::Render(SDL_Renderer* renderer) {
         }
 
         node->SubmitToRenderer(renderer, absX, absY);
+
+        // 有装饰笔的节点进待落栈：等它的子树画完再落（见上面那段）。
+        if (node->HasRenderDecoration()) {
+            pendingDecorations.push_back({node, absX, absY});
+        }
     }
+
+    // 帧末清空待落栈（最深那几棵子树的装饰笔在这里落）。
+    flushDecorations(nullptr);
 
     // 帧末把裁剪恢复：下一个渲染目标（或下一帧）不该继承别人的裁剪区。
     if (clipActive) {

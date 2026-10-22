@@ -15,6 +15,11 @@
 #
 #   ink_add_generated(my_app SOURCES ${MY_CSS})
 #
+# 或者把整个 CXXCSS 根交给它（**推荐**：组件多时命令行只有 1 个参数，
+# 工程放在中文路径下也不会撞上 Windows 的 8191 字符上限）：
+#
+#   ink_add_generated(my_app DIR "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS")
+#
 # 然后代码里就能：
 #
 #   #include <inkgen/button_service.h>
@@ -24,7 +29,7 @@
 # 产物只落构建目录（默认 `<build>/inkgen/`），源码树保持干净。
 # ---------------------------------------------------------------------------
 function(ink_add_generated target)
-    cmake_parse_arguments(GEN "" "OUT_DIR;NAMESPACE;HEADER" "SOURCES" ${ARGN})
+    cmake_parse_arguments(GEN "" "OUT_DIR;NAMESPACE;HEADER;DIR" "SOURCES" ${ARGN})
 
     if(NOT INKING_INKGEN OR NOT EXISTS "${INKING_INKGEN}")
         message(FATAL_ERROR
@@ -32,10 +37,28 @@ function(ink_add_generated target)
             "确认你已经 `find_package(inking CONFIG REQUIRED)`（它会导出 "
             "INKING_INKGEN），并且发布包的 bin/ 目录完整。")
     endif()
-    if(NOT GEN_SOURCES)
+    if(GEN_DIR AND GEN_SOURCES)
         message(FATAL_ERROR
-            "ink_add_generated(${target})：SOURCES 为空。"
-            "先 file(GLOB ...) 出 CXXCSS/<类型>/*.json 再传进来。")
+            "ink_add_generated(${target})：SOURCES 与 DIR 只能给一个。")
+    endif()
+    if(NOT GEN_DIR AND NOT GEN_SOURCES)
+        message(FATAL_ERROR
+            "ink_add_generated(${target})：SOURCES / DIR 至少要给一个。"
+            "先 file(GLOB ...) 出 CXXCSS/<类型>/*.json 再传进来，或者把 "
+            "CXXCSS 根交给 DIR。")
+    endif()
+    if(GEN_DIR)
+        if(NOT IS_DIRECTORY "${GEN_DIR}")
+            message(FATAL_ERROR
+                "ink_add_generated(${target})：DIR 不是目录（${GEN_DIR}）。")
+        endif()
+        # `--dir` 由 inkgen 自己扫，CMake 看不见扫了哪些文件；这里 glob 一份
+        # **只用于 DEPENDS**（新增 / 删除 json 时 CONFIGURE_DEPENDS 会重跑配置）。
+        file(GLOB_RECURSE _gen_dir_json CONFIGURE_DEPENDS "${GEN_DIR}/*.json")
+        set(GEN_SOURCES ${_gen_dir_json})
+        set(_gen_input --dir "${GEN_DIR}")
+    else()
+        set(_gen_input ${GEN_SOURCES})
     endif()
 
     if(NOT GEN_OUT_DIR)
@@ -69,7 +92,7 @@ function(ink_add_generated target)
                 --out-dir "${GEN_OUT_DIR}"
                 --namespace "${GEN_NAMESPACE}"
                 --header "${GEN_HEADER}"
-                ${GEN_SOURCES}
+                ${_gen_input}
         DEPENDS "${INKING_INKGEN}" ${GEN_SOURCES}
         COMMENT "inkgen：生成 ${GEN_NAMESPACE} 的配置（${target}）"
         VERBATIM)

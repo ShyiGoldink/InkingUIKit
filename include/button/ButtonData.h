@@ -22,10 +22,12 @@
 #include <dataStruct/InkingShapeSpec.h>
 #include <dataStruct/InkingTextLayout.h>
 #include <dataStruct/InkingTransform.h>
+#include <detail/InkLog.h>
 
 #include <cstdint>
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace inking {
 
@@ -170,6 +172,16 @@ struct ButtonTextData {
     std::string path;        ///< 字体绝对路径；空 = 机器默认字体
 
     /**
+     * @brief 字体回退链（T-13）：`path` 之后按顺序尝试。
+     *
+     * 配置里 `"path"` 写成数组时，**第一个元素进 `path`、其余进这里**——这样
+     * "首选"仍然只有一个字段（`InkingStaticButton` 的构造日志只认 `path`），
+     * 链只是它的尾巴。语义与 `TextStyle::fontPaths` 完全一致（文件级、不是
+     * 字形级；中间没命中不报警；全失败退化成占位方块 + 一条汇总 WARN）。
+     */
+    std::vector<std::string> paths;
+
+    /**
      * @brief 文字块在按钮里**怎么摆**（配置里的 `"align"` / `"alignV"`）。
      *
      * 默认 `Left` / `Top` = 老行为：文字左上角就在 `(leftSpace, topSpace)`——
@@ -267,18 +279,31 @@ struct ButtonData {
             onclicked = normal;
         }
         // 三态都是纯透明的话，这个按钮在任何情况下都看不见——那多半是配置写漏了
-        // （例如 source 写成了 "0|0|0"）。给个不透明的黑兜底，至少看得见。
+        // （例如 source 写成了 "0|0|0"）。给个不透明的**品红**兜底，至少看得见。
+        //
+        // 为什么从 0xFF000000（黑）改成 0xFFFF00FF（品红）（0.1.1 T-03）：
+        // 深色界面上纯黑和正常底色**无法区分**，兜底等于没兜——反馈方就是因此
+        // 只能临时改颜色才定位到问题。品红在正常配色里不存在，一眼就知道
+        // "这里配错了"。同时补一条 WARN：兜底是给"配错了"用的，不是正常路径。
+        // 0.2.0 T-07 补一条豁免（与面板同一条规矩）：**有可见描边或阴影时不兜底**
+        // ——"透明底 + 一圈描边"是正当配置（空心按钮），兜底成品红反而把它毁了。
         if (normal.IsColor() && ColorAlpha(normal.color) == 0u
             && ColorAlpha(hover.color) == 0u
-            && ColorAlpha(onclicked.color) == 0u) {
-            normal.color = 0xFF000000u;
-            hover.color = 0xFF000000u;
-            onclicked.color = 0xFF000000u;
+            && ColorAlpha(onclicked.color) == 0u && !stroke.Visible()
+            && !shadow.Visible()) {
+            normal.color = 0xFFFF00FFu;
+            hover.color = 0xFFFF00FFu;
+            onclicked.color = 0xFFFF00FFu;
             // 兜底色不再是语义色了：token 必须清掉，否则换主题时它又会把
-            // 这个兜底黑盖回去。
+            // 这个兜底色盖回去。
             normal.themeColor = nullptr;
             hover.themeColor = nullptr;
             onclicked.themeColor = nullptr;
+            INK_LOG_WARN(kButtonModuleName,
+                         "三态颜色全透明（alpha 都是 0），已兜底成品红："
+                             + label
+                             + "。真要一个看不见的按钮请给一个极小非零 alpha"
+                               "（1/255），别用 0");
         }
     }
 

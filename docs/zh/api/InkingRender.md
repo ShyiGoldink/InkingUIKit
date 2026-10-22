@@ -159,6 +159,7 @@ struct TextRequest {
     std::string text;              // UTF-8
     float fontSize = 16.0f;        // 设计坐标（SDL3_ttf 的 DPI 是 72，"点"= 像素）
     std::string fontPath;          // 空 = 机器默认字体（按候选表找）
+    std::vector<std::string> fontPaths;  // 回退链：fontPath 之后按顺序试（0.3.0）
     std::uint32_t color = 0xFFFFFFFFu;
     float offsetX = 0.0f;          // 文字块左上角，组件本地设计坐标
     float offsetY = 0.0f;
@@ -280,7 +281,7 @@ float LineOffsetX(float lineWidth, float availableWidth, TextAlignH align);
 于是排版逻辑可以用"每个码点固定宽"的假测量做数值自检，不需要字体、不需要渲染器。
 
 `TextLayoutRequest`：`text` / `style`（`fontSize` / `lineSpacing` / `fontPath` /
-`align` / `alignV` / `padding`）/ `maxWidth` / `maxHeight` / `maxLines` /
+`fontPaths`（回退链）/ `align` / `alignV` / `padding`）/ `maxWidth` / `maxHeight` / `maxLines` /
 `wrap`（`NoWrap` / `Word` / `Anywhere`）/ `overflow`（`Clip` / `Ellipsis`）。
 
 排版规则（与 `CXXCSS.md` §3.8 的字段一一对应）：

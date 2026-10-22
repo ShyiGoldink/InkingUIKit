@@ -1,4 +1,5 @@
 #include "Json.h"
+#include "PathUtil.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -376,7 +377,8 @@ ParseResult ParseJson(const std::string& text) {
 ParseResult LoadJsonFile(const std::string& path) {
     ParseResult result;
 
-    std::ifstream stream(path, std::ios::binary);
+    // 走 `ToPath`（宽路径）：中文路径下窄的 `ifstream(串)` 打不开（T-09）。
+    std::ifstream stream(ToPath(path), std::ios::binary);
     if (!stream) {
         result.ok = false;
         result.error = "打不开文件：" + path;

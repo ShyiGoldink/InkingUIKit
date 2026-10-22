@@ -40,6 +40,15 @@ struct JsonValue {
     Kind kind = Kind::Null;
     SourceLocation where{};
 
+    /**
+     * 这个值**来自哪个文件**（0.2.0 T-10）。
+     *
+     * 空 = 就是当前正在读的那个文件（绝大多数情况，解析器不填）。只有
+     * `$extends` 合并会把父文件里的值搬进来——那时 `where.line` 指父文件的行，
+     * 报错必须同时指对文件，否则用户会去子文件的同一行找（那里什么都没有）。
+     */
+    std::string file;
+
     bool boolean = false;
     double number = 0.0;
     std::string text;

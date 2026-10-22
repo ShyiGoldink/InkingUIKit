@@ -39,6 +39,7 @@ TextExtent MeasureWithTextLayer(const std::string& text,
     request.text = text;
     request.fontSize = style.fontSize > 0.0f ? style.fontSize : 16.0f;
     request.fontPath = style.fontPath;
+    request.fontPaths = style.fontPaths;
     const TextMetrics metrics = MeasureText(request);
     return TextExtent{metrics.width, metrics.height};
 }
@@ -63,6 +64,20 @@ InkingStaticLabel::InkingStaticLabel(InkingWidget* parent, const LabelData& data
     SetHitPassThrough(true);
 
     ClearDirty();
+
+    // 构造期没有 `SetText` 来触发重排（数据是直接写进 `_data` 的），所以这里
+    // 补一次（`0.1.1` T-01）：
+    //   - 在**有布局的容器**里：父容器排一次（幂等，`ApplyLayoutRect` 没变就不标脏）；
+    //   - 在**没有布局的容器**里：走 `RelayoutSelfIfContentSized` 自己量，
+    //     否则宽高都留在 0，一个像素都不画且零日志——这正是反馈方那张 200×0 的标签。
+    RelayoutParent();
+
+    // 尺寸护栏（T-02）放在自测量**之后**：正常标签此时已经有尺寸，不该再报。
+    // **空文本不报**：空标签本来就不占地方（不画东西），0 尺寸是预期结果。
+    if (!_data.text.empty()) {
+        WarnIfZeroSize(kLabelModuleName);
+    }
+
     NotifySceneStructureChanged();
 }
 
@@ -119,6 +134,7 @@ bool InkingStaticLabel::CacheMatches(float available) const noexcept {
     const LayoutCache& cache = _cache;
     return cache.valid && cache.text == _data.text
         && cache.fontPath == _data.style.fontPath
+        && cache.fontPaths == _data.style.fontPaths
         && cache.fontSize == _data.style.fontSize
         && cache.lineSpacing == _data.style.lineSpacing
         && cache.align == _data.style.align
@@ -155,6 +171,7 @@ const TextLayoutResult& InkingStaticLabel::LayoutForWidth(float available) const
     _cache.valid = true;
     _cache.text = _data.text;
     _cache.fontPath = _data.style.fontPath;
+    _cache.fontPaths = _data.style.fontPaths;
     _cache.fontSize = _data.style.fontSize;
     _cache.lineSpacing = _data.style.lineSpacing;
     _cache.align = _data.style.align;
@@ -220,8 +237,11 @@ void InkingStaticLabel::onRender(float pixelX, float pixelY) const {
         request.fontSize = _data.style.fontSize > 0.0f ? _data.style.fontSize
                                                       : 16.0f;
         request.fontPath = _data.style.fontPath;
+        request.fontPaths = _data.style.fontPaths;
         request.color = textColor;
-        request.offsetX = line.x;
+        // 水平滚动（T-12）：默认 0；输入框在文本超宽时给一个正值，把文字左移，
+        // 好让光标停在本体里。排版与命中不受影响（那是未滚动的坐标）。
+        request.offsetX = line.x - TextScrollX();
         request.offsetY = line.y;
         // A13：外部显示变换（如果有人设过）叠在文字这一笔上。文字这一侧只有
         // 绘制——标签默认命中穿透（`SetHitPassThrough(true)`），所以"跟手"这件事

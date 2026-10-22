@@ -228,7 +228,11 @@ void AssetResetStats();
 
 ## 七、日志：InkLog
 
-与 InkingBackendFramework 的 `ShineLog` 保持同一套设计：**纯文本是唯一事实源，HTML 是按需派生产物**。
+与 InkingBackendFramework 的 `ShineLog` 是**同一套设计取向，不是逐字同构**：**纯文本是唯一
+事实源，HTML 是按需派生产物**这一条两边一样；但前端没有搬 `init/shutdown/snapshot/command`
+那几样，级别集合也不同（前端少 `Trace`/`Fatal`、多 `Pass`），另外 `0.1.1` 起还有两处前端特有
+（DEBUG 独立折叠槽、`CountOf`）。完整对照在 `include/detail/InkLog.h` 头顶那段注释里——
+**要判断"改动要不要同步另一个仓库"，看那段**。
 
 ```C++
 class InkLog {
@@ -242,6 +246,8 @@ public:
     static std::vector<std::string> tail(std::size_t count);
     static std::vector<std::string> grep(pattern, module);
     static std::string statistics();
+    static std::uint64_t CountOf(LogLevel);         // 按级别数"真的发生了几次"
+    static void ResetStats();                       // 只给自检用：清计数与折叠槽
     static std::filesystem::path report();          // .log -> 自包含 HTML 报告
 };
 
@@ -270,10 +276,14 @@ public:
 
 | 机制 | 行为 |
 | --- | --- |
-| 折叠 | 连续相同的记录只落一条，随后补一行 `FOLD`，带重复次数与起止时间 |
-| 限流 | 同一个键每秒最多 5 条，其余只计数（`statistics()` 与报告页脚可见） |
-| 失败 | `ERROR` 不折叠，一条一行 |
+| 折叠（DEBUG 独立槽） | 同一个键再来一条就**不落第二行**，结算时补一行 `FOLD`，带次数与起止时间。别的级别的记录插进来**不打断**它——真实噪声正是"每帧一条 DEBUG、中间夹着别的日志"，共用槽对这种交错无效 |
+| 折叠（其它级别） | 只有**连续**相同才合并：DEBUG / INFO / PASS 走这条，WARN 及以上不走 |
+| 限流 | 同一个键每秒最多 5 条，其余只计数（`statistics()` 与报告页脚可见）；`ERROR` 不限流 |
+| 失败 | `WARN` / `ERROR` **不折叠**，一条一行——它们是诊断凭据，合并会丢掉"发生了几次" |
 | 阈值 | 运行时 `INK_LOG_LEVEL` 或 `setLevel()`；`MARK` 永远落盘 |
+
+`InkLog::CountOf(Level)` 数的是**真的调用了几次**（被折叠、限流、阈值挡掉都不算），
+`statistics()` 数的是**落盘了几行**。要断言"这里应当恰好出现一条 WARN"，用前者。
 
 **查看**
 
@@ -285,10 +295,13 @@ public:
 
 | 选项 | 宏 | 效果 |
 | --- | --- | --- |
-| `INK_ISLOG` | `INK_ISLOG` | 日志参与编译，输出 `.log` |
-| `INK_ISDEBUG` | `INK_ISDEBUG` | 调试级日志与调试断言生效 |
+| 恒开 | `INK_ISLOG` | 日志参与编译，输出 `.log` |
+| `INKING_DEBUG_LOG`（**默认 `OFF`**） | `INK_ISDEBUG` | 调试级日志与调试断言生效 |
 
-当前两者都在 `CMakeLists.txt` 的 `target_compile_definitions(inking PUBLIC ...)` 里直接打开。
+两个宏都是 `target_compile_definitions(inking PUBLIC ...)`——**必须是 PUBLIC**，因为公开头里
+`kDefaultLogLevel` / `kDebugEnabled` 是 `inline constexpr`，库与消费者取值不同就是 ODR 违例。
+但 `INK_ISDEBUG` 由选项控制、**默认关**：`0.1.1` 之前它被无条件写成 `PUBLIC INK_ISDEBUG=1`，
+于是发布包的消费方**关不掉**调试流（实测 948 条日志里有一条重复 528 次）。
 关闭 `INK_ISLOG` 时 `INK_LOG_*` 展开成 `((void)0)`：**参数不求值、字符串不拼接**、日志代码完全不进
 二进制。"关掉日志"是真的把代码去掉，不是运行时判断一下再跳过。
 

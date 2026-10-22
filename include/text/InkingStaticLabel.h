@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace inking {
 
@@ -72,6 +73,19 @@ public:
 protected:
     void onRender(float pixelX, float pixelY) const override;
 
+    /**
+     * 文字这一笔的**水平滚动量**（设计坐标，0 = 不滚）。
+     *
+     * 默认 0，标签不用管它。存在的理由是输入框（`InkingTextInput`，T-12）：
+     * 单行文本超宽时要把**文字**左移，让光标停在框里而不是贴在右边框上。
+     * 做成虚钩子而不是给 `onRender` 加参数：`onRender` 的签名是全库统一的那一个，
+     * 为一个组件改它会让十几个重写全跟着动。
+     *
+     * 只影响**绘制**：排版（换行 / 行宽）与命中都用未滚动的坐标，滚动量由
+     * 使用方自己负责（输入框在 `BoxForOffset` / `OffsetAtPoint` 里一对一抵消）。
+     */
+    virtual float TextScrollX() const noexcept { return 0.0f; }
+
 private:
     /// 排版的缓存键：**所有影响排版的字段**都要进来（`AGENTS.md` §6 第 72 条
     /// 那条教训——漏一个就是"改了配置、画面没变"）。
@@ -84,6 +98,10 @@ private:
         bool valid = false;
         std::string text;
         std::string fontPath;
+        /// 字体回退链（T-13）：**必须一起比**。链变了而这里不比，排出来的
+        /// 宽高会停在旧字体上——"改了配置、框还是旧尺寸"，就是 §6 第 72 条
+        /// 那类静默失效。
+        std::vector<std::string> fontPaths;
         float fontSize = 0.0f;
         float lineSpacing = 0.0f;
         TextAlignH align = TextAlignH::Left;

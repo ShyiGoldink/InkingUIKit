@@ -78,6 +78,13 @@ public:
     InkingDynamicButton(InkingWidget* parent, const ButtonData& data);
 
     /**
+     * 语义激活（D7）：等价于"用户点了一下"，不经过指针，也不改三态。
+     * 与静态档同一个契约（`InkingWidget::Activate`），两档自检可以共用一套写法。
+     * @return 有订阅者、真的派发了才返回 true。
+     */
+    bool Activate() override { return TriggerClick(); }
+
+    /**
      * 配置驱动构造：只给 parent + 名字，配置从 `ButtonLibrary` 里按名字取。
      *
      * **它不是生成的按钮类走的路**：生成器为每个名字生成一个独立的类
@@ -175,6 +182,16 @@ public:
     bool IsPressCaptured() const noexcept;
 
 protected:
+    /**
+     * 尺寸被外部改了 ⇒ 让 `ButtonLook` 跟上（0.4.0 A4/B1）。
+     *
+     * `Resize` 与布局通道都会走到这里；少了它，`GetWidth()` 会一直返回
+     * 配置里那个旧值（`fillMain` / `Stretch` 因此不收敛，且不报错）。
+     */
+    void onSizeChanged() override {
+        SyncButtonLookSize(_width, _height);
+    }
+
     /// **每帧一次的逻辑钩子**：输入在这里发生。
     ///
     /// 动态组件的 Tick 由 `InkingScene::TickLogic` 按固定逻辑步派发

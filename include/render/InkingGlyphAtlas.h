@@ -177,7 +177,10 @@ struct GlyphAtlasStats {
  *     某些没被剪，还和叠放顺序有关"（`AGENTS.md` §6 第 61 条那条的同族）；
  *   - **位图是白字**：颜色留给纹理调制（和整段那条路一致，颜色不进缓存键）；
  *   - **键 = 字体 + 字号 + 字形**：同一字号下每个字形只栅格化一次——这正是
- *     "一个字符串一张纹理"换成"一个字形一份位图"要省的东西。
+ *     "一个字符串一张纹理"换成"一个字形一份位图"要省的东西；
+ *   - **`fontPath` 必须是已解析的实际路径**（0.3.0 T-13）：回退链只在
+ *     `PaintText` 里解析一次，三种缓存键（字体 / 字形 / 整段纹理）都拿那一份，
+ *     否则"改了链顺序、字形还从旧图集里取"——画面不动、日志无声。
  */
 GlyphBitmap AcquireGlyph(SDL_Renderer* renderer, const std::string& fontPath,
                          float deviceSize, std::string_view glyph);

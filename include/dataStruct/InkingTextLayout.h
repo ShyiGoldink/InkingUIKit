@@ -72,7 +72,23 @@ struct TextExtent {
 struct TextStyle {
     float fontSize = 16.0f;      ///< 字号，设计坐标
     float lineSpacing = 1.25f;   ///< 行距倍数（1.0 = 行与行紧贴）
-    std::string fontPath;        ///< 字体绝对路径；空 = 默认字体
+    std::string fontPath;        ///< 字体绝对路径；空 = 默认字体（候选表）
+
+    /**
+     * @brief 字体**回退链**（T-13）：`fontPath` 之后按顺序尝试。
+     *
+     * 用途只有一个：**"首选那份不在，就用下一份"**——换机器 / 换系统 /
+     * 忘了带字体文件时，不至于整块文字变成方块。
+     *
+     * 三条边界，写清楚免得被当成"能混排"：
+     *   1. **文件级、不是字形级**：整块文字只会用一个字体文件。链上先命中的
+     *      那一份独占全部字形——"中文用雅黑、数字用等宽"这种**同屏混排不支持**
+     *      （SDL_ttf 只有 `TTF_OpenFont(path)`，没有按族名 / 覆盖范围选字体的入口）；
+     *   2. 链上某条打不开但后面命中了 ⇒ **不报警**（那正是回退链的用途）；
+     *   3. 整条链都打不开 ⇒ **不静默换字体**，退化成占位方块 + 一条汇总 WARN
+     *      （静默换字体等于把"设计意图没生效"藏起来，与本项目的取向相反）。
+     */
+    std::vector<std::string> fontPaths;
     TextAlignH align = TextAlignH::Left;
     TextAlignV alignV = TextAlignV::Top;
     LayoutSpacing padding{};     ///< 文字与文本框四边之间的留白

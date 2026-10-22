@@ -1,6 +1,7 @@
 #include <detail/InkLog.h>
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
@@ -242,6 +243,28 @@ struct Impl {
     std::string pendingFirst;
     std::string pendingLast;
 
+    /**
+     * DEBUG 的**独立**折叠槽（0.1.1）。
+     *
+     * 为什么不能和上面那个共用：共用的槽被"任意别的记录"打断，而真实的噪声
+     * 形态恰恰是"每帧一条 DEBUG，中间夹着别的日志"——共用槽对它一点作用都
+     * 没有（反馈方那条重复 528 次的消息就是这么漏出来的）。这一条只被
+     * "另一条不同的 DEBUG"或结算点（tail / grep / statistics / report）打断。
+     *
+     * 代价：FOLD 行落在它那次结算的位置（往往在日志尾部），而不是紧跟在正文
+     * 行后面。汇总里带 first ~ last 两个时刻，所以"这段时间里重复了多少次"
+     * 这条信息一点没丢。
+     */
+    std::string debugKey;
+    std::string debugModule;
+    std::uint64_t debugCount = 0;
+    std::uint64_t debugSuppressed = 0;
+    std::string debugFirst;
+    std::string debugLast;
+
+    /** 分级计数：**每次真的调用**都算，被折叠/限流挡住也照算（`CountOf`）。 */
+    std::array<std::uint64_t, 5> counts{};
+
     // 限流窗口
     long long rateSecond = -1;
     std::unordered_map<std::string, int> rate;
@@ -306,6 +329,30 @@ void flushPendingLocked(Impl& st) {
     st.pendingKey.clear();
     st.pendingCount = 0;
     st.pendingSuppressed = 0;
+}
+
+/** 结算 DEBUG 那条独立折叠槽（与上面同一套规则，只是槽是分开的）。 */
+void flushDebugLocked(Impl& st) {
+    if (st.debugCount > 1 || st.debugSuppressed > 0) {
+        st.folded += st.debugCount > 1 ? (st.debugCount - 1) : 0;
+        std::ostringstream message;
+        message << "上一条 DEBUG 重复 ×" << st.debugCount;
+        if (st.debugSuppressed > 0) {
+            message << "，另有 " << st.debugSuppressed << " 条被限流丢弃";
+        }
+        message << "，" << st.debugFirst << " ~ " << st.debugLast;
+        writeLineLocked(st, composeLine(kTagFold, st.debugModule, ++st.sequence, "InkLog.cpp:0",
+                                        message.str()));
+    }
+    st.debugKey.clear();
+    st.debugCount = 0;
+    st.debugSuppressed = 0;
+}
+
+/** 结算两条折叠槽（普通 + DEBUG 独立槽）。所有"要读日志了"的入口都得先调它。 */
+void flushAllLocked(Impl& st) {
+    flushPendingLocked(st);
+    flushDebugLocked(st);
 }
 
 bool openFileLocked(Impl& st, const std::chrono::system_clock::time_point& now) {
@@ -389,7 +436,18 @@ void InkLog::write(LogLevel level, const std::string& moduleName, const std::str
         return;
     }
 
-    const bool foldable = !forced && level < LogLevel::Error;
+    // 分级计数在**这一行之后**自增：被阈值挡掉的不算（那就是"没有发声"），
+    // 而被折叠 / 限流挡掉的**算**——它们确实调用了，只是没落盘。
+    ++st.counts[static_cast<std::size_t>(level)];
+
+    // 三条互不相同的问题，别合成一个标志位：
+    //   dedicated   DEBUG 走独立折叠槽（跨别的记录仍然连续，`0.1.1`）
+    //   dedupable   哪些级别**允许**合并（DEBUG / INFO / PASS；WARN 以上是
+    //               诊断凭据，合并会丢掉"发生了几次"这条最要紧的信息）
+    //   rateLimited 哪些级别受"每秒 5 条"限制（ERROR 不限——它本来就该吵）
+    const bool dedicated = !forced && level == LogLevel::Debug;
+    const bool dedupable = !forced && level < LogLevel::Warn;
+    const bool rateLimited = !forced && level < LogLevel::Error;
     const std::string flat = flatten(message);
     const char* tag = forced ? kTagMark : levelTag(level);
 
@@ -403,15 +461,53 @@ void InkLog::write(LogLevel level, const std::string& moduleName, const std::str
     const std::string key = std::string(tag) + '|' + moduleName + '|' +
                             std::to_string(std::hash<std::string>{}(flat));
 
+    // 折叠（DEBUG 独立槽）：同一个键再来一次就不再落盘，只在结算时补一行 FOLD。
+    // **别的级别的记录不打断它**——反馈方那条 ×528 的噪声正是交错形态。
+    if (dedicated) {
+        if (!st.debugKey.empty() && key == st.debugKey) {
+            ++st.debugCount;
+            st.debugLast = timeOfDay(now);
+            return;
+        }
+        if (rateLimited) {
+            int& bucket = st.rate[key];
+            if (bucket >= kMaxRecordsPerSecondPerKey) {
+                ++st.suppressed;
+                ++st.debugSuppressed;
+                return;
+            }
+            ++bucket;
+        }
+        flushDebugLocked(st);
+        flushPendingLocked(st);  // DEBUG 会打断别的级别那段"连续"
+        if (st.currentDay != dateOf(now)) {
+            st.currentDay = dateOf(now);
+            writeLineLocked(st, "# ---- 跨日 " + st.currentDay + "，本次运行继续写入同一文件 ----");
+        }
+        const std::string location =
+            fileNameOf(site.file_name()) + ':' + std::to_string(site.line());
+        writeLineLocked(st, composeLine(tag, moduleName, ++st.sequence, location, flat));
+        ++st.levelCounts[tag];
+        ++st.moduleCounts[moduleName];
+
+        st.debugKey = key;
+        st.debugModule = moduleName;
+        st.debugCount = 1;
+        st.debugSuppressed = 0;
+        st.debugFirst = timeOfDay(now);
+        st.debugLast = st.debugFirst;
+        return;
+    }
+
     // 折叠：连续相同就不再落盘，只在结算时补一行 FOLD
-    if (foldable && !st.pendingKey.empty() && key == st.pendingKey) {
+    if (dedupable && !st.pendingKey.empty() && key == st.pendingKey) {
         ++st.pendingCount;
         st.pendingLast = timeOfDay(now);
         return;
     }
 
     // 限流：同一个键每秒超过上限就只计数
-    if (foldable) {
+    if (rateLimited) {
         int& bucket = st.rate[key];
         if (bucket >= kMaxRecordsPerSecondPerKey) {
             ++st.suppressed;
@@ -438,7 +534,7 @@ void InkLog::write(LogLevel level, const std::string& moduleName, const std::str
     ++st.levelCounts[tag];
     ++st.moduleCounts[moduleName];
 
-    if (foldable) {
+    if (dedupable) {
         st.pendingKey = key;
         st.pendingModule = moduleName;
         st.pendingCount = 1;
@@ -505,6 +601,31 @@ LogLevel InkLog::level() {
     return st.threshold;
 }
 
+std::uint64_t InkLog::CountOf(LogLevel level) {
+    Impl& st = state();
+    std::lock_guard<std::mutex> lock(st.mutex);
+    const auto index = static_cast<std::size_t>(level);
+    return index < st.counts.size() ? st.counts[index] : 0;
+}
+
+void InkLog::ResetStats() {
+    // 计数与折叠槽一起清。**不清文件**：日志文件是运行记录，抹掉它等于毁掉
+    // 证据；自检要的是"从现在开始重新数"。
+    Impl& st = state();
+    std::lock_guard<std::mutex> lock(st.mutex);
+    st.counts.fill(0);
+    st.folded = 0;
+    st.suppressed = 0;
+    st.levelCounts.clear();
+    st.moduleCounts.clear();
+    st.pendingKey.clear();
+    st.pendingCount = 0;
+    st.pendingSuppressed = 0;
+    st.debugKey.clear();
+    st.debugCount = 0;
+    st.debugSuppressed = 0;
+}
+
 bool InkLog::parseLevel(std::string_view text, LogLevel& result) {
     std::string lower;
     lower.reserve(text.size());
@@ -531,7 +652,7 @@ bool InkLog::parseLevel(std::string_view text, LogLevel& result) {
 std::vector<std::string> InkLog::tail(std::size_t count) {
     Impl& st = state();
     std::lock_guard<std::mutex> lock(st.mutex);
-    flushPendingLocked(st);
+    flushAllLocked(st);
 
     std::vector<std::string> result;
     const std::size_t begin = st.ring.size() > count ? st.ring.size() - count : 0;
@@ -545,7 +666,7 @@ std::vector<std::string> InkLog::tail(std::size_t count) {
 std::vector<std::string> InkLog::grep(std::string_view pattern, std::string_view module) {
     Impl& st = state();
     std::lock_guard<std::mutex> lock(st.mutex);
-    flushPendingLocked(st);
+    flushAllLocked(st);
 
     std::vector<std::string> result;
     const std::string needle(pattern);
@@ -566,7 +687,7 @@ std::vector<std::string> InkLog::grep(std::string_view pattern, std::string_view
 std::string InkLog::statistics() {
     Impl& st = state();
     std::lock_guard<std::mutex> lock(st.mutex);
-    flushPendingLocked(st);
+    flushAllLocked(st);
 
     std::ostringstream output;
     output << "日志统计\n"

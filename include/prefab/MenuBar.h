@@ -97,6 +97,23 @@ public:
     // ---------------- 内容项：任意锚点 ----------------
 
     /**
+     * @brief 顶栏**现在占多少高度**（B3）：显示时是自身高度，隐藏（全屏）时是 0。
+     *
+     * 存在的理由很具体：`MenuBarStyle::hideInFullscreen` 会让整条顶栏在全屏时
+     * 消失，而宿主的内容区高度必须按"窗口高 − 顶栏**当前**高"算——写死
+     * `窗口高 − 40` 的结果就是全屏时底下空一条。
+     *
+     * 与 `GetHeight()` 的分工：后者是**布局尺寸**（配置那份，隐藏时也不变），
+     * 这一条回答的是"画面上还剩多少"。所以内容区用这一个，别用那个。
+     */
+    int GetCurrentHeight() const noexcept {
+        return IsVisibleInTree() ? GetHeight() : 0;
+    }
+
+    /// 顶栏现在可见吗（全屏且 `hideInFullscreen` 时为 false）。B3 的另一个观测口。
+    bool IsBarVisible() const noexcept { return IsVisibleInTree(); }
+
+    /**
      * 挂一个**由本菜单栏拥有**的子项（按钮 / 图片 / 自定义锚点都行）。
      *
      * 传进来的节点父级会被改成本菜单栏的内容容器（原父级自动摘干净）。

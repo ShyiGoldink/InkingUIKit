@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace inking {
 
@@ -26,6 +27,18 @@ struct TextRequest {
     float fontSize = 16.0f;  ///< 字号，**设计坐标**（SDL3_ttf 的 DPI 是 72，所以
                              ///< "点"在这里就等于像素，不用再乘系数）
     std::string fontPath;    ///< 字体绝对路径；空 = 机器默认字体（按候选表找）
+
+    /**
+     * @brief 字体回退链（T-13）：`fontPath` 之后**按顺序**尝试。
+     *
+     * 语义与 `TextStyle::fontPaths` 一致（那里写了三条边界）：文件级、不是字形级；
+     * 链上"前面没命中、后面命中"不报警；整条链全失败才报一条汇总 WARN，
+     * 并且**不静默换成机器默认字体**（宁可画占位方块，也不让设计意图偷偷失效）。
+     *
+     * 缓存键用的是**实际命中的那一条**（不是这份列表）：否则改了链顺序、
+     * 字形还是会从旧图集里取——画面不动、日志无声，典型的静默失效。
+     */
+    std::vector<std::string> fontPaths;
     std::uint32_t color = 0xFFFFFFFFu;  ///< 文字色 0xAARRGGBB
 
     /// 文字块左上角在**组件本地**的位置（设计坐标，相对组件左上角）。

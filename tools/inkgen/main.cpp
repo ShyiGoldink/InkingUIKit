@@ -18,14 +18,94 @@
 
 #include "Cxxcss.h"
 #include "Emit.h"
+#include "Fields.h"
 #include "Json.h"
+#include "PathUtil.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
 
 namespace {
+
+/**
+ * `--dir` 的扫描：`<根>/<组件目录>/*.json` + `<根>/config.json`。
+ *
+ * 三条规矩：
+ *   1. **组件目录由 `TryComponentKindFromPath` 判定**（"目录名 = 组件类型"的
+ *      唯一来源）——认哪些目录由生成器决定，这里不抄第二份目录名列表；
+ *   2. `*.example.json` 跳过（与显式列表同一条约定）；
+ *   3. 结果**排序**：扫描顺序在文件系统上是任意的，而重名报错要指到"第一个"
+ *      文件——不排序的话同一个工程在不同机器上报不同的文件。
+ *
+ * 全局配置还认"直接躺在 CXXCSS 根下"那种位置（`CXXCSS.md` §1），所以根下的
+ * `config.json` 单独收一条。
+ *
+ * 扫到的清单由调用方打印（`--dir` 模式必须让人看得见"到底扫了哪些"）。
+ */
+std::vector<std::string> ScanConfigDir(const std::string& root) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> files;
+    std::error_code error;
+
+    const auto isExample = [](const std::string& path) {
+        const std::string stem = inkgen::FileStem(path);
+        return stem.size() > 8 && stem.compare(stem.size() - 8, 8, ".example") == 0;
+    };
+    const auto collectJson = [&files, &isExample](const fs::path& dir) {
+        std::error_code inner;
+        for (const fs::directory_entry& entry : fs::directory_iterator(dir, inner)) {
+            if (!entry.is_regular_file(inner)) {
+                continue;
+            }
+            if (entry.path().extension() != ".json") {
+                continue;
+            }
+            const std::string path = inkgen::ToNarrow(entry.path());
+            if (isExample(path)) {
+                continue;
+            }
+            files.push_back(path);
+        }
+    };
+
+    for (const fs::directory_entry& entry :
+         fs::directory_iterator(inkgen::ToPath(root), error)) {
+        if (!entry.is_directory(error)) {
+            continue;
+        }
+        inkgen::ComponentKind kind = inkgen::ComponentKind::Button;
+        // 探针文件名只是为了拿父目录名（函数只看父目录）。
+        if (inkgen::TryComponentKindFromPath(
+                inkgen::ToNarrow(entry.path()) + "/probe.json", kind)) {
+            collectJson(entry.path());
+            continue;
+        }
+        // 不认识的目录：里面有 json 就提示一句，免得"配置放错目录"被静默跳过。
+        std::error_code inner;
+        for (const fs::directory_entry& child :
+             fs::directory_iterator(entry.path(), inner)) {
+            if (child.is_regular_file(inner)
+                && child.path().extension() == ".json") {
+                std::printf("[提示] %s 不是组件目录（目录名决定组件类型），里面的 "
+                            "json 已跳过\n",
+                            inkgen::ToNarrow(entry.path()).c_str());
+                break;
+            }
+        }
+    }
+
+    const fs::path rootConfig = inkgen::ToPath(root) / "config.json";
+    if (fs::is_regular_file(rootConfig, error)) {
+        files.push_back(inkgen::ToNarrow(rootConfig));
+    }
+
+    std::sort(files.begin(), files.end());
+    return files;
+}
 
 void PrintUsage() {
     std::printf(
@@ -33,13 +113,23 @@ void PrintUsage() {
         "\n"
         "用法：\n"
         "  inkgen --out-dir <目录> [--namespace <ns>] [--header <名>] <file.json>...\n"
+        "  inkgen --out-dir <目录> [--namespace <ns>] [--header <名>] --dir <CXXCSS 根>\n"
         "  inkgen --validate <file.json>...\n"
+        "  inkgen --validate --dir <CXXCSS 根>\n"
+        "  inkgen --dump-fields\n"
         "\n"
         "选项：\n"
         "  --out-dir <目录>   产物目录（约定指向 build/，不存在会创建）\n"
         "  --namespace <ns>   生成代码的命名空间，默认 inking::cxxcss\n"
         "  --header <名>      生成的头文件名，默认 button_service.h\n"
+        "  --dir <根>         扫 <根>/<组件目录>/*.json（+ 根下 config.json），\n"
+        "                     与显式文件列表**互斥**。19 份配置只占 1 个参数，\n"
+        "                     所以工程放在中文路径下也不会撞上 Windows 那条\n"
+        "                     8191 字符的命令行上限（CMake 的 .bat 绕行会废掉\n"
+        "                     非 ASCII 路径）\n"
         "  --validate         只校验，不写文件\n"
+        "  --dump-fields      输出「组件 × 段 × 字段」的 Markdown 表（CXXCSS.md\n"
+        "                     §9 就是它生成的；新增字段忘记同步文档时 ctest 会红）\n"
         "  -h, --help         显示这段帮助\n"
         "\n"
         "组件类型由**目录名**决定（CXXCSS.md §1）：Button/buttons → 按钮，\n"
@@ -59,7 +149,10 @@ void PrintUsage() {
 int main(int argc, char** argv) {
     inkgen::EmitOptions options;
     bool validateOnly = false;
+    bool dumpFields = false;
     bool sawOutDir = false;
+    std::string dirPath;
+    bool sawDir = false;
     std::vector<std::string> inputs;
 
     for (int i = 1; i < argc; ++i) {
@@ -73,7 +166,14 @@ int main(int argc, char** argv) {
             validateOnly = true;
             continue;
         }
-        if (arg == "--out-dir" || arg == "--namespace" || arg == "--header") {
+        if (arg == "--dump-fields") {
+            // 纯查询：不需要输入文件，也不写文件。所以它必须在"没有输入"的
+            // 校验**之前**返回（T-08）。
+            dumpFields = true;
+            continue;
+        }
+        if (arg == "--out-dir" || arg == "--namespace" || arg == "--header"
+            || arg == "--dir") {
             if (i + 1 >= argc) {
                 std::fprintf(stderr, "[错误] %s 后面缺少值\n", arg.c_str());
                 return 1;
@@ -82,6 +182,9 @@ int main(int argc, char** argv) {
             if (arg == "--out-dir") {
                 options.outDir = value;
                 sawOutDir = true;
+            } else if (arg == "--dir") {
+                dirPath = value;
+                sawDir = true;
             } else if (arg == "--namespace") {
                 options.nameSpace = value;
             } else {
@@ -95,6 +198,44 @@ int main(int argc, char** argv) {
             return 1;
         }
         inputs.push_back(arg);
+    }
+
+    if (dumpFields) {
+        // Markdown 表直接打到 stdout（ctest 拿它与 CXXCSS.md 的锚点块比对）。
+        std::printf("%s", inkgen::fields::DumpFieldTable().c_str());
+        return 0;
+    }
+
+    // `--dir` 与显式文件列表**互斥**：同时给的话"到底扫了哪些"说不清，
+    // 而生成物的差异（多一个 / 少一个组件）在运行期很难反推。宁可报错。
+    if (sawDir && !inputs.empty()) {
+        std::fprintf(stderr,
+                     "[错误] --dir 与显式文件列表不能同时给（一个是扫目录、"
+                     "一个是点名，混用之后\"到底生成了哪些\"说不清）\n");
+        return 1;
+    }
+    if (sawDir) {
+        const std::filesystem::path dir = inkgen::ToPath(dirPath);
+        std::error_code error;
+        if (!std::filesystem::is_directory(dir, error)) {
+            std::fprintf(stderr, "[错误] --dir 指的不是目录：%s\n",
+                         dirPath.c_str());
+            return 1;
+        }
+        inputs = ScanConfigDir(dirPath);
+        if (inputs.empty()) {
+            std::fprintf(stderr,
+                         "[错误] %s 下没有扫到任何配置（认的目录：Button / Panel "
+                         "/ Label / Image / Text / Theme，外加根下 config.json；"
+                         "*.example.json 不参与生成）\n",
+                         dirPath.c_str());
+            return 1;
+        }
+        // 打印实际扫描清单（`--dir` 的风险就是"扫到的比你以为的多"）。
+        std::printf("[扫描] %s：%zu 份配置\n", dirPath.c_str(), inputs.size());
+        for (const std::string& path : inputs) {
+            std::printf("        %s\n", path.c_str());
+        }
     }
 
     if (inputs.empty()) {

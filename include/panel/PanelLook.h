@@ -64,6 +64,12 @@ struct PanelLook {
     /// 现在**实际生效**的变换，与 displayColor 同步推进、同一段时长同一条曲线。
     TransformSpec displayTransform{};
 
+    /// 现在**实际画出来**的描边 / 阴影（0.2.0 T-07）：与颜色同一套插值——
+    /// 宽度 / 偏移量线性插值，颜色走 `MixColor`。描边画在子孙之上（装饰遍）、
+    /// 阴影画在填充之下，两者都不参与命中。
+    StrokeSpec displayStroke{};
+    ShadowSpec displayShadow{};
+
     /// 从配置展开两态并把状态机与过渡复位。构造时调一次。
     void Reset(const PanelData& data) noexcept {
         closed = data.closed;
@@ -72,8 +78,12 @@ struct PanelLook {
         // 颜色统一走 `TargetColor`：配了 token 就查运行期主题，没配就是烘好的字面量。
         displayColor = TargetColor(state);
         displayTransform = For(state).transform;
+        displayStroke = For(state).stroke;
+        displayShadow = For(state).shadow;
         fromColor = displayColor;
         fromTransform = displayTransform;
+        fromStroke = displayStroke;
+        fromShadow = displayShadow;
         elapsed = 0.0f;
         duration = 0.0f;
         _pendingRepaint = false;
@@ -180,6 +190,8 @@ struct PanelLook {
         // 留一份上一帧的显示值，最后拿它比对出这一帧到底变没变。
         const std::uint32_t previousColor = displayColor;
         const TransformSpec previousTransform = displayTransform;
+        const StrokeSpec previousStroke = displayStroke;
+        const ShadowSpec previousShadow = displayShadow;
 
         elapsed += deltaSeconds > 0.0f ? deltaSeconds : 0.0f;
         const bool finished = elapsed >= duration;
@@ -190,16 +202,23 @@ struct PanelLook {
             // 收尾直接落目标值，免掉插值的最后一点浮点误差。
             displayColor = TargetColor(state);
             displayTransform = For(state).transform;
+            displayStroke = For(state).stroke;
+            displayShadow = For(state).shadow;
             duration = 0.0f;
             elapsed = 0.0f;
         } else {
             displayColor = MixColor(fromColor, TargetColor(state), k);
             displayTransform = LerpTransform(fromTransform, For(state).transform, k);
+            displayStroke = LerpStroke(fromStroke, For(state).stroke, k);
+            displayShadow = LerpShadow(fromShadow, For(state).shadow, k);
         }
 
         result.repaint = result.repaint || (displayColor != previousColor)
-            || !SameTransform(displayTransform, previousTransform);
+            || !SameTransform(displayTransform, previousTransform)
+            || !SameStroke(displayStroke, previousStroke)
+            || !SameShadow(displayShadow, previousShadow);
         // 变换变了，命中区域就变了：同一个点可能落到别的组件上（和按钮同一条理由）。
+        // 描边 / 阴影**不参与命中**（InkingDecoration.h），所以只记重绘账。
         result.hit = result.hit
             || !SameTransform(displayTransform, previousTransform);
         return result;
@@ -209,8 +228,38 @@ private:
     /// 过渡的起点 / 已用时长 / 总时长。`duration == 0` 表示没有过渡在跑。
     std::uint32_t fromColor = 0xFF000000u;
     TransformSpec fromTransform{};
+    StrokeSpec fromStroke{};
+    ShadowSpec fromShadow{};
     float elapsed = 0.0f;
     float duration = 0.0f;
+
+    /// 描边 / 阴影的插值与判等（T-07）：宽度与偏移线性插、颜色走 MixColor。
+    /// 它们是**观感量**（不参与命中），所以判等只喂给重绘账。
+    static StrokeSpec LerpStroke(const StrokeSpec& a, const StrokeSpec& b,
+                                 float k) noexcept {
+        StrokeSpec out;
+        out.width = a.width + (b.width - a.width) * k;
+        out.color = MixColor(a.color, b.color, k);
+        return out;
+    }
+
+    static ShadowSpec LerpShadow(const ShadowSpec& a, const ShadowSpec& b,
+                                 float k) noexcept {
+        ShadowSpec out;
+        out.offsetX = a.offsetX + (b.offsetX - a.offsetX) * k;
+        out.offsetY = a.offsetY + (b.offsetY - a.offsetY) * k;
+        out.color = MixColor(a.color, b.color, k);
+        return out;
+    }
+
+    static bool SameStroke(const StrokeSpec& a, const StrokeSpec& b) noexcept {
+        return a.width == b.width && a.color == b.color;
+    }
+
+    static bool SameShadow(const ShadowSpec& a, const ShadowSpec& b) noexcept {
+        return a.offsetX == b.offsetX && a.offsetY == b.offsetY
+            && a.color == b.color;
+    }
 
     /**
      * 起一段过渡。起点取**当前显示值**（不是上一状态的配置值）：
@@ -219,17 +268,25 @@ private:
     void BeginTransition(float seconds) noexcept {
         fromColor = displayColor;
         fromTransform = displayTransform;
+        fromStroke = displayStroke;
+        fromShadow = displayShadow;
 
         const std::uint32_t targetColor = TargetColor(state);
         const TransformSpec targetTransform = For(state).transform;
+        const StrokeSpec targetStroke = For(state).stroke;
+        const ShadowSpec targetShadow = For(state).shadow;
         if (seconds <= 0.0f
             || (fromColor == targetColor
-                && SameTransform(fromTransform, targetTransform))) {
+                && SameTransform(fromTransform, targetTransform)
+                && SameStroke(fromStroke, targetStroke)
+                && SameShadow(fromShadow, targetShadow))) {
             // 没配过渡、或者本来就一样：直接到位，连计时都不用起。
             // 但"显示值当场就变了"这件事发生在 Advance 之外，所以先记一笔
             // 待报告——漏了它，没配过渡的开关就永远标不上重绘脏。
             _pendingRepaint = _pendingRepaint || (displayColor != targetColor)
-                || !SameTransform(displayTransform, targetTransform);
+                || !SameTransform(displayTransform, targetTransform)
+                || !SameStroke(displayStroke, targetStroke)
+                || !SameShadow(displayShadow, targetShadow);
             _pendingHit = _pendingHit
                 || !SameTransform(displayTransform, targetTransform);
 
@@ -237,6 +294,8 @@ private:
             elapsed = 0.0f;
             displayColor = targetColor;
             displayTransform = targetTransform;
+            displayStroke = targetStroke;
+            displayShadow = targetShadow;
             return;
         }
         duration = seconds;

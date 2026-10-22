@@ -1,6 +1,7 @@
 #include <widget/InkingWidget.h>
 
 #include <detail/InkingGeometry.h>
+#include <detail/InkingHit.h>
 
 #include <scene/InkingScene.h>
 
@@ -155,6 +156,15 @@ InkingWidget::~InkingWidget() {
 
 const std::string& InkingWidget::GetName() const noexcept {
     return _name;
+}
+
+bool InkingWidget::SetName(const std::string& name) {
+    if (_name == name) {
+        return false;
+    }
+    _name = name;
+    // 不标脏：名字不进几何、不进绘制顺序、也不参与命中（见头文件）。
+    return true;
 }
 
 InkingWidget* InkingWidget::GetParent() const noexcept {
@@ -323,9 +333,48 @@ bool InkingWidget::HitTest(float /*worldX*/, float /*worldY*/) const {
 }
 
 InkingWidget* InkingWidget::HitTestNode(float worldX, float worldY) noexcept {
-    // 叶子与普通组件：命中即自己。容器重写它去**深挖子树**
-    // （`InkingStaticPanel::HitTestNode`，A8a）——子孙不进命中表，
-    // 只有容器自己知道它们谁在点子底下。
+    // 默认实现 = **"容器"语义**（0.4.0 A1）：子树优先，子树里没有 Block 才轮到自己。
+    //
+    // 以前这里只有一行 `HitTest(...) ? this : nullptr`，于是"谁是容器"变成了
+    // 一个**必须重写**的隐式约定——只有 `InkingStaticPanel` 写了，动态容器
+    // （`InkingDynamicWidget` 一族）的子树里的静态按钮就永远收不到点击：
+    // 命中表里没有它们（`OwnsSubtreeHit` 之下不进表），递归到这里又断了。
+    // 把递归放进基类之后，"声明自己是容器"只需 `OwnsSubtreeHit()` 返回 true，
+    // 不用再抄一遍这个函数（抄漏了不报错，只是点不到）。
+    if (!IsVisibleInTree()) {
+        return nullptr;
+    }
+
+    // 裁剪（A5）：点落在裁剪区之外 → 整棵子树都不命中。它只剪**子孙**，
+    // 所以下面"自己那一笔"不受影响——但裁剪区一定在自己本体之内，落在外面
+    // 也就落在体外，直接 nullptr 与"自己那一笔也判 false"等价。
+    if (HasSubtreeClip()
+        && !detail::HitTestLocalRect(*this, GetSubtreeClipBounds(),
+                                     GetClipTransform(), worldX, worldY)) {
+        return nullptr;
+    }
+
+    // 子树优先：子节点画在容器之上。按 `IsAbove` 取最上面那个 Block
+    // （规则只有一份：树序 + 兄弟内 z），深层后代同样可比。
+    InkingWidget* block = nullptr;
+    for (InkingWidget* child : GetChildren()) {
+        if (child == nullptr) {
+            continue;
+        }
+        InkingWidget* hit = child->HitTestNode(worldX, worldY);
+        if (hit == nullptr || hit->IsHitPassThrough()) {
+            continue;
+        }
+        if (block == nullptr || IsAbove(*hit, *block)) {
+            block = hit;
+        }
+    }
+    if (block != nullptr) {
+        return block;
+    }
+
+    // 子树里没有 Block：自己是不是？是 `PassThrough` 的照旧返回自己——
+    // 契约第 1 条说的是"不按它过滤自己那一笔"，由调用方看 `IsHitPassThrough()`。
     return HitTest(worldX, worldY) ? this : nullptr;
 }
 
@@ -495,6 +544,57 @@ LayoutSize InkingWidget::MeasureLayout(const LayoutConstraints& /*constraints*/)
     return LayoutSize{static_cast<float>(_width), static_cast<float>(_height)};
 }
 
+bool InkingWidget::ApplySelfSize(int width, int height) noexcept {
+    // 只补尺寸，**不动锚点、不动 offset**：自测量发生在"靠锚点定位"的界面里
+    // （那正是没有布局容器的那种界面），把锚点归零就等于让标签跳到父级左上角。
+    // 这一点是它和 `ApplyLayoutRect` 唯一但致命的区别。
+    if (width == _width && height == _height) {
+        return false;
+    }
+    _width = width;
+    _height = height;
+    // 尺寸变了就是几何变了：命中脏 + 重绘脏 + 通知场景重算绝对坐标快照。
+    MarkStructureChanged();
+    onSizeChanged();
+    return true;
+}
+
+void InkingWidget::RelayoutSelfIfContentSized() noexcept {
+    if (_selfSizing) {
+        return;  // 重入：`MeasureLayout` 是开放钩子，别让它在里面再触发一次
+    }
+    if (_width > 0 && _height > 0) {
+        return;  // 两维都配置了，没有"补"的余地
+    }
+
+    // 约束给 {0,0} = "没人管我多宽"，于是内容驱动的组件按内容自然排（不换行）。
+    _selfSizing = true;
+    const LayoutSize measured = MeasureLayout(LayoutConstraints{0.0f, 0.0f});
+    _selfSizing = false;
+
+    int width = _width;
+    int height = _height;
+    // **只补零的那一维**：`width: 200` 是配置，测量值（76）不许覆盖它。
+    if (width <= 0) {
+        width = RoundSize(measured.width);
+    }
+    if (height <= 0) {
+        height = RoundSize(measured.height);
+    }
+    ApplySelfSize(width, height);
+}
+
+void InkingWidget::WarnIfZeroSize(const char* moduleName) const {
+    if (_width > 0 && _height > 0) {
+        return;
+    }
+    INK_LOG_WARN(std::string(moduleName),
+                 "尺寸为零（宽 " + std::to_string(_width) + " × 高 "
+                     + std::to_string(_height) + "），名字：" + _name
+                     + "——这个组件画不出来、也点不到（宽高漏配？或者它没有待在"
+                       "声明了 layout 的容器里）");
+}
+
 bool InkingWidget::ApplyLayoutRect(const LayoutRect& rect) noexcept {
     // 目标：让"我的矩形（相对父级左上角）"正好是 rect。
     //
@@ -554,6 +654,14 @@ void InkingWidget::RelayoutParent() noexcept {
             return;
         }
     }
+
+    // 没有布局祖先（`0.1.1` T-01）：**不再静默返回**，改成自己量一次。
+    //
+    // 这一条覆盖的是"内容驱动尺寸 + 无布局容器"这一整类组合——标签只是第一个
+    // 撞上的（200×0、一个像素不画、零日志）。放在这里而不是放进标签，是因为
+    // 同一条路径还盖着 `InkingStaticImage`、`InkingTextInput`（继承标签）以及
+    // 将来任何内容驱动组件；放组件层要每个组件各写一遍，而新人加组件时必然忘。
+    RelayoutSelfIfContentSized();
 }
 
 // ---------------------------------------------------------------------------
@@ -673,6 +781,20 @@ InkingWidget* InkingWidget::AddChild(std::unique_ptr<InkingWidget> child) {
     // 已经是我的子节点时 `SetParent` 是幂等的（返回 false），所有权照样记上了
     // ——"先 make_unique 时传了 parent、再 AddChild"这种写法也支持。
     raw->SetParent(this);
+
+    // 运行期挂上来的节点必须**立刻参与布局**（0.4.0 A4/B1）。
+    //
+    // 以前布局只在构造期跑过一趟（`ArrangeSubtree` 的唯一调用点），于是
+    // "先建容器、后 AddChild"的写法（抽屉、列表、动态面板全是这么写的）
+    // 里，孩子的尺寸永远停在它自己的 `width/height` 上：`fillMain` 不收敛、
+    // `Stretch` 不拉伸、`width:0` 的按钮解出来就是 0 宽——**不画也不报错**。
+    // 布局规则住在容器上，所以"孩子变了"就该由容器重排一次。
+    //
+    // 代价：一个一个 AddChild 会重排 N 次。实测 100 个子节点、深度 2~3 时
+    // 每次重排是微秒级（纯算术，没有 I/O），比"忘了排 → 静默 0 宽"便宜得多。
+    if (_layout.Valid()) {
+        Relayout();
+    }
     return raw;
 }
 
@@ -691,6 +813,10 @@ std::unique_ptr<InkingWidget> InkingWidget::RemoveChild(InkingWidget* child) {
         // 走 `SetParent(nullptr)` 这条统一的路（而不是靠析构体兜底）：这样
         // "摘下来但还活着"的节点也不会留在树里——既不被画、也不参与命中。
         taken->SetParent(nullptr);
+        // 少了一个孩子 ⇒ 剩余空间重新分配（与 AddChild 同一条理由，A4）。
+        if (_layout.Valid()) {
+            Relayout();
+        }
         return taken;
     }
     return nullptr;  // 不在拥有表里（借用型的子节点走不到这儿）
@@ -705,6 +831,9 @@ std::size_t InkingWidget::ClearChildren() noexcept {
         // nullptr），"脱离渲染树"这件事也就只走了这一条路。
         item->SetParent(nullptr);
         item.reset();
+    }
+    if (count > 0 && _layout.Valid()) {
+        Relayout();  // 与 AddChild / RemoveChild 同一条理由（A4）
     }
     return count;
 }
@@ -845,13 +974,13 @@ void InkingWidget::onRender(float /*pixelX*/, float /*pixelY*/) const {
     // 基类不画：具体画什么由两个具体锚点或它们的子类决定。
 }
 
-void InkingWidget::SubmitToRenderer(SDL_Renderer* renderer, float absX,
-                                    float absY) const {
-    if (renderer == nullptr) {
-        return;
-    }
+void InkingWidget::onRenderDecoration(float /*pixelX*/,
+                                      float /*pixelY*/) const {
+    // 基类没有装饰笔（T-07）。有"要压在子孙之上"那一笔（描边）的组件重写它。
+}
 
-    // 设计坐标 → 设备像素，然后交给节点自己决定画成什么样。
+float InkingWidget::BeginRenderSlots(SDL_Renderer* renderer) const {
+    // 设计坐标 → 设备像素的倍率，由调用方拿去换算坐标。
     // 顺带把渲染器挂到"当前渲染器"上，好让 onRender 不用多接一个参数。
     const float scale = magnify(*this);
     detail::currentRendererSlot() = renderer;
@@ -871,10 +1000,36 @@ void InkingWidget::SubmitToRenderer(SDL_Renderer* renderer, float absX,
         _vertexCache = std::make_unique<detail::VertexCacheSlot>();
     }
     detail::SetCurrentNode(_vertexCache.get());
-    onRender(absX * scale, absY * scale);
+    return scale;
+}
+
+void InkingWidget::EndRenderSlots() const {
     detail::SetCurrentNode(nullptr);
     detail::currentAncestorAffineSlot() = Affine{};
     detail::currentRendererSlot() = nullptr;
+}
+
+void InkingWidget::SubmitToRenderer(SDL_Renderer* renderer, float absX,
+                                    float absY) const {
+    if (renderer == nullptr) {
+        return;
+    }
+
+    // 设计坐标 → 设备像素，然后交给节点自己决定画成什么样。
+    const float scale = BeginRenderSlots(renderer);
+    onRender(absX * scale, absY * scale);
+    EndRenderSlots();
+}
+
+void InkingWidget::SubmitDecorationToRenderer(SDL_Renderer* renderer,
+                                              float absX, float absY) const {
+    if (renderer == nullptr) {
+        return;
+    }
+    // 与 SubmitToRenderer 同一份槽位（T-07），只有钩子不同。
+    const float scale = BeginRenderSlots(renderer);
+    onRenderDecoration(absX * scale, absY * scale);
+    EndRenderSlots();
 }
 
 // ---------------------------------------------------------------------------

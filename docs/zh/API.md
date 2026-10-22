@@ -171,6 +171,17 @@ int main() {
 | [api/InkingPrefab.md](api/InkingPrefab.md) | `prefab/*` |
 | [api/InkingCxxcss.md](api/InkingCxxcss.md) | **没有头文件**：`CXXCSS/*.json` 编译期生成的那些组件类（`inking::cxxcss::OptionItem` 之类）、`RegisterAllButtons()`、语言表安装、`inkgen` 命令行 |
 
+> **观测口（"它到底跑了几次 / 缓存生效了没"）**：`GetDrawItemCount()` /
+> `GetHitTableEntryCount()` / `GetRepaintingNodeCount()` / `GetPaintCount()` /
+> `GetReplayCount()` / `BatchStats*` 这一族的**口径与读法**在
+> [UsageReport.md §3「观测口与读数口径」](UsageReport.md)。三条最容易踩的：累计值必须
+> 取前后差、绘制列表条目数**含隐藏节点**、命中表条目数**不含容器子孙**。
+>
+> **布局重排的契约**（哪些 setter 会自动重排、哪些不会）在
+> [api/InkingWidget.md「Relayout / RelayoutParent」](api/InkingWidget.md)——一句话版：
+> **框架不做隐式重排**，内容变了由组件自己喊；`InkingStaticLabel::SetText` 是唯一
+> 自动喊的那一处（它一变就影响兄弟让位）。
+
 ### 3.6 运行支撑
 
 | 页面 | 覆盖的头文件 |

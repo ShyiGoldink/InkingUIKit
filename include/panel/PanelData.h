@@ -17,10 +17,12 @@
 
 #include <dataStruct/InkingAnchorData.h>
 #include <dataStruct/InkingColor.h>
+#include <dataStruct/InkingDecoration.h>
 #include <dataStruct/InkingEasing.h>
 #include <dataStruct/InkingScroll.h>
 #include <dataStruct/InkingShapeSpec.h>
 #include <dataStruct/InkingTransform.h>
+#include <detail/InkLog.h>
 
 #include <cstdint>
 #include <string>
@@ -68,6 +70,20 @@ struct PanelAppearance {
      * 面板里的子节点不用各自知道自己在动。
      */
     TransformSpec transform{};
+
+    /**
+     * 描边与阴影（0.2.0 T-07）：**放在状态里、跟着开合过渡插值**——抽屉拉出时
+     * 描边 / 阴影一起动（它们画的每一笔都用当前插值出来的显示变换）。
+     *
+     * 层次（这是 T-07 的核心决策，别改回"容器自绘一笔"）：
+     *   - **阴影**画在填充**之下**（它就是"形状之下的偏移副本"），与填充同一趟；
+     *   - **描边**画在**子孙之上**（装饰遍，`onRenderDecoration`）——跟着填充走
+     *     会被子节点盖住，加完等于没加。
+     * 两者都**不参与命中**（`InkingDecoration.h` 的规矩），也都**不走主题
+     * token**（颜色是字面量；语义色先只在 `color` 上做）。
+     */
+    StrokeSpec stroke{};
+    ShadowSpec shadow{};
 
     PanelAppearance() = default;
     PanelAppearance(std::uint32_t argb, float seconds, Easing curve,
@@ -160,18 +176,35 @@ struct PanelData {
             // token 也要跟着走：只抄颜色的话，换主题时"开着的面板"还用旧色
             // ——而且不报错，只是那一块颜色不跟着变。
             open.themeColor = closed.themeColor;
+            // 描边 / 阴影同样继承（T-07）：省略 open 的面板不该"关上时有描边、
+            // 拉开就没了"。过渡与变换仍然**不继承**（见上面那段理由）。
+            open.stroke = closed.stroke;
+            open.shadow = closed.shadow;
         }
         // 两个状态都是纯透明的话，这个面板在任何情况下都看不见——那多半是配置
-        // 写漏了（例如颜色串写成了 "0|0|0"）。给个不透明的黑兜底，至少看得见。
+        // 写漏了（例如颜色串写成了 "0|0|0"）。给个不透明的**品红**兜底，至少看得见。
         // 与 `ButtonData::Normalize` 同一条规矩（`AGENTS.md` §6 第 52 条：
         // 真想做全透明热区就别用组件，或者给一个极小但非 0 的 alpha）。
-        if (ColorAlpha(closed.color) == 0u && ColorAlpha(open.color) == 0u) {
-            closed.color = 0xFF000000u;
-            open.color = 0xFF000000u;
+        //
+        // 0.1.1 T-03 改了两处：颜色 0xFF000000 → 0xFFFF00FF，以及**补一条 WARN**。
+        // 理由与按钮那一处相同（深色界面上纯黑和正常底色无法区分 ⇒ 兜底等于没兜），
+        // 而两条规矩必须一致：否则同一个错误在按钮上是黑、在面板上是品红，更难看懂。
+        //
+        // 0.2.0 T-07 加了一条豁免：**有可见描边或阴影的面板不兜底**——"透明底 +
+        // 一圈描边"是正当配置（空心卡片），兜底成品红反而把它毁了。
+        if (ColorAlpha(closed.color) == 0u && ColorAlpha(open.color) == 0u
+            && !closed.stroke.Visible() && !open.stroke.Visible()
+            && !closed.shadow.Visible() && !open.shadow.Visible()) {
+            closed.color = 0xFFFF00FFu;
+            open.color = 0xFFFF00FFu;
             // 兜底色不再是语义色了：token 必须清掉，否则换主题时它又会把
-            // 这个兜底黑盖回去（"配了个透明面板，换肤后突然不透明了"）。
+            // 这个兜底色盖回去（"配了个透明面板，换肤后突然不透明了"）。
             closed.themeColor = nullptr;
             open.themeColor = nullptr;
+            INK_LOG_WARN(kPanelModuleName,
+                         "两态颜色全透明（alpha 都是 0），已兜底成品红：" + name
+                             + "。真要一个看不见的容器请给一个极小非零 alpha"
+                               "（1/255），别用 0");
         }
     }
 };

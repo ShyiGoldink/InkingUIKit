@@ -333,6 +333,7 @@ SDF 参考实现，抗锯齿也就是标准写法 `smoothstep(-aa, aa, d)`。
         "fontSize": 24,              // 字号（设计坐标；默认 16）
         "lineSpacing": 1.2,          // 行距**倍数**（1.0 = 行与行紧贴；默认 1.25）
         "path": "",                  // 字体绝对路径；空 = 机器默认字体（CJK 优先）
+                                     // **也可以写成数组**：["首选.ttc", "备选.ttf"] = 回退链
         "align": "center",           // 行内水平：left（默认）/ center / right
         "alignV": "middle",          // 整块垂直：top（默认）/ middle / bottom
         "padding": 8,                // 文字与文本框四边的留白（数字或四边对象）
@@ -353,14 +354,54 @@ SDF 参考实现，抗锯齿也就是标准写法 `smoothstep(-aa, aa, d)`。
 
 - **没有 `shape`**：标签只画文字、不画底（写 `shape` / `stroke` / `shadow` 会报"不认识"
   ——与其收下之后不生效，不如当场说清）。要"带底的文字"，把标签放进面板或者按钮里；
-- **`height` 省略就是"按内容撑高"**：容器里两个不同长度的标签会被自动推开（`MeasureLayout`
-  报的是排版算出来的高度，见 §3.7）；写了 `height` 则它是"还没有内容时"的兜底。
+- **`height` 省略（或写 `0`）到底谁撑高，分两种情形**（`0.1.1` 改了这条口径：
+  以前无条件写"按内容撑高"，而在没有布局的容器里其实一直是 0 高、一个像素不画）：
+  1. 父容器**声明了 `layout`**：由布局按 `MeasureLayout` 报的高度给（§3.7），
+     同一容器里两个不同长度的标签会被自动推开；
+  2. 父容器**没有 `layout`**（手搭界面常见的形态）：组件**自己量一次**，
+     只补"没配置的那一维" —— 所以省略 `height` 一样能撑开；而**写了 `height` 就是
+     那个值**，不会被测量值覆盖（自测量只补零的那一维，否则 `width: 200` 会被
+     内容的 76 压掉，右对齐文字与背景立刻错位）。
+  两条都要求**这一维是 0 / 省略**；显式写的尺寸永远优先。
   **写 `0` 与省略完全等价**（生成器两个都收，产物里都不出现这一行）——这条以前只认"省略"、
   照文档写 `0` 会被判"必须大于 0"，2026-10-18 修掉了；
 - **`wrap` 与 `overflow` 是两件事**：前者决定"要不要换行"，后者决定"放不下时怎么办"；
   最常见的组合是 `noWrap` + `ellipsis`（单行超长截断）；
 - **默认不吃点击**（标签常压在按钮 / 图片上，吃掉点击就变成"看得见、点不动"）；
 - 占位符**查不到时原样显示**：没进语言表的字面量照样能用，不会变成空白。
+
+#### 字体回退链（`text.path` 写成数组，0.3.0 T-13）
+
+`text.path`（标签与按钮**同一个字段**）除了字符串，也认**字符串数组**：
+
+```jsonc
+"text": {
+    "content": "标题",
+    "path": ["C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/simhei.ttf"]
+}
+```
+
+含义是"**首选那份不在，就用下一份**"，按顺序试，先能打开的胜出。第一个元素
+进主字段（`LabelData::style.fontPath` / `ButtonTextData::path`），其余进链尾
+（`fontPaths` / `paths`），所以"首选"仍然只有一个字段。
+
+三条边界（都是**故意**的，不是没做完）：
+
+1. **文件级，不是字形级**：整块文字只会用**一个**字体文件。想让"中文用雅黑、
+   数字用等宽"同屏混排，这一版**做不到**——SDL_ttf 只有 `TTF_OpenFont(path)`，
+   没有"按族名 / 覆盖范围选字体"的入口。链解决的是"文件不一定在哪台机器上"，
+   不是"一段文字里混几种字体"；
+2. **链上前面没命中、后面命中了 ⇒ 不报警**：那正是回退链的用途。所以缺一份
+   备选字体不会刷 WARN；
+3. **整条链都打不开 ⇒ 占位方块 + 一条汇总 WARN，不静默换成机器默认字体**：
+   换一份字体是"看起来正常、其实不是你要的字体"，比方块难发现得多；写日志时
+   会把链上**每一条路径**都列出来，便于定位是哪一份没带。
+
+缓存键用的是**实际命中的那一条**（不是这份数组）：改链顺序会换字体，而
+"键里放配置数组"会让旧字形从图集里被复用——画面不动、日志无声。
+
+> 另：**空串 / 空数组**都表示"没写字体"（用机器默认，候选表 CJK 优先）；
+> 数组里夹空串会**报错**（"退到一半改用默认字体"不是回退，是两套语义叠在一起）。
 
 #### 语言表：`CXXCSS/Text/<名字>.json`
 
@@ -389,6 +430,58 @@ SDF 参考实现，抗锯齿也就是标准写法 `smoothstep(-aa, aa, d)`。
 
 参考配置：四个标签 `Label/menuTitle.json` / `hintBody.json` / `ellipsisNote.json` /
 `langBadge.json`，语言表 `Text/ui.json`，承载容器 `Panel/labelBoard.json`（`examples/panel_demo`）。
+
+---
+
+### 3.8.1 输入框配方（面板 + 输入框，两层）
+
+**输入框本身不画底、也不画笔**：`InkingTextInput` 继承 `InkingStaticLabel`，而标签
+只画文字（见 §3.8 第一条）。所以"看起来像个输入框"的正确做法是**两层**：
+**面板当底，输入框当文字**。这不是缺陷，是分层——底与字各有自己的配置与状态。
+
+```jsonc
+// CXXCSS/Panel/inputBox.json —— 底：圆角、浅色、裁剪
+{
+    "name": "inputBox",
+    "width": 320, "height": 44,
+    "closed": { "type": "color", "source": "$panelSurfaceAlt" },
+    "clipChildren": true,
+    "shape": { "type": "roundedRect", "radius": 10 },
+    "layout": { "kind": "stack", "axis": "horizontal", "gap": 0,
+                "padding": 10, "justify": "start", "align": "center" }
+}
+```
+
+```cpp
+// 底（配置驱动）：生成的类把 PanelData 烘在类里，构造即用
+auto* box = scene.AddChild(
+    std::make_unique<ink::cxxcss::InputBox>(&scene));
+// 字（数据驱动）：输入框自己吃点击、自己拿键盘焦点，不需要额外开关
+inking::TextInputData text;
+text.name   = "nameInput";
+text.text   = "";                // 初始内容（占位符也行，见 §3.8）
+text.style.fontSize = 16.0f;
+text.style.color    = 0xFFEAF2FFu;   // 与底的明度差要够，否则"看不见字"
+auto* input = static_cast<inking::InkingTextInput*>(
+    box->AddChild(std::make_unique<inking::InkingTextInput>(box, text)));
+input->submitted += [](const std::string& value) { /* Enter 提交 */ };
+```
+
+四条要知道的：
+
+- **别只放输入框**：没有底面板时它只有文字，界面上看就像一行裸字；
+- **`clipChildren: true` 不是可选项**：单行输入框内容会横向超出本体，正是靠裁剪
+  才"停在框里"（不裁剪就会画到框外，看着像渲染错位）；
+- **文本超宽会自动横向滚动**（0.2.0 T-12）：光标越界时整段文字左移，光标始终留在
+  本体里（`GetScrollX()` 是观测口）；滚动之后点击定位仍按**屏幕上的位置**算——
+  `BoxForOffset` 减多少、`OffsetAtPoint` 就加回多少。滚出去的那部分靠上一条
+  `clipChildren` 才看不见，所以这两条要一起用；
+- **面板的 `layout` 让输入框吃到宽度**：不给布局也行（那时输入框按内容自测量宽度），
+  但"框宽 320、字从 10px 起排"这种效果只有布局能表达；
+- **焦点是点出来的**：`WantsKeyboardFocus()` 已经声明为真，点一下即获焦点；
+  想"进场景就聚焦"要业务侧调 `SetFocused(true)`。
+
+参考配置：`Panel/inputBox.json`（本节的底）。
 
 ---
 
@@ -743,10 +836,37 @@ window 里的字段 "title" 不认识（…… **没有回读口的设置不收*
 
 **它不是"另一个组件"，是同一个组件的另一档**：颜色、形状、文字、点击回调的用法完全一样，
 差别只在"几何能不能在运行期改"和"输入从哪来"。所以两块按钮要各自一份 json（名字也必须各自
-唯一，见 §1）——要消掉重复得另加机制（例如 json 之间的 `extends`），**未决定**。`dynamic`
+唯一，见 §1）——要消掉重复的公共字段用 §4.6 的 `$extends`。`dynamic`
 是**生成期**开关，不进运行期数据结构（`ButtonData` 里没有这个字段）：类型本身已经说明它属于
 哪一档。参考配置：静态档 `examples/game/buttons/menuOne.json`、动态档
 `examples/galgame/buttons/CastLuolisi.json`。
+
+#### 两档的差异表（0.2.0 T-11）
+
+业务代码只跟这两个接口打交道时，**两档是一样的**：
+
+```cpp
+button->clicked.Subscribe([] { ... });            // 点击
+button->stateChanged.Subscribe([](inking::ButtonState from, inking::ButtonState to) { ... });
+```
+
+`stateChanged` 报的是**目标状态**（`Normal` / `Hover` / `Pressed`）的变化，静态 / 动态共用
+同一个槽——所以"鼠标进出了"这类业务不用再派生类去重写 protected 虚钩子。
+
+剩下这五点确实不同，但**都不是回调语义**，而是采样与命中的机制：
+
+| 维度 | 静态档 | 动态档 | 影响 |
+| --- | --- | --- | --- |
+| **采样时机** | 由**渲染帧**派发（场景在指针事件后推 `MouseHover` / `MousePress`） | 固定 **50Hz 逻辑步**里自己 `JudgePointer` 拉（`Timeline.h` 的逻辑步长） | 快速划过时，"状态什么时候更新"最多差一个逻辑步——这不是 bug |
+| 命中 | 进场景的命中表，跨组件遮挡由表 + `IsAbove` 仲裁 | 不进表，自己算；遮挡由"谁在 Tick 里先被问"决定 | 动态档被别的组件盖住时仍可能收到悬停 |
+| 遮挡仲裁 | 与层级同源（表 + 局部层级） | 不做跨组件仲裁 | 需要严格遮挡就把它做成静态档 |
+| 几何写入口 | 没有（类型上就调不到） | `Resize` / `ChangeSelfAnchor` / `ChangeTraceAnchor` / `ChangeOffset` | 只有动态档能"边跑边改" |
+| 三态过渡 | 每渲染帧推进（真实 delta） | 每逻辑步推进（固定步长） | 同一份 `transition.duration` 在两档上"走完的墙钟时间"略有差别 |
+
+**一条使用约束**：`clicked` / `stateChanged` 都是**同步**触发的（在 `MouseHover` /
+`MousePress` / `JudgePointer` 里当场 Emit）。**不要在回调里改同一个按钮的状态**
+（`SetOpen` 那种容器写入口同理）——那会递归进入状态机；要改就排到下一帧（例如置一个
+flag，在场景的 `Tick` 里处理）。
 
 ---
 
@@ -766,12 +886,14 @@ window 里的字段 "title" 不认识（…… **没有回读口的设置不收*
         "type": "color",
         "source": "0.106|0.141|0.188|1",
         "transition": { "duration": 0.32, "easing": "easeInOut" },  // 进这个状态用多久
-        "transform": { "translateX": -420 }                          // 常见写法：整块挪出去
+        "transform": { "translateX": -420 },                          // 常见写法：整块挪出去
+        "stroke": { "width": 1, "color": "1|1|1|0.12" }               // 可选：发丝描边
     },
-    "open": {                  // 开着时的外观（省略 = 颜色继承 closed）
+    "open": {                  // 开着时的外观（省略 = 颜色 / 描边 / 阴影继承 closed）
         "type": "color",
         "source": "0.141|0.188|0.25|1",
-        "transition": { "duration": 0.18, "easing": "easeOut" }
+        "transition": { "duration": 0.18, "easing": "easeOut" },
+        "shadow": { "offsetX": 0, "offsetY": 6, "color": "0|0|0|0.35" }
     },
     "startOpen": false,        // 构造时就是开着的吗；省略 = false
     "clipChildren": true,      // 剪掉子孙超出本体的部分（A5）；省略 = false
@@ -786,10 +908,17 @@ window 里的字段 "title" 不认识（…… **没有回读口的设置不收*
 
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
-| `closed` / `open` | `closed` 必填 | 两个**具名状态**的外观。`open` 省略时**颜色**继承 `closed`（`openInheritsClosed`），但**过渡与变换不继承**——`open` 的 `transform` 就是"开到位的目标"，继承关着那份等于没开 |
+| `closed` / `open` | `closed` 必填 | 两个**具名状态**的外观。`open` 省略时**颜色、描边、阴影**继承 `closed`（`openInheritsClosed`），但**过渡与变换不继承**——`open` 的 `transform` 就是"开到位的目标"，继承关着那份等于没开 |
+| `stroke` / `shadow`（状态内） | 否 | 与按钮**同名同义**的两笔装饰（写法见 §3.5）：宽度 / 偏移是设计坐标，颜色是 `"r\|g\|b\|a"`。两者**跟着开合过渡一起插值**（抽屉拉出时描边一起动），都**不参与命中**、也不走主题 token。差别只有层次：**描边画在子孙之上**（装饰遍，不会被内容盖住），**阴影画在填充之下**（它是形状的偏移副本） |
 | `startOpen` | 否 | 构造时就是开着的吗，默认 `false`。放进配置而不是"构造完再调一次 `SetOpen`"，是为了不让初始状态先起一段过渡再被打断 |
 | `clipChildren` | 否 | **剪掉子孙超出本体的部分**（A5），默认 `false`。裁剪区就是本体矩形、只剪子孙（面板自己那一笔不受影响），而且**画出来被剪、点起来也被剪**（两边同源）。默认不剪是因为面板也常装故意溢出的东西（阴影 / tooltip）。参考 `Panel/clipWindow.json` |
 | `type` | 是（每个状态里） | 现在**只支持 `color`**。写 `img` / `svg` 会明确报"面板还不支持"——面板不贴图、不开洞，它是容器 |
+
+**描边的层次（0.2.0 T-07）**：容器的自绘整体在子孙**之下**，所以描边若跟着填充画，会被子节点
+盖住——加完等于没加。因此描边走**装饰遍**（`InkingWidget::onRenderDecoration`）：场景在"本节点
+整棵子树画完、上层兄弟还未画"的时机落这一笔，于是它**压得住自己的子孙、又不会越界压到层级更高
+的兄弟**。阴影不走装饰遍（它是"形状之下的偏移副本"，跟着描边画反而会盖住自己的内容），仍在填充
+之前。装饰笔**不是节点**：绘制列表条目数、命中表条目数都不变。
 
 **面板没有** `hover` / `onclicked`（那是指针三态）、`text`、`img` / `svg`（外观类型）、
 `dynamic`（只有静态档：开合只改变换，几何构造即定型）。**名字的限制更严**：面板的 `name`
@@ -846,6 +975,42 @@ drawer.Toggle();                           // 或 Open() / Close() / SetOpen(boo
 
 参考配置 `Panel/scrollPanel.json`；运行期接口、四条约定与自检见 `docs/UsageReport.md` §6.21。
 
+### 4.6 `$extends`：单层浅合并（0.2.0 T-10）
+
+组件多了之后，"十个面板抄同一份公共字段"会变成维护负担。写 `$extends` 就能把公共那几项
+收进一份父配置：
+
+```jsonc
+// CXXCSS/Panel/basePanel.json —— 公共字段写一份
+{
+    "name": "basePanel",
+    "width": 300, "height": 200,
+    "closed": { "type": "color", "source": "0.1|0.1|0.2|1" },
+    "shape": { "type": "roundedRect", "radius": 12 },
+    "zIndex": 3
+}
+
+// CXXCSS/Panel/settingsPanel.json —— 只写不一样的那几项
+{
+    "$extends": "Panel/basePanel",   // 相对 CXXCSS 根、**不带 .json**
+    "name": "settingsPanel",         // 必须写：name 要等于文件名
+    "closed": { "type": "color", "source": "0.2|0.25|0.3|1" }
+}
+```
+
+四条规矩：
+
+| 规矩 | 说明 |
+| --- | --- |
+| **只一层** | 父文件自己再写 `$extends` 直接报错（链式继承要环检测、行号归属与白名单二次校验，收益不成比例） |
+| **只合并顶层键** | 不做深合并：子文件的 `closed` **整段**替换父文件的 `closed`，不是逐字段合并。想只改一个字段就把整段写全 |
+| **先合并、再校验** | 父文件里写错的字段照样报错，而且**指到父文件的文件与行**（不是子文件） |
+| **`name` 要自己写** | 合并会连父文件的 `name` 一起带过来，而 `name` 必须等于文件名——所以子文件不写 `name` 几乎总是错的 |
+
+生成物的注释里会标一句 `$extends 继承自 Panel/basePanel.json`：合并之后"这份产物对应哪两个
+json"不再一眼可见，排查时看注释就知道该动父文件还是子文件。`$extends` 与 `$comment` 一样是
+**生成器指令**，不进运行期数据结构，也不出现在 §9 的字段总表里。
+
 ---
 
 ## 5. 文字（text）
@@ -860,6 +1025,7 @@ drawer.Toggle();                           // 或 Open() / Close() / SetOpen(boo
     "align": "center",    // 可选：left（默认）/ center / right —— 文字块的水平摆法
     "alignV": "middle",   // 可选：top（默认）/ middle / bottom —— 垂直摆法
     "path": "",           // 字体绝对路径；空则用机器默认字体
+                          // **也可以写成数组**：["首选.ttc", "备选.ttf"] = 回退链
     "content": { "normal": "确定", "hover": "确定", "onClicked": "确定" }
 }
 ```
@@ -877,7 +1043,8 @@ drawer.Toggle();                           // 或 Open() / Close() / SetOpen(boo
 > 但**故意不写 content**。
 
 `path` 为空时用机器的默认字体（按候选表找 CJK 优先）；**依赖机器字体意味着跨机器不一致**，
-交付版本应显式指定字体路径。文字走纹理层
+交付版本应显式指定字体路径。写成数组就是**回退链**（首个优先，逐个试到能打开为止）——
+规则、边界与缓存键在 §3.8 的「字体回退链」一节，按钮与标签共用同一套。文字走纹理层
 （[`include/render/InkingText.h`](../include/render/InkingText.h)）：按（文本 + 字号 +
 字体）栅格化并缓存，颜色走**调制**（换色不重烘），旋转 / 缩放 / 平移跟形状同一套；没接
 `SDL3_ttf`、或机器上一份字体都没有时退化成"占位方块"（老画法），不是不画。**按钮上的文字
@@ -976,3 +1143,177 @@ ink::InkingWindow::Instance().Show();
 > **给字段定稿的人一句提醒**：第 5 节的 `text` 字段是从原示例注释**推断**的，没有示例文件
 > 可对照。它现在已经在 `ButtonData` 与生成器里各固化了一次（`fontSize` / `leftSpace` /
 > `topSpace` / `path` / `content`）——要改名或改结构，现在改代价最小。
+
+
+---
+
+## 9. 字段总表（`inkgen --dump-fields`）
+
+**这一节是生成的，不要手改。** 表、生成器的报错文案（"已知字段：……"）、以及文档
+三者同源（`tools/inkgen/Fields.h` 的数组）：
+
+- `inkgen --dump-fields` 打印的就是下表；
+- ctest `field_table_in_sync` 逐字比对文档与 dump——**新增字段忘记同步文档 = 测试红**；
+  修法是重跑 dump 把输出贴回下面两个锚点之间。
+
+为什么分三层：存在**同名不同义**的字段。Button 的 `text` 与 Label 的 `text` 是两套
+排版（前者是 `leftSpace` / `topSpace`，后者是整块 `align` / `wrap` / `overflow`）；
+`shape` 段在一部分组件里共用，而 Label 根本没有。两层表（字段 → 说明）表达不了
+这件事，所以"段"必须单独一层。
+
+<!-- BEGIN FIELD TABLE -->
+| 组件 | 段 | 字段 | 说明 |
+| --- | --- | --- | --- |
+| Button | （顶层） | `$comment` | 组件级：三态外观、文字段、锚点、布局、装饰 |
+| Button | （顶层） | `name` |  |
+| Button | （顶层） | `width` |  |
+| Button | （顶层） | `height` |  |
+| Button | （顶层） | `normal` |  |
+| Button | （顶层） | `hover` |  |
+| Button | （顶层） | `onclicked` |  |
+| Button | （顶层） | `text` |  |
+| Button | （顶层） | `selfAnchorX` |  |
+| Button | （顶层） | `selfAnchorY` |  |
+| Button | （顶层） | `traceAnchorX` |  |
+| Button | （顶层） | `traceAnchorY` |  |
+| Button | （顶层） | `offsetX` |  |
+| Button | （顶层） | `offsetY` |  |
+| Button | （顶层） | `zIndex` |  |
+| Button | （顶层） | `visible` |  |
+| Button | （顶层） | `shape` |  |
+| Button | （顶层） | `dynamic` |  |
+| Button | （顶层） | `stroke` |  |
+| Button | （顶层） | `shadow` |  |
+| Button | （顶层） | `layout` |  |
+| Button | （顶层） | `layoutItem` |  |
+| Button | normal / hover / onclicked | `type` | 三态外观；逐态还能改尺寸（width / height，T-5 的布局通道） |
+| Button | normal / hover / onclicked | `source` |  |
+| Button | normal / hover / onclicked | `transition` |  |
+| Button | normal / hover / onclicked | `transform` |  |
+| Button | normal / hover / onclicked | `width` |  |
+| Button | normal / hover / onclicked | `height` |  |
+| Button | normal / hover / onclicked | `fit` |  |
+| Button | text | `fontSize` | 按钮上的文字段：位置靠 leftSpace / topSpace（不是 Label 的 align） |
+| Button | text | `leftSpace` |  |
+| Button | text | `topSpace` |  |
+| Button | text | `path` |  |
+| Button | text | `content` |  |
+| Button | text | `align` |  |
+| Button | text | `alignV` |  |
+| Panel | （顶层） | `$comment` | 容器级：两态外观 + 开合 / 裁剪 / 滚动 |
+| Panel | （顶层） | `name` |  |
+| Panel | （顶层） | `width` |  |
+| Panel | （顶层） | `height` |  |
+| Panel | （顶层） | `closed` |  |
+| Panel | （顶层） | `open` |  |
+| Panel | （顶层） | `startOpen` |  |
+| Panel | （顶层） | `clipChildren` |  |
+| Panel | （顶层） | `scroll` |  |
+| Panel | （顶层） | `selfAnchorX` |  |
+| Panel | （顶层） | `selfAnchorY` |  |
+| Panel | （顶层） | `traceAnchorX` |  |
+| Panel | （顶层） | `traceAnchorY` |  |
+| Panel | （顶层） | `offsetX` |  |
+| Panel | （顶层） | `offsetY` |  |
+| Panel | （顶层） | `zIndex` |  |
+| Panel | （顶层） | `visible` |  |
+| Panel | （顶层） | `shape` |  |
+| Panel | （顶层） | `layout` |  |
+| Panel | （顶层） | `layoutItem` |  |
+| Panel | closed / open | `type` | 两态外观；open 省略时颜色 / 描边 / 阴影继承 closed（过渡与变换不继承） |
+| Panel | closed / open | `source` |  |
+| Panel | closed / open | `transition` |  |
+| Panel | closed / open | `transform` |  |
+| Panel | closed / open | `stroke` |  |
+| Panel | closed / open | `shadow` |  |
+| Label | （顶层） | `$comment` | 标签没有 shape / stroke / shadow：它只画文字、不画底 |
+| Label | （顶层） | `name` |  |
+| Label | （顶层） | `width` |  |
+| Label | （顶层） | `height` |  |
+| Label | （顶层） | `text` |  |
+| Label | （顶层） | `selfAnchorX` |  |
+| Label | （顶层） | `selfAnchorY` |  |
+| Label | （顶层） | `traceAnchorX` |  |
+| Label | （顶层） | `traceAnchorY` |  |
+| Label | （顶层） | `offsetX` |  |
+| Label | （顶层） | `offsetY` |  |
+| Label | （顶层） | `zIndex` |  |
+| Label | （顶层） | `visible` |  |
+| Label | （顶层） | `layout` |  |
+| Label | （顶层） | `layoutItem` |  |
+| Label | text | `content` | 标签的文字段：整块排版（换行 / 省略 / 行距），与 Button 的 text 同名不同义 |
+| Label | text | `fontSize` |  |
+| Label | text | `lineSpacing` |  |
+| Label | text | `path` |  |
+| Label | text | `align` |  |
+| Label | text | `alignV` |  |
+| Label | text | `padding` |  |
+| Label | text | `color` |  |
+| Label | text | `wrap` |  |
+| Label | text | `overflow` |  |
+| Label | text | `maxLines` |  |
+| Image | （顶层） | `$comment` | 静态图片 = 没有 onClicked 的 button：没有三态、没有 dynamic |
+| Image | （顶层） | `name` |  |
+| Image | （顶层） | `width` |  |
+| Image | （顶层） | `height` |  |
+| Image | （顶层） | `normal` |  |
+| Image | （顶层） | `runtime` |  |
+| Image | （顶层） | `shape` |  |
+| Image | （顶层） | `stroke` |  |
+| Image | （顶层） | `shadow` |  |
+| Image | （顶层） | `selfAnchorX` |  |
+| Image | （顶层） | `selfAnchorY` |  |
+| Image | （顶层） | `traceAnchorX` |  |
+| Image | （顶层） | `traceAnchorY` |  |
+| Image | （顶层） | `offsetX` |  |
+| Image | （顶层） | `offsetY` |  |
+| Image | （顶层） | `layoutItem` |  |
+| Image | （顶层） | `zIndex` |  |
+| Image | （顶层） | `visible` |  |
+| Image | normal | `type` | 图片外观只认 color / img；过渡、逐态尺寸、svg 都是按钮的东西 |
+| Image | normal | `source` |  |
+| Image | normal | `fit` |  |
+| Text | （顶层） | `$comment` | 语言表（不是组件）：占位符 → 各语言的串，只允许一份 |
+| Text | （顶层） | `name` |  |
+| Text | （顶层） | `languages` |  |
+| Text | （顶层） | `default` |  |
+| Text | （顶层） | `entries` |  |
+| Theme | （顶层） | `$comment` | 主题表：生成器的输入，$token 在生成期换成字面量 |
+| Theme | （顶层） | `name` |  |
+| Theme | （顶层） | `colors` |  |
+| Theme | （顶层） | `fontSizes` |  |
+| Theme | （顶层） | `default` |  |
+| Config | （顶层） | `$comment` | 全局配置：设计画布 + 窗口启动设置（只允许一份） |
+| Config | （顶层） | `name` |  |
+| Config | （顶层） | `design` |  |
+| Config | （顶层） | `window` |  |
+| Config | design | `$comment` | 设计画布尺寸（必填） |
+| Config | design | `width` |  |
+| Config | design | `height` |  |
+| Config | window | `$comment` | 窗口启动设置；每项都对应一对有 getter 的 setter |
+| Config | window | `borderless` |  |
+| Config | window | `roundedCorners` |  |
+| Config | window | `background` |  |
+| Config | window | `fullscreen` |  |
+| Config | window | `startScene` |  |
+| （所有组件） | shape | `type` | 形状参数（几何）；描边 / 阴影与它平级，别塞进来 |
+| （所有组件） | shape | `radius` |  |
+| （所有组件） | shape | `thickness` |  |
+| （所有组件） | shape | `cap` |  |
+| （所有组件） | shape | `sides` |  |
+| （所有组件） | shape | `rotation` |  |
+| （所有组件） | shape | `chamfer` |  |
+| （所有组件） | shape | `points` |  |
+| （所有组件） | shape | `innerRatio` |  |
+| （所有组件） | shape | `exponent` |  |
+| （所有组件） | shape | `startAngle` |  |
+| （所有组件） | shape | `sweepAngle` |  |
+| （所有组件） | shape | `vertices` |  |
+| （所有组件） | transition | `duration` | 过渡：进这个状态用多久（时长 + 缓动曲线） |
+| （所有组件） | transition | `easing` |  |
+| （所有组件） | stroke | `width` | 描边：宽度一半在外一半在内；面板的描边画在子孙之上 |
+| （所有组件） | stroke | `color` |  |
+| （所有组件） | shadow | `offsetX` | 阴影：形状的偏移实心副本（无模糊，所以不认 blur） |
+| （所有组件） | shadow | `offsetY` |  |
+| （所有组件） | shadow | `color` |  |
+<!-- END FIELD TABLE -->

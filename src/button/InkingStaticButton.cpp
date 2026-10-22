@@ -68,12 +68,9 @@ int InkingStaticButton::UnknownNameCount() noexcept {
 
 void InkingStaticButton::finishConstruction(bool /*foundInLibrary*/) {
     // 尺寸为 0 的按钮画不出来也点不到，这几乎总是配置漏了 width/height。
-    if (_data.width <= 0 || _data.height <= 0) {
-        INK_LOG_WARN(std::string(kButtonModuleName),
-                     "按钮尺寸非法（宽 " + std::to_string(_data.width)
-                         + " × 高 " + std::to_string(_data.height)
-                         + "），名字：" + _data.name);
-    }
+    // 文案与判据从 `0.1.1` 起统一到 Widget 层的 `WarnIfZeroSize`（T-02）：
+    // 以前每个组件各写一句，措辞不同、漏接一处也没人发现（标签就漏了）。
+    WarnIfZeroSize(kButtonModuleName);
 }
 
 void InkingStaticButton::applyData(const ButtonData& data) {

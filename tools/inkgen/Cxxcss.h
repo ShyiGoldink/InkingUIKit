@@ -110,6 +110,10 @@ struct ButtonConfig {
     bool dynamic = false;
     inking::ButtonData data{};        ///< 运行期那份配置
 
+    /// `$extends` 的来源（相对 CXXCSS 根、不带 .json；空 = 没继承）。只用于
+    /// 生成物注释——合并发生在读配置那一层，运行期数据结构里没有这项。
+    std::string extendsFrom;
+
     /**
      * `img` 外观的**图像字节**（T-4）：生成器在生成期把文件读进来，`Emit` 会把它
      * 烘成生成代码里的静态数组。下标 0 / 1 / 2 = normal / hover / onclicked，
@@ -145,6 +149,10 @@ struct PanelConfig {
     std::string name;
     std::string identifier;   ///< 生成类名（`drawerPanel` → `DrawerPanel`）
     inking::PanelData data{};
+
+    /// `$extends` 的来源（相对 CXXCSS 根、不带 .json；空 = 没继承）。只用于
+    /// 生成物注释——合并发生在读配置那一层，运行期数据结构里没有这项。
+    std::string extendsFrom;
     std::vector<std::string> warnings;
 };
 
@@ -160,6 +168,10 @@ struct LabelConfig {
     std::string name;
     std::string identifier;   ///< 生成类名（`menuTitle` → `MenuTitle`）
     inking::LabelData data{};
+
+    /// `$extends` 的来源（相对 CXXCSS 根、不带 .json；空 = 没继承）。只用于
+    /// 生成物注释——合并发生在读配置那一层，运行期数据结构里没有这项。
+    std::string extendsFrom;
     std::vector<std::string> warnings;
 };
 
@@ -192,6 +204,10 @@ struct ImageConfig {
      * `AGENTS.md` §6 第 83 条记的那种坑。
      */
     ButtonConfig button;
+
+    /// `$extends` 的来源（相对 CXXCSS 根、不带 .json；空 = 没继承）。只用于
+    /// 生成物注释——合并发生在读配置那一层，运行期数据结构里没有这项。
+    std::string extendsFrom;
 
     /// 配置里的 `runtime`：true = 字节在**运行期**从资源根读（不进 exe）。
     bool runtimeAsset = false;

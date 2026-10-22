@@ -27,11 +27,15 @@
 #include <dataStruct/InkingTextRequest.h>
 #include <dataStruct/InkingTransform.h>
 #include <detail/MessageQueue.h>
+#include <detail/InkLog.h>
 #include <input/KeyboardInput.h>
 #include <input/Shortcut.h>
 #include <input/ShortcutRegistry.h>
 #include <panel/InkingStaticPanel.h>
 #include <panel/PanelData.h>
+#include <text/InkingStaticLabel.h>
+#include <text/InkingTextInput.h>
+#include <text/LabelData.h>
 #include <prefab/MenuBar.h>
 #include <render/InkingBatch.h>
 #include <render/InkingGlyphAtlas.h>
@@ -39,6 +43,7 @@
 #include <render/InkingText.h>
 #include <scene/InkingScene.h>
 #include <scene/SceneLibrary.h>
+#include <theme/InkingTheme.h>
 #include <thread/TaskQueue.h>
 #include <window/InkingWindow.h>
 #include <window/WindowConfig.h>
@@ -51,6 +56,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -541,6 +547,463 @@ std::string FindUsableFont() {
     return {};
 }
 
+// ---------------------------------------------------------------------------
+// 静默失效清单（0.3.0 T-14）
+//
+// **这张表就是清单**：`docs/AGENTS.md` §7 那份必须与它逐条对齐（ctest
+// `silent_failure_list_in_sync` 比对文档与源码）。每条 = 一条"会静默变空白 /
+// 不生效"的路径 + 一个**可断言**的自检名。
+//
+// 为什么要它：0.1.1 / 0.2.0 各自补了一处护栏，但补完不等于结束——没有清单，
+// 下一轮还会从别的地方漏。清单本身就是"哪些地方必须发声"的答案。
+//
+// **加一条的门槛**：写得出一条可复现的触发条件。写不出来的不进清单
+// （否则它会慢慢变成愿望清单，谁也不敢删）。
+// ---------------------------------------------------------------------------
+
+struct SilentFailureItem {
+    const char* id;          ///< 自检名（与 `Check(...)` 的消息前缀一致）
+    const char* task;        ///< 对应任务（追溯用）
+    const char* phenomenon;  ///< 现象：一句话，能照着复现
+};
+
+constexpr SilentFailureItem kSilentFailures[] = {
+    {"label_self_size", "T-01",
+     "内容驱动组件在无布局的容器里尺寸停在 0：不画、也不报"},
+    {"warn_zero_size", "T-02",
+     "任意可绘制组件 0×0：屏幕上一块空白，日志里一个字都没有"},
+    {"panel_transparent_fallback", "T-03",
+     "面板两态全透明：看不见、但点得到（比不画更容易被当成漏配）"},
+    {"font_open_failure", "T-04",
+     "字体打不开：整段文字退化成占位方块，没人知道是字体的问题"},
+    {"theme_token_missing", "既有（0.3.0 补自检）",
+     "主题 token 缺失：颜色静默退回兜底值"},
+    {"scroll_range_stale", "既有（0.3.0 补自检）",
+     "忘了 UpdateScrollRange：滚轮没反应，范围恒为 0"},
+    {"text_negative_width", "既有（0.3.0 补自检）",
+     "文本区宽度为负：排版交出零宽行，最后一个像素都不画"},
+    {"input_caret_clamped", "T-12",
+     "输入框光标越界：画到框外、还跟着滚动量漂"},
+};
+
+/// 自检**真的跑到**的条目（运行时登记）。
+///
+/// "表里有、测试里没有"只能靠这个集合抓住——声明一张表很容易，让每条真的
+/// 跑一遍不容易。删掉某个自检函数（或它的登记）时，元自检会红。
+std::vector<std::string> g_silentChecked;
+
+/// 登记一条"我刚验过"。名字必须与 `kSilentFailures` 里的一致（拼错会被元自检
+/// 抓住：总条数或逐条匹配会对不上）。
+void NoteSilentFailure(const char* id) { g_silentChecked.emplace_back(id); }
+
+// ---------------------------------------------------------------------------
+// 静默失效护栏（0.1.1 T-01 ~ T-05）
+//
+// 这一组验的不是"功能对不对"，而是"出错的时候**发不发声**"。反馈方的 12 条
+// 里真正致命的那几条都是同一类：配置错了 / 内容撑不开 / 字体没找到，界面上
+// 只是少了一块或变成方块，日志里一个字都没有。
+//
+// 断言全部落在**可观测的量**上（尺寸、颜色值、`InkLog::CountOf`），不用"看起来
+// 对"这种判据；每一项都用 `ResetStats()` 把计数归零，于是"恰好 1 条"是能断言的。
+// ---------------------------------------------------------------------------
+
+class ZeroProbe : public inking::InkingStaticWidget {
+public:
+    explicit ZeroProbe(inking::InkingWidget* parent)
+        : inking::InkingStaticWidget(parent, "zero_probe") {}
+
+    /// 把 protected 的护栏与几何暴露出来：这里验的是**机制**本身
+    /// （0×0 报一条、有尺寸不报），不依赖某个具体组件怎么排自己。
+    void Fire() { WarnIfZeroSize("ZeroProbe"); }
+    void SetBox(int width, int height) noexcept {
+        _width = width;
+        _height = height;
+    }
+};
+
+void CheckSilentFailureGuards(SDL_Renderer* renderer, inking::InkingScene* home) {
+    std::printf("\n-- 静默失效护栏（0.1.1）--\n");
+
+    struct GuardScene : inking::InkingScene {
+        explicit GuardScene(const char* name) : inking::InkingScene(name) {}
+    };
+    GuardScene scene("selftest-guard");
+
+    // 面板**故意不声明 layout**：这正是反馈方那种"手搭界面"的形态。
+    inking::PanelData panelData;
+    panelData.name = "guard_panel";
+    panelData.width = 400;
+    panelData.height = 300;
+    auto* panel = static_cast<inking::InkingStaticPanel*>(
+        scene.AddChild(std::make_unique<inking::InkingStaticPanel>(&scene, panelData)));
+
+    // ---- T-01：省略 height + 无布局容器 ⇒ 按内容自测量（不是 0） ----
+    inking::LabelData labelData;
+    labelData.name = "guard_label";
+    labelData.width = 200;  // 显式宽度，height 省略（= 0）
+    labelData.text = "guard label text";
+    labelData.style.fontSize = 16.0f;
+    auto* label = static_cast<inking::InkingStaticLabel*>(
+        panel->AddChild(std::make_unique<inking::InkingStaticLabel>(panel, labelData)));
+
+    Check(label->GetWidth() == 200,
+          "label_self_size：配置的宽度不被测量值覆盖（200 仍是 200）");
+    Check(label->GetHeight() > 0,
+          "label_self_size：无布局容器时按内容撑开（不再是 0 高、不是一像素不画）");
+    {
+        const inking::LayoutSize measured =
+            label->MeasureLayout(inking::LayoutConstraints{0.0f, 0.0f});
+        Check(static_cast<int>(std::lround(measured.height)) == label->GetHeight(),
+              "label_self_size：高度等于 MeasureLayout 报的那一份（两条腿同一个答案）");
+    }
+    NoteSilentFailure("label_self_size");
+
+    // ---- T-01 反例：显式高度优先，绝不按内容覆盖 ----
+    inking::LabelData tallData;
+    tallData.name = "guard_label_tall";
+    tallData.width = 200;
+    tallData.height = 24;  // 文字要三行，24 装不下 —— 那是使用者的选择
+    tallData.text = "line one\nline two\nline three";
+    tallData.style.fontSize = 16.0f;
+    auto* tall = static_cast<inking::InkingStaticLabel*>(
+        panel->AddChild(std::make_unique<inking::InkingStaticLabel>(panel, tallData)));
+    Check(tall->GetHeight() == 24,
+          "label_explicit_height：写了 height: 24 就是 24（自测量只补零的那一维）");
+
+    // ---- T-02：0 尺寸走统一护栏，且只有这一条 ----
+    auto probe = std::make_unique<ZeroProbe>(panel);
+    inking::InkLog::ResetStats();
+    probe->Fire();
+    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+          "warn_zero_size：0×0 产生 1 条 WARN");
+    probe->SetBox(120, 40);
+    inking::InkLog::ResetStats();
+    probe->Fire();
+    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 0,
+          "warn_zero_size：有尺寸时一条都不产生（不是每帧刷）");
+    NoteSilentFailure("warn_zero_size");
+
+    // ---- T-03：两态全透明 ⇒ 品红兜底 + 1 条 WARN ----
+    {
+        inking::PanelData transparent;
+        transparent.name = "guard_transparent";
+        transparent.closed.color = 0x00000000u;
+        transparent.openInheritsClosed = true;  // open 也跟着继承 ⇒ 两态都透明
+        inking::InkLog::ResetStats();
+        transparent.Normalize();
+        Check(transparent.closed.color == 0xFFFF00FFu
+                  && transparent.open.color == 0xFFFF00FFu,
+              "panel_transparent_fallback：兜底成品红（0xFFFF00FF），不再是看不见的黑");
+        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+              "panel_transparent_fallback：兜底同时产生 1 条 WARN");
+
+        // 半透明（alpha = 1）**不该**进兜底：那是"看不见但点得到"的正规做法。
+        inking::PanelData veil;
+        veil.name = "guard_veil";
+        veil.closed.color = 0x01000000u;
+        veil.openInheritsClosed = true;
+        inking::InkLog::ResetStats();
+        veil.Normalize();
+        Check(veil.closed.color == 0x01000000u
+                  && inking::InkLog::CountOf(inking::LogLevel::Warn) == 0,
+              "panel_transparent_fallback：alpha = 1/255 是正规用法，不动、也不报");
+    }
+    NoteSilentFailure("panel_transparent_fallback");
+
+    // ---- T-04：字体打不开要说出来（否则只能看到"字变成了方块"） ----
+    if (renderer != nullptr) {
+        inking::TextRequest request;
+        request.text = "font probe";
+        request.fontSize = 18.0f;
+        request.fontPath = "Z:/definitely/not/a/font.ttf";
+        inking::InkLog::ResetStats();
+        inking::detail::BeginFrame(renderer);
+        inking::detail::PaintText(renderer, request, 400, 100, 1.0f, 0.0f, 0.0f,
+                                  inking::TransformSpec{});
+        inking::detail::EndFrame();
+        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+              "font_open_failure：路径打不开产生 1 条 WARN（带路径、字号、SDL 错误）");
+        Check(!inking::InkLog::grep("not/a/font", "InkingText").empty(),
+              "font_open_failure：日志里能按路径搜到（可归因，不是只说'画不出来'）");
+    }
+    NoteSilentFailure("font_open_failure");
+
+    // ---- T-05：分级计数 + 同级去重 ----
+    inking::InkLog::ResetStats();
+    for (int i = 0; i < 3; ++i) {
+        INK_LOG_INFO("SelftestLog", "dedup-probe-message");
+    }
+    const std::vector<std::string> hit =
+        inking::InkLog::grep("dedup-probe-message", "SelftestLog");
+    Check(hit.size() == 1,
+          "log_dedup：同一消息连写 3 次只落 1 行（其余的进 FOLD 汇总行）");
+    Check(inking::InkLog::CountOf(inking::LogLevel::Info) == 3,
+          "log_dedup：计数按**调用次数**算（3 次），不是按落盘行数算");
+#if defined(INK_ISDEBUG)
+    std::printf("      [skip] 本次构建打开了 INKING_DEBUG_LOG —— "
+                "级别开关的验收不适用\n");
+#else
+    INK_LOG_DEBUG("SelftestLog", "debug-probe-message");
+    Check(inking::InkLog::CountOf(inking::LogLevel::Debug) == 0,
+          "log_level_filter：INKING_DEBUG_LOG=OFF 时 DEBUG 根本不进二进制（计数为 0）");
+#endif
+
+    // 场景库是"构造即登记"的：本组用完把活跃场景还回去，别让后面的用例
+    // 渲染到的是一张空场景（`CheckLayerOrder` 自己会切，但别靠它）。
+    inking::SceneLibrary::SetActiveScene(home);
+}
+
+// ---------------------------------------------------------------------------
+// 字体回退链（0.3.0 T-13）
+// ---------------------------------------------------------------------------
+//
+// 判据全都落在**可观测的量**上：字形来自哪份文件是看不出来的（长得都像字），
+// 所以验"解析结论"——`fontFallbacks` 计数、WARN 条数、以及估算法的特征值。
+//
+// 本机若一份字体都打不开（沙箱里 `SDL_IOFromFile` 对所有路径失败），
+// "退到第二条"那一段无从验起：如实跳过，别让环境问题伪装成通过。
+void CheckFontFallbackChain(SDL_Renderer* renderer,
+                            inking::InkingScene* home) {
+    std::printf("\n-- 字体回退链（0.3.0 T-13）--\n");
+
+    // ---- ① 整条链全打不开：1 条汇总 WARN（带全部候选），且不"静默换字体" ----
+    {
+        inking::TextRequest request;
+        request.text = "chain probe";  // 11 个码点
+        request.fontSize = 18.0f;
+        request.fontPath = "Z:/definitely/not/a/font.ttf";
+        request.fontPaths = {"Z:/also/not/here.ttf"};
+
+        inking::InkLog::ResetStats();
+        const inking::TextMetrics metrics = inking::MeasureText(request);
+        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+              "font_fallback_chain：两条候选都打不开 → 汇总 1 条 WARN（不是每条一条）");
+        Check(!inking::InkLog::grep("also/not/here", "InkingText").empty(),
+              "font_fallback_chain：WARN 里列全了链上每一条路径（可归因）");
+        // 没字体 ⇒ 估算法：高 = 字号，宽 = 字号 × 码点数。与退化画法同一套数。
+        Check(std::fabs(metrics.height - 18.0f) < 0.01f,
+              "font_fallback_chain：全失败时退回估算法（不是 0、也不是乱猜）");
+
+        // 同一条链再问一次：结论进缓存 ⇒ 不再产生第二条 WARN（否则每帧一条）。
+        inking::InkLog::ResetStats();
+        (void)inking::MeasureText(request);
+        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 0,
+              "font_fallback_chain：同一条链只报一次（第二次解析命中缓存）");
+    }
+
+    // ---- ② 整条链路（排版一趟 + 绘制一趟）也只报一条：0.3.0 的门槛 ----
+    // 为什么单独验：链解析发生在两个不同的字号上（排版用 `fontSize`、绘制用
+    // `deviceSize`），按字号缓存就会**两趟各报一条**——门槛要的是一共一条。
+    if (renderer != nullptr && home != nullptr) {
+        inking::InkingScene scene("selftest-font-chain");
+        inking::LabelData data;
+        data.name = "chain_label";
+        data.width = 200;
+        data.text = "chain label";
+        data.style.fontSize = 16.0f;
+        data.style.fontPath = "Z:/chain/missing.ttf";
+        data.style.fontPaths = {"Z:/chain/missing2.ttf"};
+
+        inking::InkLog::ResetStats();
+        auto* label = static_cast<inking::InkingStaticLabel*>(
+            scene.AddChild(
+                std::make_unique<inking::InkingStaticLabel>(&scene, data)));
+        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+              "font_fallback_chain：构造（排版那一趟）报 1 条");
+        Check(label->GetWidth() > 0,
+              "font_fallback_chain：没字体也照常排版（估算法给出宽度，不是 0）");
+
+        inking::SceneLibrary::SetActiveScene(&scene);
+        scene.TickFrame(1.0f / 60.0f);
+        Check(inking::SceneLibrary::RenderScene(renderer),
+              "font_fallback_chain：退化画法也能提交一帧");
+        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+              "font_fallback_chain：绘制那一趟不再重复报（整条链路共 1 条 WARN）");
+        inking::SceneLibrary::SetActiveScene(home);
+    }
+
+    // ---- ③ 链上第二条命中 ⇒ `fontFallbacks` +1（需要一份真字体） ----
+    const std::string usable = FindUsableFont();
+    if (usable.empty()) {
+        std::printf("      [skip] 没有可读字体（可用 INK_TEST_FONT 指定）——"
+                    "「退到第二条」这一段无从验起\n");
+        return;
+    }
+    inking::TextRequest request;
+    request.text = "Hg";
+    request.fontSize = 40.0f;
+    request.fontPath = "Z:/definitely/not/a/font.ttf";
+    request.fontPaths = {usable};
+    const std::uint64_t before =
+        inking::detail::TextCacheStatsSnapshot().fontFallbacks;
+    const inking::TextMetrics metrics = inking::MeasureText(request);
+    const std::uint64_t after =
+        inking::detail::TextCacheStatsSnapshot().fontFallbacks;
+    Check(after == before + 1,
+          "font_fallback_chain：命中第二条 → fontFallbacks +1（用的是第二份字体）");
+    Check(std::fabs(metrics.width - 80.0f) > 0.5f,
+          "font_fallback_chain：量出来的是真字体度量（不是 2 码点 × 40 的估算）");
+}
+
+// ---------------------------------------------------------------------------
+// 静默失效清单里的三条"既有路径"（0.3.0 T-14）
+//
+// 这三条以前只存在于代码注释里：行为是对的（或至少是定下来的），但没有断言。
+// 现在逐条钉住——"改坏了"会红，而不是等使用者再报一次。
+// ---------------------------------------------------------------------------
+
+/// 主题 token 缺失：退回兜底色**并且**记一次 miss。
+///
+/// 为什么不是"报错"：token 缺失发生在**运行期装表**之后（生成期已经保证用到的
+/// token 每张表都有），报错会把"用户拼了一张不全的表"这种可恢复的情况变成崩溃。
+/// 所以取"可见但不致命"：颜色退回兜底 + 计数 +1。
+void CheckThemeTokenMissing() {
+    std::printf("\n-- 主题 token 缺失 --\n");
+
+    inking::ClearThemeTables();
+    inking::ThemeTable partial;
+    partial.name = "t_partial";
+    partial.colors = {{"surface", 0xFF112233u}};
+    Check(inking::InstallThemeTable(std::move(partial)),
+          "装一张只含部分 token 的表");
+    Check(inking::SetActiveTheme("t_partial"), "切到那张不全的表");
+
+    const inking::ThemeStats before = inking::ThemeStatsSnapshot();
+    const std::uint32_t got = inking::ResolveThemeColor("not_a_token", 0xFF445566u);
+    const inking::ThemeStats after = inking::ThemeStatsSnapshot();
+    Check(got == 0xFF445566u,
+          "theme_token_missing：表里没有的 token 退回兜底色（不是黑、不是随机色）");
+    Check(after.misses == before.misses + 1,
+          "theme_token_missing：查不到记一次 miss（观测口看得见，不是完全无声）");
+    NoteSilentFailure("theme_token_missing");
+
+    // 一张表都没装 = 零成本路径：直接给兜底色，**不计 miss**。
+    // （否则"不用运行期主题"的项目会看到一堆假 miss，把观测口变成噪声。）
+    inking::ClearThemeTables();
+    const inking::ThemeStats idle = inking::ThemeStatsSnapshot();
+    (void)inking::ResolveThemeColor("surface", 0xFF667788u);
+    Check(inking::ThemeStatsSnapshot().misses == idle.misses,
+          "theme_token_missing：一张表都没装时不算 miss（零成本路径不该被误报）");
+}
+
+/// 滚动范围：内容超出视口后，`UpdateScrollRange` 给出的范围要被真的用上。
+///
+/// 这条路径的失败形态很隐蔽：忘了调 `UpdateScrollRange` ⇒ 范围恒为 0 ⇒
+/// 滚轮**没有任何反应**，而画面本身完全正常（所以不会有人怀疑到滚动上）。
+void CheckScrollRangeStale() {
+    std::printf("\n-- 滚动范围 --\n");
+
+    inking::InkingScene scene("selftest-scroll");
+    inking::PanelData panelData;
+    panelData.name = "scroll_panel";
+    panelData.width = 200;
+    panelData.height = 100;
+    panelData.scroll.enabled = true;
+    auto* panel = static_cast<inking::InkingStaticPanel*>(
+        scene.AddChild(
+            std::make_unique<inking::InkingStaticPanel>(&scene, panelData)));
+
+    for (int i = 0; i < 3; ++i) {
+        inking::PanelData row;
+        row.name = "scroll_row" + std::to_string(i);
+        row.width = 200;
+        row.height = 60;
+        row.offsetY = static_cast<float>(i) * 60.0f;
+        panel->AddChild(std::make_unique<inking::InkingStaticPanel>(panel, row));
+    }
+
+    panel->UpdateScrollRange();
+    Check(std::fabs(panel->GetContentHeight() - 180.0f) < 0.01f,
+          "scroll_range_stale：内容高 = 子节点并集（3 × 60 = 180）");
+    const float expected = 180.0f - panel->ContentViewportHeight();
+    Check(std::fabs(panel->GetScrollRangeY() - expected) < 0.01f,
+          "scroll_range_stale：可滚范围 = 内容 − 视口（不是 0、也不是内容本身）");
+
+    panel->SetScroll(0.0f, 10000.0f);
+    Check(std::fabs(panel->GetScrollY() - panel->GetScrollRangeY()) < 0.01f,
+          "scroll_range_stale：SetScroll 按这个范围夹住（范围错了这里立刻露馅）");
+    NoteSilentFailure("scroll_range_stale");
+
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+/// 文本区宽度为负：两层都要挡住，不能变成"什么都不画"。
+void CheckTextNegativeWidth() {
+    std::printf("\n-- 文本区宽度为负 --\n");
+
+    // ---- ① 排版层：可排宽度 = maxWidth − 左右 padding ≤ 0 ⇒ **不换行** ----
+    // 这条挡住的是"框比内缩还窄"时排出一堆零宽行、最后一像素不画。
+    inking::TextLayoutRequest request;
+    request.text = "negative width probe";
+    request.style.fontSize = 16.0f;
+    request.style.padding.left = 8.0f;
+    request.style.padding.right = 8.0f;
+    request.maxWidth = 10.0f;  // 可排宽度 = 10 − 16 = −6
+    const auto measure = [](const std::string& text,
+                            const inking::TextStyle& style) {
+        inking::TextRequest probe;
+        probe.text = text;
+        probe.fontSize = style.fontSize > 0.0f ? style.fontSize : 16.0f;
+        probe.fontPath = style.fontPath;
+        probe.fontPaths = style.fontPaths;
+        const inking::TextMetrics metrics = inking::MeasureText(probe);
+        return inking::TextExtent{metrics.width, metrics.height};
+    };
+    const inking::TextLayoutResult laid = inking::LayoutText(request, measure);
+    Check(laid.lines.size() == 1,
+          "text_negative_width：可排宽度为负时不换行（不是零行、不是崩）");
+    Check(laid.contentWidth > 0.0f,
+          "text_negative_width：仍然报出真实宽度（不是 0 宽的行）");
+    NoteSilentFailure("text_negative_width");
+
+    // ---- ② 组件层：配置了负宽度 ⇒ 夹到 0，再按内容补一维 ----
+    inking::InkingScene scene("selftest-negative");
+    inking::LabelData data;
+    data.name = "negative_label";
+    data.width = -40;   // 明显不合法的配置
+    data.height = 20;
+    data.text = "neg";
+    data.style.fontSize = 16.0f;
+    auto* label = static_cast<inking::InkingStaticLabel*>(
+        scene.AddChild(
+            std::make_unique<inking::InkingStaticLabel>(&scene, data)));
+    Check(label->GetWidth() > 0 && label->GetHeight() == 20,
+          "text_negative_width：负宽度被夹到 0 后按内容补，不会出现负几何");
+
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+/// 元自检：清单里的每一条**都真的跑过**。
+///
+/// 这是"清单化"能不能成立的关键：声明一张表只要几分钟，而一条自检悄悄消失
+/// （改名、被注释掉、被删）没人会发现。这里逐条对账，并且要求**恰好一次**
+/// （登记两次意味着两个自检共用一个名字，那等于其中一个没被清单覆盖）。
+void CheckSilentFailureListSynced() {
+    std::printf("\n-- 静默失效清单同步（T-14）--\n");
+
+    std::size_t declared = 0;
+    for (const SilentFailureItem& item : kSilentFailures) {
+        ++declared;
+        bool noted = false;
+        for (const std::string& seen : g_silentChecked) {
+            if (seen == item.id) {
+                noted = true;
+                break;
+            }
+        }
+        char label[256] = {};
+        std::snprintf(label, sizeof(label),
+                      "silent_failure_list_synced：%s 的自检真的跑了（%s）",
+                      item.id, item.task);
+        Check(noted, label);
+        if (!noted) {
+            std::printf("         现象：%s\n", item.phenomenon);
+        }
+    }
+    Check(g_silentChecked.size() == declared,
+          "silent_failure_list_synced：每条恰好登记一次（多登记 = 两条自检共用同一个名字）");
+}
+
 void CheckTextHiDpi() {
     SDL_Window* windowA = SDL_CreateWindow("hidpi-1x", 1280, 720, 0);
     SDL_Window* windowB = SDL_CreateWindow("hidpi-2x", 2560, 1440, 0);
@@ -918,6 +1381,415 @@ void CheckLayerOrder(SDL_Renderer* renderer) {
 }
 
 // ---------------------------------------------------------------------------
+// 面板装饰（0.2.0 T-07）：描边在**子孙之上**、阴影在**填充之下**
+// ---------------------------------------------------------------------------
+//
+// 三条要一起验，因为它们互相制衡：
+//   ① 描边压得住子孙：暗底面板 + 亮描边 + 铺满的子面板，边框那一像素必须是
+//      描边色（描边若跟填充同一趟，会被子面板盖掉 —— 那就是"加完等于没加"）；
+//   ② 描边不越界压兄弟：后注册（层级更高）的 B 盖住 A 的边框，那里必须是 B
+//      的颜色。这是"局部层级"的判据：装饰笔只压自己的子孙，不是全局第二趟；
+//   ③ 装饰不是节点：`GetDrawItemCount()` 一条都不多。
+//
+// 再加两条：阴影在填充之下（偏移副本露在面板外的部分可见、面板内不被它压暗）、
+// 描边/阴影跟着开合过渡插值（`GetDisplayStroke` 观测口）。
+//
+// 坐标：设计 1280×720 → 窗口 640×360（倍率 0.5）。面板 200×200 居中 ⇒
+// 设计 (540,260)~(740,460)，设备 (270,130)~(370,230)。
+void CheckPanelDecoration(SDL_Renderer* renderer) {
+    std::printf("\n-- 面板装饰：描边在子孙之上 / 阴影在填充之下 --\n");
+    if (renderer == nullptr) {
+        return;
+    }
+
+    // 抗锯齿边缘不做逐位相等（软件渲染器会羽化半像素），给一个宽容带。
+    const auto closeTo = [](std::uint32_t got, std::uint32_t want, int tol) {
+        const auto ch = [](std::uint32_t v, int shift) {
+            return static_cast<int>((v >> shift) & 0xFFu);
+        };
+        return std::abs(ch(got, 16) - ch(want, 16)) <= tol
+            && std::abs(ch(got, 8) - ch(want, 8)) <= tol
+            && std::abs(ch(got, 0) - ch(want, 0)) <= tol;
+    };
+
+    constexpr std::uint32_t kDark = 0xFF202020u;    // 面板底（暗）
+    constexpr std::uint32_t kEdge = 0xFFFFD000u;    // 描边（亮黄）
+    constexpr std::uint32_t kChild = 0xFF0000FFu;   // 子面板（蓝）
+    constexpr std::uint32_t kSibling = 0xFF00C000u; // 后注册的兄弟（绿）
+    constexpr std::uint32_t kFill = 0xFFFF0000u;    // 阴影测试面板的填充（红）
+    constexpr std::uint32_t kShadow = 0xFF804000u;  // 阴影（棕）
+
+    inking::InkingScene scene;
+
+    inking::PanelData a;
+    a.name = "deco_parent";
+    a.width = 200;
+    a.height = 200;
+    a.selfAnchor = inking::InkingChangeAnchor::Center;
+    a.traceAnchor = inking::InkingChangeAnchor::Center;
+    a.closed.color = kDark;
+    a.open.color = kDark;
+    a.closed.stroke = inking::StrokeSpec{6.0f, kEdge};  // 6 设计像素 = 3 设备像素
+
+    inking::InkingWidget* parent = scene.AddChild(
+        std::make_unique<inking::InkingStaticPanel>(&scene, a));
+
+    inking::PanelData c;
+    c.name = "deco_child";
+    c.width = 200;
+    c.height = 200;  // 和父**完全重合**：描边只能靠装饰遍才活下来
+    c.selfAnchor = inking::InkingChangeAnchor::Center;
+    c.traceAnchor = inking::InkingChangeAnchor::Center;
+    c.closed.color = kChild;
+    c.open.color = kChild;
+    parent->AddChild(
+        std::make_unique<inking::InkingStaticPanel>(parent, c));
+
+    // B：后注册 = 层级更高，压住 A 的左上边框（设计 530..600 × 260..320）。
+    inking::PanelData b;
+    b.name = "deco_sibling";
+    b.width = 70;
+    b.height = 60;
+    b.selfAnchor = inking::InkingChangeAnchor::Center;
+    b.traceAnchor = inking::InkingChangeAnchor::Center;
+    b.offsetX = -75.0f;
+    b.offsetY = -70.0f;
+    b.closed.color = kSibling;
+    b.open.color = kSibling;
+    scene.AddChild(std::make_unique<inking::InkingStaticPanel>(&scene, b));
+
+    // D：阴影测试（摆开，不和 A 重叠）。设计 280..400 × 450..570。
+    inking::PanelData d;
+    d.name = "deco_shadow";
+    d.width = 120;
+    d.height = 120;
+    d.selfAnchor = inking::InkingChangeAnchor::Center;
+    d.traceAnchor = inking::InkingChangeAnchor::Center;
+    d.offsetX = -300.0f;
+    d.offsetY = 150.0f;
+    d.closed.color = kFill;
+    d.open.color = kFill;
+    d.closed.shadow = inking::ShadowSpec{12.0f, 12.0f, kShadow};
+    scene.AddChild(std::make_unique<inking::InkingStaticPanel>(&scene, d));
+
+    scene.TickFrame(1.0f / 60.0f);
+    Check(scene.GetDrawItemCount() == 4,
+          "装饰笔不是节点：绘制列表条目数 = 4（描边 / 阴影不各占一条）");
+
+    inking::SceneLibrary::SetActiveScene(&scene);
+    SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
+                                     inking::DesignHeight(),
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    const bool rendered = inking::SceneLibrary::RenderScene(renderer);
+    // 这一帧画完再逐个读像素（每次 RenderScene 都会清屏重画，读一次就够）。
+    const auto readPixel = [&](int x, int y) -> std::uint32_t {
+        const SDL_Rect one{x, y, 1, 1};
+        SDL_Surface* shot = SDL_RenderReadPixels(renderer, &one);
+        if (shot == nullptr) {
+            return 0u;
+        }
+        std::uint32_t pixel = 0;
+        SDL_Surface* argb = SDL_ConvertSurface(shot, SDL_PIXELFORMAT_ARGB8888);
+        if (argb != nullptr) {
+            std::memcpy(&pixel, argb->pixels, sizeof(pixel));
+            SDL_DestroySurface(argb);
+        }
+        SDL_DestroySurface(shot);
+        return pixel;
+    };
+
+    const std::uint32_t edge = readPixel(320, 130);     // 上边框中点
+    const std::uint32_t inside = readPixel(320, 180);   // 正中（子面板）
+    const std::uint32_t overlap = readPixel(270, 150);  // A 的左边框 × B
+    const std::uint32_t fill = readPixel(170, 255);     // D 的正中
+    const std::uint32_t shadow = readPixel(203, 288);   // D 的右下外侧（只在阴影里）
+
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    inking::SceneLibrary::SetActiveScene(nullptr);
+
+    Check(rendered, "装饰场景渲染一帧");
+    std::printf("         边框=0x%08X 内部=0x%08X 重叠=0x%08X 填充=0x%08X 阴影=0x%08X\n",
+                edge, inside, overlap, fill, shadow);
+    Check(closeTo(edge, kEdge, 60),
+          "panel_stroke_over_children：铺满的子面板盖不住父面板的描边");
+    Check(closeTo(inside, kChild, 40),
+          "子面板的填充在描边之内（描边没有把内容整块盖住）");
+    Check(closeTo(overlap, kSibling, 40),
+          "描边不越界：后注册的兄弟盖住边框时，那里是兄弟的颜色（局部层级）");
+    Check(closeTo(fill, kFill, 40), "阴影面板的填充正常（阴影没有压暗自己）");
+    Check(closeTo(shadow, kShadow, 40),
+          "阴影画在填充之下：露出面板外的偏移副本可见");
+
+    // -----------------------------------------------------------------------
+    // 描边 / 阴影跟着开合过渡插值（观测口，不猜像素）
+    // -----------------------------------------------------------------------
+    inking::InkingScene anim;
+    inking::PanelData p;
+    p.name = "deco_anim";
+    p.width = 100;
+    p.height = 100;
+    p.selfAnchor = inking::InkingChangeAnchor::Center;
+    p.traceAnchor = inking::InkingChangeAnchor::Center;
+    p.closed.color = kDark;
+    p.closed.stroke = inking::StrokeSpec{};  // 关着：没描边
+    p.open.color = kDark;
+    p.open.stroke = inking::StrokeSpec{4.0f, kEdge};
+    p.open.transitionSeconds = 0.2f;
+    p.openInheritsClosed = false;  // 显式给了 open 的描边，不继承
+    inking::InkingStaticPanel* animated =
+        static_cast<inking::InkingStaticPanel*>(anim.AddChild(
+            std::make_unique<inking::InkingStaticPanel>(&anim, p)));
+
+    Check(!animated->GetDisplayStroke().Visible(),
+          "关着时没有描边");
+    Check(animated->SetOpen(true), "打开（起一段 0.2s 过渡）");
+    // 必须让它**活跃**：`TickFrame` 对非活跃场景直接返回（和上面主题那段同一条坑）。
+    inking::SceneLibrary::SetActiveScene(&anim);
+    anim.TickFrame(0.1f);  // 过一半
+    const float midWidth = animated->GetDisplayStroke().width;
+    std::printf("         过渡中点描边宽度 = %.2f（目标 4）\n", midWidth);
+    Check(midWidth > 0.5f && midWidth < 3.5f,
+          "描边跟着开合过渡插值（不是 0 也不是一步到位）");
+    anim.TickFrame(0.2f);  // 收尾
+    Check(animated->GetDisplayStroke().width == 4.0f,
+          "过渡结束落目标值（4 设计像素）");
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// 按钮三笔：抽公共件之后画面必须一模一样（0.2.0 T-07 的回归网）
+// ---------------------------------------------------------------------------
+//
+// `PaintSurface` 是把 `PaintButtonAppearance` 里"阴影 → 填充 → 描边"整段搬出来
+// 的（面板描边要用同一份）。搬动最容易出的错是**顺序变了**——阴影盖住填充、
+// 描边被填充盖住，两边单独看都"画了"，合起来才错。所以这里按三笔的可见结果
+// 逐个取像素：中心=填充、边框=描边、右下外侧=阴影。
+void CheckButtonPaintOrder(SDL_Renderer* renderer) {
+    std::printf("\n-- 按钮三笔：阴影 → 填充 → 描边（顺序回归） --\n");
+    if (renderer == nullptr) {
+        return;
+    }
+
+    const auto closeTo = [](std::uint32_t got, std::uint32_t want, int tol) {
+        const auto ch = [](std::uint32_t v, int shift) {
+            return static_cast<int>((v >> shift) & 0xFFu);
+        };
+        return std::abs(ch(got, 16) - ch(want, 16)) <= tol
+            && std::abs(ch(got, 8) - ch(want, 8)) <= tol
+            && std::abs(ch(got, 0) - ch(want, 0)) <= tol;
+    };
+
+    constexpr std::uint32_t kFill = 0xFFD04040u;    // 填充
+    constexpr std::uint32_t kEdge = 0xFF00FF00u;    // 描边（绿）
+    constexpr std::uint32_t kShadow = 0xFF804000u;  // 阴影（棕）
+
+    inking::InkingScene scene;
+    inking::ButtonData data;
+    data.name = "paint_button";
+    data.width = 200;
+    data.height = 60;
+    data.selfAnchor = inking::InkingChangeAnchor::Center;
+    data.traceAnchor = inking::InkingChangeAnchor::Center;
+    data.normal = inking::ButtonAppearance(inking::AppearanceType::Color, kFill);
+    data.hover = data.normal;
+    data.onclicked = data.normal;
+    data.stroke = inking::StrokeSpec{8.0f, kEdge};       // 8 设计 = 4 设备像素
+    data.shadow = inking::ShadowSpec{10.0f, 10.0f, kShadow};
+    scene.AddChild(std::make_unique<inking::InkingStaticButton>(&scene, data));
+
+    scene.TickFrame(1.0f / 60.0f);
+    inking::SceneLibrary::SetActiveScene(&scene);
+    SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
+                                     inking::DesignHeight(),
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    const bool rendered = inking::SceneLibrary::RenderScene(renderer);
+
+    const auto readPixel = [&](int x, int y) -> std::uint32_t {
+        const SDL_Rect one{x, y, 1, 1};
+        SDL_Surface* shot = SDL_RenderReadPixels(renderer, &one);
+        if (shot == nullptr) {
+            return 0u;
+        }
+        std::uint32_t pixel = 0;
+        SDL_Surface* argb = SDL_ConvertSurface(shot, SDL_PIXELFORMAT_ARGB8888);
+        if (argb != nullptr) {
+            std::memcpy(&pixel, argb->pixels, sizeof(pixel));
+            SDL_DestroySurface(argb);
+        }
+        SDL_DestroySurface(shot);
+        return pixel;
+    };
+
+    // 按钮设计 540..740 × 330..390 ⇒ 设备 270..370 × 165..195。
+    const std::uint32_t center = readPixel(320, 180);
+    const std::uint32_t border = readPixel(320, 165);
+    const std::uint32_t outside = readPixel(372, 197);
+
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    inking::SceneLibrary::SetActiveScene(nullptr);
+
+    std::printf("         中心=0x%08X 边框=0x%08X 右下外侧=0x%08X\n", center,
+                border, outside);
+    Check(rendered, "按钮场景渲染一帧");
+    Check(closeTo(center, kFill, 40), "button_paint_unchanged：填充在最上（没被阴影压暗）");
+    Check(closeTo(border, kEdge, 60), "button_paint_unchanged：描边压在填充边缘之上");
+    Check(closeTo(outside, kShadow, 40),
+          "button_paint_unchanged：阴影露在形状之外（偏移副本，无模糊）");
+}
+
+// ---------------------------------------------------------------------------
+// 按钮状态事件（0.2.0 T-11）：两档共用 `stateChanged`
+// ---------------------------------------------------------------------------
+//
+// 反馈里"两档语义分叉"指的是**采样时机**（动态档 50Hz 逻辑步、静态档渲染帧），
+// 不是回调接口。T-11 把公开订阅口补上之后，业务只要订阅 `stateChanged` 就能
+// 知道"鼠标进出 / 按下抬起"，不用再派生类去重写 protected 钩子。
+//
+// 这里对两档各推一次 hover：静态档走 `DispatchPointer`（场景推），动态档走
+// `TickLogic`（自己拉），断言两边都恰好收到一次 `(Normal, Hover)`。
+void CheckButtonStateEvent() {
+    std::printf("\n-- 按钮状态事件：两档共用 stateChanged --\n");
+
+    inking::InkingScene scene;
+
+    inking::ButtonData base;
+    base.width = 160;
+    base.height = 60;
+    base.selfAnchor = inking::InkingChangeAnchor::Center;
+    base.traceAnchor = inking::InkingChangeAnchor::Center;
+    base.normal = inking::ButtonAppearance(inking::AppearanceType::Color, 0xFF3070C0u);
+
+    inking::ButtonData staticData = base;
+    staticData.name = "event_static";
+    auto* staticButton = static_cast<inking::InkingStaticButton*>(
+        scene.AddChild(std::make_unique<inking::InkingStaticButton>(
+            &scene, staticData)));
+
+    int staticCount = 0;
+    inking::ButtonState staticFrom = inking::ButtonState::Pressed;
+    inking::ButtonState staticTo = inking::ButtonState::Pressed;
+    staticButton->stateChanged.Subscribe(
+        [&](inking::ButtonState from, inking::ButtonState to) {
+            ++staticCount;
+            staticFrom = from;
+            staticTo = to;
+        });
+
+    // 动态档挪开摆（正下方 200 设计像素），两档各自独立收指针。
+    inking::ButtonData dynamicData = base;
+    dynamicData.name = "event_dynamic";
+    dynamicData.offsetY = 200.0f;
+    auto* dynamicButton = static_cast<inking::InkingDynamicButton*>(
+        scene.AddChild(std::make_unique<inking::InkingDynamicButton>(
+            &scene, dynamicData)));
+
+    int dynamicCount = 0;
+    inking::ButtonState dynamicFrom = inking::ButtonState::Pressed;
+    inking::ButtonState dynamicTo = inking::ButtonState::Pressed;
+    dynamicButton->stateChanged.Subscribe(
+        [&](inking::ButtonState from, inking::ButtonState to) {
+            ++dynamicCount;
+            dynamicFrom = from;
+            dynamicTo = to;
+        });
+
+    inking::SceneLibrary::SetActiveScene(&scene);
+    scene.TickFrame(1.0f / 60.0f);
+
+    // ① 静态档：指针进按钮 → 场景派发。
+    scene.SetPointerState(640.0f, 360.0f, false, true);
+    scene.DispatchPointer();
+    Check(staticCount == 1 && staticFrom == inking::ButtonState::Normal
+              && staticTo == inking::ButtonState::Hover,
+          "静态档：hover 推一次 → (Normal, Hover)，计数 1");
+
+    // 同一状态再派发一次：不该重复发（事件报的是"变化"）。
+    scene.DispatchPointer();
+    Check(staticCount == 1, "静态档：状态没变就不重复触发");
+
+    // ② 动态档：指针移到它身上，逻辑步里自己判。
+    scene.SetPointerState(640.0f, 560.0f, false, true);
+    scene.TickLogic(0.02f);
+    Check(dynamicCount == 1 && dynamicFrom == inking::ButtonState::Normal
+              && dynamicTo == inking::ButtonState::Hover,
+          "动态档：JudgePointer 拉到 → (Normal, Hover)，计数 1");
+
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// 输入框：光标 clamp + 水平滚动（0.2.0 T-12）
+// ---------------------------------------------------------------------------
+//
+// 反馈报的"未获焦点仍画光标"在 0.1.x 已经修掉（`onRender` 有 `_focused` 门控）。
+// 同一症状的**另一个成因**还在：单行输入不换行，文本一超宽光标就画到本体之外
+// （面板默认 `clipChildren = false`，所以它真的会出现在框外）。
+//
+// 两条断言把这件事钉住：
+//   ① 光标整体落在 `[0, width]` 里（夹取 + 滚动一起生效）；
+//   ② 滚动之后，"点在光标那一像素上"命中的偏移仍是光标那个偏移
+//      （`BoxForOffset` 减了多少，`OffsetAtPoint` 就加回多少）。
+void CheckInputScroll() {
+    std::printf("\n-- 输入框：光标 clamp + 水平滚动 --\n");
+
+    inking::InkingScene scene;
+    inking::TextInputData data;
+    data.name = "scroll_input";
+    data.width = 120;
+    data.height = 32;
+    data.selfAnchor = inking::InkingChangeAnchor::Center;
+    data.traceAnchor = inking::InkingChangeAnchor::Center;
+    data.style.fontSize = 16.0f;
+    data.style.fontPath = "";  // 机器默认字体：无头环境也能量到宽度
+
+    auto* input = static_cast<inking::InkingTextInput*>(scene.AddChild(
+        std::make_unique<inking::InkingTextInput>(&scene, data)));
+
+    inking::SceneLibrary::SetActiveScene(&scene);
+    scene.TickFrame(1.0f / 60.0f);
+
+    input->SetFocused(true);
+    input->SetEditText("WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW");  // 32 个宽字符
+    Check(input->GetTextWidth() > static_cast<float>(input->GetWidth()),
+          "前置条件：文本确实比本体宽");
+
+    // End：光标到末尾（这一下会触发滚动）。
+    inking::KeyEvent end;
+    end.key = SDLK_END;
+    Check(input->HandleKey(end), "End 被输入框吃掉（光标到末尾）");
+
+    const inking::TextInputRect caret = input->CaretBox();
+    std::printf("         滚动量=%.1f 光标 x=%.1f 宽=%.1f 本体宽=%d\n",
+                input->GetScrollX(), caret.x, caret.width, input->GetWidth());
+    Check(input->GetScrollX() > 0.0f, "文本超宽 + 光标在末尾 → 产生水平滚动");
+    Check(caret.x >= -0.01f
+              && caret.x + caret.width
+                     <= static_cast<float>(input->GetWidth()) + 0.01f,
+          "input_caret_clamped：光标整体落在本体里（不再画到框外）");
+    NoteSilentFailure("input_caret_clamped");
+
+    // 点光标那一像素：Roll 后映射仍然一致。
+    const float pressX = input->GetAbsX() + caret.x + caret.width * 0.5f;
+    const float pressY = input->GetAbsY() + caret.y + caret.height * 0.5f;
+    const std::size_t hitOffset = input->OffsetAtPoint(pressX, pressY);
+    Check(hitOffset == input->Edit().Caret(),
+          "input_scroll_mapping：滚动后同一像素仍映射到光标那个偏移");
+
+    // 文本变短：滚动量必须回 0（否则下次输入会从"半句话"开始显示）。
+    input->SetEditText("ab");
+    Check(input->GetScrollX() == 0.0f, "文本变短后滚动量回 0");
+    const inking::TextInputRect shortCaret = input->CaretBox();
+    Check(shortCaret.x >= -0.01f
+              && shortCaret.x + shortCaret.width
+                     <= static_cast<float>(input->GetWidth()) + 0.01f,
+          "短文本时光标也在本体里");
+
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
 // 截图：失败路径的契约（正路径见下面「怎么验」）
 // ---------------------------------------------------------------------------
 //
@@ -939,6 +1811,240 @@ void CheckCaptureContract() {
           "没有窗口 / 渲染器：排队截图也返回 false");
     Check(!window.HasPendingCapture(),
           "被拒的请求没有留在队列里（不会有一张永远不落盘的截图）");
+}
+
+// ---------------------------------------------------------------------------
+// 树的动态性（0.4.0 A 组）：改树之后，收集表 / 命中表立刻跟上
+// ---------------------------------------------------------------------------
+//
+// 这一组对应 GoldingCore 反馈的 A1~A5。它们的共同根因只有一句：
+// **渲染列表与命中表在"建树时"一次性收集，之后树变了不重建**。
+//
+// 每条断言都对着一个"以前必错、而且不报错"的现象：
+//   A1 动态容器子树里的静态按钮永远收不到点击（点得到容器、点不到按钮）
+//   A2 离线建好的子树挂进场景后不渲染（节点在、就是没画）
+//   A3 创建时隐藏、之后显示也不渲染
+//   A4 容器改尺寸后 `fillMain` 不重新收敛
+//   B1 交叉轴 `Stretch` 没生效（`width:0` 解出来就是 0 宽）
+//   A5 显式重建入口
+void CheckDynamicTree() {
+    std::printf("\n-- 树的动态性（A 组） --\n");
+
+    struct ProbeScene : public inking::InkingScene {
+        ProbeScene() : inking::InkingScene("probe_dyntree") {}
+    };
+
+    // 场景名不能和主场景撞：撞了会被 SceneLibrary 驳回，测试就变成"在停放态
+    // 的场景上断言"——全绿但什么都没验（这种假绿最难发现）。
+    ProbeScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "A 组：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+
+    const auto makeButton = [](const char* name, int width, int height, int x,
+                               int y) {
+        inking::ButtonData data;
+        data.name = name;
+        data.width = width;
+        data.height = height;
+        data.offsetX = static_cast<float>(x);
+        data.offsetY = static_cast<float>(y);
+        data.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+                                              0xFF112233u);
+        return data;
+    };
+
+    // ---- A1：动态容器子树里的静态按钮 ----
+    inking::AnchorData outerData;
+    outerData.width = 400;
+    outerData.height = 300;
+    auto* outer = static_cast<inking::InkingStaticPanel*>(
+        scene.AddChild(std::make_unique<inking::InkingStaticPanel>(
+            &scene, [] {
+                inking::PanelData data;
+                data.name = "a1_outer";
+                data.width = 400;
+                data.height = 300;
+                data.closed.color = 0xFF808080u;
+                data.open.color = data.closed.color;
+                data.Normalize();
+                return data;
+            }())));
+
+    inking::AnchorData boxData;
+    boxData.width = 200;
+    boxData.height = 150;
+    boxData.offsetX = 10.0f;
+    boxData.offsetY = 10.0f;
+    auto* box = scene.AddChild(
+        std::make_unique<inking::InkingDynamicWidget>(outer, boxData));
+    auto* inner = static_cast<inking::InkingStaticButton*>(
+        box->AddChild(std::make_unique<inking::InkingStaticButton>(
+            box, makeButton("a1_inner", 80, 30, 20, 20))));
+
+    Check(scene.QueryHit(inner->GetAbsX() + 5.0f, inner->GetAbsY() + 5.0f)
+                  .target
+              == inner,
+          "A1：动态容器里的静态按钮能被命中（以前只有容器自己）");
+
+    // ---- A2：离线建好的子树再挂进来 ----
+    std::size_t before = scene.GetDrawItemCount();
+    auto offline = std::make_unique<inking::InkingStaticPanel>(
+        nullptr, [] {
+            inking::PanelData data;
+            data.name = "a2_offline";
+            data.width = 120;
+            data.height = 60;
+            data.offsetX = 500.0f;
+            data.closed.color = 0xFF445566u;
+            data.open.color = data.closed.color;
+            data.Normalize();
+            return data;
+        }());
+    auto* offlineChild = static_cast<inking::InkingStaticButton*>(
+        offline->AddChild(std::make_unique<inking::InkingStaticButton>(
+            offline.get(), makeButton("a2_child", 60, 20, 10, 10))));
+    auto* attached = static_cast<inking::InkingStaticPanel*>(
+        scene.AddChild(std::move(offline)));
+    (void)attached;
+    Check(scene.GetDrawItemCount() == before + 2,
+          "A2：离线子树的**每一层**都进了绘制列表（以前只进最上面那层）");
+    Check(scene.QueryHit(offlineChild->GetAbsX() + 5.0f,
+                         offlineChild->GetAbsY() + 5.0f)
+                  .target
+              == offlineChild,
+          "A2：离线子树里的按钮也能被命中");
+
+    // ---- A3：创建时隐藏、之后显示 ----
+    inking::PanelData hiddenData;
+    hiddenData.name = "a3_hidden";
+    hiddenData.width = 120;
+    hiddenData.height = 60;
+    hiddenData.offsetY = 400.0f;
+    hiddenData.visible = false;
+    hiddenData.closed.color = 0xFF778899u;
+    hiddenData.open.color = hiddenData.closed.color;
+    hiddenData.Normalize();
+    auto* hidden = static_cast<inking::InkingStaticPanel*>(
+        scene.AddChild(std::make_unique<inking::InkingStaticPanel>(&scene,
+                                                                   hiddenData)));
+    Check(scene.QueryHit(60.0f, 430.0f).target == nullptr,
+          "A3：隐藏的面板点不到（可见性在命中侧也生效）");
+    hidden->SetVisible(true);
+    Check(scene.QueryHit(60.0f, 430.0f).target == hidden,
+          "A3：隐藏过再显示，立刻能点到（以前永远回不来）");
+
+    // ---- A4 / B1：布局在"孩子挂了"和"容器改了"之后都要重跑 ----
+    inking::AnchorData columnData;
+    columnData.width = 300;
+    columnData.height = 200;
+    columnData.offsetX = 600.0f;
+    columnData.offsetY = 400.0f;
+    columnData.layout.kind = inking::LayoutKind::Stack;
+    columnData.layout.axis = inking::LayoutAxis::Vertical;
+    columnData.layout.gap = 4.0f;
+    auto* column = static_cast<inking::InkingDynamicWidget*>(
+        scene.AddChild(
+            std::make_unique<inking::InkingDynamicWidget>(&scene, columnData)));
+
+    inking::ButtonData fixed = makeButton("a4_fixed", 100, 40, 0, 0);
+    inking::ButtonData filler = makeButton("a4_filler", 0, 40, 0, 0);
+    filler.layoutItem.fillMain = true;
+    auto* fixedButton = static_cast<inking::InkingStaticButton*>(
+        column->AddChild(std::make_unique<inking::InkingStaticButton>(
+            column, fixed)));
+    auto* fillerButton = static_cast<inking::InkingStaticButton*>(
+        column->AddChild(std::make_unique<inking::InkingStaticButton>(
+            column, filler)));
+
+    Check(fixedButton->GetWidth() == 300,
+          "B1：交叉轴 Stretch 把 `width:100` 的按钮拉到 300（不是 100）");
+    Check(fillerButton->GetWidth() == 300,
+          "B1：`width:0` 的按钮也拉到 300（以前解出来就是 0 宽、不画不报错）");
+    Check(fillerButton->GetHeight() > 100,
+          "A4：`fillMain` 在**挂上来那一刻**就收敛（以前只看构造期那一趟）");
+
+    column->Resize(500, 300);
+    Check(fixedButton->GetWidth() == 500 && fillerButton->GetWidth() == 500,
+          "A4：容器改尺寸后交叉轴跟着变（抽屉拉宽的基础）");
+    Check(fillerButton->GetHeight() > 200,
+          "A4：容器改尺寸后 `fillMain` 重新分配（不是只收敛一次）");
+
+    // ---- A5：显式重建入口 ----
+    const std::size_t rebuilt = scene.RebuildRenderList();
+    Check(rebuilt == scene.GetDrawItemCount() && rebuilt >= 6,
+          "A5：RebuildRenderList 返回重建后的项数（与随后的查询一致）");
+
+    // ---- B2 / D7：名字入口与语义激活 ----
+    inner->SetName("a1_inner_renamed");
+    Check(scene.FindByName("a1_inner_renamed") == inner,
+          "B2：SetName 之后能按名字找到动态容器里的节点");
+    Check(scene.FindByName("a1_inner") == nullptr, "B2：旧名字不再命中");
+
+    bool clicked = false;
+    inner->SetOnClicked([&clicked] { clicked = true; });
+    Check(scene.Activate("a1_inner_renamed") && clicked,
+          "D7：`Activate(名字)` 触发点击，**不需要知道控件类型**");
+
+    // ---- D6：不用等帧，命中表可强制建 ----
+    Check(scene.RebuildHitTable() > 0,
+          "D6：`RebuildHitTable()` 在没有任何帧的情况下建表成功");
+}
+
+// ---------------------------------------------------------------------------
+// 非阻塞跑帧 / 帧末任务 / 确定性时间 / 退出码 / 离屏渲染（D 组，0.3.0）
+// ---------------------------------------------------------------------------
+//
+// **必须放在最后**：`Open()` 会自己 `SDL_Init`，而 `releaseWindow` 会
+// `SDL_Quit`——中途跑会把上面那些检查用的裸窗口 / 渲染器一起拆掉。
+// 所以本函数在 `main` 里排在"销毁裸窗口"之后。
+void CheckHeadlessPump() {
+    std::printf("\n-- 非阻塞跑帧（D 组） --\n");
+    inking::InkingWindow& window = inking::InkingWindow::Instance();
+
+    // D4：固定 delta —— 截图与动画断言要在 CI 里稳定，就必须去掉墙上时钟。
+    window.SetFixedDelta(1.0f / 60.0f);
+    Check(window.GetFixedDelta() > 0.0f, "D4：固定 delta 记下了");
+
+    // D1：Open 只建窗口，不进循环。
+    Check(window.Open("selftest"), "D1：Open 成功（dummy 视频驱动 + 软渲染器）");
+    Check(window.RunFrames(2) == 2, "D1：RunFrames(2) 真的跑了两帧");
+    Check(window.HasWindow(), "D1：跑帧期间窗口还活着");
+
+    // D3：帧末任务的两种排法。
+    int order = 0;
+    int first = 0;
+    int third = 0;
+    window.PostFrameTask([&] { first = ++order; });
+    window.RunAfterFrames(2, [&] { third = ++order; });
+    window.RunFrames(1);
+    Check(first == 1 && third == 0,
+          "D3：PostFrameTask 在本帧末执行、RunAfterFrames(2) 还没到");
+    window.RunFrames(1);
+    Check(third == 2, "D3：RunAfterFrames(2) 在第二帧末执行");
+
+    // D2：离屏渲染，不依赖窗口。
+    const std::string offscreen = "selftest_offscreen.png";
+    Check(inking::InkingWindow::RenderToTexture(offscreen, 320, 180, "selftest"),
+          "D2：RenderToTexture 不建窗口也能出图");
+    {
+        std::FILE* file = std::fopen(offscreen.c_str(), "rb");
+        long size = 0;
+        if (file != nullptr) {
+            std::fseek(file, 0, SEEK_END);
+            size = std::ftell(file);
+            std::fclose(file);
+        }
+        Check(size > 100, "D2：写出的是真文件（不是空壳）");
+        std::remove(offscreen.c_str());
+    }
+
+    // D5：带退出码关窗。
+    window.RequestClose(7);
+    Check(window.GetExitCode() == 7, "D5：`RequestClose(7)` 记下退出码");
+    Check(!window.PumpOnce(), "D5：关窗之后 `PumpOnce()` 返回 false");
+    Check(!window.HasWindow(), "D5：收尾把窗口释放了（不会留下半开状态）");
 }
 
 // ---------------------------------------------------------------------------
@@ -1141,6 +2247,17 @@ int main() {
     // ---- 文字高清：按设备比例烘字，布局零位移 ----
     CheckTextHiDpi();
 
+    // ---- 静默失效护栏：自测量 / 零尺寸 / 全透明兜底 / 字体 / 日志（0.1.1） ----
+    CheckSilentFailureGuards(rnd, &scene);
+
+    // ---- 字体回退链：链上第二条命中 / 全失败只报一条（0.3.0 T-13） ----
+    CheckFontFallbackChain(rnd, &scene);
+
+    // ---- 静默失效清单里的三条既有路径（0.3.0 T-14） ----
+    CheckThemeTokenMissing();
+    CheckScrollRangeStale();
+    CheckTextNegativeWidth();
+
     // ---- 消息队列 ----
     inking::MessageQueue::addMessage(inking::MessageType::Pass, 0.0f, "hi");
     const std::vector<inking::Message> msgs =
@@ -1166,11 +2283,27 @@ int main() {
     // ---- 层级：树序绘制 + 兄弟内 z（放在最后：会临时切换活动场景） ----
     CheckLayerOrder(rnd);
 
+    // ---- 装饰笔：面板描边在子孙之上 / 阴影在填充之下；按钮三笔顺序不变（0.2.0） ----
+    CheckPanelDecoration(rnd);
+    CheckButtonPaintOrder(rnd);
+
+    // ---- 按钮状态事件：两档共用 stateChanged（0.2.0 T-11） ----
+    CheckButtonStateEvent();
+
+    // ---- 输入框：光标 clamp + 水平滚动（0.2.0 T-12） ----
+    CheckInputScroll();
+
     // ---- 截图：失败路径的契约（正路径由 INK_CAPTURE 跑示例验） ----
     CheckCaptureContract();
 
     // ---- 运行期主题：换表 → 下一帧颜色就变（含真渲染像素） ----
     CheckRuntimeTheme(rnd);
+
+    // ---- 树的动态性（0.4.0 A 组）：A1 / A2 / A3 / A4 / A5 / B1 / B2 / D6 / D7 ----
+    CheckDynamicTree();
+
+    // ---- 清单的元自检放在**最后**：前面的检查全部登记完才对账（T-14） ----
+    CheckSilentFailureListSynced();
 
     inking::SceneLibrary::SetActiveScene(nullptr);
     if (rnd != nullptr) {
@@ -1180,6 +2313,11 @@ int main() {
         SDL_DestroyWindow(win);
     }
     SDL_Quit();
+
+    // ---- 非阻塞跑帧（0.4.0 D 组）：**必须放在裸窗口销毁之后** ----
+    // 它会自己 SDL_Init，并在收尾时 SDL_Quit——放在前面会把上面用到的
+    // 渲染器一起拆掉（那种顺序错误会表现成"随机几个检查失败"）。
+    CheckHeadlessPump();
 
     std::printf("== 失败项：%d ==\n", g_fail);
     return g_fail;

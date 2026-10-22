@@ -10,6 +10,8 @@
 #include <SDL3/SDL.h>
 
 #include <cctype>
+#include <cstdio>
+#include <cstring>
 #include <chrono>
 #include <cmath>
 #include <string>
@@ -228,6 +230,31 @@ struct WindowState {
     bool          vsyncActive = false;  /** vsync 是否接上了（决定还要不要自己 sleep） */
     bool          open = false;         /** 是否已经成功打开 */
     std::string   sceneName;            /** 当前要展示的场景名 */
+
+    /**
+     * @brief 帧时钟 + 时间线（D1 的落点）。
+     *
+     * 以前两者都是 `runLoop` 里的**局部变量**，于是"跑一帧就返回"根本做不到：
+     * timeline 的累加器、上一帧时刻都是跨帧状态，重开一次就清零（逻辑步会
+     * 重新计时、动画会跳一下）。搬到状态里之后，`Show()` 与 `PumpOnce()`
+     * 共用**同一个**节拍器。
+     */
+    Timeline timeline;
+    std::chrono::steady_clock::time_point previousFrame{};
+    std::chrono::steady_clock::time_point start{};
+    bool pumpReady = false;  ///< 上面三个量初始化过了没有
+
+    /**
+     * 帧末任务（D3）：`RunAfterFrames(n, fn)` 排进来的那些。
+     *
+     * `framesLeft` 每帧末减一，到 0 的那一帧执行。用 vector 而不是
+     * priority_queue：任务数是个位数，顺序执行比"按时间排序"更好推理。
+     */
+    struct FrameTask {
+        int framesLeft = 0;
+        std::function<void()> action;
+    };
+    std::vector<FrameTask> frameTasks;
 };
 
 /** 返回唯一的窗口状态。 */
@@ -529,9 +556,123 @@ bool hasPngExtension(const std::string& path) {
 }
 
 /**
+ * 把**已经编码好**的字节写进文件。
+ *
+ * 顺序有讲究：**先用 `std::fopen`**（走 CRT，不吃 SDL 的文件抽象层），失败才
+ * 退回 SDL 的路径 API。两个理由：
+ *   1. 某些受限环境（沙箱 / 只给 stdio 的容器）里 SDL 的文件层会被拦或截断，
+ *      而 `fopen` 正常——实测过"文件名被截成前 7 个字符"这种荒唐现象；
+ *   2. Windows 下窄串是 ANSI，`fopen` 对非 ASCII 路径会失败，而 SDL 的
+ *      `SDL_IOFromFile` 收 UTF-8——两条路互补，覆盖面比任一条都大。
+ */
+bool writeBytesToFile(const std::vector<unsigned char>& bytes,
+                      const std::string& path) {
+    if (bytes.empty()) {
+        return false;
+    }
+    if (std::FILE* file = std::fopen(path.c_str(), "wb")) {
+        const std::size_t written =
+            std::fwrite(bytes.data(), 1, bytes.size(), file);
+        const bool closed = (std::fclose(file) == 0);
+        if (written == bytes.size() && closed) {
+            return true;
+        }
+        INK_LOG_WARN(kModuleName,
+                     "写文件不完整（fwrite 短写），改用 SDL 文件层再试一次："
+                         + path);
+    }
+
+    // 退回 SDL：它在 Windows 上认 UTF-8 路径。
+    SDL_IOStream* stream = SDL_IOFromFile(path.c_str(), "wb");
+    if (stream == nullptr) {
+        INK_LOG_ERROR(kModuleName,
+                      "写文件失败：" + path + "：" + std::string(SDL_GetError()));
+        return false;
+    }
+    const std::size_t written = SDL_WriteIO(stream, bytes.data(), bytes.size());
+    const bool flushed = SDL_FlushIO(stream);
+    SDL_CloseIO(stream);
+    if (written != bytes.size() || !flushed) {
+        INK_LOG_ERROR(kModuleName, "写文件不完整（SDL 文件层）：" + path);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 一块**可写内存流**（`SDL_IOStreamInterface`）：编码先落到内存，再一次性写盘。
+ *
+ * 为什么绕这一道：`SDL_SavePNG(surface, path)` 直接把路径交给 SDL 的文件层，
+ * 于是"能不能存图"取决于那层在这个环境里好不好使——在沙箱里实测会把文件名
+ * 截断（写出一个叫 `probe_o` 的文件、返回 true）。编码与落盘分开之后，
+ * 编码用 SDL（它只会写内存），落盘用自己的两条路（见 `writeBytesToFile`）。
+ */
+struct MemorySink {
+    std::vector<unsigned char> bytes;
+    std::size_t position = 0;
+};
+
+Sint64 SDLCALL sinkSize(void* userdata) {
+    return static_cast<Sint64>(static_cast<MemorySink*>(userdata)->bytes.size());
+}
+
+Sint64 SDLCALL sinkSeek(void* userdata, Sint64 offset, SDL_IOWhence whence) {
+    MemorySink& sink = *static_cast<MemorySink*>(userdata);
+    const Sint64 size = static_cast<Sint64>(sink.bytes.size());
+    Sint64 base = 0;
+    switch (whence) {
+        case SDL_IO_SEEK_SET:
+            base = 0;
+            break;
+        case SDL_IO_SEEK_CUR:
+            base = static_cast<Sint64>(sink.position);
+            break;
+        case SDL_IO_SEEK_END:
+            base = size;
+            break;
+        default:
+            return -1;
+    }
+    const Sint64 target = base + offset;
+    if (target < 0) {
+        return -1;
+    }
+    sink.position = static_cast<std::size_t>(target);
+    return target;
+}
+
+size_t SDLCALL sinkRead(void* /*userdata*/, void* /*ptr*/, size_t /*size*/,
+                        SDL_IOStatus* status) {
+    *status = SDL_IO_STATUS_READONLY;
+    return 0;
+}
+
+size_t SDLCALL sinkWrite(void* userdata, const void* ptr, size_t size,
+                         SDL_IOStatus* status) {
+    MemorySink& sink = *static_cast<MemorySink*>(userdata);
+    if (size == 0) {
+        return 0;
+    }
+    if (sink.position + size > sink.bytes.size()) {
+        sink.bytes.resize(sink.position + size);
+    }
+    std::memcpy(sink.bytes.data() + sink.position, ptr, size);
+    sink.position += size;
+    *status = SDL_IO_STATUS_READY;
+    return size;
+}
+
+bool SDLCALL sinkFlush(void* /*userdata*/, SDL_IOStatus* status) {
+    *status = SDL_IO_STATUS_READY;
+    return true;  // 内存流没有缓冲可刷
+}
+
+bool SDLCALL sinkClose(void* /*userdata*/) { return true; }
+
+/**
  * 把渲染器当前的输出存成图片。
  *
- * PNG 只有 SDL ≥ 3.4 的核心库才有（`SDL_SavePNG`）。这里**故意不引
+ * PNG 只有 SDL ≥ 3.4 的核心库才有（`SDL_SavePNG_IO`）。这里**故意不引
  * SDL3_image 的 `IMG_SavePNG`**：截图是排错手段，不该因为一个可选依赖没开
  * 就"能用 / 不能用"取决于构建配置。老 SDL 上请用 `.bmp`。
  *
@@ -550,27 +691,51 @@ bool writeRendererImage(SDL_Renderer* renderer, const std::string& path) {
         return false;
     }
 
-    bool saved = false;
+    // ① 编码到内存：这一段只用 SDL 的**内存**能力，不碰文件系统。
+    MemorySink sink;
+    SDL_IOStreamInterface iface{};
+    iface.version = sizeof(iface);
+    iface.size = sinkSize;
+    iface.seek = sinkSeek;
+    iface.read = sinkRead;
+    iface.write = sinkWrite;
+    iface.flush = sinkFlush;
+    iface.close = sinkClose;
+
+    SDL_IOStream* stream = SDL_OpenIO(&iface, &sink);
+    if (stream == nullptr) {
+        INK_LOG_ERROR(kModuleName,
+                      "截图失败（建内存流）：" + std::string(SDL_GetError()));
+        SDL_DestroySurface(shot);
+        return false;
+    }
+
+    bool encoded = false;
     if (hasPngExtension(path)) {
 #if SDL_VERSION_ATLEAST(3, 4, 0)
-        saved = SDL_SavePNG(shot, path.c_str());
+        encoded = SDL_SavePNG_IO(shot, stream, /*closeio=*/false);
 #else
         INK_LOG_ERROR(kModuleName,
                       "这个 SDL 版本没有 PNG 保存能力（需要 3.4+），请改用 .bmp："
                           + path);
+        SDL_CloseIO(stream);
         SDL_DestroySurface(shot);
         return false;
 #endif
     } else {
-        saved = SDL_SaveBMP(shot, path.c_str());
+        encoded = SDL_SaveBMP_IO(shot, stream, /*closeio=*/false);
+    }
+    SDL_CloseIO(stream);
+    SDL_DestroySurface(shot);
+
+    if (!encoded) {
+        INK_LOG_ERROR(kModuleName,
+                      "截图编码失败：" + path + "：" + std::string(SDL_GetError()));
+        return false;
     }
 
-    if (!saved) {
-        INK_LOG_ERROR(kModuleName,
-                      "截图保存失败：" + path + "：" + std::string(SDL_GetError()));
-    }
-    SDL_DestroySurface(shot);
-    return saved;
+    // ② 落盘：内存 → 文件（两条路，见 `writeBytesToFile`）。
+    return writeBytesToFile(sink.bytes, path);
 }
 
 /**
@@ -634,16 +799,184 @@ void drawFrame(WindowState& s, const MouseInput& mouse,
 }
 
 /**
- * 主循环：事件泵 → 展示倍率 → 时间线 → 绘制 → 帧末收尾 → 节流。
+ * 帧末任务（D3）：把 `framesLeft` 减一，到 0 的那些**先取出来再执行**。
+ *
+ * 先取出来再执行是必须的：任务里常常又要排一个（"再等 3 帧做下一步"），
+ * 边遍历边改 vector 会失效。
+ */
+void runFrameTasks(WindowState& s) {
+    if (s.frameTasks.empty()) {
+        return;  // 稳态：一次判空
+    }
+    std::vector<WindowState::FrameTask> due;
+    for (std::size_t i = 0; i < s.frameTasks.size();) {
+        WindowState::FrameTask& task = s.frameTasks[i];
+        --task.framesLeft;
+        if (task.framesLeft <= 0) {
+            due.push_back(std::move(task));
+            s.frameTasks.erase(s.frameTasks.begin()
+                               + static_cast<std::ptrdiff_t>(i));
+            continue;
+        }
+        ++i;
+    }
+    for (WindowState::FrameTask& task : due) {
+        if (task.action) {
+            task.action();
+        }
+    }
+}
+
+/**
+ * 跑**一帧**：事件泵 → 展示倍率 → 时间线 → 绘制 → 帧末收尾 → 帧末任务 → 节流。
+ *
+ * 从 `runLoop` 里拆出来（D1）是这一版唯一的结构性改动：拆之前"跑一帧就返回"
+ * 做不到，自检只能塞在 `onRenderBoundTick` 里数帧。拆之后 `Show()` 是
+ * `while (stepFrame(...))`，`PumpOnce()` 是"调一次"，两条路**共用同一份顺序**
+ * ——不存在"阻塞跑和手动跑行为不一样"这种最难查的分叉。
  *
  * 时间线是这里的节拍器：逻辑步固定 50Hz，每帧通道和渲染同拍。
  * 接上 vsync 之后节流交给 SDL，不再自己 sleep。
+ *
+ * @return 还要不要继续跑（false = 收到关窗请求 / 冒烟时间到）。
+ */
+bool stepFrame(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
+               InkingWindow& window) {
+    // 0. 时钟初始化：第一次进来（或重新 Open 之后）才做。
+    if (!s.pumpReady) {
+        s.previousFrame = std::chrono::steady_clock::now();
+        s.start = s.previousFrame;
+        s.pumpReady = true;
+
+        // 时间线的两条通道**必须在这里挂**（不是只在 runLoop 里挂）：
+        // `PumpOnce()` 不走 runLoop，漏了这一步就是"帧跑了、场景一帧都没收到"
+        // ——自检里表现为 `onRenderBoundTick` 计数为 0，非常像"能力没实现"。
+        s.timeline.SetLogicCallback([](double fixedStep) {
+            // 固定逻辑步：每次派发都喂同一个步长，状态机要的就是确定的步。
+            if (InkingScene* scene = SceneLibrary::GetActiveScene()) {
+                scene->TickLogic(fixedStep);
+            }
+        });
+        // 每帧通道跟着渲染走：真实 delta，和这一帧画出来的东西对齐。
+        s.timeline.SetFrameCallback([](double delta) {
+            if (InkingScene* scene = SceneLibrary::GetActiveScene()) {
+                scene->TickFrame(delta);
+            }
+        });
+    }
+
+    // 1. 事件泵：退出、键盘、鼠标都在这里变成状态。
+    bool running = pumpEvents(s, mouse, keyboard, window);
+
+    // 1a. 全局快捷键（B）：**排在指针 / 键盘派发之前**。
+    //     它是"应用级命令"，语义上先于任何组件的局部反应；命中后会把那条
+    //     Down 事件从本帧事件里消费掉，于是焦点输入框收不到 `Ctrl+S`，
+    //     但"按着 Ctrl"这个跨帧状态不受影响。
+    window.GetShortcuts().Dispatch(keyboard);
+
+    // 1b. 关窗请求（C2）：无边框下的自绘关闭按钮、或业务代码调 `RequestClose()`
+    //     都走这条路。它和 ESC 是同一个落点（都在"这一帧还要不要继续"上），
+    //     区别只是来源是**程序自己**而不是 SDL 事件。
+    if (window.IsCloseRequested()) {
+        INK_LOG_INFO(kModuleName, "收到关窗请求（自绘标题栏 / 业务代码）");
+        running = false;
+    }
+
+    // 1c. 预加载收尾（帧首）：管家线程跑完 `onPreload` 的场景，在这一步
+    //     回到 UI 线程做它的 `onPreloadFinished`——建组件 / 建纹理都只在
+    //     UI 线程做得了。放在帧首而不是帧末：本帧的绘制就能用上刚装好的东西。
+    SceneLibrary::DrainPreloadCompletions();
+
+    // 2. 展示倍率跟着窗口 / DPI 走。
+    syncMagnification(s, window);
+
+    // 2b. 指针：把设计坐标与按键状态喂给活跃场景，并派发一次
+    //     （悬停进出 / 按下 / 抬起触发点击）。放在推进时间线之前，
+    //     这样本帧画出来的就是本帧的交互结果，不会差一帧。
+    dispatchPointer(s, mouse);
+
+    // 2c. 键盘：**排在指针之后**——点击可能刚把焦点换给别人，本帧的按键
+    //     要推给新的焦点节点（"点进输入框并立刻打字"的第一下不能丢）。
+    //     它同样要放在推进时间线之前，理由和指针那条一样。
+    dispatchKeyboard(keyboard);
+
+    // 3. 推进时间线。delta 用**真实流逝时间**，所以某帧掉到 30ms 也不会
+    //    让逻辑时间相对墙上时钟漂移——累加器会把欠的步补上。
+    //
+    //    D4：装了固定 delta（`SetFixedDelta`）就用它，不看墙上时钟——
+    //    动画 / 主题过渡的截图要在 CI 里逐像素稳定，就必须去掉"这一帧花了多久"
+    //    这个变量。固定 delta 下也**不节流**（否则跑 100 帧要 1.6 秒）。
+    const auto now = std::chrono::steady_clock::now();
+    const double measuredDelta =
+        std::chrono::duration<double>(now - s.previousFrame).count();
+    s.previousFrame = now;
+
+    const float fixedDelta = window.GetFixedDelta();
+    const double deltaSeconds =
+        fixedDelta > 0.0f ? static_cast<double>(fixedDelta) : measuredDelta;
+
+    s.timeline.Advance(deltaSeconds);
+
+    // 3b. 音频（B10）：**每帧都要推进**——它和场景无关（标题画面没场景也要
+    //     有 BGM），所以不能挂在 timeline 那条"给活跃场景"的通道上。
+    //     用同一个真实 delta：声音不该跟着帧率走。
+    AudioTick(static_cast<float>(deltaSeconds));
+
+    // 4. 绘制：底色 + 当前场景的整棵渲染树 + 指针标记。
+    drawFrame(s, mouse, window.GetBackgroundColor());
+
+    // 5. 帧末收尾：瞬时状态一帧只清一次。放在这里而不是事件循环里，
+    //    否则一帧里的多个移动事件会被后一个清掉。
+    //
+    //    场景的脏标记也在这里**统一消费**（T-3）：一帧里可能连着标了很多次，
+    //    攒到最后只处理这一回。只消费**活跃**场景——静默 / 停放 / 已关闭的
+    //    场景脏要留着，切回来时才有意义。
+    if (InkingScene* scene = SceneLibrary::GetActiveScene()) {
+        scene->ConsumeFrameDirty();
+    }
+    mouse.ResetFrameFlags();
+    // 键盘的瞬时部分同理：本帧事件清掉，**按着的键留着**（跨帧状态）。
+    keyboard.ResetFrameFlags();
+
+    // 5a. 帧末任务（D3）：`RunAfterFrames(n, fn)` 攒下的那些。
+    //
+    //     为什么在"脏消费之后"：任务里常常要读"这一帧的结果"（命中、尺寸、
+    //     动画进度），而消费之后那些值才是定稿的。为什么在"待销毁场景提交
+    //     之前"：任务里可能刚把所有引用交出去，场景下一帧再析构更安全。
+    runFrameTasks(s);
+
+    // 5b. 待销毁的场景在这里真正析构（`SceneLibrary::DestroyScene` 只入队）。
+    //
+    //     为什么必须等到帧末：销毁场景会连带拆掉它整棵子树，而上面这一帧的
+    //     Render / Tick / 指针派发都在遍历那份绘制列表——遍历中途拆容器就是
+    //     悬垂。攒到这一步再删，"这一刻没有人在看它"。
+    SceneLibrary::CommitPendingDestructions();
+
+    // 6. 节流。接了 vsync 就交给 SDL（它会阻塞到下一次垂直回扫），
+    //    没接上时才退回固定 sleep——sleep 不扣本帧耗时，
+    //    实际是 16ms + 工作时间，这是没 vsync 时的将就之法。
+    //    固定 delta（D4）下不节流：手动跑帧要的是"快"，不是"像真的"。
+    if (!s.vsyncActive && fixedDelta <= 0.0f) {
+        std::this_thread::sleep_for(kFrameInterval);
+    }
+
+    const bool autoQuit = SDL_getenv("INK_AUTOQUIT") != nullptr;
+    if (autoQuit
+        && std::chrono::steady_clock::now() - s.start > AutoQuitDuration()) {
+        running = false;
+    }
+
+    return running;
+}
+
+/**
+ * 主循环：一直跑 `stepFrame` 到它说不跑为止。
+ *
+ * 位置：**指针派发之后**（见 stepFrame 里的顺序）。这个函数只负责循环，
+ * 一帧做什么全在 `stepFrame` 里——那样 `PumpOnce()` 才可能是"同一份顺序"。
  */
 void runLoop(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
              InkingWindow& window) {
-    const bool autoQuit = SDL_getenv("INK_AUTOQUIT") != nullptr;
-    const auto start = std::chrono::steady_clock::now();
-
     // 零代码截图（P2-6）：`INK_CAPTURE=<路径>` 让**第一帧**落一张图。
     // 和 `INK_AUTOQUIT` 同一族——排错时"先看一眼画面"比加日志快得多，
     // 而此刻改业务代码往往是最不方便的事。只截一次，之后照常跑。
@@ -654,109 +987,13 @@ void runLoop(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
     }
 
     // 整个 UI 的唯一时间源。逻辑步长取默认的 1/50s。
-    Timeline timeline;
+    // **两条通道在 `stepFrame` 的初始化里挂**（`PumpOnce()` 也要用同一份），
+    // 这里不再重复——两处都挂会出现"谁最后写谁生效"，而它们是同一份逻辑，
+    // 重复只是掩盖"漏挂"这个真问题。
 
-    timeline.SetLogicCallback([](double fixedStep) {
-        // 固定逻辑步：每次派发都喂同一个步长，状态机要的就是确定的步。
-        if (InkingScene* scene = SceneLibrary::GetActiveScene()) {
-            scene->TickLogic(fixedStep);
-        }
-    });
-
-    // 每帧通道跟着渲染走：真实 delta，和这一帧画出来的东西对齐。
-    timeline.SetFrameCallback([](double delta) {
-        if (InkingScene* scene = SceneLibrary::GetActiveScene()) {
-            scene->TickFrame(delta);
-        }
-    });
-
-    auto previousFrame = std::chrono::steady_clock::now();
     bool running = true;
-
     while (running) {
-        // 1. 事件泵：退出、键盘、鼠标都在这里变成状态。
-        running = pumpEvents(s, mouse, keyboard, window);
-
-        // 1a. 全局快捷键（B）：**排在指针 / 键盘派发之前**。
-        //     它是"应用级命令"，语义上先于任何组件的局部反应；命中后会把那条
-        //     Down 事件从本帧事件里消费掉，于是焦点输入框收不到 `Ctrl+S`，
-        //     但"按着 Ctrl"这个跨帧状态不受影响。
-        window.GetShortcuts().Dispatch(keyboard);
-
-        // 1b. 关窗请求（C2）：无边框下的自绘关闭按钮、或业务代码调 `RequestClose()`
-        //     都走这条路。它和 ESC 是同一个落点（都在"这一帧还要不要继续"上），
-        //     区别只是来源是**程序自己**而不是 SDL 事件。
-        if (window.IsCloseRequested()) {
-            INK_LOG_INFO(kModuleName, "收到关窗请求（自绘标题栏 / 业务代码）");
-            running = false;
-        }
-
-        // 1c. 预加载收尾（帧首）：管家线程跑完 `onPreload` 的场景，在这一步
-        //     回到 UI 线程做它的 `onPreloadFinished`——建组件 / 建纹理都只在
-        //     UI 线程做得了。放在帧首而不是帧末：本帧的绘制就能用上刚装好的东西。
-        SceneLibrary::DrainPreloadCompletions();
-
-        // 2. 展示倍率跟着窗口 / DPI 走。
-        syncMagnification(s, window);
-
-        // 2b. 指针：把设计坐标与按键状态喂给活跃场景，并派发一次
-        //     （悬停进出 / 按下 / 抬起触发点击）。放在推进时间线之前，
-        //     这样本帧画出来的就是本帧的交互结果，不会差一帧。
-        dispatchPointer(s, mouse);
-
-        // 2c. 键盘：**排在指针之后**——点击可能刚把焦点换给别人，本帧的按键
-        //     要推给新的焦点节点（"点进输入框并立刻打字"的第一下不能丢）。
-        //     它同样要放在推进时间线之前，理由和指针那条一样。
-        dispatchKeyboard(keyboard);
-
-        // 3. 推进时间线。delta 用**真实流逝时间**，所以某帧掉到 30ms 也不会
-        //    让逻辑时间相对墙上时钟漂移——累加器会把欠的步补上。
-        const auto now = std::chrono::steady_clock::now();
-        const double deltaSeconds =
-            std::chrono::duration<double>(now - previousFrame).count();
-        previousFrame = now;
-
-        timeline.Advance(deltaSeconds);
-
-        // 3b. 音频（B10）：**每帧都要推进**——它和场景无关（标题画面没场景也要
-        //     有 BGM），所以不能挂在 timeline 那条"给活跃场景"的通道上。
-        //     用同一个真实 delta：声音不该跟着帧率走。
-        AudioTick(static_cast<float>(deltaSeconds));
-
-        // 4. 绘制：底色 + 当前场景的整棵渲染树 + 指针标记。
-        drawFrame(s, mouse, window.GetBackgroundColor());
-
-        // 5. 帧末收尾：瞬时状态一帧只清一次。放在这里而不是事件循环里，
-        //    否则一帧里的多个移动事件会被后一个清掉。
-        //
-        //    场景的脏标记也在这里**统一消费**（T-3）：一帧里可能连着标了很多次，
-        //    攒到最后只处理这一回。只消费**活跃**场景——静默 / 停放 / 已关闭的
-        //    场景脏要留着，切回来时才有意义。
-        if (InkingScene* scene = SceneLibrary::GetActiveScene()) {
-            scene->ConsumeFrameDirty();
-        }
-        mouse.ResetFrameFlags();
-        // 键盘的瞬时部分同理：本帧事件清掉，**按着的键留着**（跨帧状态）。
-        keyboard.ResetFrameFlags();
-
-        // 5b. 待销毁的场景在这里真正析构（`SceneLibrary::DestroyScene` 只入队）。
-        //
-        //     为什么必须等到帧末：销毁场景会连带拆掉它整棵子树，而上面这一帧的
-        //     Render / Tick / 指针派发都在遍历那份绘制列表——遍历中途拆容器就是
-        //     悬垂。攒到这一步再删，"这一刻没有人在看它"。
-        SceneLibrary::CommitPendingDestructions();
-
-        // 6. 节流。接了 vsync 就交给 SDL（它会阻塞到下一次垂直回扫），
-        //    没接上时才退回固定 sleep——sleep 不扣本帧耗时，
-        //    实际是 16ms + 工作时间，这是没 vsync 时的将就之法。
-        if (!s.vsyncActive) {
-            std::this_thread::sleep_for(kFrameInterval);
-        }
-
-        if (autoQuit
-            && std::chrono::steady_clock::now() - start > AutoQuitDuration()) {
-            running = false;
-        }
+        running = stepFrame(s, mouse, keyboard, window);
     }
 }
 
@@ -911,6 +1148,19 @@ void InkingWindow::RequestClose() {
     // 会被自绘标题栏的 × 绕过去（那是最容易被漏掉的一条旁路）。
     RequestExit();
 }
+
+void InkingWindow::RequestClose(int exitCode) {
+    // 先记账再走闸门：被否决的这次关窗请求**不改退出码**——"用户点了取消"
+    // 不该让上一轮的失败码生效，也不该把已经记下的失败码抹成 0。
+    if (_exitConfirm && !_exitConfirm()) {
+        INK_LOG_INFO(kModuleName, "退出请求被确认回调否决，主循环继续");
+        return;
+    }
+    _exitCode = exitCode;
+    _closeRequested = true;
+}
+
+int InkingWindow::GetExitCode() const noexcept { return _exitCode; }
 
 void InkingWindow::SetExitConfirmHandler(ExitConfirmHandler handler) {
     _exitConfirm = std::move(handler);
@@ -1272,26 +1522,53 @@ bool showSceneByName(const std::string& sceneName, bool withPreload) {
     return true;
 }
 
-void InkingWindow::Show(const std::string& sceneName) {
+int InkingWindow::Show(const std::string& sceneName) {
     WindowState& s = state();
-
-    // 每次进主循环都复位一次：上一次跑完留下的请求不该影响下一次 Show。
-    _closeRequested = false;
 
     if (s.open) {
         // 主循环跑起来之后，只有场景回调里再调 Show() 会走到这条分支——
-        // 那正是运行期换场景的用法，所以这里是“切场景”而不是“忽略重复调用”。
+        // 那正是运行期换场景的用法，所以这里是"切场景"而不是"忽略重复调用"。
         // 旧场景会在这里自动进入静默。
         s.sceneName = sceneName;
         showSceneByName(sceneName, /*withPreload=*/true);
         INK_LOG_INFO(kModuleName, "窗口已经打开，切换场景：" + sceneName);
-        return;
+        return _exitCode;
     }
+
+    if (!Open(sceneName)) {
+        return _exitCode;
+    }
+
+    // Show() 是启动点：窗口开出来之后就在这里进主循环，一直阻塞到窗口关闭
+    // （或按 ESC），返回前把窗口释放掉。想自己控制帧节奏（自检 / CI）就走
+    // `Open()` + `RunFrames(n)`，那条路与这里共用 `stepFrame`。
+    runLoop(s, _mouseInput, _keyboardInput, *this);
+
+    INK_LOG_INFO(kModuleName, "主循环退出，释放窗口");
+    releaseWindow(s);
+
+    // D5：`RequestClose(code)` 记下的退出码原样传出去——CI 拿的就是它。
+    return _exitCode;
+}
+
+bool InkingWindow::Open(const std::string& sceneName) {
+    WindowState& s = state();
+
+    if (s.open) {
+        // 已经开着：与 `Show()` 的第二条路径同义（切场景）。
+        s.sceneName = sceneName;
+        showSceneByName(sceneName, /*withPreload=*/true);
+        return true;
+    }
+
+    // 每次进循环都复位一次：上一次跑完留下的请求不该影响下一次。
+    _closeRequested = false;
+    _exitCode = 0;
 
     // SDL3 的 SDL_Init 返回 bool：true 才是成功（SDL2 是"0 表示成功"）
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         INK_LOG_ERROR(kModuleName, std::string("SDL_Init 失败：") + SDL_GetError());
-        return;
+        return false;
     }
 
     // C2：无边框窗口。标志必须在**建窗口那一刻**给（之后改要走
@@ -1307,7 +1584,7 @@ void InkingWindow::Show(const std::string& sceneName) {
         INK_LOG_ERROR(kModuleName,
                       std::string("SDL_CreateWindow 失败：") + SDL_GetError());
         SDL_Quit();
-        return;
+        return false;
     }
 
     // 窗口位置取回来：自绘标题栏的拖动是"在当前坐标上累加"，起点必须是真的
@@ -1328,14 +1605,22 @@ void InkingWindow::Show(const std::string& sceneName) {
     // 窗口圆角（Win11 的 DWM；旧系统 / 非 Windows 静默无效）——必须在窗口
     // **建起来之后**才能应用。请求与读回是两件事：`_roundedCornersApplied`
     // 存的是读回来的答案，日志照着它说，别把"发过请求"说成"已生效"。
+    //
+    // 级别（0.1.1）：**"请求了圆角但没落到窗口上"升 WARN**。它不是调试信息
+    // ——用户配了圆角却看不到效果，属于"配置未生效"，而这条以前是 DEBUG，
+    // 发布包里根本看不见（消费方正好也关着调试流）。另外两种情形仍是 DEBUG：
+    // 已生效、以及本来就没请求。
     _roundedCornersApplied = RequestRoundedCorners(s.window, _roundedCorners);
-    INK_LOG_DEBUG(kModuleName,
-                  std::string("窗口圆角：")
-                      + (_roundedCornersApplied
-                             ? "已生效（DWM 属性读回为圆角）"
-                             : (_roundedCorners
-                                    ? "系统不支持或忽略了它（退回方角）"
-                                    : "已关闭（DwmcpDoNotRound）")));
+    if (_roundedCorners && !_roundedCornersApplied) {
+        INK_LOG_WARN(kModuleName,
+                     "窗口圆角：系统不支持或忽略了它（退回方角）");
+    } else {
+        INK_LOG_DEBUG(kModuleName,
+                      std::string("窗口圆角：")
+                          + (_roundedCornersApplied
+                                 ? "已生效（DWM 属性读回为圆角）"
+                                 : "已关闭（DwmcpDoNotRound）"));
+    }
 
     // 打开文本输入（A3）：**不调这一句就收不到 `SDL_EVENT_TEXT_INPUT`**，
     // 于是 `onTextInput` 永远不触发——而按键事件照样来，症状是"英文能打、
@@ -1419,13 +1704,124 @@ void InkingWindow::Show(const std::string& sceneName) {
                      + "，展示倍率 " + std::to_string(GetMagnification())
                      + "，场景：" + sceneName);
 
-    // Show() 是启动点：窗口开出来之后就在这里进主循环，一直阻塞到窗口关闭
-    // （或按 ESC），返回前把窗口释放掉。谁想让主循环跑在别的线程上，
-    // 以后再加一个不阻塞的入口，别把 Show() 拆成两种语义。
-    runLoop(s, _mouseInput, _keyboardInput, *this);
+    // **不进主循环**：这是 `Open()` 与 `Show()` 的唯一区别。帧时钟在这里复位，
+    // 于是"Open → RunFrames(2)"与"Show 跑两帧"的 delta 起点一致。
+    s.pumpReady = false;
+    s.frameTasks.clear();
+    return true;
+}
 
-    INK_LOG_INFO(kModuleName, "主循环退出，释放窗口");
-    releaseWindow(s);
+bool InkingWindow::PumpOnce() {
+    WindowState& s = state();
+
+    if (!s.open) {
+        // 还没开：先开一个（场景为空 = 沿用当前活跃场景）。
+        // 自检因此不用先写一遍窗口代码，`PumpOnce()` 自己就够了。
+        if (!Open("")) {
+            return false;
+        }
+    }
+
+    const bool running = stepFrame(s, _mouseInput, _keyboardInput, *this);
+    if (!running) {
+        // 循环结束了：和 `Show()` 的收尾一致，否则下一次 Open 会拿到残留状态。
+        releaseWindow(s);
+    }
+    return running;
+}
+
+int InkingWindow::RunFrames(int frameCount) {
+    int ran = 0;
+    for (int i = 0; i < frameCount; ++i) {
+        if (!PumpOnce()) {
+            break;
+        }
+        ++ran;
+    }
+    return ran;
+}
+
+void InkingWindow::PostFrameTask(std::function<void()> task) {
+    if (!task) {
+        return;
+    }
+    state().frameTasks.push_back({1, std::move(task)});
+}
+
+void InkingWindow::RunAfterFrames(int frames, std::function<void()> task) {
+    if (!task) {
+        return;
+    }
+    // `frames <= 0` 与 `PostFrameTask` 同义（都是"这一帧末"）。
+    const int wait = frames > 0 ? frames : 1;
+    state().frameTasks.push_back({wait, std::move(task)});
+}
+
+void InkingWindow::SetFixedDelta(float seconds) {
+    _fixedDelta = seconds > 0.0f ? seconds : 0.0f;
+}
+
+float InkingWindow::GetFixedDelta() const noexcept { return _fixedDelta; }
+
+bool InkingWindow::RenderToTexture(const std::string& path, int width, int height,
+                                   const std::string& sceneName) {
+    if (path.empty() || width <= 0 || height <= 0) {
+        INK_LOG_ERROR(kModuleName,
+                      "RenderToTexture：参数非法（路径空 / 宽高非正）：" + path);
+        return false;
+    }
+
+    // ① 目标位图 + 软件渲染器。**不需要窗口，也不需要 dummy 视频驱动**
+    //    ——那条依赖正是旧写法"换个机器就可能挂"的来源。
+    SDL_Surface* target =
+        SDL_CreateSurface(width, height, SDL_PIXELFORMAT_ARGB8888);
+    if (target == nullptr) {
+        INK_LOG_ERROR(kModuleName,
+                      "RenderToTexture：建目标位图失败：" + std::string(SDL_GetError()));
+        return false;
+    }
+    SDL_Renderer* renderer = SDL_CreateSoftwareRenderer(target);
+    if (renderer == nullptr) {
+        INK_LOG_ERROR(kModuleName,
+                      "RenderToTexture：建软渲染器失败：" + std::string(SDL_GetError()));
+        SDL_DestroySurface(target);
+        return false;
+    }
+
+    // ② 与真窗口同一套呈现规则：设计坐标 → letterbox。文本层的"按设备比例
+    //    烘字"也走这条逻辑尺寸（`render/` 自己问渲染器），所以字号不会忽大忽小。
+    SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
+                                     inking::DesignHeight(),
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    // ③ 清屏（和 drawFrame 的底色同一条规矩）。
+    const std::uint32_t bg = Instance().GetBackgroundColor();
+    SDL_SetRenderDrawColor(renderer, static_cast<Uint8>((bg >> 16) & 0xFFu),
+                           static_cast<Uint8>((bg >> 8) & 0xFFu),
+                           static_cast<Uint8>(bg & 0xFFu),
+                           static_cast<Uint8>((bg >> 24) & 0xFFu));
+    SDL_RenderClear(renderer);
+
+    // ④ 临时切场景（空 = 用当前活跃那个），画完还原——这条函数是**只读**
+    //    语义，不该把宿主的活跃场景改掉。
+    InkingScene* previous = SceneLibrary::GetActiveScene();
+    InkingScene* wanted =
+        sceneName.empty() ? previous : SceneLibrary::FindScene(sceneName);
+    if (wanted != nullptr) {
+        SceneLibrary::SetActiveScene(wanted);
+    }
+    const bool rendered = SceneLibrary::RenderScene(renderer);
+    if (wanted != nullptr && wanted != previous) {
+        SceneLibrary::SetActiveScene(previous);
+    }
+
+    // ⑤ 落盘用与截图同一条路（PNG 走 SDL_SavePNG，其它走 BMP）。
+    const bool saved = rendered && writeRendererImage(renderer, path);
+
+    SDL_DestroyRenderer(renderer);  // 会一并处理它自己的纹理
+    SDL_DestroySurface(target);
+    return saved;
 }
 
 }  // namespace inking

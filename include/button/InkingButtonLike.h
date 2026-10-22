@@ -110,6 +110,27 @@ public:
      */
     InkingEvent<> clicked;
 
+    /**
+     * **状态变化事件**（0.2.0 T-11）：`stateChanged.Subscribe(...)`，参数是
+     * `(from, to)` 两个 `ButtonState`。
+     *
+     * 为什么要有它：`onButtonStateChanged` 是 protected 虚钩子——业务想监听
+     * "鼠标进出了"就必须派生一个类；而**静态档与动态档共用这一个槽**，所以
+     * 业务代码不用关心自己拿到的是哪一档（这正是反馈里"两档语义分叉"那条
+     * 能低成本满足的部分）。
+     *
+     * 三件事要知道：
+     *   1. **同步触发**：它在 `MouseHover` / `MousePress` 里当场 Emit（和钩子
+     *      同一个位置），不在帧末、不排队。所以**不要在回调里改同一个按钮的
+     *      状态**（会递归进入状态机）；
+     *   2. 只报**目标状态**的变化（配了过渡时目标当场就变，显示值要几帧才走到）；
+     *      要看"显示值"用 `onButtonDisplayAdvanced`；
+     *   3. 两档的**采样时机**不同（动态档是固定 50Hz 逻辑步、静态档由渲染帧
+     *      派发），所以"快速划过时状态什么时候更新"会有差别——见
+     *      `CXXCSS.md` §4.3 的两档差异表。
+     */
+    InkingEvent<ButtonState, ButtonState> stateChanged;
+
     // ---------------- 观测口 ----------------
     //
     // 渲染、命中、自检都问这几个，不必知道具体是哪个组件。
@@ -269,6 +290,17 @@ protected:
      */
     void ResetButtonLook(const ButtonData& data) noexcept { _look.Reset(data); }
 
+    /**
+     * 组件**自己那份尺寸被外部改了**（布局 / 自测量）时同步一次（0.4.0 A4/B1）。
+     *
+     * 组件在重写的 `onSizeChanged()` 里调它——那一钩子正是"几何真的变了"的
+     * 唯一落点。不同步的症状是"布局排对了、`GetWidth()` 还是旧值"，于是
+     * `fillMain` / `Stretch` 全都不收敛，而且**不报错**。
+     */
+    void SyncButtonLookSize(int width, int height) noexcept {
+        _look.SyncBaseSize(width, height);
+    }
+
     // ---------------- [√] 可重写钩子 ----------------
     //
     // 两个钩子都**不标脏**——标脏是组件的事（`AGENTS.md` §3 第 3 条）。
@@ -311,6 +343,10 @@ private:
     /// `before` 与当前状态的比较收在一处，两个写入口共用。
     void OnStateChanged(ButtonState before) {
         onButtonStateChanged(before, _look.state);
+        // 公开事件在同一处 Emit（T-11）：两档自动都有，派生类与外部订阅者
+        // 看到的是**同一次**状态迁移。放在钩子之后——钩子先收尾（同步基类
+        // 颜色等），订阅者读到的状态是完整的。
+        stateChanged.Emit(before, _look.state);
     }
 };
 

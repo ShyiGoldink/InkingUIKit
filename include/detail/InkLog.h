@@ -2,20 +2,48 @@
 
 // InkingFrontendDeveloper 日志系统。
 //
-// 与 InkingBackendFramework 的 ShineLog 保持同一套设计（2026-10 重构后）：
+// 与 InkingBackendFramework 的 `ShineLog`（`basic/ShineLog.h`）是**同一套设计取向，
+// 不是逐字同构**——写清楚这层关系，是为了让"改哪一边"有判据，而不是靠记忆：
+//
+//   **一样**（这两条一旦改，两边都得改，否则解析/报告工具会错位）
+//     a. 纯文本唯一事实源、运行期不写 HTML；
+//     b. 每行 7 段自带定位，且第 3 段固定写成 `模块:--`。
+//
+//   **前端没搬**（仍只在框架端，别在这里找）
+//     `init(LogOptions)` / `shutdown()` / 差分快照 `snapshot()` /
+//     控制台镜像 `setMirrorSink` + `INKING_LOG_CONSOLE` / 交互命令 `command()`。
+//     级别集合也不同：框架端是 `Trace…Fatal` 六档，前端是
+//     `Debug / Info / **Pass** / Warn / Error` 五档——`Pass` 是 GUI 库特有的
+//     "成功流水"级别（调到 warn 时和 Info 一起被过滤）。
+//
+//   **前端特有**（`0.1.1` 加的，框架端没有；不需要反向同步）
+//     DEBUG 独立折叠槽、WARN/ERROR 不折叠、`CountOf` / `ResetStats` 观测口。
+//
+// 下面四条是本层自己的设计原则（其中第 3 条里"前端特有"的那半段已就地标注）：
 //
 //   1. 纯文本是唯一事实源。文件是可被 grep / tail / less 直接消费的 .log，
 //      运行期**不写任何 HTML**；浏览器视图改由 report() 从 .log 按需生成。
 //   2. 每行自带定位：级别、模块、序号、线程号、源文件:行。
 //   3. 连续相同的记录只落一条，后续合并成 FOLD 行并带重复次数；同一个键
 //      每秒最多 5 条，其余只计数。GUI 库的告警很容易每帧刷，这层是刚需。
+//      **DEBUG 另有一条独立的折叠槽**（`0.1.1` 加的）：别的级别的记录插进来
+//      不会打断它的累计——实测反馈方那条噪声正是"每帧一条 DEBUG，中间夹着
+//      别的日志"，共用的折叠槽对这种交错毫无作用。
 //   4. 一次运行一个文件：LOG/<日期>/run-<时-分-秒>-<pid>.log，
 //      另有 LOG/latest.txt 指向最近一次运行。
 //
 // 编译期开关（见根目录 CMakeLists.txt 的 target_compile_definitions）：
-//   INK_ISLOG    日志系统参与编译；关掉时 INK_LOG_* 展开成 ((void)0)，
-//                参数不求值、字符串不拼接，日志代码完全不进二进制。
-//   INK_ISDEBUG  调试级日志与调试断言生效。
+//   INK_ISLOG         日志系统参与编译；关掉时 INK_LOG_* 展开成 ((void)0)，
+//                     参数不求值、字符串不拼接，日志代码完全不进二进制。
+//   INK_ISDEBUG       调试级日志与调试断言生效。**由 CMake 选项
+//                     `INKING_DEBUG_LOG` 控制，默认关**（`0.1.1` 之前它被
+//                     无条件写成 PUBLIC，于是发布包的消费方**关不掉**调试流，
+//                     948 条里有一条重复 528 次——噪声的根子是这条，不是
+//                     某一句日志的级别写错了）。
+//                     它仍然必须是 **PUBLIC** 而不是 PRIVATE：本头里
+//                     `kDefaultLogLevel` / `kDebugEnabled` 是 `inline constexpr`，
+//                     库与调用方取值不同就是 ODR 违例（见 CMakeLists.txt 里
+//                     那段"一旦公开头出现这种分支，就必须改成 PUBLIC"）。
 //
 // 注意：关掉 ISLOG 时本类的空实现必须与真实现**签名一致**，
 // 否则宏以外的直接调用会编译不过（.cpp 在关闭时是整段不参与的）。
@@ -106,6 +134,28 @@ public:
     static std::string statistics();
 
     /**
+     * @brief 某个级别在**本次进程内发生了多少次**（编译期关闭时恒为 0）。
+     *
+     * 与 `statistics()` 的"落盘条数"不是一回事：被折叠、被限流、被当前阈值
+     * 挡住的不算——这里数的是"真的调用了"，因为它要回答的问题是
+     * **"这段代码到底发声了没有"**。
+     *
+     * 存在的理由很具体：从 `0.1.1` 起，好几条护栏的验收是"这里应当产生
+     * 恰好 1 条 WARN"（零尺寸、全透明兜底、字体打不开）。没有这个观测口，
+     * 那些断言只能靠人翻 `LOG/` 目录——而"只能靠眼看"的验收等于没有验收。
+     */
+    static std::uint64_t CountOf(LogLevel level);
+
+    /**
+     * @brief 清空分级计数、折叠/去重槽。
+     *
+     * **只给自检用，不是业务 API**：自检一个进程里会跑很多组断言，不归零就
+     * 没法断言"这一组恰好产生了 1 条"。业务代码没有任何理由调它（调了会把
+     * 已经记下的运行期统计抹掉）。
+     */
+    static void ResetStats();
+
+    /**
      * @brief 从当前 .log 生成一份自包含 HTML 报告。
      * @return 报告路径；失败时返回空 path。
      *
@@ -152,6 +202,8 @@ public:
     static std::vector<std::string> tail(std::size_t) { return {}; }
     static std::vector<std::string> grep(std::string_view, std::string_view) { return {}; }
     static std::string statistics() { return {}; }
+    static std::uint64_t CountOf(LogLevel) noexcept { return 0; }
+    static void ResetStats() noexcept {}
     static std::filesystem::path report() { return {}; }
 };
 

@@ -1,4 +1,5 @@
 #include <render/InkingDraw.h>
+#include <button/ButtonPaint.h>
 #include <panel/InkingStaticPanel.h>
 #include <scene/InkingScene.h>
 
@@ -30,13 +31,6 @@ void InkingStaticPanel::applyData(const PanelData& data) {
     // 构造时就直接是目标态，不会先按关闭态起一段过渡再打断。
     _look.Reset(_data);
 
-    if (_data.width <= 0 || _data.height <= 0) {
-        INK_LOG_WARN(std::string(kPanelModuleName),
-                     "面板尺寸非法（宽 " + std::to_string(_data.width)
-                         + " × 高 " + std::to_string(_data.height)
-                         + "），名字：" + _data.name);
-    }
-
     syncBaseColor();
 
     // -----------------------------------------------------------------------
@@ -65,6 +59,10 @@ void InkingStaticPanel::applyData(const PanelData& data) {
     // 几何定下来了 → 这一份"待消费的改动"就没了。之后开合只改变换，
     // 而变换按设计**不碰命中表**（`InputDesign.md` §11）。
     ClearDirty();
+
+    // 尺寸护栏（T-02）：判据与文案统一在 Widget 层。放在几何写完之后调用，
+    // 所以报出来的是**真的写进基类的那一份**（而不是 `_data` 里的原始值）。
+    WarnIfZeroSize(kPanelModuleName);
 
     // 几何是构造期写入的，场景绘制列表里的绝对坐标快照要重算一次。
     NotifySceneStructureChanged();
@@ -288,6 +286,14 @@ void InkingStaticPanel::syncBaseColor() noexcept {
 void InkingStaticPanel::onRender(float pixelX, float pixelY) const {
     // 只有自己那一笔。子节点由场景按 z 序逐个提交，各自带上"祖先子树变换"
     // （`SubmitToRenderer` 里算好的仿射槽），所以这里不需要（也不该）递归。
+    //
+    // T-07：有阴影先画阴影（它在填充**之下**——"形状之下的偏移副本"）。
+    // 描边不在这里：它走装饰遍（`onRenderDecoration`），画在子孙之上。
+    if (_look.displayShadow.Visible()) {
+        detail::PaintSurfaceShadow(detail::currentRenderer(), *this, GetShape(),
+                                   _look.displayShadow, _look.displayTransform,
+                                   pixelX, pixelY);
+    }
     detail::PaintPanelAppearance(*this, GetShape(), _look.displayColor,
                                  _look.displayTransform, pixelX, pixelY);
 
@@ -344,6 +350,15 @@ void InkingStaticPanel::onRender(float pixelX, float pixelY) const {
         paint(bar.thumbX, bar.thumbY, bar.thumbWidth, bar.thumbHeight,
               _data.scroll.thumbColor);
     }
+}
+
+void InkingStaticPanel::onRenderDecoration(float pixelX, float pixelY) const {
+    // 只有描边（T-07）：阴影在填充那一趟（它在形状**之下**，挪到这里反而
+    // 盖住自己的内容）。场景在"子树画完、上层兄弟未画"时调这里，所以这一笔
+    // 压得住子孙、又不越界。
+    detail::PaintSurfaceStroke(detail::currentRenderer(), *this, GetShape(),
+                               _look.displayStroke, _look.displayTransform,
+                               pixelX, pixelY);
 }
 
 // ---------------------------------------------------------------------------

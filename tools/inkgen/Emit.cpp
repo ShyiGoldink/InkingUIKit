@@ -1,4 +1,5 @@
 #include "Emit.h"
+#include "PathUtil.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -9,6 +10,15 @@
 namespace inkgen {
 
 namespace {
+
+/// `$extends` 继承关系的一句话（T-10）：没写就返回空串。
+///
+/// 写在生成物的注释里是**排查成本**的对冲：合并之后"这份产物对应哪两个 json"
+/// 不再一眼可见，注释里标出来，改配置的人才知道该去动父文件。
+std::string ExtendsNote(const std::string& extendsFrom) {
+    return extendsFrom.empty() ? std::string()
+                               : "，$extends 继承自 " + extendsFrom + ".json";
+}
 
 /// 浮点字面量：整数值也写成 `10.0f`，免得在 C++ 里变成 int 再隐式转换。
 std::string Float(double value) {
@@ -440,6 +450,18 @@ std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
     if (!data.text.path.empty()) {
         out << indent << "data.text.path = " << Quote(data.text.path) << ";\n";
     }
+    if (!data.text.paths.empty()) {
+        // 回退链（T-13）：只写链尾，首元素已经在 `path` 里。
+        // `std::vector<std::string>` 的 initializer_list 构造 ⇒ 直接花括号。
+        out << indent << "data.text.paths = {";
+        for (std::size_t i = 0; i < data.text.paths.size(); ++i) {
+            if (i != 0) {
+                out << ", ";
+            }
+            out << Quote(data.text.paths[i]);
+        }
+        out << "};\n";
+    }
     if (!data.label.empty()) {
         out << indent << "data.label = " << Quote(data.label) << ";\n";
     }
@@ -639,6 +661,24 @@ std::string PanelBody(const PanelConfig& panel, const std::string& indent) {
                 << Float(value.transform.rotate) << ", "
                 << Float(value.transform.scale) << "};\n";
         }
+        // 描边 / 阴影（0.2.0 T-07）：只写真配了的（与按钮同一条
+        // "缺省即不输出"——`StrokeSpec.width <= 0`、`ShadowSpec.color` 全透明
+        // 本来就是"不画"）。
+        if (value.stroke.width > 0.0f) {
+            out << indent << "data." << field << ".stroke.width = "
+                << Float(value.stroke.width) << ";\n";
+            out << indent << "data." << field << ".stroke.color = "
+                << Color(value.stroke.color) << ";\n";
+        }
+        if (value.shadow.offsetX != 0.0f || value.shadow.offsetY != 0.0f
+            || value.shadow.color != inking::ShadowSpec{}.color) {
+            out << indent << "data." << field << ".shadow.offsetX = "
+                << Float(value.shadow.offsetX) << ";\n";
+            out << indent << "data." << field << ".shadow.offsetY = "
+                << Float(value.shadow.offsetY) << ";\n";
+            out << indent << "data." << field << ".shadow.color = "
+                << Color(value.shadow.color) << ";\n";
+        }
     };
 
     appearance("closed", data.closed);
@@ -761,6 +801,17 @@ std::string LabelBody(const LabelConfig& label, const std::string& indent) {
         out << indent << "data.style.fontPath = " << Quote(data.style.fontPath)
             << ";\n";
     }
+    if (!data.style.fontPaths.empty()) {
+        // 回退链（T-13）：只写链尾，首元素已经在 `fontPath` 里。
+        out << indent << "data.style.fontPaths = {";
+        for (std::size_t i = 0; i < data.style.fontPaths.size(); ++i) {
+            if (i != 0) {
+                out << ", ";
+            }
+            out << Quote(data.style.fontPaths[i]);
+        }
+        out << "};\n";
+    }
     if (data.style.align != defaultStyle.align) {
         out << indent << "data.style.align = inking::TextAlignH::"
             << TextAlignHIdentifier(data.style.align) << ";\n";
@@ -874,7 +925,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
     out << "）\n";
     if (!loaded.themes.empty()) {
         out << "// 主题：" << loaded.themes.front().name << "（烘焙主题，"
-            << loaded.themes.front().filePath << "）";
+            << PathToUtf8(loaded.themes.front().filePath) << "）";
         if (loaded.themes.size() > 1) {
             out << " + " << (loaded.themes.size() - 1) << " 份备用主题";
         }
@@ -927,7 +978,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
                             || config.fullscreen.has_value()
                             || config.startScene.has_value();
         out << "\n// ---------------------------------------------------------------------------\n";
-        out << "// 全局配置（来自 " << config.filePath << "）\n";
+        out << "// 全局配置（来自 " << PathToUtf8(config.filePath) << "）\n";
         out << "//\n";
         out << "// 两块：设计画布（letterbox 的逻辑坐标系）+ 窗口启动设置。\n";
         out << "//\n";
@@ -1029,8 +1080,9 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         const char* const baseClass = button.dynamic
                                           ? "inking::InkingDynamicButton"
                                           : "inking::InkingStaticButton";
-        out << "\n/// " << button.name << "（来自 " << button.filePath
-            << (button.dynamic ? "，动态按钮" : "，静态按钮") << "）\n";
+        out << "\n/// " << button.name << "（来自 " << PathToUtf8(button.filePath)
+            << (button.dynamic ? "，动态按钮" : "，静态按钮")
+            << ExtendsNote(button.extendsFrom) << "）\n";
         out << "class " << button.identifier << " : public " << baseClass
             << " {\n";
         out << "public:\n";
@@ -1068,8 +1120,8 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
     }
 
     for (const PanelConfig& panel : panels) {
-        out << "\n/// " << panel.name << "（来自 " << panel.filePath
-            << "，静态面板）\n";
+        out << "\n/// " << panel.name << "（来自 " << PathToUtf8(panel.filePath)
+            << "，静态面板" << ExtendsNote(panel.extendsFrom) << "）\n";
         out << "class " << panel.identifier
             << " : public inking::InkingStaticPanel {\n";
         out << "public:\n";
@@ -1104,8 +1156,8 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
     }
 
     for (const LabelConfig& label : labels) {
-        out << "\n/// " << label.name << "（来自 " << label.filePath
-            << "，静态标签）\n";
+        out << "\n/// " << label.name << "（来自 " << PathToUtf8(label.filePath)
+            << "，静态标签" << ExtendsNote(label.extendsFrom) << "）\n";
         out << "class " << label.identifier
             << " : public inking::InkingStaticLabel {\n";
         out << "public:\n";
@@ -1127,8 +1179,8 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
     }
 
     for (const ImageConfig& image : images) {
-        out << "\n/// " << image.name << "（来自 " << image.filePath
-            << "，静态图片）\n";
+        out << "\n/// " << image.name << "（来自 " << PathToUtf8(image.filePath)
+            << "，静态图片" << ExtendsNote(image.extendsFrom) << "）\n";
         out << "class " << image.identifier
             << " : public inking::InkingStaticImage {\n";
         out << "public:\n";
@@ -1299,7 +1351,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
         }
         for (std::size_t i = 0; i < buttons.size(); ++i) {
             const ButtonConfig& button = buttons[i];
-            out << "/// " << button.name << "（来自 " << button.filePath
+            out << "/// " << button.name << "（来自 " << PathToUtf8(button.filePath)
                 << "）\n";
             out << "inking::ButtonData Build" << i << "() {\n";
             out << ButtonBody(button, "    ", i);
@@ -1337,8 +1389,8 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
         }
         for (std::size_t i = 0; i < images.size(); ++i) {
             const ImageConfig& image = images[i];
-            out << "/// " << image.name << "（来自 " << image.filePath
-                << "）\n";
+            out << "/// " << image.name << "（来自 " << PathToUtf8(image.filePath)
+                << ExtendsNote(image.extendsFrom) << "）\n";
             out << "inking::ImageData BuildImage" << i << "() {\n";
             // 逐字复用按钮那套烘法（`ImageData` 派生自 `ButtonData`）：只把
             // 类型名换掉、末尾补一行 `runtimeAsset`。数组下标接在按钮后面，
@@ -1352,23 +1404,23 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
         }
         for (std::size_t i = 0; i < panels.size(); ++i) {
             const PanelConfig& panel = panels[i];
-            out << "/// " << panel.name << "（来自 " << panel.filePath
-                << "）\n";
+            out << "/// " << panel.name << "（来自 " << PathToUtf8(panel.filePath)
+                << ExtendsNote(panel.extendsFrom) << "）\n";
             out << "inking::PanelData BuildPanel" << i << "() {\n";
             out << PanelBody(panel, "    ");
             out << "}\n\n";
         }
         for (std::size_t i = 0; i < labels.size(); ++i) {
             const LabelConfig& label = labels[i];
-            out << "/// " << label.name << "（来自 " << label.filePath
-                << "）\n";
+            out << "/// " << label.name << "（来自 " << PathToUtf8(label.filePath)
+                << ExtendsNote(label.extendsFrom) << "）\n";
             out << "inking::LabelData BuildLabel" << i << "() {\n";
             out << LabelBody(label, "    ");
             out << "}\n\n";
         }
         for (std::size_t i = 0; i < textTables.size(); ++i) {
             const TextConfig& text = textTables[i];
-            out << "/// 语言表 " << text.name << "（来自 " << text.filePath
+            out << "/// 语言表 " << text.name << "（来自 " << PathToUtf8(text.filePath)
                 << "）\n";
             out << "inking::TextTable BuildTextTable" << i << "() {\n";
             out << TextTableBody(text, "    ");
@@ -1551,7 +1603,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
     return out.str();
 }
 
-bool WriteFile(const std::string& path, const std::string& text,
+bool WriteFile(const std::filesystem::path& path, const std::string& text,
                std::string& error) {
     // ---------------------------------------------------------------------
     // 产物统一带 UTF-8 BOM。
@@ -1581,12 +1633,12 @@ bool WriteFile(const std::string& path, const std::string& text,
 
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) {
-        error = "写不了文件：" + path;
+        error = "写不了文件：" + ToNarrow(path);
         return false;
     }
     out << payload;
     if (!out) {
-        error = "写入失败：" + path;
+        error = "写入失败：" + ToNarrow(path);
         return false;
     }
     return true;
@@ -1626,7 +1678,9 @@ EmitResult Emit(const LoadResult& loaded, const EmitOptions& options) {
     // include 路径的东西——这么设计是为了让产物永远写成
     // `#include <inkgen/xxx/button_service.h>`，和别的头文件放在一起也不撞名。
     // 只拦两件真会出事的事：绝对路径、以及".."这种会写到源码树里去的路径。
-    const std::filesystem::path headerRel(options.headerName);
+    // `ToPath` 而不是 `fs::path(串)`：中文路径下后者在 libstdc++ 上直接抛
+    // "Illegal byte sequence"（T-09 的实测，见 PathUtil.h）。
+    const std::filesystem::path headerRel = ToPath(options.headerName);
     if (headerRel.is_absolute()) {
         result.error = "头文件名 \"" + options.headerName
                      + "\" 不合法（要相对路径，产物必须落在 build 目录里）";
@@ -1661,26 +1715,26 @@ EmitResult Emit(const LoadResult& loaded, const EmitOptions& options) {
     // 生成源文件里 include 的是 HEADER 原样的相对路径，所以两者必须对齐。
     const std::filesystem::path dir =
         headerRel.has_parent_path()
-            ? std::filesystem::path(options.outDir) / headerRel.parent_path()
-            : std::filesystem::path(options.outDir);
+            ? ToPath(options.outDir) / headerRel.parent_path()
+            : ToPath(options.outDir);
     std::filesystem::create_directories(dir, code);
     if (code) {
-        result.error = "建不了输出目录 " + dir.string() + "：" + code.message();
+        result.error = "建不了输出目录 " + ToNarrow(dir) + "：" + code.message();
         return result;
     }
 
-    result.headerPath = (dir / headerRel.filename()).string();
+    result.headerPath = ToNarrow(dir / headerRel.filename());
     // 源文件名跟着头文件主体走（`button_service.h` → `button_service_register.cpp`）。
     // 固定叫 `button_register.cpp` 的话，产物里混了面板之后名不副实；
     // 而且同一个产物目录里想放两套生成结果时会撞名。
-    result.sourcePath = (dir / (stem + "_register.cpp")).string();
+    result.sourcePath = ToNarrow(dir / (stem + "_register.cpp"));
 
-    if (!WriteFile(result.headerPath, MakeHeader(loaded, options),
-                   result.error)) {
+    if (!WriteFile(inkgen::ToPath(result.headerPath),
+                   MakeHeader(loaded, options), result.error)) {
         return result;
     }
-    if (!WriteFile(result.sourcePath, MakeSource(loaded, options),
-                   result.error)) {
+    if (!WriteFile(inkgen::ToPath(result.sourcePath),
+                   MakeSource(loaded, options), result.error)) {
         return result;
     }
 

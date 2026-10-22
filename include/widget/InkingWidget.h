@@ -112,6 +112,18 @@ public:
 
     const std::string& GetName() const noexcept;
 
+    /**
+     * 改名字（B2）。
+     *
+     * 以前名字只有构造时那一份，于是 `CXXCSS`/代码里给静态组件起的名字
+     * 动态组件拿不到——`findByName` 走不到它，自检只能按"子节点索引"定位
+     * （索引一变断言全错）。
+     *
+     * **不标脏**：名字不进几何、不进绘制顺序，改它不影响画面也不影响命中。
+     * @return 真的改了才返回 true（传同一个名字返回 false）。
+     */
+    bool SetName(const std::string& name);
+
     // 父节点（非拥有）
     //
     // 它隐藏基类的 `GetAnchorParent()`：那一条是定位链（`InkingAnchor*`），这一条是树语义（`InkingWidget*`）。
@@ -389,7 +401,7 @@ public:
 
     /**
      * @brief 命中测试的**节点版**：这个点落在我的子树里，"最上面那个该收事件"的
-     * 节点是谁。默认实现：命中就是我自己（A8a）。
+     * 节点是谁。默认实现：**子树优先**，子树里没有 Block 命中才轮到自己（A8a）。
      *
      * 为什么除了 `HitTest` 还要有它：`HitTest` 只回答"在不在我身上"，而事件要发给
      * **最具体的那一个**。容器（`OwnsSubtreeHit() == true`）的子孙**不进全局命中表**
@@ -398,7 +410,12 @@ public:
      * 的，见 `InkingScene::SetKeyboardFocus`）。有了这一步，场景在查到容器之后可以
      * 再问一次"你子树里是谁"，把事件发到该去的地方。
      *
-     * **契约**（容器重写时按这三条来）：
+     * **默认实现就是"容器"语义**（0.4.0 A1）：先按 `IsAbove` 取子树里最上面那个
+     * Block，取不到才看自己。于是任何声明了 `OwnsSubtreeHit()` 的组件（动态容器、
+     * 业务自写的弹层）**不用再抄一遍递归**——以前只有 `InkingStaticPanel` 有一份，
+     * 动态组件子树里的静态按钮因此永远收不到点击。
+     *
+     * **契约**（重写时按这三条来）：
      *  1. 返回子树里**最上面那个 `Block`** 命中的节点（不按 `IsHitPassThrough`
      *     过滤掉自己那一笔——组件自己是不是 Block 由调用方看
      *     `IsHitPassThrough()` 决定）；
@@ -411,6 +428,21 @@ public:
      * `IsAbove`（z 优先、同 z 看注册序号），不另立一套。
      */
     virtual InkingWidget* HitTestNode(float worldX, float worldY) noexcept;
+
+    /**
+     * @brief 用**语义方式**触发一次"点击"（D7），不经过指针。
+     *
+     * 自检 / 快捷键 / 脚本要"点一下这个控件"，就不该 `dynamic_cast` 到
+     * `InkingStaticButton*` 再调它自己的 `TriggerClick()`——那会让调用方和
+     * 具体控件类型绑死（换控件类型编译期就崩）。这里给基类一条通道：
+     * 组件自己决定"被激活"是什么意思。
+     *
+     * 默认返回 false（"我不是能被激活的东西"），按钮那两档返回
+     * `TriggerClick()` 的答案。它不是写入口、不标脏、不改变三态。
+     *
+     * @return 真的发生了什么才返回 true（例如按钮没有订阅者时为 false）。
+     */
+    virtual bool Activate() { return false; }
 
     /**
      * 命中索引用的**保守包络**，相对本节点左上角（设计坐标）。
@@ -481,6 +513,15 @@ public:
      * 只由框架调用，别在业务代码里手工调。
      */
     void RebindScene(InkingScene* scene) noexcept;
+
+    /**
+     * 只改"我属于哪个场景"这条指针，**不碰场景的绘制列表**（0.4.0 A2）。
+     *
+     * 给"场景按树重建收集表"那条路用：树是唯一真相源，重建时扫到的节点
+     * 一律认领，但列表正在重建中——再回头调 `AddDrawNode` 会边遍历边改容器。
+     * 只由 `InkingScene::collectDrawList()` 调。
+     */
+    void AdoptIntoScene(InkingScene* scene) noexcept { _scene = scene; }
 
     /// 本节点所属的场景，非拥有指针；没有场景时为 nullptr。
     InkingScene* GetScene() const noexcept;
@@ -627,6 +668,31 @@ public:
     void SubmitToRenderer(SDL_Renderer* renderer, float absX, float absY) const;
 
     /**
+     * 把本节点的**装饰笔**提交给渲染器（0.2.0 T-07）。
+     *
+     * 与 `SubmitToRenderer` 的差别只在调用的钩子（`onRenderDecoration`），
+     * 槽位搭建（当前渲染器 / 祖先仿射 / 顶点缓存）完全是同一份。
+     *
+     * 调用时机由场景掌握：**本节点的整棵子树画完之后、上层兄弟画之前**——
+     * 于是描边这类"要压在子孙之上"的一笔不被子孙盖住，也不越界压到
+     * 兄弟头上（局部层级，与 `IsAbove` 同一套语义）。
+     */
+    void SubmitDecorationToRenderer(SDL_Renderer* renderer, float absX,
+                                    float absY) const;
+
+    /**
+     * 本帧有没有装饰笔要画（默认 false）。
+     *
+     * 场景的装饰提交靠它**跳过无装饰的节点**：绝大多数节点没有装饰笔，
+     * 有这个口子，"每帧多一趟"的稳态成本就是一次布尔虚调用，而不是
+     * 每节点再搭一遍渲染槽位（祖先仿射是 O(深度) 的）。
+     *
+     * 公开：调用方是场景（它决定何时落笔），与 `IsDynamic` / `OwnsSubtreeHit`
+     * 同一档——**查询**，不是"怎么画"的实现细节。
+     */
+    virtual bool HasRenderDecoration() const noexcept { return false; }
+
+    /**
      * **每渲染帧一次**：推进这个节点自己的动画（颜色 / 透明度过渡）。
      *
      * 由场景在渲染之前调（`InkingScene::TickFrame` 里分发），传真实 delta。
@@ -687,7 +753,10 @@ public:
      * 给"内容驱动的尺寸变了"的组件用——例如标签换了更长的文字：它自己的高度变了，
      * 而**兄弟要让位**，那是父容器的活儿。`InkingStaticLabel::SetText` 就是调它。
      *
-     * 找不到布局容器时什么都不做（没有布局的界面本来就靠锚点定位）。
+     * 找不到布局容器时（`0.1.1` 起）**改走自身测量**：见
+     * `RelayoutSelfIfContentSized()`。以前这里是静默 `return`，于是
+     * "内容驱动尺寸 + 无布局容器"这一整类组合会把尺寸留在 0——组件一个像素都
+     * 不画、也不报错（反馈方那张 200×0 的标签就是这么来的）。
      */
     void RelayoutParent() noexcept;
 
@@ -733,6 +802,22 @@ protected:
     virtual void onRender(float pixelX, float pixelY) const;
 
     /**
+     * 本节点的**装饰笔**（0.2.0 T-07）：画在**整棵子树之后**的那一笔。
+     *
+     * 存在的理由：容器的自绘（`onRender`）整体在子孙之下（`IsAbove` 保证祖先
+     * 先画），所以"描边"跟着填充走会被子节点盖住——加完等于没加。把描边挪到
+     * 这一笔，它就压在子孙之上；同时它仍画在**上层兄弟之前**，不会越界盖住
+     * 层级更高的别的子树（局部层级）。
+     *
+     * 基类什么都不画。**阴影不该放这里**：它是"形状之下的偏移副本"，要跟填充
+     * 同一趟（放这里反而会盖住自己的内容）。
+     *
+     * 装饰笔**不参与命中**、不进绘制列表（`GetDrawItemCount` 不变）、不标脏——
+     * 它与 `onRender` 同帧提交，重绘脏由各自的写入口照旧标。
+     */
+    virtual void onRenderDecoration(float pixelX, float pixelY) const;
+
+    /**
      * **骨架变化**的统一出口：命中脏 + 重绘脏 + 通知场景重排，一次做完。
      *
      * 写入口（几何四个 + \c SetVisible / \c ChangeZIndex / \c SetParent）内部都调它。
@@ -770,7 +855,66 @@ protected:
      */
     bool ApplyLayoutRect(const LayoutRect& rect) noexcept;
 
+    // ---------------- 内容驱动尺寸的自测量（0.1.1 T-01） ----------------
+
+    /**
+     * @brief 我是**内容驱动**的、又没被布局管着时，自己量一次尺寸。
+     *
+     * 语义只有一条：**只补"没配置"的那一维**（`<= 0` 用测量值），已经配置过的
+     * 维度一个字节都不动。这一条是硬约束，不是保守：实测那个 200 宽的标签，
+     * 按内容量出来的宽是 76——若拿测量值覆盖，`width: 200` 会被压成 76，
+     * 右对齐文字与背景对位全部错位。
+     *
+     * 触发点只有一个，在 `RelayoutParent()` 的末尾：它原本的语义是"往上游找
+     * 布局容器"，找不到时**以前是静默返回**——那正是"内容驱动尺寸 + 无布局
+     * 容器"整类组合静默失效的来源（`AGENTS.md` §6 那条"漏一处就是画不出来"）。
+     * 现在找不到就自己量，于是 `SetText` 那条既有链路自动生效，不必在每个
+     * 组件里各加一处。
+     *
+     * **布局容器内一律不自测量**：那种情况下尺寸归父容器管，自己量会和布局
+     * 打架（也会在父容器尚未构造完时量出一个偏小的值）。
+     */
+    void RelayoutSelfIfContentSized() noexcept;
+
+    /**
+     * @brief 尺寸为零时告警（`0.1.1` T-02）。
+     *
+     * **可绘制组件**在构造末尾各调一行：0 尺寸意味着"画不出来、也点不到"，
+     * 而它不报错、不崩溃——界面上只是少了一块，最难查的那一类。
+     *
+     * 边界：**不查纯容器**。0 尺寸的分组节点常被用来做逻辑分组（`visible`
+     * 由业务控制、自己不画东西），对它告警只会变成噪声。判据是"有没有
+     * 自己那一笔"，所以这条由组件自己决定调不调，基类不替它判断。
+     */
+    void WarnIfZeroSize(const char* moduleName) const;
+
     friend void detail::layout::ArrangeSubtree(InkingWidget& container);
+
+private:
+    /**
+     * 渲染槽位的搭 / 拆（T-07 从 SubmitToRenderer 抽出）：当前渲染器、祖先
+     * 仿射、顶点缓存三样。两个提交入口（填充笔 / 装饰笔）共用同一份——
+     * 抄第二份就会出现"填充和描边看到的祖先变换不一样"。
+     *
+     * @return 设计坐标 → 设备像素的倍率，调用方拿去换算提交坐标。
+     */
+    float BeginRenderSlots(SDL_Renderer* renderer) const;
+    void EndRenderSlots() const;
+
+    /**
+     * 自测量那条路唯一的几何写入（`0.1.1` T-01）。**private**：和
+     * `ApplyLayoutRect` 同一个理由——"业务代码改不了静态几何"要是编译期
+     * 保证，就得让它在派生类里也看不见。
+     *
+     * 与 `ApplyLayoutRect` 的关键区别：**不动锚点、不动 offset**，
+     * 只写 `_width` / `_height`。后者会把锚点归零，而自测量发生在
+     * "靠锚点定位"的那种界面里——归零就等于让标签跳到父级左上角。
+     *
+     * @return 尺寸真的变了才 true（幂等；重复量出同一个数不标脏）。
+     */
+    bool ApplySelfSize(int width, int height) noexcept;
+
+protected:
 
     std::string _name;
 
@@ -847,6 +991,10 @@ protected:
     /// 就清掉对应的脏；任何一次新的标脏都会把它归零。
     int _hitQuietFrames = 0;
     int _repaintQuietFrames = 0;
+
+    /// 自测量的重入位（`0.1.1` T-01）：`MeasureLayout` 是个开放钩子，万一某个
+    /// 组件在里面又触发一次重排，没有它就会无限递归。只在自测量那一小段为真。
+    bool _selfSizing = false;
 };
 
 // ---------------------------------------------------------------------------

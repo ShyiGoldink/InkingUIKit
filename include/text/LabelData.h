@@ -15,6 +15,9 @@
 
 namespace inking {
 
+/// 模块名常量：日志与自检要用（约定：每个模块都暴露一个）。
+inline constexpr const char* kLabelModuleName = "InkingStaticLabel";
+
 /// 标签的数据面。
 struct LabelData {
     std::string name;

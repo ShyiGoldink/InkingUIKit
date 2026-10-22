@@ -66,12 +66,8 @@ int InkingDynamicButton::UnknownNameCount() noexcept {
 }
 
 void InkingDynamicButton::finishConstruction() {
-    if (_data.width <= 0 || _data.height <= 0) {
-        INK_LOG_WARN(std::string(kButtonModuleName),
-                     "动态按钮尺寸非法（宽 " + std::to_string(_data.width)
-                         + " × 高 " + std::to_string(_data.height)
-                         + "），名字：" + _data.name);
-    }
+    // 与静态按钮同一条护栏（`0.1.1` T-02：判据与文案统一在 Widget 层）。
+    WarnIfZeroSize(kButtonModuleName);
 }
 
 void InkingDynamicButton::applyData(const ButtonData& data) {

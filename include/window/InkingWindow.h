@@ -54,7 +54,109 @@ public:
      */
     InkingScene* GetCurrentScene() const;
 
-    void Show(const std::string& sceneName = "");
+    /**
+     * @brief 跑主循环（**阻塞**）到窗口关闭，返回**进程退出码**（D5）。
+     *
+     * 以前返回 void，自检只能自己数失败项再 `return`；现在 `RequestClose(code)`
+     * 记下的那个码会原样传出来，`return inking::InkingWindow::Instance().Show();`
+     * 就是 CI 要的那条信号。
+     *
+     * 需要"跑几帧就回来"的非阻塞写法见 `PumpOnce()` / `RunFrames(n)`（D1）。
+     */
+    int Show(const std::string& sceneName = "");
+
+    // ---------------- 非阻塞跑帧与确定性时间（D1 / D3 / D4） ----------------
+    //
+    // 这一组是"自检从跑一次看截图，升级到 CI 里跑一百个断言"的前提：
+    //
+    //   Open("scene");              // 建窗口 + 预加载，**不进循环**
+    //   RunFrames(2);               // 跑两帧（事件泵 / 派发 / 渲染全走一遍）
+    //   scene->Activate("ok");      // 语义点击，不碰指针
+    //   RunAfterFrames(1, [&]{ ... });
+    //   RequestClose(failures);     // 退出码进 CI
+    //
+    // 与 `Show()` 的关系：`Show()` 就是 `Open()` + `while (PumpOnce())` +
+    // 释放窗口。两条路共用 `stepFrame`，所以"手动跑一帧"与"主循环里的一帧"
+    // **顺序完全一致**——不存在"自检过了、真机不过"这种分叉。
+
+    /**
+     * @brief 建窗口并准备好渲染，**不进主循环**（D1）。
+     *
+     * 已经打开时按"切场景"处理（与 `Show()` 第二条路径同义）。
+     *
+     * @return 真的打开了才返回 true；SDL 初始化 / 建窗口失败返回 false
+     *         （错误已记日志，不会抛）。
+     */
+    bool Open(const std::string& sceneName = "");
+
+    /**
+     * @brief 跑**一帧**就返回（D1）。
+     *
+     * 窗口还没打开时先自动 `Open("")`——无头自检因此可以"一句都不写窗口代码"
+     * 就开始跑帧。
+     *
+     * @return 这一帧之后还能继续跑吗。收到关窗请求 / 冒烟时间到 → false。
+     */
+    bool PumpOnce();
+
+    /**
+     * @brief 连跑 `frameCount` 帧（D1），中途收到关窗请求就提前停。
+     * @return 实际跑了多少帧。
+     */
+    int RunFrames(int frameCount);
+
+    /**
+     * @brief 排一个**帧末任务**：这一帧收尾之后执行一次（D3）。
+     *
+     * "帧末"的准确位置是：场景脏消费之后、待销毁场景提交之前。所以任务里读到
+     * 的命中 / 尺寸 / 动画进度都是**这一帧定稿的**值，而场景还活着。
+     *
+     * 回调抛异常会一路逃出主循环（那是长驻线程的入口，SKILL.md §7 的禁令）——
+     * 这里不多做一层兜底：任务是你自己写的同步代码，异常该在任务里处理。
+     */
+    void PostFrameTask(std::function<void()> task);
+
+    /**
+     * @brief 等 `frames` 帧之后执行一次（D3）：`frames <= 0` 等价于
+     *        "这一帧末就执行"（与 `PostFrameTask` 同义）。
+     *
+     * 典型用法："窗口出现之后再断言"——`RunFrames(1)` 保证第一帧真的画过。
+     */
+    void RunAfterFrames(int frames, std::function<void()> task);
+
+    /**
+     * @brief 固定每帧的 delta（D4）：动画 / 主题过渡的截图在 CI 里才稳定。
+     *
+     * 传 `0`（默认）恢复"按墙上时钟算"。**固定 delta 下不节流**——否则跑
+     * 100 帧要等 1.6 秒，CI 的时间全花在 sleep 上。
+     *
+     * 它只影响**喂给时间线的 delta**，不影响 `SDL_GetTicks` 之类的外部时间源。
+     */
+    void SetFixedDelta(float seconds);
+
+    /// 当前固定 delta（0 = 用真实流逝时间）。
+    float GetFixedDelta() const noexcept;
+
+    /**
+     * @brief **离屏渲染一张图**（D2）：不建窗口、不需要 dummy 视频驱动。
+     *
+     * 做法是一条最短路径：`SDL_CreateSurface` 出目标位图 → `SDL_CreateSoftwareRenderer`
+     * 出一个软渲染器 → 走**与真窗口同一条** `SceneLibrary::RenderScene` →
+     * 存成图片。所以它验的是真实提交路径（形状 / 文字 / 裁剪 / 装饰笔全在内），
+     * 不是"另画一份"。
+     *
+     * 逻辑呈现按**设计尺寸**做 letterbox：`width × height` 与设计比不同时，
+     * 多出来的地方是黑边——和真窗口一致，截图才可比。
+     *
+     * @param path       输出路径；`.png` 需要 SDL ≥ 3.4，其它扩展名写 BMP。
+     * @param width      输出像素宽。
+     * @param height     输出像素高。
+     * @param sceneName  画哪个场景；空 = 当前活跃场景。
+     *
+     * @return 真的写出了文件才返回 true（失败已记 ERROR 日志）。
+     */
+    static bool RenderToTexture(const std::string& path, int width, int height,
+                                const std::string& sceneName = "");
 
     // ---------------- 无边框窗口（C2：自绘标题栏 / 菜单栏） ----------------
     //
@@ -114,6 +216,25 @@ public:
      * ESC 全走这一条，所以"要不要问一句再退"只需要装一次回调。
      */
     void RequestClose();
+
+    /**
+     * 请求关闭，并**指定进程退出码**（D5）。
+     *
+     * 与无参版同一条路（同一个退出闸门、同一个 `IsCloseRequested()` 落点），
+     * 区别只是记下"退出时返回几"。自检插件 / CI 里"报了失败还要让进程以非 0
+     * 退出"就靠它——以前只能让宿主自己算，插件拿不到这个口子。
+     *
+     * @param exitCode `Show()` 返回它；`0` 表示正常。
+     */
+    void RequestClose(int exitCode);
+
+    /**
+     * 这次运行要返回给操作系统的退出码（默认 0）。
+     *
+     * 一旦有 `RequestClose(code)` 记过，之后 `RequestClose()`（无参）不会把它
+     * 清回 0——"已经报过失败"这件事不该被后来的关窗动作抹掉。
+     */
+    int GetExitCode() const noexcept;
 
     /// 有人请求过关窗吗（主循环每帧查一次）。自检观测口。
     bool IsCloseRequested() const noexcept;
@@ -325,6 +446,15 @@ private:
 
     /// 关窗请求（无边框下的自绘关闭按钮 / 业务代码都可以置它）。
     bool _closeRequested = false;
+
+    /// 退出码（D5）：`RequestClose(code)` 记下，`Show()` 原样返回。0 = 正常。
+    int _exitCode = 0;
+
+    /**
+     * 固定帧 delta（D4）：> 0 时用它代替真实流逝时间，并且**关掉节流**。
+     * 0（默认）= 按墙上时钟算，节流照旧。
+     */
+    float _fixedDelta = 0.0f;
 
     /// 窗口清屏色（`0xAARRGGBB`）。默认是原来的深灰，亮色场景自己设。
     std::uint32_t _backgroundColor = 0xFF121218u;

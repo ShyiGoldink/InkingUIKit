@@ -206,6 +206,52 @@ public:
     /** 标脏：骨架变了，绘制顺序需要重建。写入口内部已经调过。 */
     void NotifyStructureChanged() noexcept;
 
+    /**
+     * @brief **显式重建收集表**（A5）：`_drawList` + 命中表，立刻按当前树重建一份。
+     *
+     * A2 / A3 这一类"树变了但收集表没跟上"的问题，从 0.3.0 起由
+     * `sortDrawList()` 自己按**树**重建（树是唯一真相源），所以正常路径
+     * 不需要手工调它。留着它有三个正当用途：
+     *
+     *   1. **自检**：想在"下一帧之前"就断言"这棵子树进表了没有"；
+     *   2. **宿主诊断**：怀疑收集表与树不一致时，重建一次再看数量；
+     *   3. **兜底**：有人在树外改了父子关系（没走 `SetParent`）之后强制对齐。
+     *
+     * @return 重建后列表里有多少项。
+     */
+    std::size_t RebuildRenderList();
+
+    /**
+     * @brief **强制重建命中表**（D6），不必等帧。
+     *
+     * `QueryHit` 本来就会先推一次重建，所以"窗口还没 Show 就想验证某个位置
+     * 点得到谁"在 0.3.0 之后直接可用；这个入口是给"只要表、不查点"的场合
+     * （自检统计条目数、宿主预热）。
+     *
+     * @return 表里有多少条静态条目。
+     */
+    std::size_t RebuildHitTable();
+
+    /**
+     * @brief 按名字找节点（B2 的配套）：深度优先，先序，找第一个同名的。
+     *
+     * 名字不唯一是允许的（同名多半是配置复制粘贴），所以这里只承诺
+     * "找第一个"；要全部拿到请自己走 `GetChildren()`。
+     *
+     * @return 找到的节点；没有时返回 nullptr。**不含场景自己**。
+     */
+    InkingWidget* FindByName(const std::string& name) noexcept;
+
+    /**
+     * @brief 按名字**激活**一个节点（D7）：`FindByName` + `InkingWidget::Activate()`。
+     *
+     * 自检 / 快捷键 / 脚本用它代替 `dynamic_cast<InkingStaticButton*>`
+     * 再调 `TriggerClick()`——不绑具体控件类型，换控件也不用改调用方。
+     *
+     * @return 找到并真的触发了才返回 true。
+     */
+    bool Activate(const std::string& name) noexcept;
+
     // ---------------- 标脏的统一消费（T-3） ----------------
     //
     // 三种脏的三个消费点，各管一段，别混：
@@ -601,8 +647,19 @@ protected:
 private:
     friend class SceneLibrary;
 
-    /** 重建绘制列表：剔除失效项、重算静态坐标，并按 z 升序排好。 */
+    /** 重建绘制列表：**按树重建**（树是唯一真相源），再按 z 升序排好。 */
     void sortDrawList();
+
+    /**
+     * 深度优先（先序）收一棵子树的节点到 `_drawList`（A2/A3 的落点）。
+     *
+     * 为什么按树扫而不是"谁登记就收谁"：登记是**增量**的，而增量一定有漏
+     * ——构造时挂在还没进场景的父级上的子树（先建面板、后 AddChild）、
+     * 换父级之后新父级的子孙、`SetVisible` 前后重新挂接的节点，全都会漏。
+     * 漏了不报错，只是"节点在、`IsVisibleInTree()` 为真、就是不画"。
+     * 树本来就在那儿，扫一遍 O(N)，比维护"哪次登记漏了"便宜。
+     */
+    void collectDrawList(InkingWidget* node);
 
     /** 场景根矩形的初始数据；三个构造函数共用。 */
     static AnchorData sceneRootAnchorData();

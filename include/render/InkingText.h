@@ -74,6 +74,15 @@ namespace inking::detail {
 struct TextCacheStats {
     std::uint64_t texturesCreated = 0;  ///< 真的栅格化 + 建纹理的次数
     std::uint64_t cacheHits = 0;        ///< 直接复用现成纹理的次数
+    /**
+     * 字体回退链里"退到第 2 条及以后"才命中的次数（T-13）。
+     *
+     * 为什么需要这个口子：链上"到底用了哪一份字体"在画面上只体现为**字形不同**，
+     * 自检没法断言"这一撇来自第二份文件"。所以把结论落成计数——一条
+     * `[不存在的路径, 存在的路径]` 的链跑一次，这个值 +1 就证明用的是第二条。
+     * 按**链**计数（一条链解析一次），不是按帧、也不是按字形。
+     */
+    std::uint64_t fontFallbacks = 0;
 };
 
 TextCacheStats TextCacheStatsSnapshot() noexcept;

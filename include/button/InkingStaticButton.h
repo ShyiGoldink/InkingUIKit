@@ -90,6 +90,15 @@ public:
     InkingStaticButton(InkingWidget* parent, const ButtonData& data);
 
     /**
+     * 语义激活（D7）：等价于"用户点了一下"，不经过指针，也不改三态。
+     *
+     * 自检 / 快捷键 / 脚本用它代替 `dynamic_cast<InkingStaticButton*>` +
+     * `TriggerClick()`——调用方从此不认识具体控件类型。
+     * @return 有订阅者、真的派发了才返回 true。
+     */
+    bool Activate() override { return TriggerClick(); }
+
+    /**
      * 配置驱动构造：只给 parent + 名字，配置从 `ButtonLibrary` 里按名字取。
      *
      * **它不是生成的按钮类走的路**：生成器为每个名字生成一个独立的类，
@@ -205,6 +214,18 @@ public:
     // `include/button/InkingButtonLike.h`。
 
 protected:
+    /**
+     * 尺寸被外部改了（布局 / 自测量）⇒ 让 `ButtonLook` 跟上（0.4.0 A4/B1）。
+     *
+     * 少了这一步，"布局把宽度写成 300、`GetWidth()` 还是 100"——`fillMain` /
+     * `Stretch` 因此全都不收敛，而且**不报错**。
+     */
+    void onSizeChanged() override {
+        // 调用方是基类的尺寸写入口（`ApplyLayoutRect` / `ApplySelfSize`），
+        // 此时 `_width` / `_height` 已经是新值。
+        SyncButtonLookSize(_width, _height);
+    }
+
     /// 按状态选外观、按形状填色，再画上文字。
     ///
     /// 重写的是**钩子**（[√] onRender），不是写入口：基类给"一块实心矩形"

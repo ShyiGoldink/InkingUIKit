@@ -23,8 +23,12 @@
 
 ## 主循环的固定顺序（改之前先读这一节）
 
+这张图现在是 `stepFrame()` 的**函数体**（0.4.0 D1 把它从 `runLoop` 里拆出来了）：
+`Show()` 是 `while (stepFrame(...))`，`PumpOnce()` 是"调一次"。两条路共用同一份顺序，
+所以**不存在"自检跑的和真机跑的不一样"**这种分叉。
+
 ```
-while (running):
+每帧（stepFrame）:
   1.   事件泵（SDL 事件 → 退出 / 键盘 / 鼠标状态）
   1a.  全局快捷键 Dispatch        ← 排在所有派发之前
   1b.  关窗请求检查（RequestClose / 自绘关闭按钮）
@@ -37,8 +41,9 @@ while (running):
   4.   drawFrame（清屏色 + 场景 + 指针标记 + Present）
   5.   Scene::ConsumeFrameDirty   ← 脏的统一消费（只对活跃场景）
   5b.  mouse/keyboard ResetFrameFlags（瞬时状态一帧清一次）
-  5c.  CommitPendingDestructions  ← 待销毁场景在这里真析构
-  6.   节流（有 vsync 交给 SDL，否则固定 sleep）
+  5c.  runFrameTasks              ← 帧末任务（D3）：读到的都是这一帧定稿的值
+  5d.  CommitPendingDestructions  ← 待销毁场景在这里真析构
+  6.   节流（有 vsync 交给 SDL；固定 delta 时不节流）
 ```
 
 四条"顺序不能改"的理由：
@@ -49,6 +54,39 @@ while (running):
 3. **指针 / 键盘在推进时间线之前**：这样本帧画出来的就是本帧的交互结果，不会差一帧。
 4. **销毁在帧末**：销毁场景会连带拆掉整棵子树，而这一帧的 Render / Tick / 派发都在遍历
    那份绘制列表——遍历中途拆容器就是悬垂。攒到这一步再删，"这一刻没有人在看它"。
+
+## 非阻塞跑帧（0.4.0 D 组）
+
+```C++
+inking::InkingWindow& window = inking::InkingWindow::Instance();
+window.SetFixedDelta(1.0f / 60.0f);      // D4：确定性时间步（0 = 用墙上时钟）
+window.Open("main");                     // D1：建窗口 + 预加载，**不进循环**
+window.RunFrames(2);                     // 跑两帧：事件泵 / 派发 / 渲染全走一遍
+window.PostFrameTask([]{ /* 帧末 */ });  // D3：这一帧末执行
+window.RunAfterFrames(2, [&]{ /* ... */ });
+window.RequestClose(failures);           // D5：退出码 = 失败项数，给 CI
+// Show() 的返回值就是这个码
+```
+
+| 入口 | 回答的问题 |
+| --- | --- |
+| `Open(scene)` | 把"建窗口"与"跑循环"分开；返回是否真的打开 |
+| `PumpOnce()` | 跑**一帧**就回来；返回"还能不能继续跑" |
+| `RunFrames(n)` | 连跑 n 帧，中途关窗就提前停；返回实际帧数 |
+| `PostFrameTask(fn)` | 这一帧收尾之后跑一次 |
+| `RunAfterFrames(n, fn)` | 第 n 帧收尾之后跑一次（`n <= 0` = 这一帧） |
+| `SetFixedDelta(s)` | 固定每帧 delta，**且关掉节流**（跑 100 帧不用等 1.6 秒） |
+| `RenderToTexture(path,w,h,scene)` | 离屏出图：**不建窗口**、不需要 dummy 驱动 |
+
+`RenderToTexture` 走的是**同一条** `SceneLibrary::RenderScene`（形状 / 文字 / 裁剪 /
+装饰笔全在内），不是"另画一份"。落盘是"先编码到内存，再 `fopen`（失败才退回 SDL 文件层）"
+——实测受限环境里 `SDL_SavePNG(surface, path)` 会把文件名截断却返回 true。
+
+## 退出码（0.4.0 D5）
+
+`RequestClose(code)` 记下退出码，`GetExitCode()` 读回，`Show()` 原样返回。
+被退出闸门否决（`SetExitConfirmHandler` 返回 false）时**不改退出码**，也不置关窗标志
+——"用户点了取消"不该让上一轮的失败码生效。
 
 ## 无边框（自绘标题栏那一档）
 

@@ -1,4 +1,6 @@
 #include "Cxxcss.h"
+#include "Fields.h"
+#include "PathUtil.h"
 
 // 设计尺寸的**上限**只有一份定义：它住在公开头里（运行期也用它夹参数），
 // 生成器这边直接引用，免得两个数字各自演化（`AGENTS.md` §6 那条
@@ -20,26 +22,30 @@ namespace inkgen {
 
 namespace {
 
-/// 接受的全部字段名。不在这里出现的一律报错（CXXCSS.md §2.1）。
-const char* const kKnownRootFields[] = {
-    "$comment",    "name",        "width",        "height",
-    "normal",      "hover",       "onclicked",    "text",
-    "selfAnchorX", "selfAnchorY", "traceAnchorX", "traceAnchorY",
-    "offsetX",     "offsetY",     "zIndex",       "visible",
-    "shape",       "dynamic",     "stroke",       "shadow",
-    "layout",      "layoutItem",
-};
-
-const char* const kKnownTextFields[] = {
-    "fontSize", "leftSpace", "topSpace", "path", "content", "align", "alignV",
-};
-
-/// `shape` 对象里认的字段（每种形状各取所需，必填项在 ReadShape 里分别校验）。
-const char* const kKnownShapeFields[] = {
-    "type",     "radius",     "thickness",  "cap",       "sides",
-    "rotation", "chamfer",    "points",     "innerRatio", "exponent",
-    "startAngle", "sweepAngle", "vertices",
-};
+// 白名单集中在 `Fields.h`（0.2.0 T-08 的单一来源）：这里只留**引用别名**，
+// 所以下面所有调用点（`std::size(kKnownXxx)` / `JoinKnownFields`）一个字不用改。
+// ⚠️ 数组顺序在 Fields.h 里也不能动——报错文案与自检断言依赖它。
+constexpr auto& kKnownRootFields = fields::kKnownRootFields;
+constexpr auto& kKnownTextFields = fields::kKnownTextFields;
+constexpr auto& kKnownShapeFields = fields::kKnownShapeFields;
+constexpr auto& kKnownButtonAppearanceFields
+    = fields::kKnownButtonAppearanceFields;
+constexpr auto& kKnownTransitionFields = fields::kKnownTransitionFields;
+constexpr auto& kKnownStrokeFields = fields::kKnownStrokeFields;
+constexpr auto& kKnownShadowFields = fields::kKnownShadowFields;
+constexpr auto& kKnownPanelFields = fields::kKnownPanelFields;
+constexpr auto& kKnownPanelAppearanceFields
+    = fields::kKnownPanelAppearanceFields;
+constexpr auto& kKnownLabelFields = fields::kKnownLabelFields;
+constexpr auto& kKnownLabelTextFields = fields::kKnownLabelTextFields;
+constexpr auto& kKnownImageFields = fields::kKnownImageFields;
+constexpr auto& kKnownImageAppearanceFields
+    = fields::kKnownImageAppearanceFields;
+constexpr auto& kKnownTextTableFields = fields::kKnownTextTableFields;
+constexpr auto& kKnownThemeFields = fields::kKnownThemeFields;
+constexpr auto& kKnownConfigFields = fields::kKnownConfigFields;
+constexpr auto& kKnownDesignFields = fields::kKnownDesignFields;
+constexpr auto& kKnownWindowFields = fields::kKnownWindowFields;
 
 /// 单张图片的字节上限。烘进源码的字节数与编译时间是线性关系（1 字节约 5 个
 /// 源字符），2 MB 已经是"一两万行源码"的量级——再大就该先压一压图，
@@ -61,7 +67,7 @@ constexpr std::size_t kMaxImageBytes = 2u * 1024u * 1024u;
 std::string ReadImageBytes(const std::string& path,
                            std::vector<std::uint8_t>& out) {
     std::error_code error;
-    const std::filesystem::path filePath(path);
+    const std::filesystem::path filePath = ToPath(path);
     const std::uintmax_t size = std::filesystem::file_size(filePath, error);
     if (error) {
         return "图片读不到文件 \"" + path + "\"（" + error.message()
@@ -1006,6 +1012,17 @@ std::string JoinKnownFields(const char* const* table, std::size_t count) {
 }
 
 /**
+ * **生成器指令字段**：不参与运行期数据，所有加载器一律跳过（0.2.0 T-10）。
+ *
+ * 与"未知字段"的区别是**谁处理它**：指令字段在读配置这一层就被消费掉了
+ * （`$comment` 是注释、`$extends` 是继承），不会进 `ButtonData` / `PanelData`
+ * 那些结构，所以白名单里也不该有它们。
+ */
+bool IsDirectiveField(const std::string& key) {
+    return key == "$comment" || key == "$extends";
+}
+
+/**
  * @brief 配置加载器的**共用那一半**：报错、提醒，以及各种通用字段读取器。
  *
  * 两个 loader（`ButtonLoader` / `PanelLoader`）都继承它。为什么抽出来：这些读取器
@@ -1028,8 +1045,11 @@ protected:
     std::vector<std::string> _warnings;
 
     void Error(const JsonValue& where, const std::string& message) {
+        // 值的来源文件优先（`$extends` 合并进来的字段来自父文件，T-10）：
+        // 只报子文件名会让人去错误的地方找。
         _result.errors.push_back(
-            CxxcssError{_path, where.where.line, message});
+            CxxcssError{where.file.empty() ? _path : where.file,
+                        where.where.line, message});
         _failed = true;
     }
 
@@ -1319,9 +1339,14 @@ protected:
             } else if (entry.first == "easing") {
                 easingField = &entry.second;
             } else {
+                // 文案从白名单数组来（Fields.h 的单一来源）：加字段时改一处，
+                // 报错与文档表一起变。
                 Error(entry.second,
                       field + ".transition 里的字段 \"" + entry.first
-                          + "\" 不认识（这一层只认 duration 与 easing）");
+                          + "\" 不认识（这一层只认 "
+                          + JoinKnownFields(kKnownTransitionFields,
+                                            std::size(kKnownTransitionFields))
+                          + "）");
             }
         }
 
@@ -1699,10 +1724,14 @@ protected:
             return;
         }
         for (const auto& entry : value.fields) {
-            if (entry.first != "width" && entry.first != "color") {
+            if (!IsKnownField(kKnownStrokeFields,
+                              std::size(kKnownStrokeFields), entry.first)) {
                 Error(entry.second,
                       "stroke 里的字段 \"" + entry.first
-                          + "\" 不认识（这一层只认 width、color）");
+                          + "\" 不认识（这一层只认 "
+                          + JoinKnownFields(kKnownStrokeFields,
+                                            std::size(kKnownStrokeFields))
+                          + "）");
             }
         }
 
@@ -1739,12 +1768,14 @@ protected:
             return;
         }
         for (const auto& entry : value.fields) {
-            if (entry.first != "offsetX" && entry.first != "offsetY"
-                && entry.first != "color") {
+            if (!IsKnownField(kKnownShadowFields,
+                              std::size(kKnownShadowFields), entry.first)) {
                 Error(entry.second,
                       "shadow 里的字段 \"" + entry.first
-                          + "\" 不认识（这一层只认 offsetX、offsetY、color；"
-                            "模糊还没做，所以没有 blur）");
+                          + "\" 不认识（这一层只认 "
+                          + JoinKnownFields(kKnownShadowFields,
+                                            std::size(kKnownShadowFields))
+                          + "；模糊还没做，所以没有 blur）");
             }
         }
 
@@ -1805,6 +1836,60 @@ protected:
         readSide("top", out.top);
         readSide("right", out.right);
         readSide("bottom", out.bottom);
+    }
+
+    /**
+     * @brief 读字体字段：字符串，或**字符串数组**（0.3.0 T-13）。
+     *
+     * 数组 = 回退链：**第一个元素进主字段**（`ButtonTextData::path` /
+     * `TextStyle::fontPath`），其余进链尾。这样"首选"仍然只有一个字段
+     * （构造日志只认主字段），链只是它的尾巴。
+     *
+     * 两种写法都不会被静默吞掉：
+     *   - 数组里有非字符串 → 报错并指到那一项（不是"整段配置读不下去"）；
+     *   - 数组里有空串 → 报错（`""` 的语义是"用机器默认字体"，混在链里
+     *     等于"退到一半突然改用默认字体"，那不是回退，是两套语义叠在一起）；
+     *   - `[]` 不报错：它就是"没写字体"，与 `""` 同义。
+     */
+    void ReadFontPaths(const JsonValue& child, const char* fieldName,
+                       std::string* primary,
+                       std::vector<std::string>* fallbacks) {
+        fallbacks->clear();
+        if (child.IsString()) {
+            *primary = child.text;
+            return;
+        }
+        if (!child.IsArray()) {
+            Error(child, std::string(fieldName)
+                             + " 必须是字符串或字符串数组（字体绝对路径；"
+                               "字符串数组 = 回退链，第一个元素优先；"
+                               "空串 / 空数组 = 机器默认字体）");
+            return;
+        }
+        if (child.items.empty()) {
+            primary->clear();
+            return;
+        }
+        for (std::size_t index = 0; index < child.items.size(); ++index) {
+            const JsonValue& item = child.items[index];
+            const std::string ordinal =
+                std::string(fieldName) + " 的第 " + std::to_string(index + 1)
+                + " 项";
+            if (!item.IsString()) {
+                Error(item, ordinal + " 必须是字符串");
+                return;
+            }
+            if (item.text.empty()) {
+                Error(item, ordinal + " 是空串（要机器默认字体就别写 "
+                                + fieldName + "；回退链里不放空串）");
+                return;
+            }
+            if (index == 0) {
+                *primary = item.text;
+            } else {
+                fallbacks->push_back(item.text);
+            }
+        }
     }
 
     /// 读一个枚举字段：认表里的字符串，其它一律报错并列出可选项。
@@ -2188,11 +2273,19 @@ public:
             return;
         }
 
+        // `$extends` 的来源（T-10）：合并已经在 `LoadConfigInto` 里做完，
+        // 这里只抄一份来源串给生成物注释用；字段本身由 `IsDirectiveField` 跳过。
+        if (const JsonValue* extends = root.Find("$extends")) {
+            if (extends->IsString()) {
+                _config.extendsFrom = extends->text;
+            }
+        }
+
         for (const auto& field : root.fields) {
             const std::string& key = field.first;
             const JsonValue& value = field.second;
 
-            if (key == "$comment") {
+            if (IsDirectiveField(key)) {
                 continue;  // CXXCSS.md §2.1：注释字段，生成器跳过
             }
             if (!IsKnownField(kKnownRootFields,
@@ -2401,14 +2494,15 @@ private:
         }
 
         for (const auto& entry : value.fields) {
-            if (entry.first != "type" && entry.first != "source"
-                && entry.first != "transition" && entry.first != "transform"
-                && entry.first != "width" && entry.first != "height"
-                && entry.first != "fit") {
+            if (!IsKnownField(kKnownButtonAppearanceFields,
+                              std::size(kKnownButtonAppearanceFields),
+                              entry.first)) {
                 Error(entry.second,
                       field + " 里的字段 \"" + entry.first
-                          + "\" 不认识（这一层只认 type、source、transition、"
-                            "transform、width、height、fit）");
+                          + "\" 不认识（这一层只认 "
+                          + JoinKnownFields(kKnownButtonAppearanceFields,
+                                            std::size(kKnownButtonAppearanceFields))
+                          + "）");
             }
         }
 
@@ -2541,7 +2635,6 @@ private:
             Error(value, "text 必须是对象");
             return;
         }
-
         for (const auto& entry : value.fields) {
             const std::string& key = entry.first;
             const JsonValue& child = entry.second;
@@ -2564,11 +2657,8 @@ private:
                 _config.data.text.topSpace
                     = static_cast<float>(ReadNumber(child, "text.topSpace"));
             } else if (key == "path") {
-                if (child.IsString()) {
-                    _config.data.text.path = child.text;
-                } else {
-                    Error(child, "text.path 必须是字符串");
-                }
+                ReadFontPaths(child, "text.path", &_config.data.text.path,
+                              &_config.data.text.paths);
             } else if (key == "content") {
                 ReadTextContent(child);
             } else if (key == "align") {
@@ -2683,15 +2773,6 @@ private:
 // 面板（Panel）
 // ---------------------------------------------------------------------------
 
-/// 面板配置认的字段（CXXCSS.md §4.4）。不在这里出现的一律报错。
-const char* const kKnownPanelFields[] = {
-    "$comment",    "name",         "width",        "height",
-    "closed",      "open",         "startOpen",    "clipChildren", "scroll",
-    "selfAnchorX", "selfAnchorY",  "traceAnchorX", "traceAnchorY",
-    "offsetX",     "offsetY",      "zIndex",       "visible",
-    "shape",       "layout",       "layoutItem",
-};
-
 /**
  * @brief 面板的加载器。
  *
@@ -2718,11 +2799,19 @@ public:
             return;
         }
 
+        // `$extends` 的来源（T-10）：合并已经在 `LoadConfigInto` 里做完，
+        // 这里只抄一份来源串给生成物注释用；字段本身由 `IsDirectiveField` 跳过。
+        if (const JsonValue* extends = root.Find("$extends")) {
+            if (extends->IsString()) {
+                _config.extendsFrom = extends->text;
+            }
+        }
+
         for (const auto& field : root.fields) {
             const std::string& key = field.first;
             const JsonValue& value = field.second;
 
-            if (key == "$comment") {
+            if (IsDirectiveField(key)) {
                 continue;  // CXXCSS.md §2.1：注释字段，生成器跳过
             }
             if (!IsKnownField(kKnownPanelFields,
@@ -2821,6 +2910,9 @@ private:
      * 与按钮的 `ReadAppearance` 同构，但**只认 `color`**：`PanelAppearance` 里
      * 没有"外观类型"这一维（面板不贴图、不开洞——它是容器）。写了 `img` / `svg`
      * 时明确报"面板还不支持这个"，而不是假装没看见。
+     *
+     * 0.2.0 T-07：状态里多收 `stroke` / `shadow` 两段（与按钮同两个读取器）。
+     * 描边画在**子孙之上**（装饰遍），阴影在填充之下；两者都不参与命中。
      */
     void ReadAppearance(const JsonValue& value, const std::string& field,
                         inking::PanelAppearance& out) {
@@ -2834,12 +2926,15 @@ private:
         }
 
         for (const auto& entry : value.fields) {
-            if (entry.first != "type" && entry.first != "source"
-                && entry.first != "transition" && entry.first != "transform") {
+            if (!IsKnownField(kKnownPanelAppearanceFields,
+                              std::size(kKnownPanelAppearanceFields),
+                              entry.first)) {
                 Error(entry.second,
                       field + " 里的字段 \"" + entry.first
-                          + "\" 不认识（这一层只认 type、source、transition、"
-                            "transform）");
+                          + "\" 不认识（这一层只认 "
+                          + JoinKnownFields(kKnownPanelAppearanceFields,
+                                            std::size(kKnownPanelAppearanceFields))
+                          + "）");
             }
         }
 
@@ -2872,6 +2967,14 @@ private:
         }
         if (const JsonValue* transform = value.Find("transform")) {
             ReadTransform(*transform, field, out.transform);
+        }
+        // 描边与阴影（T-07）：与按钮同两个读取器。`open` 省略时由
+        // `PanelData::Normalize` 连同颜色一起继承 `closed` 那份。
+        if (const JsonValue* stroke = value.Find("stroke")) {
+            ReadStroke(*stroke, out.stroke);
+        }
+        if (const JsonValue* shadow = value.Find("shadow")) {
+            ReadShadow(*shadow, out.shadow);
         }
     }
 
@@ -2916,25 +3019,6 @@ private:
 // 标签（Label，A7 的生成器段）
 // ---------------------------------------------------------------------------
 
-/// 标签配置认的字段（CXXCSS.md §3.8）。
-///
-/// 比按钮 / 面板都短，因为标签是**叶子**：没有三态、没有开合、没有 `shape`
-/// （`LabelData` 里就没有形状这一项——标签只画文字，不画底）。文字那一整块
-/// 收在一个 `text` 段里（内容 + 排版样式 + 换行 / 省略开关）。
-const char* const kKnownLabelFields[] = {
-    "$comment",     "name",        "width",        "height",
-    "text",         "selfAnchorX", "selfAnchorY",  "traceAnchorX",
-    "traceAnchorY", "offsetX",     "offsetY",      "zIndex",
-    "visible",      "layout",      "layoutItem",
-};
-
-/// 标签 `text` 段认的字段。
-const char* const kKnownLabelTextFields[] = {
-    "content", "fontSize", "lineSpacing", "path",   "align",
-    "alignV",  "padding",  "color",       "wrap",   "overflow",
-    "maxLines",
-};
-
 /**
  * @brief 标签的加载器。
  *
@@ -2963,11 +3047,19 @@ public:
             return;
         }
 
+        // `$extends` 的来源（T-10）：合并已经在 `LoadConfigInto` 里做完，
+        // 这里只抄一份来源串给生成物注释用；字段本身由 `IsDirectiveField` 跳过。
+        if (const JsonValue* extends = root.Find("$extends")) {
+            if (extends->IsString()) {
+                _config.extendsFrom = extends->text;
+            }
+        }
+
         for (const auto& field : root.fields) {
             const std::string& key = field.first;
             const JsonValue& value = field.second;
 
-            if (key == "$comment") {
+            if (IsDirectiveField(key)) {
                 continue;  // CXXCSS.md §2.1：注释字段，生成器跳过
             }
             if (!IsKnownField(kKnownLabelFields,
@@ -3078,12 +3170,9 @@ private:
                     _config.data.style.lineSpacing = static_cast<float>(number);
                 }
             } else if (key == "path") {
-                if (child.IsString()) {
-                    _config.data.style.fontPath = child.text;
-                } else {
-                    Error(child, "text.path 必须是字符串（字体绝对路径；"
-                                 "空串 = 机器默认字体）");
-                }
+                ReadFontPaths(child, "text.path",
+                              &_config.data.style.fontPath,
+                              &_config.data.style.fontPaths);
             } else if (key == "align") {
                 int parsed = 0;
                 if (ReadEnum(child, "text.align",
@@ -3180,13 +3269,6 @@ private:
  * 没有 `layout`（图片不是容器），也没有 `dynamic`（图片只有静态档：换图只标
  * 重绘脏，几何不动）。
  */
-const char* const kKnownImageFields[] = {
-    "$comment",   "name",         "width",        "height",  "normal",
-    "runtime",    "shape",        "stroke",       "shadow",  "selfAnchorX",
-    "selfAnchorY", "traceAnchorX", "traceAnchorY", "offsetX", "offsetY",
-    "layoutItem", "zIndex",       "visible",
-};
-
 /**
  * 图片配置里**明确不接受**的字段：写了就报错，而不是静默忽略。
  *
@@ -3239,6 +3321,14 @@ public:
             return;
         }
 
+        // `$extends` 的来源（T-10）：合并已经在 `LoadConfigInto` 里做完，
+        // 这里只抄一份来源串给生成物注释用；字段本身由 `IsDirectiveField` 跳过。
+        if (const JsonValue* extends = root.Find("$extends")) {
+            if (extends->IsString()) {
+                _config.extendsFrom = extends->text;
+            }
+        }
+
         // 第一趟：先收 `runtime` 开关。
         //
         // 它决定后面处理 `normal` 时要不要在生成期读文件，而 json 里的字段顺序
@@ -3263,7 +3353,7 @@ public:
             const std::string& key = field.first;
             const JsonValue& value = field.second;
 
-            if (key == "$comment" || key == "runtime") {
+            if (IsDirectiveField(key) || key == "runtime") {
                 continue;  // 注释跳过；runtime 第一趟已经收过
             }
             if (IsKnownField(kRejectedImageFields,
@@ -3368,12 +3458,15 @@ private:
         _config.sawNormal = true;
 
         for (const auto& entry : value.fields) {
-            if (entry.first != "type" && entry.first != "source"
-                && entry.first != "fit") {
+            if (!IsKnownField(kKnownImageAppearanceFields,
+                              std::size(kKnownImageAppearanceFields),
+                              entry.first)) {
                 Error(entry.second,
                       "normal 里的字段 \"" + entry.first
-                          + "\" 不认识（图片这一层只认 type、source、fit；"
-                            "三态 / 过渡 / 逐态尺寸 / svg 都是按钮的东西）");
+                          + "\" 不认识（图片这一层只认 "
+                          + JoinKnownFields(kKnownImageAppearanceFields,
+                                            std::size(kKnownImageAppearanceFields))
+                          + "；三态 / 过渡 / 逐态尺寸 / svg 都是按钮的东西）");
             }
         }
 
@@ -3515,11 +3608,6 @@ private:
 // 语言表（Text，A7 的生成器段）
 // ---------------------------------------------------------------------------
 
-/// 语言表配置认的字段（CXXCSS.md §3.8）。
-const char* const kKnownTextTableFields[] = {
-    "$comment", "name", "languages", "default", "entries",
-};
-
 /**
  * @brief 语言表的加载器。
  *
@@ -3554,7 +3642,7 @@ public:
             const std::string& key = field.first;
             const JsonValue& value = field.second;
 
-            if (key == "$comment") {
+            if (IsDirectiveField(key)) {
                 continue;
             }
             if (!IsKnownField(kKnownTextTableFields,
@@ -3770,11 +3858,6 @@ private:
 // 主题表（Theme，B8）
 // ---------------------------------------------------------------------------
 
-/// 主题表配置认的字段（CXXCSS.md §3.9）。
-const char* const kKnownThemeFields[] = {
-    "$comment", "name", "colors", "fontSizes", "default",
-};
-
 /**
  * @brief 主题表的加载器。
  *
@@ -3814,7 +3897,7 @@ public:
             const std::string& key = field.first;
             const JsonValue& value = field.second;
 
-            if (key == "$comment") {
+            if (IsDirectiveField(key)) {
                 continue;
             }
             if (!IsKnownField(kKnownThemeFields, std::size(kKnownThemeFields),
@@ -3955,23 +4038,6 @@ private:
 // 全局配置（Config）：设计画布尺寸 + 窗口启动设置
 // ---------------------------------------------------------------------------
 
-/// 全局配置认的字段（CXXCSS.md §3.11）。
-const char* const kKnownConfigFields[] = {
-    "$comment", "name", "design", "window",
-};
-
-/// `design` 段认的字段。
-const char* const kKnownDesignFields[] = {
-    "$comment", "width", "height",
-};
-
-/// `window` 段认的字段。每一项都对应库里一对**有 getter 的** setter：
-/// 没有回读口的设置不收——"写了不生效"没法自证，就是新的静默失效。
-const char* const kKnownWindowFields[] = {
-    "$comment", "borderless", "roundedCorners", "background", "fullscreen",
-    "startScene",
-};
-
 /**
  * @brief 全局配置的加载器（`CXXCSS/config.json`）。
  *
@@ -4012,7 +4078,7 @@ public:
             const std::string& key = field.first;
             const JsonValue& value = field.second;
 
-            if (key == "$comment" || key == "name") {
+            if (IsDirectiveField(key) || key == "name") {
                 continue;
             }
             if (!IsKnownField(kKnownConfigFields, std::size(kKnownConfigFields),
@@ -4058,7 +4124,7 @@ private:
         for (const auto& entry : value.fields) {
             const std::string& key = entry.first;
             const JsonValue& child = entry.second;
-            if (key == "$comment") {
+            if (IsDirectiveField(key)) {
                 continue;
             }
             if (!IsKnownField(kKnownDesignFields, std::size(kKnownDesignFields),
@@ -4140,7 +4206,7 @@ private:
         for (const auto& entry : value.fields) {
             const std::string& key = entry.first;
             const JsonValue& child = entry.second;
-            if (key == "$comment") {
+            if (IsDirectiveField(key)) {
                 continue;
             }
             if (!IsKnownField(kKnownWindowFields,
@@ -4397,6 +4463,161 @@ LoadResult LoadConfig(const std::string& path) {
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// `$extends`：单层浅合并（0.2.0 T-10）
+// ---------------------------------------------------------------------------
+//
+// 语义（CXXCSS.md §4.6）：
+//   - `"$extends": "Panel/basePanel"`——**相对 CXXCSS 根**、**不带 .json**；
+//   - **一层**：父文件的字段被子文件同名字段覆盖；**不支持 A→B→C**；
+//   - **对象逐键覆盖，不做深合并**：深合并会让"我想把父的 `text` 整段换掉"
+//     变成做不到（子对象里没写的键会从父继承下来）。
+//
+// 顺序是"**先合并、再校验**"：反过来的话，父文件里写错的字段会被子文件覆盖掉，
+// 永远查不出来。
+
+namespace {
+
+/// 路径的父目录。配置路径来自扫描 / 命令行，没有尾分隔符。
+std::string ParentDirectoryOf(const std::string& path) {
+    const std::size_t slash = path.find_last_of("/\\");
+    return slash == std::string::npos ? std::string() : path.substr(0, slash);
+}
+
+/// ASCII 大小写不敏感比较（目录名 / 扩展名这种场景够用）。
+bool EqualsIgnoreCase(const std::string& left, const std::string& right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < left.size(); ++i) {
+        const unsigned char a = static_cast<unsigned char>(left[i]);
+        const unsigned char b = static_cast<unsigned char>(right[i]);
+        const auto lower = [](unsigned char c) {
+            return static_cast<unsigned char>(
+                c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+        };
+        if (lower(a) != lower(b)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// 把路径里的 `\` 统一成 `/`，供"是不是同一个文件"这种粗比较用。
+std::string NormalizeSeparators(const std::string& path) {
+    std::string out = path;
+    for (char& c : out) {
+        if (c == '\\') {
+            c = '/';
+        }
+    }
+    return out;
+}
+
+/// 这个文件所属的 **CXXCSS 根**——`$extends` 的路径相对它解析。
+std::string CxxcssRootOf(const std::string& path) {
+    const std::string dir = ParentDirectoryOf(path);
+    if (dir.empty()) {
+        return {};
+    }
+    // 文件直接躺在根下（`CXXCSS/config.json`）：根就是它的父目录。
+    // 用**目录名**判断，不用"父目录是不是组件目录"：`CXXCSS` 这个名字本身
+    // 也会被 `TryComponentKindFromPath` 认成 Config（`CXXCSS.md` §1 的那条特例）。
+    if (EqualsIgnoreCase(LeafDirectory(path), "cxxcss")) {
+        return dir;
+    }
+    return ParentDirectoryOf(dir);
+}
+
+/// 递归标上来源文件：合并进来的值报错时要指到**父文件**（T-10 的第 4 条）。
+void MarkSourceFile(JsonValue& value, const std::string& file) {
+    value.file = file;
+    for (JsonValue& item : value.items) {
+        MarkSourceFile(item, file);
+    }
+    for (auto& field : value.fields) {
+        MarkSourceFile(field.second, file);
+    }
+}
+
+/// 子对象覆盖父对象（**只合并顶层**）。
+JsonValue MergeExtendsObjects(const JsonValue& child, const JsonValue& parent,
+                              const std::string& parentPath) {
+    JsonValue merged;
+    merged.kind = JsonValue::Kind::Object;
+    merged.where = child.where;
+
+    for (const auto& field : parent.fields) {
+        if (IsDirectiveField(field.first)) {
+            continue;  // 指令字段不继承（父的 $comment / $extends 不往下带）
+        }
+        JsonValue value = field.second;
+        MarkSourceFile(value, parentPath);
+        merged.fields.emplace_back(field.first, std::move(value));
+    }
+    for (const auto& field : child.fields) {
+        const auto existing = std::find_if(
+            merged.fields.begin(), merged.fields.end(),
+            [&field](const auto& entry) { return entry.first == field.first; });
+        if (existing != merged.fields.end()) {
+            existing->second = field.second;  // 子覆盖父
+        } else {
+            merged.fields.push_back(field);
+        }
+    }
+    return merged;
+}
+
+}  // namespace
+
+/**
+ * 配置里写了 `$extends` 就先把父文件读进来做一层浅合并。
+ *
+ * @return false = 已经报了错（调用方直接返回，不要拿半份配置去生成）。
+ */
+bool ApplyExtends(const std::string& path, JsonValue& root,
+                  LoadResult& result) {
+    const JsonValue* extends = root.Find("$extends");
+    if (extends == nullptr) {
+        return true;
+    }
+
+    const auto fail = [&](const std::string& message) {
+        result.errors.push_back(
+            CxxcssError{path, extends->where.line, message});
+        return false;
+    };
+
+    if (!extends->IsString() || extends->text.empty()) {
+        return fail("$extends 必须是字符串：相对 CXXCSS 根的路径、**不带 .json**"
+                    "（例如 \"Panel/basePanel\"）");
+    }
+    const std::string rootDir = CxxcssRootOf(path);
+    if (rootDir.empty()) {
+        return fail("$extends：算不出 CXXCSS 根（这个文件的路径里没有目录）");
+    }
+
+    const std::string parentPath = rootDir + "/" + extends->text + ".json";
+    if (NormalizeSeparators(parentPath) == NormalizeSeparators(path)) {
+        return fail("$extends 指向它自己（\"" + extends->text
+                    + "\" 就是本文件）");
+    }
+
+    const ParseResult parent = LoadJsonFile(parentPath);
+    if (!parent.ok) {
+        return fail("$extends 的父文件读不到：" + parentPath
+                    + "（路径是相对 CXXCSS 根的、不带 .json）");
+    }
+    if (parent.value.Find("$extends") != nullptr) {
+        return fail("$extends 只支持**一层**：父文件 \"" + extends->text
+                    + "\" 自己也写了 $extends。链式继承要环检测、行号归属与"
+                      "白名单二次校验，收益不成比例（CXXCSS.md §4.6）");
+    }
+
+    root = MergeExtendsObjects(root, parent.value, parentPath);
+    return true;
+}
+
 void LoadConfigInto(const std::string& path, LoadResult& result) {
     // 第一步：**从目录名定组件类型**（CXXCSS.md §1 第 1 条）。
     // 定不出来就报错，不猜——猜错的后果是一堆莫名其妙的字段报错
@@ -4423,41 +4644,48 @@ void LoadConfigInto(const std::string& path, LoadResult& result) {
         return;
     }
 
+    // `$extends`（T-10）：**先合并、再交给各 Loader**。反过来的话父文件里
+    // 写错的字段会被子文件覆盖掉，永远查不出来。
+    JsonValue root = parsed.value;
+    if (!ApplyExtends(path, root, result)) {
+        return;
+    }
+
     switch (kind) {
         case ComponentKind::Panel: {
             PanelLoader loader(path, result);
-            loader.Run(parsed.value);
+            loader.Run(root);
             break;
         }
         case ComponentKind::Label: {
             LabelLoader loader(path, result);
-            loader.Run(parsed.value);
+            loader.Run(root);
             break;
         }
         case ComponentKind::Image: {
             ImageLoader loader(path, result);
-            loader.Run(parsed.value);
+            loader.Run(root);
             break;
         }
         case ComponentKind::Text: {
             TextLoader loader(path, result);
-            loader.Run(parsed.value);
+            loader.Run(root);
             break;
         }
         case ComponentKind::Theme: {
             ThemeLoader loader(path, result);
-            loader.Run(parsed.value);
+            loader.Run(root);
             break;
         }
         case ComponentKind::Config: {
             ConfigLoader loader(path, result);
-            loader.Run(parsed.value);
+            loader.Run(root);
             break;
         }
         case ComponentKind::Button:
         default: {
             ButtonLoader loader(path, result);
-            loader.Run(parsed.value);
+            loader.Run(root);
             break;
         }
     }

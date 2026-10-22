@@ -76,8 +76,11 @@ cmake --build build -j
 == 失败项：0 ==
 ```
 
-**看这一行，不要只看退出码。** 当前 `0.1.0-test` 实测 **73 项通过 / 0 项失败**
-（退出码也等于失败项数，可以直接用）。
+**看这一行，不要只看退出码。** 当前实测 **217 项 ok / 0 项失败**（退出码也等于失败项数，
+可以直接用；项数会随环境略有浮动——没有可读字体时文字高清那几条会打成 `[skip]`）。
+
+自检不需要显示器：`0.4.0` 起可以直接 `InkingWindow::Open()` + `RunFrames(n)` 手动跑帧，
+或者用 `RenderToTexture()` 完全不开窗口出图（详见 `docs/zh/api/InkingWindow.md`）。
 
 ```bash
 ctest --test-dir build --output-on-failure   # 若有 CXXCSS 配置，还会跑生成链路的编译自检
@@ -88,12 +91,15 @@ ctest --test-dir build --output-on-failure   # 若有 CXXCSS 配置，还会跑�
 | 选项 | 默认 | 作用 |
 | --- | --- | --- |
 | `ISMESSAGE` | `ON` | 消息队列参与编译（宏 `INK_ISMESSAGE`）；关掉时退化成空实现 |
+| `INKING_DEBUG_LOG` | `OFF` | 调试级日志与调试断言参与编译（宏 `INK_ISDEBUG`）。**发布包不该打开**：实测打开时 948 条日志里 528 条是同一条调试流的重复 |
 | `INK_BUILD_EXAMPLES` | 顶层构建时 `ON` | 构建 `examples/demo`（演示 + 自检） |
 | `INK_BUILD_TESTS` | 顶层构建时 `ON` | 注册 ctest（含 `inkgen --validate` 与生成链路编译自检） |
 | `CMAKE_BUILD_TYPE` | `Release` | — |
 
-`INK_ISLOG` / `INK_ISDEBUG` 恒为 `PUBLIC` 定义（会改公开头里 inline 函数的内容，
-消费者必须与库看到同一个值，否则是 ODR 违例）。
+`INK_ISLOG` 恒为 `PUBLIC` 定义；`INK_ISDEBUG` 由 `INKING_DEBUG_LOG` 控制、**同样必须是
+PUBLIC**——两者都会改公开头里 `inline` 函数的**内容**（`kDefaultLogLevel` /
+`kDebugEnabled` / `INK_LOG_DEBUG` 宏），库与消费者看到不同的值就是 ODR 违例。
+所以正确的用法是"默认关、需要的人显式打开"，而不是把它藏进库自己的编译选项。
 
 ---
 
@@ -173,6 +179,19 @@ pacman -S --needed mingw-w64-ucrt-x86_64-{cmake,ninja,gcc,pkgconf} \
 > ⚠ **不能用 MSVC 链接这个包**：它是 MinGW(GCC) 编译的，`.dll.a` 导入库与 MSVC 的
 > `.lib` 互不兼容，C++ ABI 也不同。在 Visual Studio 里请用"打开文件夹"（CMake 模式）
 > 并选 MinGW 工具链，别用 `.vcxproj`。
+
+### 路线 0：先跑一次 `inkgen --validate`（**做两条路线之前**）
+
+只要你的工程里有 `CXXCSS/`，**先校验配置、再写代码**：
+
+```bash
+./inkgen.exe --validate CXXCSS/Button/*.json CXXCSS/Panel/*.json   # 逐类列出；示例文件会被跳过
+```
+
+它检查的是**配置**（字段名、类型、取值范围、主题 token 是否存在），不是 C++ 语法。
+这一步的报错经常被读成"编译不过"——两者是两回事，而配置错在编译期只能表现为
+"生成的头文件里少了一个字段"，很难往配置上想。把 validate 放在最前面，
+问题就落在**它自己的名字**上。
 
 ### 路线 A：手写组件（最快上手）
 

@@ -181,6 +181,34 @@ struct ButtonLook {
                    : _baseHeight;
     }
 
+    /**
+     * @brief 组件**自己那份尺寸被外部改了**（布局 / 自测量）时同步一次。
+     *
+     * 为什么必须有它（0.4.0 A4/B1）：`GetWidth()` 走的是 `DisplayWidth()`，
+     * 而后者读的是 `_baseWidth` / `displayWidth`——布局把新尺寸写进组件的
+     * `_width` 之后，这里不同步就出现"布局算对了、`GetWidth()` 还是旧值"：
+     * `fillMain` / `Stretch` 全都**不收敛且不报错**（核的抽屉只能整树重建，
+     * 正是这个）。
+     *
+     * 两维都按当前状态的生效尺寸重算；**状态里写了尺寸的维度不动**
+     * （`EffectiveWidth` 会自己返回配置那份，行为与以前一致）。
+     */
+    void SyncBaseSize(int width, int height) noexcept {
+        if (_baseWidth == width && _baseHeight == height) {
+            return;
+        }
+        _baseWidth = width;
+        _baseHeight = height;
+        // display 两份是"正在显示的尺寸"：只有**没有每态尺寸动画**时才跟着走
+        // （有动画时它是插值出来的，下一帧 `Advance` 会自己收敛，硬写会抖）。
+        if (!HasSizeAnimation()) {
+            displayWidth = static_cast<float>(EffectiveWidth(state));
+            displayHeight = static_cast<float>(EffectiveHeight(state));
+            fromWidth = displayWidth;
+            fromHeight = displayHeight;
+        }
+    }
+
     /// 三个状态里有没有哪个改了尺寸（改了才需要"每帧现算位置"与命中脏）。
     bool HasSizeAnimation() const noexcept {
         const int baseWidth = EffectiveWidth(ButtonState::Normal);

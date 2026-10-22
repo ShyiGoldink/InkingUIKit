@@ -50,8 +50,16 @@
 
 ## 三、渲染树：骨架 + 扁平绘制列表
 
-层级（`_parent`）是**唯一真相源**，场景持有的绘制列表只是它的派生索引。子节点在构造时
-沿父链找到所属场景并登记进来，场景这边只是一份按 z 序排好的扁平数组。
+层级（`_parent`）是**唯一真相源**，场景持有的绘制列表只是它的派生索引。
+
+> **0.4.0 起这句话是字面意义上的**：`_contentDirty` 时 `sortDrawList()` 从场景根做一次
+> **先序 DFS**，扫到谁就收谁（顺带把 `_scene` 认领到本场景）。以前是**增量登记**
+> （构造时沿父链登记一次），于是"先建子树、后 `AddChild`"的节点永远进不了列表
+> ——症状是**节点在、`IsVisibleInTree()` 为真、就是不画**，且不报错。树本来就在那儿，
+> 扫一遍 O(N)，比维护"哪次登记漏了"便宜得多。
+>
+> 增量入口 `AddDrawNode()` / `RemoveDrawNode()` 仍然保留：前者退化成"标脏"，
+> 后者仍要立刻从列表里摘掉（节点可能正在析构，留着就是野指针）。
 
 为什么扁平而不是递归：
 
@@ -62,6 +70,9 @@
 顺序的维护方式是**标脏 + 帧末惰性重建**：骨架变化只把场景标脏，不立刻排序；
 重建推迟到 `Render()` 开头做。提交顺序是 **z 从小到大**（先画底下的），
 与 `IsAbove` 的答案相反但**规则同源**——两边不同源，就会"画的是 A、点到的是 B"。
+
+**显式重建**（`RebuildRenderList()` / `RebuildHitTable()`）给三个场合用：自检想在
+"下一帧之前"就断言、宿主怀疑表与树不一致、有人在树外改了父子关系。正常路径不需要它们。
 
 ## 四、三个"脏"的三个消费点
 
@@ -212,6 +223,32 @@ struct Cluster { float cellSize; ... };   // 一个粗块 + 它自己的格子�
 
 ### InkingScene — Public
 
+>**RebuildRenderList() / RebuildHitTable()（0.4.0 A5 / D6）**
+
+```C++
+std::size_t RebuildRenderList();
+std::size_t RebuildHitTable();
+```
+
+立刻按当前树重建收集表 / 命中表，**不必等帧**。前者返回重建后的项数，后者返回静态条目数。
+
+正常路径不需要它们：`sortDrawList()` 在结构脏时本来就会重建。三个正当用途——
+自检想在"下一帧之前"断言、宿主怀疑表与树不一致、有人在树外改了父子关系。
+`QueryHit()` 自己会先推一次重建，所以"窗口 Show 之前验证某个位置点得到谁"直接可用。
+
+>**FindByName(name) / Activate(name)（0.4.0 B2 配套 / D7）**
+
+```C++
+InkingWidget* FindByName(const std::string& name) noexcept;
+bool Activate(const std::string& name) noexcept;
+```
+
+`FindByName` 深度优先、先序、返回**第一个**同名节点（不含场景自己）；找不到返回 nullptr。
+同名是允许的（配置复制粘贴），要全部拿到请自己走 `GetChildren()`。
+
+`Activate` = `FindByName` + `InkingWidget::Activate()`。自检 / 快捷键 / 脚本用它代替
+`dynamic_cast<InkingStaticButton*>` 再调 `TriggerClick()`——**调用方从此不认识控件类型**。
+
 >**构造函数（三种）**
 
 ```C++
@@ -300,6 +337,17 @@ std::size_t GetHitTableMaxCellCandidates() noexcept;
 ```
 
 自检与预算估算用。最后那个是一次查询的候选上界——用来判断格子尺寸定得是不是太粗。
+
+> **怎么读这些数（口径）**
+
+上面这一族的**口径与读法**在 [../UsageReport.md §3「观测口与读数口径」](../UsageReport.md)
+有完整一张表（含 `BatchStats`、`GetPaintCount()` / `GetReplayCount()`、
+`GetDisplayTransformRevision()` 等）。三条最容易踩的：
+
+- `BatchStats*` 是**累计值**，自检必须取前后差；
+- `GetDrawItemCount()` **含隐藏节点**——它不是"可见节点数"；
+- `GetHitTableEntryCount()` **不含容器子孙**（`OwnsSubtreeHit()` 为真的容器只登记一条包络），
+  动态组件记为"洞"。
 
 >**骨架登记写入口（只由 `InkingWidget` 调）**
 

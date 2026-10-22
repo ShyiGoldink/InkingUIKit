@@ -48,6 +48,15 @@ if(INK_BUILD_TESTS)
         add_test(NAME inkgen_validate_cxxcss
                  COMMAND inkgen --validate ${INK_CXXCSS_CONFIGS})
     endif()
+
+    # 字段表防漂移（0.2.0 T-08）：`CXXCSS.md` §9 的锚点块必须与
+    # `inkgen --dump-fields` 逐字一致——新增字段忘记同步文档，这条测试就红。
+    add_test(NAME field_table_in_sync
+             COMMAND ${CMAKE_COMMAND}
+                     -DINKGEN=$<TARGET_FILE:inkgen>
+                     -DDOC=${CMAKE_CURRENT_LIST_DIR}/../CXXCSS/CXXCSS.md
+                     -DOUT=${CMAKE_CURRENT_BINARY_DIR}/field_table_dump.md
+                     -P ${CMAKE_CURRENT_LIST_DIR}/check-field-table.cmake)
 endif()
 
 # 生成器**自己的**自检（目录名判定 / 跨类型重名 / 每条报错 / 产物内容）

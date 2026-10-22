@@ -129,6 +129,21 @@ public:
     /// 某个点（设计坐标）对应的**字节偏移**（已吸附到码点边界）。
     std::size_t OffsetAtPoint(float designX, float designY) const;
 
+    // ---------------- 水平滚动（0.2.0 T-12） ----------------
+
+    /**
+     * 文字左移了多少（设计坐标）。0 = 没滚（文本没超宽，或光标在开头）。
+     *
+     * 为什么要有它：单行输入框**不换行**，文本一超宽光标就画到本体之外
+     * （面板默认 `clipChildren = false`，于是它真的会出现在框外）。两件事一起做：
+     * 光标位置夹进 `[0, width]`（兜底），再加一段水平滚动让光标可见（体验）。
+     */
+    float GetScrollX() const noexcept { return _scrollX; }
+
+    /// 整段文字**未滚动时**的宽度（设计坐标，单行 = 最后一行的行尾）。
+    /// 自检用它断言"文本确实超宽了"，也给 `EnsureCaretVisible` 算上限。
+    float GetTextWidth() const;
+
     // ---------------- 计数观测 ----------------
 
     int TextInputCount() const noexcept { return _textInputs; }
@@ -167,10 +182,27 @@ private:
     /// 编辑状态 → 基类：内容变了就 `SetText`（它会重排 + 让容器重排 + 标重绘）。
     void syncToLabel();
 
+    /// 文字这一笔的水平滚动量（基类的虚钩子，T-12）。
+    float TextScrollX() const noexcept override { return _scrollX; }
+
+    /// 设滚动量（夹进 `[0, maxScroll]`；没变化不标脏）。
+    ///
+    /// ⚠️ 滚动量**只影响绘制**（排版与命中都用未滚动坐标），所以它不进排版
+    /// 缓存键、也不进命中脏——但**必须标重绘脏**，否则"滚动量变了、画面不动"。
+    void SetScrollX(float x);
+
+    /// 让光标（含宽度）落在 `[0, width]` 里：越界才滚，不逐帧跟随。
+    /// 每次光标 / 文本 / 选区变化之后调用。
+    void EnsureCaretVisible();
+
     /// 光标 / 选区几何的共同底座：**字节偏移 → 行内矩形**。
     ///
     /// 用了基类那份排好行的结果（`GetTextLayout()`，它是 `TextLine{begin,end,width,x,y,height}`）
     /// 加 `MeasureText` 逐码点累加——所以比例字体下光标也贴在正确的字缝上。
+    /// 返回的是**未滚动、未夹取**的原始坐标（`BoxForOffset` 会再套上滚动与夹取）。
+    TextInputRect RawBoxForOffset(std::size_t offset) const;
+
+    /// 带滚动与夹取的光标 / 选区矩形（绘制与观测口用的都是这一份）。
     TextInputRect BoxForOffset(std::size_t offset) const;
 
     /// 设计坐标 → 组件本地坐标（标签没有变换，减左上角就够）。
@@ -188,6 +220,9 @@ private:
 
     /// 拖动扩选的起点（按下那一刻的偏移）。
     std::size_t _dragAnchor = 0;
+
+    /// 文字左移了多少（设计坐标，T-12）。只影响绘制：排版与命中都用未滚动坐标。
+    float _scrollX = 0.0f;
 
     int _textInputs = 0;
     int _submits = 0;

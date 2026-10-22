@@ -50,6 +50,17 @@ bool InkingDynamicWidget::Resize(int width, int height) noexcept {
     // 最后那条正是"父级一动，静态子节点的缓存绝对坐标会过期"：
     // 动态节点自己每帧现算没问题，但**它的静态子孙**靠的是列表里的快照。
     MarkStructureChanged();
+
+    // 自己是容器 ⇒ 尺寸变了要**立刻重排孩子**（0.4.0 A4）。
+    //
+    // 以前只有构造期那一趟布局，所以"抽屉从 56 拉到 200"之后里面的
+    // `fillMain` / `Stretch` 全停在旧值上——核的抽屉只能跳变后整树重建。
+    // 布局规则住在自己身上（`GetLayoutSpec()`），所以尺寸写入口是它唯一的
+    // 触发点；放在 `MarkStructureChanged` 之后，重排里再标脏也只会合并成一次。
+    if (GetLayoutSpec().Valid()) {
+        Relayout();
+    }
+
     onSizeChanged();
     return true;
 }

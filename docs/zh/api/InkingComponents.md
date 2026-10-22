@@ -29,7 +29,7 @@
 ```
 ButtonData            数据：三态外观 / 每态尺寸 / 文字 / 形状 / 描边阴影
 ButtonLook            状态机：三态 + 过渡插值（纯值类型，可单测）
-InkingButtonLike      契约：clicked 事件 + 三态 + [√] 钩子（带实现，不是纯接口）
+InkingButtonLike      契约：clicked / stateChanged 事件 + 三态 + [√] 钩子（带实现，不是纯接口）
 detail::ButtonPaint   绘制：形状 / 贴图 / 描边阴影 / 文字
       ↓
 InkingStaticButton    接线：形状、文字、命中、登记（输入由场景推）
@@ -135,7 +135,7 @@ static const ButtonData* FindData(const std::string& name);
 static int UnknownNameCount() noexcept;    // 取不到配置的次数（自检断言用）
 
 // 下面这些都从 InkingButtonLike 继承得来，本类一个都不转发：
-//   clicked / GetState / GetAppearance / GetDisplayColor / GetDisplayTransform
+//   clicked / stateChanged / GetState / GetAppearance / GetDisplayColor / GetDisplayTransform
 //   GetDisplayWidth / GetDisplayHeight / MouseHover / MousePress / MouseRelease
 //   TriggerClick / SetOnClicked / HasOnClicked / IsTransitioning
 

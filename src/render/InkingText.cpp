@@ -3,11 +3,14 @@
 
 #include <render/InkingBatch.h>
 #include <render/InkingDraw.h>
+#include <detail/InkLog.h>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #if defined(INK_HAS_SDL3_TTF)
 #include <SDL3_ttf/SDL_ttf.h>
@@ -48,9 +51,20 @@ struct TextLayer {
     SDL_Renderer* renderer = nullptr;  ///< 纹理表里的纹理属于它
     std::unordered_map<std::string, TextureEntry> textures;
     std::unordered_map<std::string, void*> fonts;  ///< 键 = 路径 + 字号
+    /**
+     * 字体链签名 → 实际命中的那条路径（`""` = 整条链全失败）。
+     *
+     * 键**不含字号**：一条链能不能打开与字号无关，而"全失败只报一条 WARN"
+     * 要求"量一次、画一次"共用同一个结论（见 `ResolveFontChain`）。
+     */
+    std::unordered_map<std::string, std::string> chainHits;
+    /// 回退链里"退到第 2 条及以后"才命中的次数（T-13 的观测口）。
+    std::uint64_t fontFallbacks = 0;
     std::string defaultFontPath;
     bool defaultFontResolved = false;
     bool ttfInitialized = false;
+    /// `TTF_Init` 失败只报一次（它每次调用都会重试，不记这笔就会每帧一条）。
+    bool ttfFailureReported = false;
     std::uint64_t texturesCreated = 0;
     std::uint64_t cacheHits = 0;
 
@@ -216,12 +230,12 @@ void CloseFontRaw(void*) {}
 
 #endif
 
-/// 字体路径：配置里给了就用它；没给就按候选表找一份机器默认字体（只找一次）。
-std::string ResolveFontPath(const std::string& requested) {
-    if (!requested.empty()) {
-        return requested;
-    }
-
+/// 机器默认字体：按候选表找一份（只找一次），空串 = 这台机器没有。
+///
+/// **只处理"一条字体都没写"这一条**（T-13 之后配置来的路径一律走链解析，见
+/// `ResolveFontChain`）。它只问"文件在不在"，能不能打开由链解析试开确认——
+/// 那一步漏了的话，"文件在、TTF 打不开"会静默变成占位方块。
+std::string MachineDefaultFontPath() {
     TextLayer& state = layer();
     if (state.defaultFontResolved) {
         return state.defaultFontPath;
@@ -235,12 +249,41 @@ std::string ResolveFontPath(const std::string& requested) {
         }
     }
 #endif
+    if (state.defaultFontPath.empty()) {
+        // 候选表全落空（或这台机器压根没编译进 SDL3_ttf）：接下来所有文字都会
+        // 退化成占位方块。**必须说出来**——只说"字怎么变成方块了"，谁也没法
+        // 往"字体没找到"上想。只报一次：`defaultFontResolved` 已经保证不重复。
+        INK_LOG_WARN("InkingText",
+                     "没找到任何机器默认字体（候选表全部落空，或未编译进 "
+                     "SDL3_ttf）：文字将退化为占位方块。请在 CXXCSS 里显式写 "
+                     "fontPath / text.path");
+    }
     return state.defaultFontPath;
 }
 
-/// 拿一个字体（开过就复用）。拿不到返回 nullptr，调用方走退化画法。
+/**
+ * @brief 拿一个字体（开过就复用）。拿不到返回 nullptr，调用方走退化画法。
+ *
+ * **不报错**（0.3.0 T-13 改）：回退链会拿它逐条试，故障日志由
+ * `ResolveFontChain` 汇总成一条——每个候选各报一条，等于把日志刷成墙。
+ * 失败也占一格缓存（"空"那一格），所以不会每帧重试开字体。
+ */
 void* AcquireFont(const std::string& path, float pixelSize) {
-    if (path.empty() || pixelSize <= 0.0f || !EnsureTtf()) {
+    if (pixelSize <= 0.0f) {
+        return nullptr;
+    }
+    if (path.empty()) {
+        // 空路径 = 一条字体都没有（机器默认也没找到），报错在链解析那边。
+        return nullptr;
+    }
+    if (!EnsureTtf()) {
+        TextLayer& state = layer();
+        if (!state.ttfFailureReported) {
+            state.ttfFailureReported = true;
+            INK_LOG_WARN("InkingText",
+                         std::string("TTF_Init 失败，文字将退化为占位方块：")
+                             + SDL_GetError());
+        }
         return nullptr;
     }
 
@@ -252,13 +295,131 @@ void* AcquireFont(const std::string& path, float pixelSize) {
     }
 
     void* font = OpenFontRaw(path, pixelSize);
-    if (font == nullptr) {
-        // 记一个"空"也值得：免得每次绘制都去试开一次（那才是真的慢）。
-        state.fonts.emplace(key, nullptr);
-        return nullptr;
-    }
+    // 失败也记一格：免得每次绘制都去试开一次（那才是真的慢）。
     state.fonts.emplace(key, font);
     return font;
+}
+
+/// 链签名：`a\x1Fa\x1F`。**空串不可能**（链里只放非空路径），所以不会与
+/// "没有链"混淆。用 `\x1F`（单元分隔符）而不是 `|`：路径里可能有 `|`，
+/// 但不会有控制字符。
+std::string ChainSignature(const std::vector<std::string>& chain) {
+    std::string key;
+    for (const std::string& path : chain) {
+        key += path;
+        key += '\x1F';
+    }
+    return key;
+}
+
+/**
+ * @brief 把"请求里的字体"解析成**一条真的能打开的路径**（T-13）。
+ *
+ * 链 = `fontPath`（非空时排第一）+ `fontPaths`（去重、跳过空串）。**没写任何字体**
+ * 时链 = 机器默认那一条——它也要**真的试开一次**：候选表只问"文件在不在"，
+ * 而"在却打不开"（权限 / 被占用 / 沙箱）会静默退化成占位方块。
+ *
+ * 三个决定：
+ *   1. **按链缓存**（`TextLayer::chainHits`），键**不含字号**：一条链能不能打开
+ *      与字号无关，而"整条链全失败只报一条 WARN"要求跨字号共用同一个结论
+ *      （量在 `fontSize`、画在 `deviceSize` 是两次调用，各报一条就是两条）。
+ *      缓存里也存"全失败"这个结论（空串），否则每帧重试 → 每帧一条 WARN；
+ *   2. **不静默换成机器默认字体**：写了字体却全打不开时，宁可画占位方块。
+ *      换一份字体是"看起来正常、其实不是你要的字体"，比方块更难发现；
+ *      而且那样一来 T-04 的"打不开要发声"在机器默认可用的机器上会变成
+ *      0 条 WARN——测试与实现互相打架，说明这条路本来就不该走；
+ *   3. `TTF_Init` 失败**不缓存**：它每次调用都会重试，缓存成"这条链没戏"
+ *      会让后来 init 成功的进程永远画方块。
+ */
+std::string ResolveFontChain(const TextRequest& request, float pixelSize) {
+    TextLayer& state = layer();
+    const bool explicitFont =
+        !request.fontPath.empty() || !request.fontPaths.empty();
+
+    // 单条路径是绝大多数调用：不进循环、只拼一次签名。
+    std::vector<std::string> chain;
+    if (request.fontPaths.empty()) {
+        if (!request.fontPath.empty()) {
+            chain.push_back(request.fontPath);
+        }
+    } else {
+        chain.reserve(request.fontPaths.size() + 1);
+        if (!request.fontPath.empty()) {
+            chain.push_back(request.fontPath);
+        }
+        for (const std::string& path : request.fontPaths) {
+            if (path.empty()) {
+                continue;
+            }
+            if (std::find(chain.begin(), chain.end(), path) != chain.end()) {
+                continue;  // 重复的候选没有意义（同一份文件试两遍）
+            }
+            chain.push_back(path);
+        }
+    }
+
+    if (chain.empty()) {
+        // 没写字体：机器默认。候选表全落空时 `MachineDefaultFontPath` 已报过，
+        // 这里直接放弃（否则会为"根本不存在的一条路径"再报一条）。
+        const std::string machineDefault = MachineDefaultFontPath();
+        if (machineDefault.empty()) {
+            return std::string();
+        }
+        chain.push_back(machineDefault);
+    }
+
+    const std::string signature = ChainSignature(chain);
+    if (const auto found = state.chainHits.find(signature);
+        found != state.chainHits.end()) {
+        return found->second;
+    }
+
+    if (!EnsureTtf()) {
+        // 故障日志在 `AcquireFont` 里（`ttfFailureReported` 只报一次）。
+        // **不写缓存**：理由见上面第 3 条。
+        return std::string();
+    }
+
+    for (std::size_t index = 0; index < chain.size(); ++index) {
+        if (AcquireFont(chain[index], pixelSize) != nullptr) {
+            state.chainHits.emplace(signature, chain[index]);
+            if (index > 0) {
+                ++state.fontFallbacks;
+            }
+            return chain[index];
+        }
+    }
+
+    state.chainHits.emplace(signature, std::string());
+
+    char sizeText[32] = {};
+    std::snprintf(sizeText, sizeof(sizeText), "%.1f",
+                  static_cast<double>(pixelSize));
+    std::string tried;
+    for (const std::string& path : chain) {
+        if (!tried.empty()) {
+            tried += "、";
+        }
+        tried += "\"" + path + "\"";
+    }
+    // 一条汇总 WARN：**带全部候选路径**（可归因）、字号、以及最后一条失败原因。
+    if (explicitFont) {
+        INK_LOG_WARN("InkingText",
+                     "字体打不开，该处文字将退化为占位方块：回退链上 " +
+                         std::to_string(chain.size()) + " 条路径全部失败（"
+                         + tried + "），字号 " + sizeText + "，最后一条 SDL 说："
+                         + SDL_GetError());
+    } else {
+        // 没写字体、机器默认那一条也打不开：候选表只问"文件在不在"，
+        // "在却打不开"（权限 / 被占用 / 沙箱）必须在这里说出来，
+        // 否则整屏文字变方块而日志一片安静。
+        INK_LOG_WARN("InkingText",
+                     "机器默认字体打不开（文件存在，但 TTF 开不了），文字将退化为"
+                     "占位方块：路径 " + tried + "，字号 " + sizeText
+                         + "，SDL 说：" + SDL_GetError()
+                         + "。请在 CXXCSS 里显式写 fontPath / text.path");
+    }
+    return std::string();
 }
 
 /// 渲染器换人：把纹理记账整个丢掉（**不**销毁句柄，它们已经随旧渲染器死了）。
@@ -566,7 +727,7 @@ TextMetrics MeasureText(const TextRequest& request) {
         return metrics;
     }
 
-    const std::string fontPath = ResolveFontPath(request.fontPath);
+    const std::string fontPath = ResolveFontChain(request, request.fontSize);
     if (void* font = AcquireFont(fontPath, request.fontSize)) {
         int width = 0;
         int height = 0;
@@ -591,6 +752,7 @@ TextCacheStats TextCacheStatsSnapshot() noexcept {
     TextCacheStats stats;
     stats.texturesCreated = state.texturesCreated;
     stats.cacheHits = state.cacheHits;
+    stats.fontFallbacks = state.fontFallbacks;
     return stats;
 }
 
@@ -607,9 +769,14 @@ GlyphBitmap AcquireGlyph(SDL_Renderer* renderer, const std::string& fontPath,
     EnsureRenderer(renderer);
     TextLayer& state = layer();
 
-    // 空路径 = "用机器默认字体"：走和整段那条路**同一个**解析入口，
-    // 免得"同一字体两条缓存键"。
-    const std::string resolvedPath = ResolveFontPath(fontPath);
+    // `fontPath` 是**已经解析过的实际路径**（`PaintText` 解析一次、整段复用）。
+    // 这里不再解析链：既省一遍签名拼接，也保证"图集键里的字体 = 真的用来烘字
+    // 的那份字体"——键里放配置路径的话，改了链顺序还会从旧图集里取到旧字形。
+    const std::string& resolvedPath = fontPath;
+    if (resolvedPath.empty()) {
+        ++state.glyphStats.failed;  // 没字体：调用方退回整段渲染（那边画方块）
+        return result;
+    }
 
     // 键 = 字体 + 字号 + 字形：**同一个字在不同字符串里只栅格化一次**，
     // 这正是"整段一张纹理"换成"逐字形"要省下来的东西。
@@ -887,7 +1054,9 @@ void PaintText(SDL_Renderer* renderer, const TextRequest& request, int width,
         return;  // 小到看不清，不画
     }
 
-    const std::string fontPath = ResolveFontPath(request.fontPath);
+    // 字体只解析一次（T-13）：逐字形那条路与整段那条路共用**同一个实际路径**，
+    // 于是"图集键 / 纹理键 / 真正开的那份字体"永远是同一份。
+    const std::string fontPath = ResolveFontChain(request, deviceSize);
 
     // B4 后半：优先走**逐字形**那条路（图集里一格一个字形，同一个字跨字符串复用）。
     // 取不到字形（没字体 / 图集满）时它返回 false，落到下面那条整段渲染上。
@@ -983,6 +1152,11 @@ void ReleaseTextCache() noexcept {
         }
     }
     state.fonts.clear();
+
+    // 链解析的结论也一起丢：它记的是"哪份字体能开"，而字体句柄刚被全部关掉，
+    // 再加上 `TTF_Quit` —— 留着会让"下一轮重新 init 之后再画"沿用旧结论
+    // （那条结论可能是在 TTF 还没起来的时候得出的）。
+    state.chainHits.clear();
 
 #if defined(INK_HAS_SDL3_TTF)
     if (state.ttfInitialized) {

@@ -93,7 +93,24 @@ target_include_directories(inking
 # 编译期开关。PUBLIC：这些宏会影响公开头里 inline 函数的**内容**
 # （例如 MessageQueue 的空实现与真实现是两份不同的类定义），消费者必须
 # 与库看到同一个取值，否则就是 ODR 违例。
-target_compile_definitions(inking PUBLIC INK_ISLOG=1 INK_ISDEBUG=1)
+#
+# `INK_ISDEBUG` 从 0.1.1 起改成**默认关**的选项（`INKING_DEBUG_LOG`）。
+# 它长期被无条件写成 PUBLIC，于是发布包的消费方**关不掉**调试流：实测 948 条
+# 日志里有一条重复 528 次，而那一条本来就是 DEBUG 级——噪声的根子是"这个开关
+# 永远为真"，不是哪一句日志写错了级别。
+#
+# 为什么仍然是 PUBLIC 而不是 PRIVATE：`include/detail/InkLog.h` 里的
+# `kDefaultLogLevel` / `kDebugEnabled` 是 `inline constexpr`，库与调用方取值
+# 不同就是同一个头两套定义（ODR 违例，编译器不报错、行为错乱）——正是下面
+# 那段"一旦公开头出现这种分支，就必须改成 PUBLIC"说的情形。所以正确做法是
+# **让它默认 OFF、需要的人显式打开**，而不是把它藏进库自己的编译选项里：
+# 藏起来的话库打出调试流、调用方的宏却是空的，两边看到的不是同一个日志世界。
+option(INKING_DEBUG_LOG "调试级日志与调试断言参与编译（定义 INK_ISDEBUG）" OFF)
+
+target_compile_definitions(inking PUBLIC INK_ISLOG=1)
+if(INKING_DEBUG_LOG)
+    target_compile_definitions(inking PUBLIC INK_ISDEBUG=1)
+endif()
 if(ISMESSAGE)
     target_compile_definitions(inking PUBLIC INK_ISMESSAGE=1)
 endif()
@@ -175,8 +192,12 @@ include(cmake/inkgen.cmake)
 #
 #   ink_add_generated(<目标>
 #       OUT_DIR   <include 根，约定在 build/ 下>
-#       SOURCES   <json 文件列表>
+#       (SOURCES  <json 文件列表> | DIR <CXXCSS 根>)
 #       [NAMESPACE inking::cxxcss] [HEADER inkgen/button_service.h])
+#
+# SOURCES 与 DIR **二选一**：DIR 让 inkgen 自己扫目录（`--dir`），组件多的时候
+# 命令行只有 1 个参数——工程放在中文路径下时，CMake 不会再因为命令行太长把它
+# 包进 .bat（那个 .bat 走系统代码页，非 ASCII 路径必然废）。
 #
 # HEADER 可以带一层子目录（默认 `inkgen/button_service.h`）：产物写成
 # `#include <inkgen/button_service.h>`，和其他头文件放在一起也不会撞名。
@@ -192,15 +213,33 @@ include(cmake/inkgen.cmake)
 # 产物只落 build 目录，源码树保持干净（docs/AGENTS.md §3 第 9 条）。
 # ---------------------------------------------------------------------------
 function(ink_add_generated target)
-    cmake_parse_arguments(GEN "" "OUT_DIR;NAMESPACE;HEADER" "SOURCES" ${ARGN})
+    cmake_parse_arguments(GEN "" "OUT_DIR;NAMESPACE;HEADER;DIR" "SOURCES" ${ARGN})
 
     if(NOT GEN_OUT_DIR)
         message(FATAL_ERROR "ink_add_generated(${target})：缺少 OUT_DIR")
     endif()
-    if(NOT GEN_SOURCES)
+    if(GEN_DIR AND GEN_SOURCES)
         message(FATAL_ERROR
-            "ink_add_generated(${target})：SOURCES 为空。"
-            "先 glob 出 CXXCSS/Button/*.json 再传进来。")
+            "ink_add_generated(${target})：SOURCES 与 DIR 只能给一个。")
+    endif()
+    if(NOT GEN_DIR AND NOT GEN_SOURCES)
+        message(FATAL_ERROR
+            "ink_add_generated(${target})：SOURCES / DIR 至少要给一个"
+            "（先 glob 出 CXXCSS/Button/*.json，或者把 CXXCSS 根交给 DIR）。")
+    endif()
+    if(GEN_DIR)
+        if(NOT IS_DIRECTORY "${GEN_DIR}")
+            message(FATAL_ERROR
+                "ink_add_generated(${target})：DIR 不是目录（${GEN_DIR}）。")
+        endif()
+        # 依赖跟踪：`--dir` 让 inkgen 自己扫，CMake 看不见它扫了哪些文件，
+        # 所以这里自己 glob 一份**只用于 DEPENDS**（CONFIGURE_DEPENDS 保证
+        # 新增 / 删除 json 时自动重跑 configure）。
+        file(GLOB_RECURSE _gen_dir_json CONFIGURE_DEPENDS "${GEN_DIR}/*.json")
+        set(GEN_SOURCES ${_gen_dir_json})
+        set(_gen_input --dir "${GEN_DIR}")
+    else()
+        set(_gen_input ${GEN_SOURCES})
     endif()
     if(NOT GEN_NAMESPACE)
         set(GEN_NAMESPACE "inking::cxxcss")
@@ -230,7 +269,7 @@ function(ink_add_generated target)
                 --out-dir "${GEN_OUT_DIR}"
                 --namespace "${GEN_NAMESPACE}"
                 --header "${GEN_HEADER}"
-                ${GEN_SOURCES}
+                ${_gen_input}
         DEPENDS inkgen ${GEN_SOURCES}
         COMMENT "inkgen：生成 ${GEN_NAMESPACE} 的配置（${target}）"
         VERBATIM)
@@ -287,7 +326,7 @@ if(INK_ALL_CSS_CONFIGS)
         OUT_DIR   "${CMAKE_BINARY_DIR}"
         NAMESPACE "inking::cxxcss"
         HEADER    "inkgen/all/button_service.h"
-        SOURCES   ${INK_ALL_CSS_CONFIGS})
+        DIR       "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS")
 
     # 把"生成 + 编译 + 链接"整体挂成一条测试：`ctest -R inkgen` 就能单独跑。
     # 用 `--build` 而不是直接跑 exe —— 要验的正是**构建**这一步。
@@ -298,6 +337,21 @@ if(INK_ALL_CSS_CONFIGS)
     endif()
 else()
     message(STATUS "Inking: CXXCSS/ 下没有配置，跳过生成链路的编译自检")
+endif()
+
+# ---------------------------------------------------------------------------
+# 静默失效清单（`docs/AGENTS.md` §7）与自检源码的对账（0.3.0 T-14）。
+#
+# 清单是**手写**的（现象 / 触发条件没法从代码生成），所以只能对账"名字 + 条数"：
+# 文档里的每条自检名，自检源码里必须真有 `NoteSilentFailure("<名字>")`。
+# 这条测试挡的是"在文档里加一行、以为就做完了"。
+# ---------------------------------------------------------------------------
+if(INK_BUILD_TESTS)
+    add_test(NAME silent_failure_list_in_sync
+             COMMAND ${CMAKE_COMMAND}
+                     -DDOC=${CMAKE_CURRENT_SOURCE_DIR}/docs/AGENTS.md
+                     -DSELFTEST=${CMAKE_CURRENT_SOURCE_DIR}/examples/demo/selftest.cpp
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-silent-failure-list.cmake)
 endif()
 
 # ---------------------------------------------------------------------------

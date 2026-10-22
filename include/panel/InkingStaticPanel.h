@@ -75,6 +75,15 @@ public:
     /// 现在**实际生效**的变换（过渡中是插值出来的中间值）——它同时作用于子树。
     const TransformSpec& GetDisplayTransform() const noexcept;
 
+    /// 现在**实际画出来**的描边 / 阴影（T-07，过渡中是插值出来的中间值）。
+    /// 观测口：自检靠它断言"描边跟着开合过渡一起插值"，不用去猜像素。
+    const StrokeSpec& GetDisplayStroke() const noexcept {
+        return _look.displayStroke;
+    }
+    const ShadowSpec& GetDisplayShadow() const noexcept {
+        return _look.displayShadow;
+    }
+
     // ---------------- 滚动（B12） ----------------
 
     /**
@@ -212,8 +221,28 @@ public:
 
 protected:
     /// 按当前显示的颜色与变换画自己那一笔（形状填充，边缘抗锯齿）。
+    /// 有阴影时**阴影先画**（它在填充之下），填充随后；描边不在这里——
+    /// 描边是装饰笔，见 `onRenderDecoration`。
     /// 子节点由场景逐个提交，各自带上"祖先子树变换"——这里不用管它们。
     void onRender(float pixelX, float pixelY) const override;
+
+    /**
+     * 描边（0.2.0 T-07）：画在**整棵子树之后**的一笔。
+     *
+     * 为什么描边必须在装饰遍：容器自绘整体在子孙之下（`IsAbove` 保证祖先
+     * 先画），描边跟着填充走会被子节点盖住，加完等于没加。场景在"本节点
+     * 子树画完、上层兄弟未画"的时机调它，所以描边压住自己的子孙、又不
+     * 越界盖住层级更高的兄弟（局部层级）。
+     *
+     * **阴影不在这里**：它是"形状之下的偏移副本"，放装饰遍会盖住自己的
+     * 内容——它跟着填充走（`onRender` 里先画）。
+     */
+    void onRenderDecoration(float pixelX, float pixelY) const override;
+
+    /// 本帧有描边要画吗（场景靠它跳过无装饰的节点，稳态零成本）。
+    bool HasRenderDecoration() const noexcept override {
+        return _look.displayStroke.Visible();
+    }
 
     /// 滚轮（B12）：`deltaX/deltaY` 是**一次性的滚动增量**（A4 那套），
     /// 一格滚 `ScrollSpec::wheelStep` 设计像素。

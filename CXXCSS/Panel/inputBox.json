@@ -1,0 +1,38 @@
+{
+    "$comment": [
+        "输入框的「底」（CXXCSS.md §3.8.1 的配方）：输入框本身不画底、也不画笔，",
+        "所以正确用法是**两层**——这块面板当底，InkingTextInput 当字，放进 layout 里。",
+        "三条都不是可省的：",
+        "  1. shape.radius 让它看起来像个输入框（直角面板也能用，只是像个方块）；",
+        "  2. clipChildren=true 是硬要求：单行输入框的内容会横向超出本体，",
+        "     靠裁剪才「停在框里」；不裁剪会画到框外，看着像渲染错位；",
+        "  3. layout 让输入框吃到宽度（不配布局时输入框按内容自测量，宽度会跟着字变）。"
+    ],
+    "name": "inputBox",
+    "width": 320,
+    "height": 44,
+
+    "closed": {
+        "type": "color",
+        "source": "$panelSurfaceAlt"
+    },
+    "clipChildren": true,
+
+    "selfAnchorX": 0, "selfAnchorY": 0,
+    "traceAnchorX": 0, "traceAnchorY": 0,
+    "offsetX": 460, "offsetY": 480,
+
+    "zIndex": 2,
+    "visible": true,
+
+    "shape": { "type": "roundedRect", "radius": 10 },
+
+    "layout": {
+        "kind": "stack",
+        "axis": "horizontal",
+        "gap": 0,
+        "padding": 10,
+        "justify": "start",
+        "align": "center"
+    }
+}

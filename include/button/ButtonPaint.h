@@ -28,7 +28,47 @@
 
 #include <cstdint>
 
+// 前向声明就够（与 `InkingWidget.h` 同一形态）：`PaintSurface` 一族把渲染器当
+// 形参传，但本头**不拖 SDL 进来**（见顶上那段纪律）。
+struct SDL_Renderer;
+
 namespace inking::detail {
+
+/**
+ * 「形状表面」三笔的公共件（0.2.0 T-07）：**阴影 → 填充 → 描边**。
+ *
+ * 为什么抽出来：这三笔原来内联在 `PaintButtonAppearance` 里，面板要描边 /
+ * 阴影时只能抄第二份——而两份"形状怎么变成像素"各自演化就会分叉
+ * （按钮与面板画得不一样，两边单独看都对、合起来才错）。现在**只有这一份**：
+ *
+ *   - `PaintSurface`：三笔合一（阴影 → 按颜色填充 → 描边），面板与按钮的
+ *     纯颜色路径都走它；
+ *   - 三个单笔（`PaintSurfaceShadow` / `PaintSurfaceFill` / `PaintSurfaceStroke`）：
+ *     给"中间那笔不是纯色填充"的调用方用——按钮的 `img` 外观把填充换成纹理，
+ *     但**顺序不变**（阴影仍在最下、描边仍在最上）；
+ *   - 面板的描边要画在**子孙之上**（装饰遍，`InkingWidget::onRenderDecoration`），
+ *     它只调 `PaintSurfaceStroke`；阴影留在填充那一趟——它是"形状之下的偏移
+ *     副本"，跟着装饰遍走反而会盖住内容。
+ *
+ * 三笔都**不参与命中**（`InkingDecoration.h` 的规矩）。`pixelX` / `pixelY`
+ * 是设备像素（与 `PaintButtonAppearance` 同一约定）。
+ */
+void PaintSurfaceShadow(SDL_Renderer* renderer, const InkingAnchor& node,
+                        const ShapeSpec& shape, const ShadowSpec& shadow,
+                        const TransformSpec& transform, float pixelX,
+                        float pixelY);
+void PaintSurfaceFill(SDL_Renderer* renderer, const InkingAnchor& node,
+                      const ShapeSpec& shape, std::uint32_t fillColor,
+                      const TransformSpec& transform, float pixelX,
+                      float pixelY);
+void PaintSurfaceStroke(SDL_Renderer* renderer, const InkingAnchor& node,
+                        const ShapeSpec& shape, const StrokeSpec& stroke,
+                        const TransformSpec& transform, float pixelX,
+                        float pixelY);
+void PaintSurface(SDL_Renderer* renderer, const InkingAnchor& node,
+                  const ShapeSpec& shape, const StrokeSpec& stroke,
+                  const ShadowSpec& shadow, std::uint32_t fillColor,
+                  const TransformSpec& transform, float pixelX, float pixelY);
 
 /**
  * 画这个组件**这一帧看起来的样子**（设备像素）——按当前状态的**外观类型**分派：

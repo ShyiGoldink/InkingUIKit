@@ -80,7 +80,7 @@ class InkingWidget : public InkingAnchor,             // 定位：锚点公式�
 | 概念 | 函数 | 谁回答 |
 | --- | --- | --- |
 | 几何上在不在我身上 | `HitTest(worldX, worldY)` | 组件（按 SDF 形状） |
-| 我子树里最上面该收事件的是谁 | `HitTestNode(worldX, worldY)` | 容器（默认返回自己） |
+| 我子树里最上面该收事件的是谁 | `HitTestNode(worldX, worldY)` | **基类已给通用递归**（0.4.0 A1） |
 | 命中索引用的保守包络 | `GetHitEnvelope()` | 组件（默认整块矩形） |
 | 命中之后让不让过 | `SetHitPassThrough(bool)` / `IsHitPassThrough()` | 策略，不是几何 |
 
@@ -93,6 +93,30 @@ class InkingWidget : public InkingAnchor,             // 定位：锚点公式�
 容器（`OwnsSubtreeHit() == true`）的子孙**不进全局命中表**，所以场景查到容器之后还要再问
 一次 `HitTestNode` 才能把事件发到容器里的按钮上——否则容器里的控件收不到 hover / 点击，
 也**拿不到键盘焦点**。
+
+> **0.4.0 改了什么**：`HitTestNode()` 的基类默认实现从"命中即自己"改成**子树优先的递归**
+> （按 `IsAbove` 取子树里最上面那个 Block，取不到才看自己）。
+> 以前这份递归只有 `InkingStaticPanel` 写了一份，于是**动态容器**子树里的静态按钮
+> 永远收不到点击：命中表里没有它（`OwnsSubtreeHit` 之下不进表），递归又断在容器上。
+> 现在"声明自己是容器"只需要 `OwnsSubtreeHit()` 返回 true，忘了重写不再是静默失效。
+
+## 语义激活（0.4.0 D7）
+
+```C++
+bool InkingWidget::Activate();                 // 默认 false = "我不是能被激活的东西"
+bool InkingStaticButton::Activate() override;   // = TriggerClick() 的答案
+bool InkingDynamicButton::Activate() override;  // 同上
+```
+
+自检 / 快捷键 / 脚本要"点一下这个控件"，就不该 `dynamic_cast` 到具体控件类型。
+配合 `InkingScene::Activate(名字)` 就是一句 `scene.Activate("ok")`。
+它不是写入口、不标脏、不改变三态。
+
+## 名字入口（0.4.0 B2）
+
+`GetName()` 一直有，写入口 `SetName(name)` 是 0.4.0 补的——以前名字只有构造期那一份，
+动态组件设不了，于是 `FindByName` 走不到它、自检只能按"子节点索引"定位（索引一变断言全错）。
+**不标脏**：名字不进几何、不进绘制顺序，也不参与命中。
 
 ## 子树变换与裁剪
 
@@ -555,6 +579,23 @@ void RelayoutParent() noexcept;
 `[final]`。`Relayout` 从**我这棵子树**开始同步排一次；`RelayoutParent` 往父链找第一个
 声明了布局的祖先让它排一次（给"内容驱动的尺寸变了"用——标签换了更长的文字，
 自己的高度变了而**兄弟要让位**，那是父容器的活儿）。两只都**幂等**。
+
+**找不到布局祖先时（`0.1.1` 起）不再静默返回**：改为**自己量一次**
+（`RelayoutSelfIfContentSized`），且只补"没配置的那一维"。以前这里直接返回，
+于是"内容驱动尺寸 + 无布局容器"这一整类组合会把尺寸留在 0——组件一个像素都不画、
+也不报错（典型症状：`200×0` 的标签，`MeasureLayout` 却报 27.5）。
+
+| setter / 动作 | 会自动重排吗 | 说明 |
+| --- | --- | --- |
+| `InkingStaticLabel::SetText` | **会**（`RelayoutParent`） | 文字长度直接决定自己高度与兄弟让位 |
+| `InkingStaticLabel::SetTextColor` | 不会 | 只重绘（颜色不进排版） |
+| `SetVisible` / `ChangeZIndex` / `SetParent` | 不会 | 骨架变化，只标脏 + 通知场景重排列表 |
+| 动态档 `Resize` / `ChangeOffset` | 不会 | 容器尺寸变了要在 `onSizeChanged()` 里自己喊 `Relayout()` |
+| 换语言 `SetTextLanguage` | 不会 | 版本号会让排版缓存失效，但行数 / 高度可能变 ⇒ 换完喊一次 `Relayout()` |
+| 构造（标签） | **会**（`0.1.1`） | 构造期没有 `SetText` 触发，所以在构造末尾补一次 |
+
+「框架不做隐式重排」这条没变：它保证"什么时候重排"看得见，代价是调用方要记得喊。
+上面那张表就是"要记得喊"的那几处。
 
 >**ApplyLayoutRect(rect)**
 
