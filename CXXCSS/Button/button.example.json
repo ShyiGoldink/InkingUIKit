@@ -1,7 +1,7 @@
 {
     "$comment": [
         "这里是注释，代码生成器不会读这一部分，只作为介绍向你介绍Button中的各个用法",
-        "作为实例，这里提供的是一个【正常状态下为0.75透明度的黑色按钮，hover状态时透明度提高到0.85，按下后透明度恢复0.75，四角圆角半径为10px的圆角矩形按钮】",
+        "作为实例，这里提供的是一个【亮色浅紫按钮：normal #F3F1EF、hover 提到 #F8F6F4、按下落到浅紫 #DFD6F2，1px #E7E2F0 描边 + 极淡阴影，圆角 10px】，与 Theme/lavender.json、include/prefab/PrefabTheme.h 是同一套调色板。",
         "name：这里是你的按钮的名称，需要与你在代码中使用的按钮名称，以及你的CXXCSS配置json的名称完全一致",
         "width:你的设计宽度。设计宽度是指：对于你的场景来说，你们设计稿的大小。",
         "height :你的设计高度。",
@@ -35,17 +35,17 @@
     "height": "100",
     "normal": {
         "type": "color",
-        "source": "0|0|0|0.75",
+        "source": "0.953|0.945|0.937|1",
         "transition": { "duration": 0.3, "easing": "easeInOut" }
     },
     "hover": {
         "type": "color",
-        "source": "0|0|0|0.85",
+        "source": "0.973|0.965|0.957|1",
         "transition": { "duration": 0.15, "easing": "easeOut" }
     },
     "onclicked": {
         "type": "color",
-        "source": "0|0|0|0.75"
+        "source": "0.875|0.839|0.949|1"
     },
     "selfAnchorX": 0.5,
     "selfAnchorY": 0.5,
@@ -55,6 +55,6 @@
         "type": "roundedRect",
         "radius": 10
     },
-    "stroke": { "width": 2, "color": "1|1|1|0.35" },
-    "shadow": { "offsetX": 0, "offsetY": 4, "color": "0|0|0|0.45" }
+    "stroke": { "width": 1, "color": "0.906|0.886|0.941|1" },
+    "shadow": { "offsetX": 0, "offsetY": 4, "color": "0|0|0|0.10" }
 }

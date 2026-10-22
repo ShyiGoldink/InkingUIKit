@@ -39,7 +39,12 @@ struct WindowConfig {
     /// 真正的圆角由系统画，读回用 `IsRoundedCornersApplied()`。
     std::optional<bool> roundedCorners;
 
+    /// 透明窗口：清屏色的 alpha 真的会透出桌面。**必须在 Show() 之前**——
+    /// SDL 的透明是建窗标志，窗口开出来之后就切不了。
+    std::optional<bool> transparent;
+
     /// 清屏色（`0xAARRGGBB`）。场景渲染之前那一笔窗底。
+    /// alpha 只在 `transparent = true` 时有意义，否则会有一条 WARN。
     std::optional<std::uint32_t> background;
 
     /// 启动即全屏。`Show()` 之前只记账，建完窗口补应用一次。

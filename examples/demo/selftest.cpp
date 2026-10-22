@@ -317,23 +317,29 @@ void CheckWindowConfigApply() {
               && window.IsBorderless() == borderlessBefore,
           "空 WindowConfig 确实一项都没动");
 
-    // 2) 四项全设：回读一致、失败数为 0。
+    // 2) 五项全设：回读一致、失败数为 0。
     inking::WindowConfig config;
     config.borderless = true;
     config.roundedCorners = true;
+    config.transparent = true;
     config.background = 0xFF010203u;
     config.fullscreen = true;
     Check(inking::ApplyWindowConfig(config) == 0,
-          "四项窗口设置回读全部一致（失败数 0）");
+          "五项窗口设置回读全部一致（失败数 0）");
     Check(window.IsBorderless(), "borderless 回读为真");
     Check(window.GetBackgroundColor() == 0xFF010203u, "background 回读一致");
     Check(window.IsFullscreen(), "fullscreen 回读为真");
     Check(window.IsRoundedCornersRequested(),
           "roundedCorners 请求值回读为真（系统画不画是另一件事）");
+    Check(window.IsTransparentRequested(),
+          "transparent 请求值回读为真（还没建窗，标志无从落地）");
+    Check(!window.IsTransparentApplied(),
+          "没有窗口时 IsTransparentApplied 恒为假（它读的是窗口标志）");
 
     // 3) 复原，别污染后面的用例。
     inking::WindowConfig restore;
     restore.borderless = borderlessBefore;
+    restore.transparent = false;
     restore.background = backgroundBefore;
     restore.fullscreen = false;
     Check(inking::ApplyWindowConfig(restore) == 0, "复原窗口设置成功");
@@ -584,6 +590,8 @@ constexpr SilentFailureItem kSilentFailures[] = {
      "文本区宽度为负：排版交出零宽行，最后一个像素都不画"},
     {"input_caret_clamped", "T-12",
      "输入框光标越界：画到框外、还跟着滚动量漂"},
+    {"background_alpha_without_transparent", "既有（0.4.0 补自检）",
+     "背景色配了 alpha、窗口却不是透明窗口：桌面透不出来，日志一个字都没有"},
 };
 
 /// 自检**真的跑到**的条目（运行时登记）。
@@ -2008,7 +2016,15 @@ void CheckHeadlessPump() {
     Check(window.GetFixedDelta() > 0.0f, "D4：固定 delta 记下了");
 
     // D1：Open 只建窗口，不进循环。
+    //
+    // 透明是**建窗标志**，所以断言分三步：请求 → 建窗 → 读回标志。
+    // 第三步是这次改动唯一的"落地证据"——请求值只证明我们记下了。
+    Check(window.SetTransparent(true), "透明窗口：建窗前请求被记下");
+    Check(window.IsTransparentRequested(), "透明窗口：请求值回读为真");
+    Check(!window.IsTransparentApplied(), "透明窗口：建窗前 applied 为假");
     Check(window.Open("selftest"), "D1：Open 成功（dummy 视频驱动 + 软渲染器）");
+    Check(window.IsTransparentApplied(),
+          "透明窗口：SDL_WINDOW_TRANSPARENT 真的进了窗口标志");
     Check(window.RunFrames(2) == 2, "D1：RunFrames(2) 真的跑了两帧");
     Check(window.HasWindow(), "D1：跑帧期间窗口还活着");
 
@@ -2045,6 +2061,24 @@ void CheckHeadlessPump() {
     Check(window.GetExitCode() == 7, "D5：`RequestClose(7)` 记下退出码");
     Check(!window.PumpOnce(), "D5：关窗之后 `PumpOnce()` 返回 false");
     Check(!window.HasWindow(), "D5：收尾把窗口释放了（不会留下半开状态）");
+
+    // ---- 静默失效：半透明底 + 不透明窗口 ----
+    //
+    // 触发条件写得出、也验得了：`background` 的 alpha < 255，而窗口不是透明窗口。
+    // 断言落在"恰好一条 WARN"上（`InkLog::grep` 按模块 + 关键字检索），不靠眼睛。
+    // 窗口刚关掉，所以这一次 `SetTransparent(false)` 能生效（它只在建窗前有效）。
+    Check(window.SetTransparent(false), "静默失效用例：关窗后可以改回不透明");
+    window.SetBackgroundColor(0x80112233u);
+    inking::InkLog::ResetStats();
+    Check(window.Open("selftest"), "静默失效用例：重新开窗成功");
+    Check(window.RunFrames(1) == 1, "静默失效用例：跑一帧（清屏那一笔真的发生）");
+    const std::vector<std::string> alphaWarns =
+        inking::InkLog::grep("window.background", "InkingWindow");
+    Check(alphaWarns.size() == 1,
+          "background_alpha_without_transparent：半透明底 + 不透明窗口恰好 1 条 WARN");
+    NoteSilentFailure("background_alpha_without_transparent");
+    window.RequestClose(0);
+    Check(!window.PumpOnce(), "静默失效用例：收尾关窗");
 }
 
 // ---------------------------------------------------------------------------
@@ -2302,9 +2336,6 @@ int main() {
     // ---- 树的动态性（0.4.0 A 组）：A1 / A2 / A3 / A4 / A5 / B1 / B2 / D6 / D7 ----
     CheckDynamicTree();
 
-    // ---- 清单的元自检放在**最后**：前面的检查全部登记完才对账（T-14） ----
-    CheckSilentFailureListSynced();
-
     inking::SceneLibrary::SetActiveScene(nullptr);
     if (rnd != nullptr) {
         SDL_DestroyRenderer(rnd);
@@ -2318,6 +2349,13 @@ int main() {
     // 它会自己 SDL_Init，并在收尾时 SDL_Quit——放在前面会把上面用到的
     // 渲染器一起拆掉（那种顺序错误会表现成"随机几个检查失败"）。
     CheckHeadlessPump();
+
+    // ---- 清单的元自检放在**真正的最后**：前面的检查全部登记完才对账（T-14） ----
+    //
+    // 为什么排在 `CheckHeadlessPump()` 之后：`background_alpha_without_transparent`
+    // 的断言要开窗才验得到（清屏那一笔发生在 `stepFrame` 里）。放在窗口用例之前，
+    // 它会误报"这条自检没跑"。
+    CheckSilentFailureListSynced();
 
     std::printf("== 失败项：%d ==\n", g_fail);
     return g_fail;

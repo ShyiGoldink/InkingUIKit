@@ -184,6 +184,7 @@ bool SetDesignSize(int width, int height);          // 必须在构造场景 / �
 struct WindowConfig {                 // 每一项都是 std::optional：空 = 不动
     std::optional<bool>          borderless;
     std::optional<bool>          roundedCorners;
+    std::optional<bool>          transparent;    // 透明窗口（只能 Show() 之前）
     std::optional<std::uint32_t> background;     // 0xAARRGGBB
     std::optional<bool>          fullscreen;
 };
@@ -314,6 +315,36 @@ std::uint32_t GetBackgroundColor() const noexcept;
 
 窗口清屏色（`0xAARRGGBB`），默认 `0xFF121218`。那一笔发生在场景渲染之前，组件一个字都
 不知道——**亮色场景必须把它一起改掉**，否则白卡浮在深底上会很怪。
+
+**最高字节只在透明窗口下有意义。** 不透明窗口上 `SDL_RenderClear` 直接写帧缓冲、不参与
+混合，帧缓冲的 alpha 又没人采信：写 0 也透不出桌面，画面仍是那个 RGB 的不透明底。这种
+情况 `stepFrame` 会打一条 WARN（静默失效清单第 9 条）。
+
+>**SetTransparent(transparent) / IsTransparentRequested() / IsTransparentApplied()**
+
+```C++
+bool SetTransparent(bool transparent);
+bool IsTransparentRequested() const noexcept;
+bool IsTransparentApplied() const noexcept;
+```
+
+透明窗口：清屏色的 alpha 真的透出桌面。默认 **false**。
+
+- **只能建窗前设**（`Show()` / `Open()` 之前）。SDL3 的透明是建窗标志
+  `SDL_WINDOW_TRANSPARENT`，没有事后切换的 API；窗口已打开时调用返回 false + 一条 WARN。
+- `IsTransparentRequested()` 是**请求值**，`SetTransparent` 的返回值分不清"幂等"和
+  "窗口已开"，所以 `WindowConfig` 的回读比的是它。
+- `IsTransparentApplied()` 是"标志**进了窗口**"（建窗后读 `SDL_GetWindowFlags`），
+  **不是"桌面真的透了"**——合成结果读不回来，只能真机目视 / 截图读 alpha。
+
+**后端限制**：SDL 只在 Windows 的 D3D11 后端补过透明 swapchain；D3D12 明确不行，
+Vulkan 多数环境不行，混合 GPU 也可能失效。已知不行的后端会在建渲染器后补一条 WARN。
+
+> 本机实测（Windows + `direct3d11`，2026-10-22）：`SDL_WINDOW_TRANSPARENT` 进了窗口
+> 标志，清屏 `alpha=0` / `alpha=128` 都能从后缓冲**原样读回**（`a=0` / `a=128`）。
+> 但读回的 RGB 是 **straight** 值（`255,0,0,128` 而不是预乘的 `128,0,0,128`）——
+> 如果 DWM 按 premultiplied 解释，带 alpha 的内容会**偏亮 / 过饱和**。全不透明的内容
+> 不受影响；半透明描边 / 阴影要按真机校色。"桌面真的透了"仍只能人眼验收。
 
 >**SetRoundedCorners(rounded) / IsRoundedCornersApplied()**
 

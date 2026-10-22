@@ -828,6 +828,39 @@ void runFrameTasks(WindowState& s) {
 }
 
 /**
+ * 背景色带 alpha、但窗口不是透明窗口时打一条 WARN（按状态去重）。
+ *
+ * 为什么不在 `SetBackgroundColor` 里打：那个 setter 是 `noexcept`，而日志要拼
+ * `std::string`（理论上会抛）。放在这里——"这一帧真的要拿这个 alpha 去清屏"是
+ * 唯一确定的时刻，运行期改色也能覆盖到。
+ *
+ * 去重标记是文件内静态量而不是窗口成员：窗口是单例，两者等价；而 `stepFrame`
+ * 是自由函数，够不到私有成员。
+ */
+void warnIfBackgroundAlphaIgnored(std::uint32_t background, bool transparent) {
+    static bool warned = false;
+
+    const bool translucent = ((background >> 24) & 0xFFu) != 0xFFu;
+    if (!translucent || transparent) {
+        // 回到"能自洽"的状态：下次再出现半透明背景时还应该发声一次。
+        warned = false;
+        return;
+    }
+    if (warned) {
+        return;
+    }
+    warned = true;
+
+    // 说清楚"发生了什么"和"为什么"：alpha 不会被丢弃，它只是写进了一个
+    // 没人采信的地方（不透明窗口的帧缓冲 alpha 通道）。
+    INK_LOG_WARN(
+        kModuleName,
+        "window.background 的 alpha < 255，但窗口不是透明窗口"
+        "（window.transparent = false）：桌面透不出来，这一笔仍会以同色"
+        "不透明底渲染。要真透明请设 window.transparent = true");
+}
+
+/**
  * 跑**一帧**：事件泵 → 展示倍率 → 时间线 → 绘制 → 帧末收尾 → 帧末任务 → 节流。
  *
  * 从 `runLoop` 里拆出来（D1）是这一版唯一的结构性改动：拆之前"跑一帧就返回"
@@ -923,6 +956,11 @@ bool stepFrame(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
     AudioTick(static_cast<float>(deltaSeconds));
 
     // 4. 绘制：底色 + 当前场景的整棵渲染树 + 指针标记。
+    //
+    // 清屏之前先判一次"这个 alpha 有没有意义"：不透明窗口上半透明背景是
+    // **一条看起来支持、其实无效的通道**（alpha 写进帧缓冲没人采信）。
+    warnIfBackgroundAlphaIgnored(window.GetBackgroundColor(),
+                                 window.IsTransparentRequested());
     drawFrame(s, mouse, window.GetBackgroundColor());
 
     // 5. 帧末收尾：瞬时状态一帧只清一次。放在这里而不是事件循环里，
@@ -1110,6 +1148,38 @@ bool InkingWindow::SetBorderless(bool borderless) {
 }
 
 bool InkingWindow::IsBorderless() const noexcept { return _borderless; }
+
+bool InkingWindow::SetTransparent(bool transparent) {
+    WindowState& s = state();
+    if (s.window != nullptr) {
+        // 已经开出来了：SDL 没有事后切换透明的入口（`SDL_WINDOW_TRANSPARENT`
+        // 只在建窗那一刻生效）。这里**不能**先记账再假装成功——窗口上的标志
+        // 不会跟着变，用户会得到"配置说透明、画面不透明"的静默不一致。
+        if (_transparent == transparent) {
+            return false;  // 幂等：值没变，不需要告警
+        }
+        INK_LOG_WARN(kModuleName,
+                     "SetTransparent 在窗口已打开后无法切换（SDL 的透明是建窗"
+                     "标志）：需要透明请在下一次 Open()/Show() 之前设置");
+        return false;
+    }
+
+    if (_transparent == transparent) {
+        return false;  // 幂等
+    }
+    _transparent = transparent;
+    INK_LOG_INFO(kModuleName,
+                 std::string("透明窗口 = ") + (_transparent ? "开" : "关")
+                     + "（建窗时生效）");
+    return true;
+}
+
+bool InkingWindow::IsTransparentRequested() const noexcept { return _transparent; }
+
+bool InkingWindow::IsTransparentApplied() const noexcept {
+    // 窗口不在了就恒为 false：标志是"窗口上的东西"，不是"请求过的值"。
+    return state().window != nullptr && _transparentApplied;
+}
 
 int InkingWindow::GetWindowX() const noexcept { return _windowX; }
 
@@ -1421,6 +1491,9 @@ float InkingWindow::GetZoom() const noexcept { return _zoom; }
 
 
 void InkingWindow::SetBackgroundColor(std::uint32_t argb) noexcept {
+    // 只记账：**不要在这里打日志**。这个 setter 是 noexcept，而日志要拼
+    // `std::string`（理论上会抛）。"alpha 有没有意义"的判定与发声在
+    // `stepFrame` 的 `warnIfBackgroundAlphaIgnored()` 里。
     _backgroundColor = argb;
 }
 
@@ -1574,9 +1647,14 @@ bool InkingWindow::Open(const std::string& sceneName) {
     // C2：无边框窗口。标志必须在**建窗口那一刻**给（之后改要走
     // `SDL_SetWindowBordered`，那会有一次真实的窗口重建）。默认关——
     // "某块东西莫名没有标题栏"和"某块东西莫名被挪走"是同一种难查。
+    //
+    // 透明（`SDL_WINDOW_TRANSPARENT`）也是同一类：SDL3 **没有**"事后变透明"的
+    // 入口（`SDL_SetWindowOpacity` 是整窗不透明度，不是逐像素 alpha），所以它
+    // 只能挂在这里。两者都是"建窗时一次成型"。
     const SDL_WindowFlags windowFlags =
         SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY
-        | (_borderless ? SDL_WINDOW_BORDERLESS : 0);
+        | (_borderless ? SDL_WINDOW_BORDERLESS : 0)
+        | (_transparent ? SDL_WINDOW_TRANSPARENT : 0);
 
     s.window = SDL_CreateWindow("InkingWindow", _windowWidth, _windowHeight,
                                 windowFlags);
@@ -1585,6 +1663,17 @@ bool InkingWindow::Open(const std::string& sceneName) {
                       std::string("SDL_CreateWindow 失败：") + SDL_GetError());
         SDL_Quit();
         return false;
+    }
+
+    // 透明标志有没有真的进窗口。**别把"请求了"当"生效了"**：后端忽略未知
+    // 标志时 `SDL_CreateWindow` 照样成功，只有读 flags 才知道答案。
+    _transparentApplied =
+        _transparent
+        && (SDL_GetWindowFlags(s.window) & SDL_WINDOW_TRANSPARENT) != 0;
+    if (_transparent && !_transparentApplied) {
+        INK_LOG_WARN(kModuleName,
+                     "window.transparent 请求了，但 SDL_WINDOW_TRANSPARENT 没有"
+                     "进窗口标志：这个平台 / 视频驱动上背景不会真的透出桌面");
     }
 
     // 窗口位置取回来：自绘标题栏的拖动是"在当前坐标上累加"，起点必须是真的
@@ -1682,6 +1771,24 @@ bool InkingWindow::Open(const std::string& sceneName) {
             INK_LOG_WARN(kModuleName,
                          std::string("vsync 没接上，退回固定节流：")
                              + SDL_GetError());
+        }
+
+        // 透明窗口的**后端限制**：标志在窗口上不等于画面真的会透。
+        // SDL 只在 Windows 的 D3D11 后端补过透明 swapchain（`DXGI_SWAP_EFFECT_DISCARD`
+        // + `DwmEnableBlurBehindWindow` 的空模糊区），D3D12 明确不支持，Vulkan 多数
+        // 环境不行。这里不去猜"支持不支持"，只把**已知不行**的说出来——其余交给
+        // 真机验收（断言"真的透了"没有任何回读口）。
+        if (_transparentApplied) {
+            const char* rawName = SDL_GetStringProperty(
+                SDL_GetRendererProperties(s.renderer),
+                SDL_PROP_RENDERER_NAME_STRING, "");
+            const std::string rendererName = rawName != nullptr ? rawName : "";
+            if (rendererName == "software" || rendererName == "direct3d12") {
+                INK_LOG_WARN(kModuleName,
+                             "window.transparent 在 " + rendererName
+                                 + " 后端上不会生效（SDL 只在 D3D11 / 部分 Vulkan "
+                                   "后端支持透明 swapchain）：背景仍会是不透明的");
+            }
         }
     }
 

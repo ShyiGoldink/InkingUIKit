@@ -958,6 +958,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         const GlobalConfig& config = loaded.configs.front();
         const bool hasWindow = config.borderless.has_value()
                             || config.roundedCorners.has_value()
+                            || config.transparent.has_value()
                             || config.background.has_value()
                             || config.fullscreen.has_value()
                             || config.startScene.has_value();
@@ -974,6 +975,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         const GlobalConfig& config = loaded.configs.front();
         const bool hasWindow = config.borderless.has_value()
                             || config.roundedCorners.has_value()
+                            || config.transparent.has_value()
                             || config.background.has_value()
                             || config.fullscreen.has_value()
                             || config.startScene.has_value();
@@ -1001,6 +1003,13 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
             out << "\n/// 请求系统圆角（= json 的 window.roundedCorners 字段）。\n";
             out << "inline constexpr bool kRoundedCorners = "
                 << (*config.roundedCorners ? "true" : "false") << ";\n";
+        }
+        if (config.transparent.has_value()) {
+            out << "\n/// 透明窗口（= json 的 window.transparent 字段）。\n";
+            out << "///\n";
+            out << "/// 建窗标志：必须在 Show() 之前应用（`ApplyConfig()` 已经排好）。\n";
+            out << "inline constexpr bool kTransparent = "
+                << (*config.transparent ? "true" : "false") << ";\n";
         }
         if (config.background.has_value()) {
             out << "\n/// 窗口清屏色（= json 的 window.background 字段）。\n";
@@ -1039,6 +1048,11 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
             }
             if (config.roundedCorners.has_value()) {
                 out << "    window.roundedCorners = kRoundedCorners;\n";
+            }
+            // **顺序有意**：background 的 alpha 判定看 transparent 是否已开，
+            // 反了就会把"透明窗口 + 半透明底"误报成"alpha 无效"。
+            if (config.transparent.has_value()) {
+                out << "    window.transparent = kTransparent;\n";
             }
             if (config.background.has_value()) {
                 out << "    window.background = kBackground;\n";

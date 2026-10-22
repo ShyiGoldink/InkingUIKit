@@ -187,6 +187,55 @@ public:
     /// 现在是无边框吗。
     bool IsBorderless() const noexcept;
 
+    // ---------------- 透明窗口 ----------------
+    //
+    // **为什么需要它**：`SetBackgroundColor` 收的是 `0xAARRGGBB`，最高字节看起来
+    // 像"背景的透明度"，但不透明窗口上那一字节写进去之后没有任何人采信——桌面
+    // 合成器按不透明窗口处理，`SDL_RenderClear` 也不做混合（直接写目标）。
+    // 于是"把 alpha 配成 0 就能透"是一条**看起来支持、其实无效**的通道。
+    //
+    // 真透明只能靠建窗标志：SDL3 的 `SDL_WINDOW_TRANSPARENT` 在
+    // `SDL_CreateWindow` 那一刻决定，SDK 没有"事后变透明"的 API
+    // （`SDL_SetWindowOpacity` 是整窗不透明度，不是逐像素 alpha）。
+    //
+    // 三条边界，都是**实测过的限制**，不是没做：
+    //   - **只能在建窗前设**：窗口已经开出来时调用返回 false + 一条 WARN，
+    //     而不是悄悄记下来等下次——"下次"永远不会来；
+    //   - **后端不保证**：SDL 只在 Windows 的 D3D11 后端补了透明 swapchain，
+    //     D3D12 明确不支持、Vulkan 多数环境不行，SDL 源码自己注了混合 GPU 下
+    //     "not work on all hardware configurations"。所以"标志落地"不等于
+    //     "真的透"，后者读不回来；
+    //   - **半透明元素的色值要真机校**：DWM 拿窗口 alpha 合成那一路按
+    //     premultiplied 解释，而组件层画的是 straight alpha。全不透明的内容
+    //     不受影响；带 alpha 的描边 / 阴影会**偏亮 / 过饱和**（2026-10-22 实测：
+    //     `SDL_RenderClear(255,0,0,128)` 读回 `255,0,0,128`，RGB 没有预乘）。
+
+    /**
+     * 透明窗口：清屏色的 alpha 真的会透出桌面（默认 **false**）。
+     *
+     * **必须在 `Show()` / `Open()` 之前**。窗口已经开出来时返回 false 并打一条
+     * WARN（SDL 没有事后切换透明的入口）。
+     *
+     * @return 记下了（值真的变了）为 true；窗口已打开或值没变则为 false。
+     */
+    bool SetTransparent(bool transparent);
+
+    /**
+     * **请求值**：我们让窗口透明，与"合成器是否照做"分开。
+     *
+     * `window/WindowConfig.h` 的回读校验比的是这一个——透明到底透没透读不回来，
+     * 拿 `IsTransparentApplied()` 去比会把"后端不支持"误报成"配置没生效"。
+     */
+    bool IsTransparentRequested() const noexcept;
+
+    /**
+     * 建窗时 `SDL_WINDOW_TRANSPARENT` **真的进了窗口标志**吗。
+     *
+     * 它证明的是"标志落地"，**不是"桌面真的透出来了"**——后者没有任何回读口，
+     * 只能真机目视 / 截图读 alpha 两步验收。没有窗口时恒为 false。
+     */
+    bool IsTransparentApplied() const noexcept;
+
     /// 窗口左上角的**屏幕坐标**（无边框下自绘标题栏拖动时的观测口）。
     int GetWindowX() const noexcept;
     int GetWindowY() const noexcept;
@@ -341,6 +390,10 @@ public:
      * 为什么这件事归窗口层：那一笔是"窗口自己的底"，发生在场景渲染之前
      * （`drawFrame` 里的 `SDL_RenderClear`），组件一个字都不知道。
      * 亮色场景（浅底 + 白卡）必须把它一起改掉，否则白卡浮在深底上会很怪。
+     *
+     * **最高字节（alpha）只在透明窗口下有意义**：不透明窗口上 `SDL_RenderClear`
+     * 直接把颜色写进帧缓冲、不参与混合，帧缓冲的 alpha 又没人采信 —— 写 0 也
+     * 不会透出桌面。那种情况会由 `stepFrame` 打一条 WARN（见 `SetTransparent`）。
      */
     void SetBackgroundColor(std::uint32_t argb) noexcept;
 
@@ -440,6 +493,12 @@ private:
     /// 无边框开关（C2）。`Show()` 之前设置就是"建窗口时带上标志"。
     bool _borderless = false;
 
+    /// 透明窗口的**请求值**：`Show()` 之前设置就是"建窗口时带上标志"。
+    bool _transparent = false;
+
+    /// 建窗后从 `SDL_GetWindowFlags` 读回的答案（标志有没有真的进窗口）。
+    bool _transparentApplied = false;
+
     /// 窗口左上角的屏幕坐标（自绘标题栏拖动时累加；`Show()` 时从 SDL 读一次）。
     int _windowX = 0;
     int _windowY = 0;
@@ -457,6 +516,7 @@ private:
     float _fixedDelta = 0.0f;
 
     /// 窗口清屏色（`0xAARRGGBB`）。默认是原来的深灰，亮色场景自己设。
+    /// alpha 只在 `_transparent` 为真时才有意义（否则 `stepFrame` 会提一条 WARN）。
     std::uint32_t _backgroundColor = 0xFF121218u;
 
     /// 窗口圆角：请求值（默认开）+ 系统读回的那份答案。

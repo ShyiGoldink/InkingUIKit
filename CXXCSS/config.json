@@ -12,10 +12,11 @@
     "height": 720
   },
   "window": {
-    "$comment": "颜色写法与主题一致：\"r|g|b|a\"（0..1 浮点）或 \"$token\"。",
+    "$comment": "颜色写法与主题一致：\"r|g|b|a\"（0..1 浮点）或 \"$token\"。清底色 #EBE6F2 与 PrefabTheme::kSceneBackground 是同一个值（两处一起改，否则窗口底和面板底会差一档灰）。",
     "borderless": true,
     "roundedCorners": true,
-    "background": "0.11|0.11|0.14|1",
+    "transparent": false,
+    "background": "0.922|0.902|0.949|1",
     "fullscreen": false,
     "startScene": "main"
   }

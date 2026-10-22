@@ -33,7 +33,9 @@ namespace inking::prefab::theme {
 // ---------------------------------------------------------------------------
 
 /// 场景底（浅紫灰）。窗口层用它当清屏色（`InkingWindow::SetBackgroundColor`）。
-inline constexpr std::uint32_t kSceneBackground = 0xFFF5F2F8u;
+/// 与 `CXXCSS/config.json` 的 `window.background` 是**同一个值**：一个管预制件
+/// 自己的底，一个管窗口清屏，分成两个数就会出现"窗口底和面板底不是一种灰"。
+inline constexpr std::uint32_t kSceneBackground = 0xFFEBE6F2u;
 /// 卡片面（面板 / 视口 / 菜单栏）。
 inline constexpr std::uint32_t kSurface = 0xFFFFFFFFu;
 /// 次级面（比卡片略沉一点）。

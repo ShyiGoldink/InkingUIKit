@@ -83,7 +83,7 @@ inline constexpr const char* const kKnownDesignFields[] = {
 
 /// 全局配置 `window` 段（每项都对应一对有 getter 的 setter）。
 inline constexpr const char* const kKnownWindowFields[] = {
-    "$comment", "borderless", "roundedCorners", "background", "fullscreen",
+    "$comment", "borderless", "roundedCorners", "transparent", "background", "fullscreen",
     "startScene",
 };
 

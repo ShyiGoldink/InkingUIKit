@@ -308,6 +308,7 @@ struct GlobalConfig {
     /// 以下都来自可选的 `window` 段；空 = json 没写 = 不动。
     std::optional<bool> borderless;
     std::optional<bool> roundedCorners;
+    std::optional<bool> transparent;  ///< 透明窗口（建窗标志，Show() 之前才有效）
     std::optional<std::uint32_t> background;  ///< 已解析成 0xAARRGGBB（`$token` 也支持）
     std::optional<bool> fullscreen;
     std::optional<std::string> startScene;    ///< 只是常量：`Show()` 的参数值

@@ -31,7 +31,7 @@ CXXCSS/
 ├─ Label/    menuTitle.json、hintBody.json、ellipsisNote.json、langBadge.json
 ├─ Image/    cardArt.json（运行期读图）
 ├─ Text/     ui.json（语言表）
-└─ Theme/    dark.json（主题表）
+└─ Theme/    lavender.json（主题表：现代浅紫）
 ```
 
 > 全局配置放**根下**是有意的：它是整个工程唯一的一份设置，为它再套一层 `Config/` 没有
@@ -491,12 +491,12 @@ input->submitted += [](const std::string& value) { /* Enter 提交 */ };
 **生成期**换成主题里的值、照旧烘成字面量：
 
 ```jsonc
-// CXXCSS/Theme/dark.json —— 它不是组件，是**生成器的输入**
+// CXXCSS/Theme/lavender.json —— 它不是组件，是**生成器的输入**
 {
-    "name": "dark",
+    "name": "lavender",
     "colors": {
-        "panelSurface": "0.08|0.11|0.15|0.94",   // 键写名字（不带 $）
-        "textPrimary": "1|1|1|1"
+        "panelSurface": "1|1|1|1",               // 键写名字（不带 $）
+        "textPrimary": "0.200|0.188|0.235|1"
     },
     "fontSizes": { "title": 24, "body": 15 }
 }
@@ -560,7 +560,9 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
 - 运行期换肤**只覆盖颜色**，且**只覆盖按钮三态 / 面板两态 / 标签文字色**这三处
   （`image` / `canvas` / 滚动条的颜色仍在生成期定）。
 
-参考配置：`Theme/dark.json`（10 个颜色 token + 3 个字号 token）。
+参考配置：`Theme/lavender.json`（10 个颜色 token + 3 个字号 token；「现代浅紫」，
+与 `include/prefab/PrefabTheme.h` 同一张调色板——场景底 `#F5F2F8` / 卡片 `#FFFFFF` /
+承载面 `#F1EDF7` / 主紫 `#9380C2`）。
 
 ---
 
@@ -617,6 +619,7 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
     "window": {
         "borderless": false,                    // 无边框（自绘标题栏）
         "roundedCorners": true,                 // 请求系统圆角
+        "transparent": false,                   // 透明窗口（清底色的 alpha 真的透出桌面）
         "background": "0.11|0.11|0.14|1",       // "r|g|b|a"（0..1）或 "$token"
         "fullscreen": false,                    // 启动即全屏
         "startScene": "main"                    // 起始场景名
@@ -646,15 +649,28 @@ int main() {
 
 **一个字段只有同时具备 ① 运行期 setter ② 回读 getter ③ 生成期校验，才有资格进来。**
 缺一条的后果是"写了不生效、还没人知道"，而这个仓库已经为这类静默失效付过代价
-（`INK_HAS_SDL3_TTF` / `INK_HAS_SDL3_MIXER` 两次）。所以 `window` 里只认这五项：
+（`INK_HAS_SDL3_TTF` / `INK_HAS_SDL3_MIXER` 两次）。所以 `window` 里只认这六项：
 
 | 字段 | 类型 | 落到 | 回读口 | 备注 |
 | --- | --- | --- | --- | --- |
 | `borderless` | bool | `SetBorderless` | `IsBorderless` | `Show()` 之前设 → 建窗直接带标志，不重建窗口 |
 | `roundedCorners` | bool | `SetRoundedCorners` | `IsRoundedCornersRequested` | 比的是**请求值**；系统画不画是另一件事（Win10 恒不画） |
+| `transparent` | bool | `SetTransparent` | `IsTransparentRequested` | **只能建窗前设**（SDL 的透明是建窗标志）；后端不保证，见下 |
 | `background` | 颜色串 | `SetBackgroundColor` | `GetBackgroundColor` | 与主题同一套写法：`"r\|g\|b\|a"` 或 `"$token"` |
 | `fullscreen` | bool | `SetFullscreen` | `IsFullscreen` | `Show()` 之前只是记账，建完窗口补应用 |
 | `startScene` | string | —（纯常量） | — | 只是 `Show()` 的参数值：`Show(kStartScene)` |
+
+**`transparent` 的两条边界**（真机结论，不是没做）：
+
+1. **alpha 只在透明窗口下有意义。** 不透明窗口上 `SDL_RenderClear` 直接把颜色写进帧缓冲、
+   不参与混合，帧缓冲的 alpha 又没人采信——`background` 的 `a` 写 0 也透不出桌面。这种情况
+   运行期会打一条 WARN（`background_alpha_without_transparent`），不再静默。
+2. **"标志落地"≠"桌面真的透"。** SDL 只在 Windows 的 D3D11 后端补过透明 swapchain；
+   D3D12 明确不行、Vulkan 多数环境不行，混合 GPU 也可能失效。`IsTransparentApplied()`
+   读的是"`SDL_WINDOW_TRANSPARENT` 有没有进窗口标志"，合成结果读不回来——验收只能
+   真机目视 + 截图读 alpha 两步。另外带 alpha 的描边 / 阴影可能**偏亮 / 过饱和**
+   （本机实测清屏 alpha 能原样读回、但 RGB 是未预乘的 straight 值，DWM 若按
+   premultiplied 解释就会加亮），要按真机校色。
 
 **没写的字段 = 不动**（生成器不抄一份库的默认值——抄了就是第二份真相，库改默认值它一定错）。
 所以 `ApplyConfig()` 里只有 json 写了的那几项才有值。
@@ -1293,6 +1309,7 @@ ink::InkingWindow::Instance().Show();
 | Config | window | `$comment` | 窗口启动设置；每项都对应一对有 getter 的 setter |
 | Config | window | `borderless` |  |
 | Config | window | `roundedCorners` |  |
+| Config | window | `transparent` |  |
 | Config | window | `background` |  |
 | Config | window | `fullscreen` |  |
 | Config | window | `startScene` |  |

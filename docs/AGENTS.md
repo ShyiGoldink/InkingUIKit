@@ -362,6 +362,7 @@ Windows 下 exe 按"自身所在目录 → PATH"找 DLL，分开放会变成"程
 | 6 | 忘了 `UpdateScrollRange`：滚轮没反应，范围恒为 0 | 往滚动容器里加了子节点，但没重新量内容 | 既有（0.3.0 补自检） | `scroll_range_stale` |
 | 7 | 文本区宽度为负：排版交出零宽行，最后一个像素都不画 | `maxWidth` 小于左右 padding，或组件拿到负宽度 | 既有（0.3.0 补自检） | `text_negative_width` |
 | 8 | 输入框光标越界：画到框外，还跟着滚动量漂 | 文本长于本体宽度且光标在末尾（滚动与 clamp 只做一半） | T-12 | `input_caret_clamped` |
+| 9 | 背景色配了 alpha，桌面却透不出来（窗口其实不透明） | `window.background` 的 `a < 1`，而 `window.transparent` 为 false / 没写 | 既有（0.4.0 补自检） | `background_alpha_without_transparent` |
 <!-- END SILENT FAILURE LIST -->
 
 两条纪律：

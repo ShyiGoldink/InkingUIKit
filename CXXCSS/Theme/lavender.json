@@ -1,0 +1,40 @@
+{
+    "$comment": [
+        "主题表（B8）：语义色 / 语义字号 → 具体值。**它不是组件**，是生成器的输入。",
+        "组件配置里写 \"$panelSurface\" / \"$title\" 这样的语义名，inkgen 在**生成期**",
+        "把它换成这里的值、照旧烘成字面量——所以产物里没有主题类，也没有运行期查表；",
+        "换主题 = 改这一份（或者换一份 Theme/*.json 传进构建）之后**重新生成**",
+        "（CXXCSS.md §3.9 写了取舍：这样不动运行期数据结构，代价是换肤要重编）。",
+        "只允许一份：两份主题只有一份生效，与其让人猜哪份赢，不如生成期报错。",
+        "colors / fontSizes 里的键写名字（不带 $）；值必须是字面量（不能是另一个 token）。",
+        "",
+        "本套是「现代浅紫」（0.4.0）：取自用户那份 Godot（D:\\Lya）里 'White Purple'",
+        "预设（editor/themes/editor_theme_manager.cpp 的 preset 分支 + theme_modern.cpp",
+        "的 palette overrides），与 include/prefab/PrefabTheme.h 是同一套色——",
+        "预制件（菜单栏 / 列表 / 下拉）与 CXXCSS 组件必须长在同一张调色板上，",
+        "否则同一屏里会出现两种紫、两种灰。",
+        "",
+        "层次靠**明度差**而不是描边：场景底 #F5F2F8 → 卡片 #FFFFFF → 承载面 #F1EDF7。",
+        "textMuted 比 PrefabTheme 的 kTextDisabled 深一档：它承担的是正文的弱化（可读），",
+        "不是禁用态（淡）。accent 取主色的深版 #6E5AAE：这个 token 只被当**文字色**用",
+        "（langBadge），#9380C2 在白底上只有 3.5:1；实底紫仍是 #9380C2，由组件自己写。"
+    ],
+    "name": "lavender",
+    "colors": {
+        "panelSurface": "1|1|1|1",
+        "panelSurfaceAlt": "0.980|0.973|0.988|1",
+        "panelSurfaceOpenAlt": "1|1|1|1",
+        "drawerSurface": "0.980|0.973|0.988|1",
+        "drawerSurfaceOpen": "1|1|1|1",
+        "clipSurface": "0.945|0.929|0.969|1",
+        "textPrimary": "0.200|0.188|0.235|1",
+        "textBody": "0.353|0.329|0.408|1",
+        "textMuted": "0.486|0.459|0.565|1",
+        "accent": "0.431|0.353|0.682|1"
+    },
+    "fontSizes": {
+        "title": 24,
+        "body": 15,
+        "caption": 13
+    }
+}

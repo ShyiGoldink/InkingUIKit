@@ -1,8 +1,9 @@
 // `ApplyWindowConfig`：set + **回读校验**。
 //
 // 为什么不把校验留给调用方：调用方拿到的返回值本来就不可靠——
-// `SetBorderless` / `SetRoundedCorners` / `SetFullscreen` 返回的是"真的变了没有"，
-// 幂等调用返回 false，和失败无法区分；`SetBackgroundColor` 是 void。
+// `SetBorderless` / `SetRoundedCorners` / `SetFullscreen` / `SetTransparent`
+// 返回的是"真的变了没有"，幂等调用返回 false，和失败无法区分；
+// `SetBackgroundColor` 是 void。
 // 唯一的可靠判据是**把值读回来比**，而这件事只有在这里做才只需要写一遍。
 
 #include <window/WindowConfig.h>
@@ -53,6 +54,24 @@ int ApplyWindowConfig(const WindowConfig& config) {
             INK_LOG_DEBUG(kModuleName,
                           "window.roundedCorners 已请求，但系统没有按圆角处理"
                           "（Win11 之前 / 非 Windows 属正常）");
+        }
+    }
+
+    // 透明**必须排在 background 前面**：背景色的 alpha 判定看的就是这个值，
+    // 顺序反了会把"透明窗口 + 半透明底"误报成"alpha 无效"。
+    if (config.transparent.has_value()) {
+        const bool wanted = *config.transparent;
+        window.SetTransparent(wanted);
+        // 比的是**请求值**：`IsTransparentApplied()` 说的是"标志进没进窗口"，
+        // 而"桌面到底透没透"根本没有回读口；拿它比会把后端不支持误报成配置没生效。
+        if (window.IsTransparentRequested() != wanted) {
+            INK_LOG_ERROR(kModuleName,
+                          std::string("window.transparent 要 ")
+                              + (wanted ? "true" : "false")
+                              + "，窗口回读 "
+                              + (window.IsTransparentRequested() ? "true" : "false")
+                              + "（窗口已打开时无法切换：透明是建窗标志）");
+            ++failed;
         }
     }
 

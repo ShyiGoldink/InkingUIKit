@@ -348,6 +348,9 @@ int main(int argc, char** argv) {
         if (config.roundedCorners.has_value()) {
             std::printf("  圆角=%s", *config.roundedCorners ? "请求" : "关闭");
         }
+        if (config.transparent.has_value()) {
+            std::printf("  透明窗口=%s", *config.transparent ? "是" : "否");
+        }
         if (config.fullscreen.has_value()) {
             std::printf("  启动全屏=%s", *config.fullscreen ? "是" : "否");
         }

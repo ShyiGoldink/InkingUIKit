@@ -4227,6 +4227,10 @@ private:
                     = ReadBool(child, "window.roundedCorners");
             } else if (key == "fullscreen") {
                 _config.fullscreen = ReadBool(child, "window.fullscreen");
+            } else if (key == "transparent") {
+                // 顺序无关（这里只解析）；`ApplyConfig()` 生成时会把 transparent
+                // 排在 background 之前——背景 alpha 的判定看的就是它。
+                _config.transparent = ReadBool(child, "window.transparent");
             } else if (key == "background") {
                 // 与组件外观同一个解析器：`"r|g|b|a"`（0..1 浮点）或 `"$token"`。
                 _config.background = ReadColorSource(child, "window.background",

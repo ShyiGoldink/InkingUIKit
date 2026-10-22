@@ -81,7 +81,7 @@ public:
 | `EllipsisNote` / `HintBody` / `LangBadge` / `MenuTitle` | `Label/*.json` | 静态标签 |
 | `CardArt` | `Image/cardArt.json` | 静态图片 |
 | （语言表） | `Text/ui.json` | 2 门语言 / 4 条占位符 |
-| （不生成） | `Theme/dark.json` | 主题输入 |
+| （不生成） | `Theme/lavender.json` | 主题输入（现代浅紫） |
 
 ## 四、命名：文件名 = `name` 字段 → PascalCase 类名
 

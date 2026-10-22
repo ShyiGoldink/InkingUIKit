@@ -19,13 +19,13 @@
 
     "closed": {
         "type": "color",
-        "source": "0.1|0.14|0.19|1",
+        "source": "0.980|0.973|0.988|1",
         "transition": { "duration": 0.32, "easing": "easeInOut" },
         "transform": { "translateX": -420 }
     },
     "open": {
         "type": "color",
-        "source": "0.14|0.19|0.25|1",
+        "source": "1|1|1|1",
         "transition": { "duration": 0.18, "easing": "easeOut" }
     },
 

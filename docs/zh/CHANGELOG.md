@@ -34,6 +34,10 @@
 - **截图 / 离屏渲染的落盘不再依赖 SDL 的文件层**：编码先进内存（`SDL_IOStreamInterface`
   实现一块可写内存流），落盘走 `std::fopen`、失败再退回 SDL 路径 API。实测受限环境里
   `SDL_SavePNG(surface, path)` 会把文件名截断（写出 `probe_o` 却返回 true）。
+- **背景 alpha 不再是"看起来支持、其实无效"的通道**：不透明窗口上 `SDL_RenderClear`
+  直接写帧缓冲、不参与混合，帧缓冲的 alpha 又没人采信 ⇒ `background` 的 `a` 写 0 也透
+  不出桌面，而且一个字都不报。现在 `stepFrame` 会打一条 WARN（每状态一次），并进了
+  静默失效清单第 9 条。要真透明请开 `window.transparent`。
 
 ### 新增
 
@@ -57,9 +61,25 @@
   不需要 dummy 视频驱动。走的是**同一条** `SceneLibrary::RenderScene`，不是另画一份。
 - **`MenuBar::GetCurrentHeight()` / `IsBarVisible()`**（B3）：顶栏在全屏时整条消失，内容区
   高度必须按"窗口高 − 顶栏**当前**高"算（写死 `窗口高 − 40` 就是全屏留一条白）。
+- **透明窗口**：`InkingWindow::SetTransparent()` / `IsTransparentRequested()` /
+  `IsTransparentApplied()`，配置侧对应 `window.transparent`。建窗时带上
+  `SDL_WINDOW_TRANSPARENT`，清屏色的 alpha 从此**真的**能透出桌面。`Applied` 读的是
+  "标志进没进窗口"，不是"合成器照没照做"——后者没有回读口。
 
 ### 变更
 
+- **默认主题换成「现代浅紫」**：`CXXCSS/Theme/dark.json` → `Theme/lavender.json`，10 个
+  颜色 token 全部重配。色源是用户那份 Godot（`D:\Lya`）的 **"White Purple"** 预设，
+  与 `include/prefab/PrefabTheme.h` 同一张调色板：
+  场景底 `#EBE6F2` / 卡片 `#FFFFFF` / 次级面 `#FAF8FC` / 承载面 `#F1EDF7` /
+  文字 `#33303C` · `#5A5468` · `#7C7590` / 强调 `#6E5AAE`。
+  窗口清屏色（`config.json` 的 `window.background`）与 `PrefabTheme::kSceneBackground`
+  一起改成 `#EBE6F2`——两处必须是同一个数，否则"窗口底"和"面板底"会差一档灰。
+  两点取值理由：`textMuted` 比 `kTextDisabled` 深（它承担正文弱化，不是禁用态）；
+  `$accent` 取主色的**深版** `#6E5AAE`（这个 token 只被当文字色用，`#9380C2` 在白底
+  只有 3.5:1），实底紫仍是 `#9380C2`，由组件配置自己写。
+  示例配置（`button.example.json` / `panel.example.json`）同步成同一套，免得"照示例
+  复制"又拿回一份深色。
 - **`Relayout()` 的调用时机多了一类**：框架现在会在"容器增删孩子"与"动态容器改尺寸"之后
   自动重排。`InkingWidget.h` 里原来写着"框架不做隐式重排"，那句话对**内容变化**仍然成立
   （文字改长仍要自己喊），对**骨架变化**不再成立——骨架变了而布局不动，等于让调用方
@@ -77,6 +97,12 @@
 
 ### 已知限制
 
+- **透明窗口只在部分后端成立**：SDL 只在 Windows 的 D3D11 后端补过透明 swapchain，
+  D3D12 明确不行、Vulkan 多数环境不行，混合 GPU 也可能失效。`IsTransparentApplied()`
+  证明的是"`SDL_WINDOW_TRANSPARENT` 进了窗口标志"，**不是"桌面真的透了"**——合成结果
+  读不回来。本机实测（`direct3d11`）：清屏 alpha=0 / 128 都能从后缓冲原样读回，但读回的
+  RGB 是**未预乘**的 straight 值，所以带 alpha 的描边 / 阴影可能**偏亮 / 过饱和**，
+  要按真机校色。
 - **C 组暂缓**：`0x00000000` 仍兜底成品红（T-03 的护栏）、按钮文字仍居中不可调、缺字形
   仍画方框。三条都要新的配置字段 / 文本排版能力，属于下一批（详见任务书 §4）。
 - `RebuildRenderList()` 是 **O(N)** 的全表重建；它不该出现在每帧路径上。正常路径由
