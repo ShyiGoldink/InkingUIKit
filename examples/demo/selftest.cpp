@@ -28,15 +28,21 @@
 #include <dataStruct/InkingTransform.h>
 #include <detail/MessageQueue.h>
 #include <detail/InkLog.h>
+#include <detail/InkingPointerProbe.h>
+#include <detail/InkingPopupPlacement.h>
 #include <input/KeyboardInput.h>
 #include <input/Shortcut.h>
 #include <input/ShortcutRegistry.h>
 #include <panel/InkingStaticPanel.h>
 #include <panel/PanelData.h>
+#include <panel/InkingFixedPopup.h>
 #include <text/InkingStaticLabel.h>
 #include <text/InkingTextInput.h>
 #include <text/LabelData.h>
+#include <widget/InkingDynamicWidget.h>
 #include <prefab/MenuBar.h>
+#include <prefab/MenuPopup.h>
+#include <prefab/MenuPopupData.h>
 #include <render/InkingBatch.h>
 #include <render/InkingGlyphAtlas.h>
 #include <render/InkingMesh.h>
@@ -1655,8 +1661,9 @@ void CheckButtonPaintOrder(SDL_Renderer* renderer) {
 // 不是回调接口。T-11 把公开订阅口补上之后，业务只要订阅 `stateChanged` 就能
 // 知道"鼠标进出 / 按下抬起"，不用再派生类去重写 protected 钩子。
 //
-// 这里对两档各推一次 hover：静态档走 `DispatchPointer`（场景推），动态档走
-// `TickLogic`（自己拉），断言两边都恰好收到一次 `(Normal, Hover)`。
+// 这里对两档各推一次 hover：**两档都由 `DispatchPointer` 驱动**——静态档是场景
+// 推结果，动态档是场景在"指针真的变了"那一帧推一次通知（0.4.1 T-02）。
+// 断言两边都恰好收到一次 `(Normal, Hover)`。
 void CheckButtonStateEvent() {
     std::printf("\n-- 按钮状态事件：两档共用 stateChanged --\n");
 
@@ -1717,14 +1724,426 @@ void CheckButtonStateEvent() {
     scene.DispatchPointer();
     Check(staticCount == 1, "静态档：状态没变就不重复触发");
 
-    // ② 动态档：指针移到它身上，逻辑步里自己判。
+    // ② 动态档：指针移到它身上 → 指针变化当帧通知（0.4.1 T-02）。
+    //    以前这里走 `TickLogic`（固定逻辑步里自己拉）；现在通知挂在"指针真的
+    //    变了"那一帧上，所以驱动方式换成 `DispatchPointer`，断言一字不改。
     scene.SetPointerState(640.0f, 560.0f, false, true);
-    scene.TickLogic(0.02f);
+    scene.DispatchPointer();
     Check(dynamicCount == 1 && dynamicFrom == inking::ButtonState::Normal
               && dynamicTo == inking::ButtonState::Hover,
-          "动态档：JudgePointer 拉到 → (Normal, Hover)，计数 1");
+          "动态档：指针变化通知 → (Normal, Hover)，计数 1");
 
     inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// 统一输入语义（0.4.1 T-01 / T-02 / T-03）
+// ---------------------------------------------------------------------------
+//
+// 三件事一起验，因为它们合起来才是"一个点上只有一个输入归属"：
+//   T-01 容器答案要深挖到**真正接住输入的那一个**（静态 / 动态同一套）；
+//   T-02 通知只发生在"指针真的变了"的帧上（鼠标不动就不通知）；
+//   T-03 边沿判定只有一份（`PointerProbe`），语义与静态档同一套。
+
+/// 动态容器：矩形命中 + 声明"子树由我判"（`OwnsSubtreeHit`）。
+class DynamicContainerSpy : public inking::InkingDynamicWidget {
+public:
+    DynamicContainerSpy(inking::InkingWidget* parent,
+                        const inking::AnchorData& data)
+        : inking::InkingDynamicWidget(parent, data) {}
+
+    bool HitTest(float worldX, float worldY) const override {
+        const float lx = worldX - GetAbsX();
+        const float ly = worldY - GetAbsY();
+        return lx >= 0.0f && ly >= 0.0f
+            && lx < static_cast<float>(GetWidth())
+            && ly < static_cast<float>(GetHeight());
+    }
+
+    bool OwnsSubtreeHit() const noexcept override { return true; }
+};
+
+/// 只数"被通知了几次"的动态节点。
+class PointerSpy : public inking::InkingDynamicWidget {
+public:
+    PointerSpy(inking::InkingWidget* parent, const inking::AnchorData& data)
+        : inking::InkingDynamicWidget(parent, data) {}
+
+    bool HitTest(float, float) const override { return false; }
+
+    int notifications = 0;
+
+protected:
+    void onPointerStateChanged() override { ++notifications; }
+};
+
+// ---- T-01：动态容器里的静态按钮能被命中 ----
+void CheckPopupHitOwner() {
+    std::printf("\n-- 统一输入语义：动态容器的答案深挖到子控件（T-01）--\n");
+
+    inking::InkingScene scene("hit_owner");
+
+    inking::AnchorData panelData;
+    panelData.width = 200;
+    panelData.height = 200;
+    panelData.offsetX = 100.0f;
+    panelData.offsetY = 100.0f;
+    auto* container = static_cast<DynamicContainerSpy*>(scene.AddChild(
+        std::make_unique<DynamicContainerSpy>(&scene, panelData)));
+    container->SetName("dyn_container");
+
+    inking::ButtonData buttonData;
+    buttonData.name = "inner_button";
+    buttonData.width = 80;
+    buttonData.height = 40;
+    buttonData.offsetX = 10.0f;
+    buttonData.offsetY = 10.0f;
+    buttonData.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+                                                 0xFF204060u);
+    auto* inner = static_cast<inking::InkingStaticButton*>(container->AddChild(
+        std::make_unique<inking::InkingStaticButton>(container, buttonData)));
+
+    // 按钮世界中心 = 100 + 10 + 40, 100 + 10 + 20
+    Check(scene.QueryHit(150.0f, 130.0f).target == inner,
+          "T-01：动态容器（OwnsSubtreeHit=true）里的静态按钮能被命中");
+
+    // 容器内的空白区仍答容器自己——深挖没把它弄丢
+    Check(scene.QueryHit(280.0f, 280.0f).target == container,
+          "T-01：容器里的空白处仍答容器（深挖只换到真正的子控件）");
+}
+
+// ---- T-02：指针不变就不通知 ----
+void CheckPointerStateChannel() {
+    std::printf("\n-- 统一输入语义：指针不变就不通知动态节点（T-02）--\n");
+
+    inking::InkingScene scene("pointer_channel");
+
+    inking::AnchorData data;
+    data.width = 100;
+    data.height = 100;
+    auto* spy = static_cast<PointerSpy*>(
+        scene.AddChild(std::make_unique<PointerSpy>(&scene, data)));
+
+    // 指针从没变过：连着派发两次，一次都不该通知。
+    scene.DispatchPointer();
+    scene.DispatchPointer();
+    Check(spy->notifications == 0, "T-02：指针没变 → 一次都不通知");
+
+    // 同一帧里重复派发也只通知一次（"每帧只判断一次"不依赖调用方自觉）。
+    scene.SetPointerState(10.0f, 10.0f, false, true);
+    scene.DispatchPointer();
+    scene.DispatchPointer();
+    Check(spy->notifications == 1, "T-02：指针变了 → 当帧通知一次，重复派发不再通知");
+
+    // 换一帧（帧末消费清账）再变一次 ⇒ 再通知一次。
+    scene.ConsumeFrameDirty();
+    scene.SetPointerState(20.0f, 20.0f, false, true);
+    scene.DispatchPointer();
+    Check(spy->notifications == 2, "T-02：下一帧再变 → 再通知一次");
+}
+
+// ---- T-03：边沿判定只有一份 ----
+void CheckPointerProbe() {
+    std::printf("\n-- 统一输入语义：PointerProbe 的边沿与捕获（T-03）--\n");
+
+    inking::detail::PointerProbe probe;
+
+    // ① 同点按下 → 抬起 = 一次点击
+    auto r = probe.Update(true, false);
+    Check(r.hoverChanged && r.hovered && !r.clicked,
+          "T-03：指针进入 → hoverChanged，无点击");
+    r = probe.Update(true, true);
+    Check(r.pressed && probe.IsCaptured(), "T-03：按下 → pressed + 捕获");
+    r = probe.Update(true, false);
+    Check(r.released && r.clicked, "T-03：同点抬起 → released + clicked");
+
+    // ② 按下 → 滑出去 → 松开 = 取消（用户唯一的"我反悔了"）
+    probe.Reset();
+    probe.Update(true, false);
+    probe.Update(true, true);
+    r = probe.Update(false, true);
+    Check(r.hoverChanged && !r.hovered && !r.released,
+          "T-03：按着滑出去 → 捕获不结束");
+    r = probe.Update(false, false);
+    Check(r.released && !r.clicked, "T-03：在外面松开 → released 但不 click");
+
+    // ③ 没按下时重复判：第二次什么都不报（幂等）
+    probe.Reset();
+    probe.Update(true, false);
+    const auto again = probe.Update(true, false);
+    Check(!again.hoverChanged && !again.pressed && !again.released
+              && !again.clicked,
+          "T-03：无按下连判两次，第二次什么都不报");
+
+    // ④ 在别处按下、按着挪进来：不算这次按下
+    probe.Reset();
+    probe.Update(false, true);
+    r = probe.Update(true, true);
+    Check(!r.pressed && !probe.IsCaptured(),
+          "T-03：在别处按下、按着挪进来 → 不算这次按下");
+
+    // ⑤ "按下发生了"与"按下算在我身上"是两件事：前者给"点外部就关"用
+    probe.Reset();
+    r = probe.Update(false, true);
+    Check(r.downEdge && !r.pressed,
+          "T-03：在别处按下 → downEdge 真、pressed 假");
+}
+
+// ---------------------------------------------------------------------------
+// 定点浮窗的落位算术（0.4.1 T-05）
+// ---------------------------------------------------------------------------
+//
+// 纯数字断言：四方向 × "翻转后仍放不下" 一共十几种组合，靠开窗口看不出对错。
+// 这里只验四组代表 + 三条边界（两轴独立 / 非零原点 / 尺寸为 0 的退化）。
+void CheckPopupPlacement() {
+    std::printf("\n-- 定点浮窗：落位算术（T-05）--\n");
+
+    const inking::ShapeBounds screen{0.0f, 0.0f, 1280.0f, 720.0f};
+    const inking::AnchorPoint leftTop{0.0f, 0.0f};
+
+    // ① 右下角：两轴都要翻到对侧
+    {
+        const auto p = inking::detail::SolvePopupPlacement(
+            1200.0f, 700.0f, 200, 120, screen, leftTop);
+        std::printf("         右下角 → x=%.1f y=%.1f side=(%d,%d)\n", p.x, p.y,
+                    p.sideX, p.sideY);
+        Check(p.x == 1000.0f && p.y == 580.0f && p.sideX == -1
+                  && p.sideY == -1 && !p.clampedX && !p.clampedY,
+              "T-05：右下角定点 → 翻左翻上（x=1000, y=580）");
+    }
+
+    // ② 左上角：原地不动
+    {
+        const auto p = inking::detail::SolvePopupPlacement(
+            10.0f, 10.0f, 200, 120, screen, leftTop);
+        Check(p.x == 10.0f && p.y == 10.0f && p.sideX == 1 && p.sideY == 1,
+              "T-05：左上角定点 → 不翻不夹（x=10, y=10）");
+    }
+
+    // ③ 中部：不动
+    {
+        const auto p = inking::detail::SolvePopupPlacement(
+            600.0f, 300.0f, 200, 120, screen, leftTop);
+        Check(p.x == 600.0f && p.y == 300.0f && p.sideX == 1 && p.sideY == 1,
+              "T-05：中部定点 → 不翻不夹");
+    }
+
+    // ④ 两轴独立：x 翻、y 不翻（右下角那种"往下展开"的手感）
+    {
+        const auto p = inking::detail::SolvePopupPlacement(
+            1200.0f, 10.0f, 200, 120, screen, leftTop);
+        Check(p.x == 1000.0f && p.sideX == -1 && p.y == 10.0f
+                  && p.sideY == 1,
+              "T-05：x 翻左、y 仍向下（两轴独立）");
+    }
+
+    // ⑤ 比范围还大：贴住起始边、允许另一侧溢出
+    {
+        const auto p = inking::detail::SolvePopupPlacement(
+            600.0f, 300.0f, 1400, 120, screen, leftTop);
+        Check(p.clampedX && p.sideX == 0 && p.x == 0.0f && !p.clampedY,
+              "T-05：比范围还宽的浮窗 → clampedX + x=0（允许右溢出）");
+    }
+
+    // ⑥ 范围原点不是 (0,0)：整套算术在父级坐标里自洽
+    {
+        const inking::ShapeBounds area{100.0f, 100.0f, 400.0f, 300.0f};
+        const auto p = inking::detail::SolvePopupPlacement(
+            450.0f, 350.0f, 200, 120, area, leftTop);
+        Check(p.x == 250.0f && p.y == 230.0f && p.sideX == -1
+                  && p.sideY == -1,
+              "T-05：范围原点非零时，翻到对侧后仍落在范围内");
+    }
+
+    // ⑦ 退化：尺寸还是 0（布局没算完就 OpenAt）→ 就放在定点上，不崩
+    {
+        const auto p = inking::detail::SolvePopupPlacement(
+            600.0f, 300.0f, 0, 0, screen, leftTop);
+        Check(p.x == 600.0f && p.y == 300.0f && p.sideX == 1
+                  && !p.clampedX,
+              "T-05：尺寸为 0 → 位置 = 定点，不翻转不夹紧");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 定点浮窗（0.4.1 T-06）
+// ---------------------------------------------------------------------------
+//
+// 七条断言把"定点 / 吃掉 / 点外关闭 / 焦点"四件事钉住。注意第 3 条其实在验
+// T-01 与 T-06 的协同：浮窗是**动态容器**，里面的静态按钮能命中，靠的正是
+// `QueryHit` 对动态那一侧也深挖。
+void CheckFixedPopup() {
+    std::printf("\n-- 定点浮窗：OpenAt / 吃掉 / 点外关闭（T-06）--\n");
+
+    inking::InkingScene scene("fixed_popup");
+
+    const auto makePanel = [](const char* name) {
+        inking::PanelData data;
+        data.name = name;
+        data.width = 200;
+        data.height = 120;
+        data.closed.color = 0xFFFFFFFFu;
+        data.shape = inking::ShapeSpec::RoundedRect(16.0f);
+        return data;
+    };
+
+    inking::InkingFixedPopup popup(&scene, makePanel("popup"));
+
+    // ① 定点落位：右下角 ⇒ 翻左翻上
+    popup.OpenAt(1200.0f, 700.0f);
+    std::printf("         OpenAt(1200,700) → GetX=%.1f GetY=%.1f side=(%d,%d)\n",
+                popup.GetX(), popup.GetY(), popup.GetResolvedSideX(),
+                popup.GetResolvedSideY());
+    Check(popup.IsOpen() && popup.GetX() == 1000.0f && popup.GetY() == 580.0f
+              && popup.GetResolvedSideX() == -1
+              && popup.GetResolvedSideY() == -1,
+          "T-06：OpenAt(1200,700) → 翻左翻上（GetX=1000 / GetY=580）");
+
+    // ② 打开时夺取键盘焦点（局部快捷键的前提）
+    Check(scene.GetKeyboardFocus() == &popup,
+          "T-06：OpenAt 之后键盘焦点在浮窗上");
+
+    // ③ 浮窗里的静态按钮能被命中（动态容器深挖）
+    inking::ButtonData innerData;
+    innerData.name = "popup_inner";
+    innerData.width = 80;
+    innerData.height = 40;
+    innerData.offsetX = 10.0f;
+    innerData.offsetY = 10.0f;
+    innerData.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+                                                0xFF204060u);
+    auto* inner = static_cast<inking::InkingStaticButton*>(
+        popup.AddItem(std::make_unique<inking::InkingStaticButton>(
+            nullptr, innerData)));
+    // 按钮世界中心 = 1000 + 10 + 40, 580 + 10 + 20
+    Check(scene.QueryHit(1050.0f, 610.0f).target == inner,
+          "T-06：浮窗里的静态按钮能被命中");
+
+    // ④ 空白区：命中浮窗且是 Block（吃掉，不透到下面）
+    const inking::HitResult blank = scene.QueryHit(1150.0f, 670.0f);
+    Check(blank.target == &popup && blank.kind == inking::HitKind::Block,
+          "T-06：点浮窗空白区 → 命中浮窗且 kind=Block");
+
+    // ⑤ 外部按下 ⇒ 关闭
+    scene.SetPointerState(100.0f, 100.0f, true, true);
+    scene.DispatchPointer();
+    Check(!popup.IsOpen(), "T-06：外部按下 → 立即关闭");
+
+    // ⑥ 比范围还宽：贴左边、允许右溢出
+    inking::PanelData wideData = makePanel("popup_wide");
+    wideData.width = 1400;
+    inking::InkingFixedPopup widePopup(&scene, wideData);
+    widePopup.OpenAt(600.0f, 300.0f);
+    Check(widePopup.IsClampedX() && widePopup.GetX() == 0.0f,
+          "T-06：比窗口还宽的浮窗 → 贴左边（IsClampedX，允许右溢出）");
+
+    // ⑦ 关闭时焦点当场释放
+    widePopup.Close();
+    Check(scene.GetKeyboardFocus() == nullptr,
+          "T-06：Close 之后焦点被释放（不留悬空）");
+}
+
+// ---------------------------------------------------------------------------
+// 菜单浮窗（0.4.1 T-07 / T-08）
+// ---------------------------------------------------------------------------
+//
+// 布局四条 + 快捷键三条。快捷键那三条刻意分开验：命中 / 取回焦点 / 拒绝重复，
+// 因为它们各自会因为不同的原因坏掉（表没建、通知没来、去重写错）。
+void CheckMenuPopup() {
+    std::printf("\n-- 菜单浮窗：布局 / 项 / 局部快捷键（T-07 / T-08）--\n");
+
+    inking::InkingScene scene("menu_popup");
+
+    inking::prefab::MenuPopupStyle style =
+        inking::prefab::MenuPopupStyle::MakeDefault();
+    style.itemWidth = 200;
+    style.itemHeight = 36;
+    style.padding = 6;
+    style.gap = 2;
+
+    inking::prefab::MenuPopup menu(&scene, style);
+
+    // 只给颜色、宽高留 0：`AddButton` 应该补成菜单的默认尺寸。
+    inking::ButtonData look;
+    look.normal =
+        inking::ButtonAppearance(inking::AppearanceType::Color, 0xFFFFFFFFu);
+    look.hover = look.normal;
+    look.onclicked = look.normal;
+
+    int hits = 0;
+    auto* first = menu.AddButton(look, "打开", [&] { ++hits; });
+    menu.AddButton(look, "另存为", [&] {});
+    menu.AddButton(look, "退出", [&] {});
+
+    inking::AnchorData separatorData;
+    separatorData.width = style.itemWidth;
+    separatorData.height = 2;
+    menu.AddItem(
+        std::make_unique<inking::InkingDynamicWidget>(nullptr, separatorData));
+
+    // ① 项表：3 个按钮 + 1 个自定义件
+    Check(menu.GetItemCount() == 4,
+          "T-07：3 个按钮 + 1 个自定义项都进了项表");
+
+    // ② 竖排布局：相邻项的 y 差 = itemHeight + gap
+    const inking::ShapeBounds r0 = menu.GetItemRect(0);
+    const inking::ShapeBounds r1 = menu.GetItemRect(1);
+    const inking::ShapeBounds r2 = menu.GetItemRect(2);
+    std::printf("         项矩形 y = %.1f / %.1f / %.1f\n", r0.y, r1.y, r2.y);
+    Check(r1.y > r0.y && r2.y > r1.y
+              && (r1.y - r0.y) == static_cast<float>(style.itemHeight + style.gap),
+          "T-07：竖排布局生效（相邻项差 = itemHeight + gap）");
+
+    // ③ 容器宽度 = itemWidth + padding×2
+    Check(menu.GetWidth() == style.itemWidth + style.padding * 2,
+          "T-07：容器宽度 = itemWidth + padding×2");
+
+    // ④ 激活：回调一次 + 自动关闭
+    first->TriggerClick();
+    Check(hits == 1 && !menu.IsOpen(),
+          "T-07：TriggerClick → 回调一次并自动关闭");
+
+    // ⑤ 局部快捷键：绑 F5，按下就命中并关闭
+    int shortcutHits = 0;
+    const bool bound = menu.BindLocalShortcut(
+        inking::Shortcut::Parse("F5"), [&] { ++shortcutHits; }, "F5");
+    menu.OpenAt(100.0f, 100.0f);
+
+    inking::KeyEvent key{};
+    key.key = SDLK_F5;
+    menu.PushKeyDown(key);
+    Check(bound && shortcutHits == 1 && !menu.IsOpen(),
+          "T-08：局部快捷键 F5 → 命中一次并关闭");
+
+    // ⑥ 焦点被夺走：下一次指针变化就取回（菜单是焦点模态的）
+    menu.OpenAt(100.0f, 100.0f);
+    scene.SetKeyboardFocus(nullptr);
+    Check(scene.GetKeyboardFocus() == nullptr, "T-08：前置——焦点已被清空");
+    scene.SetPointerState(20.0f, 20.0f, false, true);
+    scene.DispatchPointer();
+    Check(scene.GetKeyboardFocus() == &menu,
+          "T-08：焦点被夺走后，下一次指针变化就取回");
+
+    // ⑦ 重复绑定被拒（先到先得，不覆盖）
+    const std::size_t before = menu.GetLocalShortcutCount();
+    const bool duplicate = menu.BindLocalShortcut(
+        inking::Shortcut::Parse("F5"), [] {}, "F5");
+    Check(!duplicate && menu.GetLocalShortcutCount() == before,
+          "T-08：重复绑同一个组合被拒（先到先得）");
+
+    // ⑧ 与全局表冲突：绑之前就拒（窗口层先跑全局表，局部永远收不到）
+    inking::ShortcutRegistry& global =
+        inking::InkingWindow::Instance().GetShortcuts();
+    const inking::ShortcutRegistry::Id id =
+        global.Bind(inking::Shortcut::Parse("Ctrl+Alt+F9"), [] {}, "probe");
+    const bool conflict = menu.BindLocalShortcut(
+        inking::Shortcut::Parse("Ctrl+Alt+F9"), [] {}, "conflict");
+    if (id != 0) {
+        global.Unbind(id);
+    }
+    Check(!conflict, "T-08：与全局表冲突时拒绝绑定（不静默）");
+
+    menu.Close();
 }
 
 // ---------------------------------------------------------------------------
@@ -2208,9 +2627,9 @@ void CheckRuntimeTheme(SDL_Renderer* renderer) {
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("== inking 动态库 · 无头端到端自检 ==\n");
-    // 阶段单独打出来（`0.1.0` + `test`）：测试版本这件事要在运行期看得见，
-    // 不能只写在 README 里（别人抓到一份日志时，第一行就该知道它不是正式版）。
-    std::printf("   版本 %s-%s（测试版本）/ SDL3 %s / 消息队列编译期%s\n",
+    // 阶段单独打出来（`0.4.0` + `release`）：当前是哪个阶段要在运行期看得见，
+    // 不能只写在 README 里（别人抓到一份日志时，第一行就该知道它是什么版本）。
+    std::printf("   版本 %s-%s / SDL3 %s / 消息队列编译期%s\n",
                 inking::kVersion, inking::kVersionStage,
                 inking::sdl3_version().c_str(),
                 inking::kMessageEnabled ? "开" : "关");
@@ -2323,6 +2742,18 @@ int main() {
 
     // ---- 按钮状态事件：两档共用 stateChanged（0.2.0 T-11） ----
     CheckButtonStateEvent();
+
+    // ---- 统一输入语义：归属深挖 / 通知时机 / 边沿判定（0.4.1 T-01~T-03） ----
+    CheckPopupHitOwner();
+    CheckPointerStateChannel();
+    CheckPointerProbe();
+
+    // ---- 定点浮窗：落位算术 + 组件行为（0.4.1 T-05 / T-06） ----
+    CheckPopupPlacement();
+    CheckFixedPopup();
+
+    // ---- 菜单浮窗：布局 / 项 / 局部快捷键（0.4.1 T-07 / T-08） ----
+    CheckMenuPopup();
 
     // ---- 输入框：光标 clamp + 水平滚动（0.2.0 T-12） ----
     CheckInputScroll();

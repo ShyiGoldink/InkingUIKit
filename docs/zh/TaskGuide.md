@@ -1,12 +1,12 @@
 # 任务书（TaskGuide）
 
-> ## ⚠ 本文对应版本 0.1.0-test（测试版本）
+> ## ⚠ 本文对应版本 0.4.0（0.x 发布版）
 >
-> 版本号 `0.1.0-test`（`inking::kVersion` / `inking::kVersionStage`）。
+> 版本号 `0.4.0`（`inking::kVersion` / `inking::kVersionStage`）。
 >
 > - **本文是重建稿**：原任务书未随仓库搬入，正文按代码注释里的引用反推，逐节标了证据。
 > - **只对编号负责**：它回答"哪个任务、落在哪、做到什么程度"，不替代 `docs/zh/api/*.md`。
-> - **不要用于生产**：`0.1.0-test` 是内部联调版本，任务状态会随接口调整变化。
+> - **不要用于生产**：`0.4.0` 是内部联调版本，任务状态会随接口调整变化。
 
 ## 0 这份文档是什么 / 重建说明
 
@@ -349,6 +349,37 @@ B 系列是"单个组件内部"的深度：不是新能力，而是把某一件�
   ③ `Accept()` 分清三种模式：开文件/存文件要**选中的文件**，选目录要**当前目录**。
 - **偏离**：不做原生对话框、驱动器列表、书签/最近位置、文件名与目录分开输入、多列/图标视图。
 
+### C6 定点浮窗（`InkingFixedPopup`）
+
+- **目标**：一个**固定几何、自己定位**的动态面板——`OpenAt(点)` 在定点弹出，靠近边缘自动翻到
+  对侧，比窗口还大时贴边并允许溢出。点击**吃掉**（不透到下面），点外部默认关闭。
+- **落点**：`panel/InkingFixedPopup.h` + `src/panel/InkingFixedPopup.cpp`；落位算术在
+  `detail/InkingPopupPlacement.h`（纯函数，可单测）。
+- **API**：`OpenAt(x, y)` / `SetTarget` / `Close` / `IsOpen` / `AddItem` /
+  `SetCloseOnOutsideClick` / `SetTakeFocusOnOpen` / `SetClampBounds` / `GetResolvedSideX/Y` /
+  `IsClampedX/Y`；事件 `opened` / `closed`；扩展点 `onPopupOpened` / `onPopupClosed` /
+  `onOutsidePressed`。
+- **验收**：① 落位四方向 + 两轴独立 + 超宽夹紧（`check_popup_placement`，7 条数字断言）；
+  ② 打开后 `GetX/GetY` 等于算出来的位置；③ 内部静态按钮能被 `QueryHit` 命中（靠 `QueryHit`
+  对动态容器深挖）；④ 空白区 `kind == Block`；⑤ 外部按下后 `IsOpen() == false`。
+- **偏离**：**这是 C 系列里第一个引入浮层与输入消费的件**（4.1 的第 3 条到 C5 为止适用）。
+  它不提供穿透开关（"点透传到下层"未排期）；不做开合动画，也不做 portal——父级的兄弟仍盖不住
+  （`InputDesign.md` §15 第 3 条）。
+
+### C7 菜单浮窗（`MenuPopup`）
+
+- **目标**：基于 C6 的竖排菜单——`AddButton` 加项（可绑**局部快捷键**）、`AddItem` 挂任意件、
+  `OpenAt(点)` 打开。定位 / 吃掉 / 点外关闭全部继承自 C6，本类只补布局、项表与快捷键。
+- **落点**：`prefab/MenuPopup.h`、`prefab/MenuPopupData.h`、`src/prefab/MenuPopup.cpp`。
+- **API**：`AddButton(look, text, action, shortcut)` / `AddItem`（含工厂版）/
+  `BindLocalShortcut` / `GetItemCount` / `GetItemRect` / `GetItemNode` / `GetActivatedCount`；
+  扩展点 `onMenuActivated`（项被激活后、关闭之前）。
+- **验收**：① 相邻项 y 差 = `itemHeight + gap`；② 容器宽 = `itemWidth + padding×2`；
+  ③ `TriggerClick` 触发一次回调并自动关闭；④ 局部快捷键命中一次并关闭；⑤ 焦点被夺走后
+  下一次指针变化就取回；⑥ 重复绑定、与全局表冲突都被拒（WARN，不静默）。
+- **偏离**：局部快捷键是**焦点模态**——菜单开着才存在，且打开期间吃焦点。这与 `MenuBar`
+  的全局表**同名不同义**，别混用。不做子菜单、方向键导航、开合动画。
+
 ## 5 D 系列：动画与过渡
 
 ### D-1 过场段各自带时长；动画绝不改本地几何
@@ -520,4 +551,4 @@ A 系列 `A1`–`A14` 全部有归属（`A5`/`A9`/`A10` 只在 §8.2 出现）�
 
 ---
 
-> 本文档对应版本：0.1.0-test（测试版本）。
+> 本文档对应版本：0.4.0（0.x 发布版）。

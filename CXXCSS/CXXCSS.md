@@ -709,7 +709,7 @@ window 里的字段 "title" 不认识（…… **没有回读口的设置不收*
 | --- | --- |
 | `name` | 与文件名、代码里使用的名字三处一致 |
 | `width` / `height` | 设计坐标尺寸 |
-| `dynamic` | 可选，布尔。`true` → 生成的类继承 `ink::InkingDynamicButton`（几何可在运行期改、不进命中表、指针由它自己在 `Tick` 里拉）；不写或 `false` → `ink::InkingStaticButton`。见 4.3 |
+| `dynamic` | 可选，布尔。`true` → 生成的类继承 `ink::InkingDynamicButton`（几何可在运行期改、不进命中表、指针由场景在"指针变化的那一帧"推一次通知、它自己读状态判）；不写或 `false` → `ink::InkingStaticButton`。见 4.3 |
 | `normal` / `hover` / `onclicked` | 三态外观，结构相同 |
 | `text` | 可选。**不建议用**，见 §5 |
 | `selfAnchorX/Y`、`traceAnchorX/Y` | 锚点 |
@@ -873,11 +873,11 @@ button->stateChanged.Subscribe([](inking::ButtonState from, inking::ButtonState 
 
 | 维度 | 静态档 | 动态档 | 影响 |
 | --- | --- | --- | --- |
-| **采样时机** | 由**渲染帧**派发（场景在指针事件后推 `MouseHover` / `MousePress`） | 固定 **50Hz 逻辑步**里自己 `JudgePointer` 拉（`Timeline.h` 的逻辑步长） | 快速划过时，"状态什么时候更新"最多差一个逻辑步——这不是 bug |
-| 命中 | 进场景的命中表，跨组件遮挡由表 + `IsAbove` 仲裁 | 不进表，自己算；遮挡由"谁在 Tick 里先被问"决定 | 动态档被别的组件盖住时仍可能收到悬停 |
-| 遮挡仲裁 | 与层级同源（表 + 局部层级） | 不做跨组件仲裁 | 需要严格遮挡就把它做成静态档 |
+| **采样时机** | 由**渲染帧**派发（场景在指针事件后推 `MouseHover` / `MousePress`） | **同一次派发里**先收一次 `onPointerStateChanged`，再由自己 `JudgePointer` 读状态（0.4.1 T-02） | 两档在**同一帧**更新；鼠标不动时两档都不更新（不再有"差一个逻辑步"） |
+| 命中 | 进场景的命中表，跨组件遮挡由表 + `IsAbove` 仲裁 | 不进表（表里只留一个洞），但**几何遮挡仍按 `IsAbove`** 与静态答案合并 | 动态组件盖住下面的静态组件时，下面那个收不到输入——与静态档一致 |
+| 遮挡仲裁 | 与层级同源（表 + 局部层级） | 几何遮挡**同源**；输入归属**不同源**（它自判） | 两个动态组件重叠时按 z 序取最上面那个 |
 | 几何写入口 | 没有（类型上就调不到） | `Resize` / `ChangeSelfAnchor` / `ChangeTraceAnchor` / `ChangeOffset` | 只有动态档能"边跑边改" |
-| 三态过渡 | 每渲染帧推进（真实 delta） | 每逻辑步推进（固定步长） | 同一份 `transition.duration` 在两档上"走完的墙钟时间"略有差别 |
+| 三态过渡 | 每渲染帧推进（真实 delta） | 每渲染帧推进（真实 delta，同一份 `ButtonLook`） | **没有差别**——两档共用一套插值 |
 
 **一条使用约束**：`clicked` / `stateChanged` 都是**同步**触发的（在 `MouseHover` /
 `MousePress` / `JudgePointer` 里当场 Emit）。**不要在回调里改同一个按钮的状态**

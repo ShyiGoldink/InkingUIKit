@@ -33,7 +33,7 @@ InkingButtonLike      契约：clicked / stateChanged 事件 + 三态 + [√] �
 detail::ButtonPaint   绘制：形状 / 贴图 / 描边阴影 / 文字
       ↓
 InkingStaticButton    接线：形状、文字、命中、登记（输入由场景推）
-InkingDynamicButton   接线：同上（输入自己在 Tick 里拉）
+InkingDynamicButton   接线：同上（输入由场景在指针变化时通知，它自己读状态）
 ```
 
 **为什么不抽成纯接口**：`InkingButtonLike` 必须**带状态**（`ButtonLook` 那十几个字段、
@@ -172,10 +172,11 @@ bool IsPressCaptured() const noexcept;
 | | 静态 | 动态 |
 | --- | --- | --- |
 | 谁判命中 | 场景（查表 + 线性扫） | **自己**（`JudgePointer` 读场景指针状态） |
-| z 序 / 遮挡 | 场景负责 | **自管自**（不做遮挡仲裁） |
-| 采样率 | 每渲染帧 | **逻辑步**（默认 50Hz） |
+| 几何遮挡 | 表 + `IsAbove` | **同源**（`QueryHit` 把动态答案与静态答案按 `IsAbove` 合并） |
+| 输入投递 | 场景推**结果** | 场景在指针变化时推一次**通知**，它自己拉状态 |
+| 采样时机 | 指针变化的那一帧 | **同一帧**（0.4.1 T-02，两档不再差一个逻辑步） |
 
-代价要说清楚：短于一个逻辑步（20ms）的点击看不出来。人手点击 80ms 起步，够用。
+代价要说清楚：动态组件若在通知里改了几何，本帧命中仍按变化前的列表算——至多一帧错位。
 
 ### InkingButtonLike（继承来的公开面）
 
@@ -687,4 +688,4 @@ void AudioTick(float deltaSeconds);   // 主循环每帧调（窗口层已经接
 
 ---
 
-> 本文档对应版本：**0.1.0-test（测试版本）**。
+> 本文档对应版本：**0.4.0（0.x 发布版）**。

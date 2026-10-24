@@ -450,4 +450,4 @@ SDL_VIDEO_DRIVER=dummy INK_CAPTURE=/tmp/shot.png INK_AUTOQUIT=1 ./inking_demo.ex
 
 ---
 
-> 本文档对应版本：**0.1.0-test（测试版本）**。
+> 本文档对应版本：**0.4.0（0.x 发布版）**。

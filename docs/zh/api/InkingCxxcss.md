@@ -190,5 +190,5 @@ CMake 侧不用手写这些参数：`ink_add_generated(<目标> OUT_DIR ... SOUR
 
 ---
 
-> 本文档对应版本：**0.1.0-test（测试版本）**。配置字段的权威说明在
+> 本文档对应版本：**0.4.0（0.x 发布版）**。配置字段的权威说明在
 > [`CXXCSS/CXXCSS.md`](../../../CXXCSS/CXXCSS.md)。

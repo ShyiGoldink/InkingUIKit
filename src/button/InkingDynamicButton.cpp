@@ -189,11 +189,11 @@ void InkingDynamicButton::syncBaseColor() noexcept {
 }
 
 bool InkingDynamicButton::IsPointerOver() const noexcept {
-    return _pointerOver;
+    return _probe.IsHovered();
 }
 
 bool InkingDynamicButton::IsPressCaptured() const noexcept {
-    return _pressedOnButton;
+    return _probe.IsCaptured();
 }
 
 // ---------------------------------------------------------------------------
@@ -209,9 +209,7 @@ bool InkingDynamicButton::JudgePointer() noexcept {
         // 三态退回走继承来的喂入口（它们自己会经钩子同步基类颜色）。
         const bool hoverChanged = MouseHover(false);
         const bool pressChanged = MousePress(false);
-        _pointerOver = false;
-        _pressedOnButton = false;
-        _wasDown = false;
+        _probe.Reset();
         return hoverChanged || pressChanged;
     }
 
@@ -222,43 +220,38 @@ bool InkingDynamicButton::JudgePointer() noexcept {
 
     // 命中自判：世界坐标 → 本地坐标，问自己的形状。
     // 指针不在窗口里时一律算"不在按钮上"（窗口外不该继续悬停）。
-    _pointerOver = inside
-                && HitTest(scene->GetPointerX(), scene->GetPointerY());
+    const bool hit = inside
+                  && HitTest(scene->GetPointerX(), scene->GetPointerY());
 
-    const bool justPressed = down && !_wasDown;
-    const bool justReleased = !down && _wasDown;
-    // 抬起是否算一次点击：按下是在它身上按的，且松手时指针还在它身上。
-    // 按着滑出去再松开是**取消**——那是用户唯一能表达"我反悔了"的方式。
-    const bool click = justReleased && _pressedOnButton && _pointerOver;
-    _wasDown = down;
-
-    if (justPressed) {
-        // 按下那一刻指针在不在它身上，决定这次按下算不算它的。
-        // 在别处按下、按着挪进来的，不算（那一趟是别的组件抓住的）。
-        _pressedOnButton = _pointerOver;
-    }
-    if (justReleased) {
-        _pressedOnButton = false;
-    }
+    // 边沿、捕获、点击判定都在 `PointerProbe` 里（0.4.1 T-03）：
+    // 那三条语义与静态档是同一套，抄在组件里就会走形。
+    const detail::PointerProbeResult r = _probe.Update(hit, down);
 
     // 三态：按下 > 悬停 > 通常。按下用的是"这次按下算在按钮上"而不是"指针
     // 此刻在按钮上"——所以按着滑出去仍然是按下，和静态版的手感一致。
     // 喂入口是继承来的 `MouseHover` / `MousePress`（静态版由场景调它们，
     // 本类自己调），三态一变就会经 `onButtonStateChanged` 钩子同步基类颜色。
-    const bool hoverChanged = MouseHover(_pointerOver);
-    const bool pressChanged = MousePress(down && _pressedOnButton);
+    const bool hoverChanged = MouseHover(r.hovered);
+    const bool pressChanged = MousePress(down && _probe.IsCaptured());
 
-    if (click) {
+    if (r.clicked) {
         TriggerClick();
     }
     return hoverChanged || pressChanged;
 }
 
-void InkingDynamicButton::onTick(float /*deltaSeconds*/) {
-    // 输入在这里发生：动态组件的 Tick 是固定逻辑步（InkingScene::TickLogic
-    // 遍历绘制列表里的动态节点逐个调），所以"输入"和"几何推进"同拍——
-    // 状态必须和渲染同 t，否则快速动画下会差帧（docs/InputDesign.md §7）。
+void InkingDynamicButton::onPointerStateChanged() {
+    // **输入在这里发生**（0.4.1 T-02/T-03）：场景只在指针真的变了的那一帧
+    // 推一次信号（鼠标不动就不推），比以前的"每个逻辑步自己拉"更准——
+    // 50Hz 的逻辑步会白算（没动也在判）、也会晚判（最多差一个逻辑步，
+    // 短于 20ms 的点击直接漏掉）。
     JudgePointer();
+}
+
+void InkingDynamicButton::onTick(float /*deltaSeconds*/) {
+    // 这里**不再判输入**：输入已经改由 `onPointerStateChanged` 唤醒（见上）。
+    // 这个钩子留给"几何 / 计时"那类每逻辑步推进的事——本类自己没有，
+    // 但派生类（自检里的 `Mover`）重写它去改 offset，所以别把它删掉。
 }
 
 void InkingDynamicButton::onAnimationTick(float deltaSeconds) {

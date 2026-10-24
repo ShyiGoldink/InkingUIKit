@@ -1,117 +1,120 @@
-inking 0.1.0-test（测试版本）—— Windows x64 构建信息
+inking 0.4.0（发布版）—— Windows x64 构建信息
 ================================================================
 
-版本号      0.1.0
-版本阶段    test            ← 测试版本：接口 / ABI / 行为在 1.0.0 之前不承诺稳定
-构建日期    2026-10-18 15:55（GMT+8）
+版本号      0.4.0
+版本阶段    release          ← 0.x 发布版：可用、可集成，但 1.0 前不承诺跨版本 ABI 兼容
+构建日期    2026-10-24 13:12（GMT+8）
 构建类型    Release（CMake + Ninja）
-许可        MIT（见本包 LICENSE；第三方依赖见文末）
+许可        MIT（本仓库代码，见包根 LICENSE；第三方见 licenses/）
 
 工具链
-  GCC       16.2.0 (MSYS2 UCRT64)
+  GCC       16.2.0 (MSYS2 UCRT64, Rev4)
   CMake     4.4.3
   Ninja     1.13.2
   平台      Windows x64 (UCRT)
 
-依赖（运行期需要，本包**不含**这些 DLL）
-  SDL3        3.4.16
-  SDL3_ttf    3.2.x
-  SDL3_image  3.4.6
-  SDL3_mixer  3.2.4
-  FFmpeg      libavcodec 63.1.102（libavformat / avutil / swresample / swscale 同期）
+依赖版本（MSYS2 UCRT64）
+  SDL3              3.4.16
+  SDL3_image        3.4.6
+  SDL3_ttf          3.2.2
+  SDL3_mixer        3.2.4
+  FreeType          2.14.3
+  HarfBuzz          14.5.0
+  GLib              2.90.0
+  FFmpeg            仅构建期检查（当前二进制未引用，见下）
 
-产物
-  bin/libinking.dll              1,368,998 字节   动态库本体
-  lib/libinking.dll.a              977,034 字节   导入库（链接用）
-  bin/inking_demo.exe              136,329 字节   真窗口演示（ESC 退出，F11 全屏）
-  bin/inking_demo_selftest.exe     195,091 字节   无头自检（dummy 视频 + 软件渲染器）
-  bin/inkgen.exe                   523,651 字节   CXXCSS/*.json -> C++ 的生成器
-  lib/cmake/inking/                5 个文件        find_package 配置 + CXXCSS 生成模块
+产物（包内路径 / 字节数 / SHA-256）
+  bin/libinking.dll               1,540,275  a83720cb96cbe4b2527f183f9ec3e463e48093d4be74d1f2f5a1ecfb67e5388d
+  lib/libinking.dll.a             1,030,478  f3a69ef50bfac0e14808197967eca89d68f8556ee0ac73e2c060bc615195a686
+  bin/inking_demo.exe               143,043  b769a762966a77c114fe5087924f5ed95159d953d6baa2c3270184ecdaed0261
+  bin/inking_demo_selftest.exe      288,783  fd002d53ae8726b14f691a09e103bb7c09ecd8d28e51aa46ca6d9236e78e906f
+  bin/inkgen.exe                    614,557  fe09ba7d13e942374b13032a6e23919ff7a82aaeed60b8f681b973678f95ed40
+  lib/cmake/inking/                 5 个文件  find_package 配置 + CXXCSS 生成模块
+
+  导出符号 1245 个（WINDOWS_EXPORT_ALL_SYMBOLS 生成的 .def）。
+
+运行期 DLL（本包**已含**，共 19 个，约 14.1 MiB）
+  SDL3.dll · SDL3_image.dll · SDL3_ttf.dll · SDL3_mixer.dll
+  libfreetype-6.dll · libharfbuzz-0.dll · libglib-2.0-0.dll · libgraphite2.dll
+  libpcre2-8-0.dll · libbrotlidec.dll · libbrotlicommon.dll · libbz2-1.dll
+  libpng16-16.dll · zlib1.dll · libiconv-2.dll · libintl-8.dll
+  libstdc++-6.dll · libgcc_s_seh-1.dll · libwinpthread-1.dll
+
+  来源与许可见 licenses/THIRD-PARTY-NOTICES.md。
+  **为什么带**：上一版不含 DLL，使用方必须先装 MSYS2 并把 ucrt64\bin 加进 PATH；
+  漏配的表现是静默退出（0xC0000135），没有报错窗口。现在解压即可运行示例。
+  **FFmpeg 不在其中**：src/video/ 的 FFmpeg 分支（INK_HAS_FFMPEG）当前未开启，
+  链接器未引入其符号，故无需分发；自己重建 SDK 时仍需其开发包（pkg-config）。
 
 文档（docs/ 下）
-  zh/UsageGuide.md                 手把手教程：设计大小 → 场景 → 第一个组件 → CMake →
-                                   编译运行，CXXCSS / API 两条路线并行
+  zh/UsageGuide.md                 手把手教程：设计大小 → 场景 → 组件 → CMake → 运行
   zh/API.md                        五分钟上手 + 模块地图 + 头文件全量索引
-  zh/api/                          16 个专页（Widget / Scene / Window / Render / Runtime / ...）
-  zh/CHANGELOG.md                  变更记录（本轮新增内容从这里看）
-  zh/AGENTS.md                     工程约定与 112 条踩坑记录
-  CXXCSS.md                        配置格式：目录与命名、形状层、层级、Button 字段全表、主题
-  examples/CXXCSS/                 17 份配置样例 + CXXCSS.md + config.json
+  zh/api/                          16 个专页（Widget / Scene / Window / Render / ...）
+  zh/CHANGELOG.md                  变更记录（0.1.1 → 0.4.0 逐条）
+  zh/SKILL.md · ComponentGuide.md · InputDesign.md · TaskGuide.md · UsageReport.md
+  zh/plans/                        本轮需求书与取舍记录
+  AGENTS.md                        工程约定与踩坑记录
+  CXXCSS.md                        配置格式：目录命名、形状层、层级、Button 字段全表
+  examples/CXXCSS/                 18 份配置样例 + CXXCSS.md + config.json
+  examples/minimal/                最小可运行工程（三步构建，验证 find_package）
 
-校验和（SHA-256）
-  libinking.dll      72295BAAE25AE18E8844C0DCB7405C44DE363C8426E9D64E365F99321C61C6A5
-  libinking.dll.a    F2D280B35BD17F4E769004DE24D8C66B3A1E6D97F1639C67B231DC65857914B8
-  inkgen.exe         2F6F5A723F8CE0756533A51212ED00C23C8A117DD316944D4C7696AFE3A01298
-  inking_demo.exe    2F3FCC13F57B2D014F0626ADC1ADA99952DFB1D74165D2B59A226C753D59AA43
-  demo_selftest.exe  ADCC6CF810C7DE26E334E484F40F84F5E43A4760CF99FC22CD7365711A8D0022
-  （包内每个文件的校验和见同级的 inking-0.1.0-test-win64.SHA256SUMS.txt）
-
-本轮（2026-10-18）改了什么
-  1. **局部层级（A8b）**：`zIndex` 从"全场景一条"改成"**兄弟之间**"——树序绘制 +
-     兄弟内 z。父容器永远先于自己的子孙画，于是"面板 z=20、里面的标签 z=1"不再被
-     底色盖掉（那是一条**不报错**的静默失效）。仍是严格全序，绘制 / 命中 / 子树仲裁 /
-     动静合并共用同一个比较器。
-  2. **截图**：`InkingWindow::RequestCapture(path)` / `Capture(path)` / `HasPendingCapture()`；
-     `.png` 走 `SDL_SavePNG`（SDL ≥ 3.4），其它走 `SDL_SaveBMP`，**不新增 SDL3_image 依赖**。
-     另有环境变量 `INK_CAPTURE=<路径>`：启动后第一帧零代码落一张图。
-  3. **运行期主题（只做颜色）**：`theme/InkingTheme.h`。生成期仍按**烘焙主题**把 `$token`
-     烘成字面量（= 默认色），同时把 token 名留在组件数据里；运行期 `SetActiveTheme("light")`
-     一句话换肤。**字号 token 与 stroke / shadow / image / canvas / scroll 的颜色仍是编译期的。**
-  4. **标签 `height` 写 `0`** 不再被判"必须大于 0"（与省略等价，产物里都不出现那一行）。
+本版内容（0.4.0，GoldingCore 第三轮 18 条落地 15 条）
+  A 组（树的动态性）：收集表按树 DFS 重建；容器命中递归进基类 HitTestNode；
+    AddChild / RemoveChild / ClearChildren / Resize 触发重排；按钮显示尺寸同步
+  B 组（布局表达力）：SetName + FindByName；MenuBar::GetCurrentHeight；
+    按钮尺寸观测口与布局结果一致
+  C 组（暂缓 3 条）：透明兜底色（品红）、按钮文字对齐字段、缺字形字体资产
+  D 组（无头能力）：Open / PumpOnce / RunFrames；RenderToTexture；SetFixedDelta；
+    PostFrameTask / RunAfterFrames；RequestClose(int) + Show 返回退出码；
+    RebuildHitTable；Activate
+  同版并入：0.1.1（静默失效清零）、0.2.0（装饰笔 / $extends / 输入框滚动）、
+    0.3.0（字体回退链）、局部层级（A8b）、透明窗口（window.transparent）、
+    默认主题「现代浅紫」
 
 验证记录
-  1. 构建：`ninja -C build-release` 全部目标通过，无 error。
-  2. ctest：2/2 passed（inkgen 配置校验 + 生成链路的编译自检）。
-  3. 自检（**在包内跑**，不是源码树）：`bin/inking_demo_selftest.exe` —— 125 项 [ok] /
-     **失败项 0**，退出码 0。覆盖：场景登记 / 组件树 / 命中表 / 按钮三态与点击 /
-     动态 Tick / 渲染提交 / 消息队列 / 任务队列 / 窗口缩放与全屏 / 快捷键 / 文字高清 /
-     音频接线 / **层级（19 项，含真渲染像素）** / **截图失败路径（4 项）** /
-     **运行期主题（18 项，含真渲染像素蓝→红→蓝）**。
-  4. 截图冒烟：`SDL_VIDEO_DRIVER=dummy INK_CAPTURE=/tmp/shot.png INK_AUTOQUIT=1
-     ./bin/inking_demo.exe` ⇒ 1280×720 PNG，30,291 字节，内容是示例界面。
-  5. 双主题生成：给 `CXXCSS/Theme/` 放第二份主题后 `inkgen` 产出 2 张表、
-     `kThemeCount = 2`、`kDefaultThemeName` 正确；删掉其中一份的一个 token 再校验 ⇒
-     `[错误] 主题 "light" 里没有颜色 token "$accent"`，退出码 1。
-  6. 二进制判据：`libinking.dll` 的依赖含 SDL3 / SDL3_image / SDL3_mixer / SDL3_ttf 四件齐全。
-  7. `cmake --install` 产物齐全：`lib/cmake/inking/` 5 个文件（`find_package(inking CONFIG)`
-     可直接用）。**打包脚本改走 `cmake --install`**，正是为了不再漏这份配置。
-  8. **消费方 smoke（用本包，不碰源码）**：新建一个只写 `find_package(inking CONFIG REQUIRED)`
-     + `target_link_libraries(smoke PRIVATE inking::inking)` 的工程，配
-     `-DCMAKE_PREFIX_PATH="<包根>;C:/msys64/ucrt64"` ⇒ configure / build / 运行全通过，
-     输出 `version=0.1.0-test design=1280x720`。
+  1. 构建：`cmake --build build-release -j` 全部目标通过，无 error。
+  2. ctest：4/4 passed（inkgen 配置校验 / 字段表对账 / 生成链路编译 / 静默失效清单对账）。
+  3. 自检（构建树）：`bin/inking_demo_selftest.exe` —— 232 项 [ok] / 0 项 [skip] /
+     **失败项 0**，退出码 0，耗时约 1.3 秒。
+  4. 截图冒烟：`SDL_VIDEO_DRIVER=dummy INK_CAPTURE=... INK_AUTOQUIT=1 bin/inking_demo.exe`
+     ⇒ 1280×720 PNG，30,148 字节，退出码 0。
+  5. 二进制判据：libinking.dll 的导入表含 SDL3 / SDL3_image / SDL3_mixer / SDL3_ttf 四件；
+     完整运行期闭包 19 个 DLL，全部在 bin/ 内。
+  6. `cmake --install` 产物齐全：lib/cmake/inking/ 5 个文件，find_package(inking CONFIG) 可用。
+  7. 包内验收（`env -i`，PATH 只留 `C:\Windows\system32` 与 `C:\Windows`，
+     不含 MSYS2 / 工具链，模拟只拿到 zip 的机器）：
+     - bin/inking_demo_selftest.exe ⇒ 232 项 ok / 0 skip / **失败项 0**，退出码 0
+     - bin/inking_demo.exe（dummy 视频 + INK_CAPTURE）⇒ 1280×720 PNG，30,148 字节，
+       退出码 0
+     - examples/minimal 拷到包外构建 ⇒ configure / build / 运行全通过，退出码 0；
+       POST_BUILD 自动拷到 20 个 DLL（19 运行期 + libinking）
+  8. 包完整性：194 个文件，zip 约 8 MB，SHA256SUMS 可逐条校验（BUILD.txt 不计入）。
 
 怎么用
-  README.md 的「用预编译包（不编译源码）」一节给了两条路线**可直接复制**的
-  CMakeLists.txt / CMakePresets.json / main.cpp。要点：
+  1. 只想看效果：双击 bin/inking_demo.exe（ESC 退出，F11 全屏）；或命令行跑
+     bin/inking_demo_selftest.exe，读末行"失败项：N"。
+     **不需要 MSYS2、不需要改 PATH**——DLL 就在 exe 旁边。
+  2. 写自己的工程：见 README「用预编译包」两条路线；最快的是把
+     examples/minimal/ 整份拷出去改：
+       cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+             -DCMAKE_PREFIX_PATH="<本包根>;C:/msys64/ucrt64"
+       cmake --build build
+     把 <本包>/bin/*.dll 拷到 exe 旁（minimal 的 CMakeLists 已自动做）。
+  3. 前提：编译需要 MSYS2 UCRT64 的 cmake / ninja / gcc / sdl3 四件 / ffmpeg。
+     **不能用 MSVC 链接本包**（MinGW 的 .dll.a 与 MSVC 的 .lib 不兼容）。
+  4. 排错先截图：设 `INK_CAPTURE=<路径>` 跑一次，比加日志快。
+  5. 跑自检会在 exe 旁生成 LOG/ 目录（日志），不属于包内容，可删。
 
-  1. 前提：MSYS2 UCRT64 的 cmake / ninja / gcc / sdl3 四件 / ffmpeg。
-     **不能用 MSVC 链接本包**（MinGW 的 .dll.a 与 MSVC 的 .lib 互不兼容）。
-  2. `find_package(inking CONFIG REQUIRED)` 之后会导出：
-       inking::inking        库目标（传播 include / SDL3 / FFmpeg / 编译宏）
-       INKING_SDK_DIR        SDK 根
-       INKING_INKGEN         bin/inkgen.exe
-       INKING_CXXCSS_DIR     examples/CXXCSS（配置样例）
-       INKING_INKGEN_CMAKE   生成模块（include 它才有 ink_add_generated）
-  3. 运行期：libinking.dll 用 POST_BUILD 自动拷到 exe 旁；SDL3 / FFmpeg 的 DLL
-     需要 PATH 里有 C:\msys64\ucrt64\bin。找不到时**静默退出**（0xC0000135）。
-  4. 音频必须显式 `AudioInit()`：窗口层只负责每帧 AudioTick 与关窗时 AudioShutdown。
-  5. 排错先截图：设 `INK_CAPTURE=<路径>` 跑一次，比加日志快。跑自检会在 exe 旁留一个
-     `Log.html`（日志），它不属于包内容。
-
-已知限制（详见 README.md「已知限制」）
+已知限制（详见 README「已知限制」）
   - 只在 Windows + MSYS2 UCRT64 + Ninja 构建过；Linux / macOS 未验证。
   - 单行输入框：多行、撤销 / 重做、Tab 焦点遍历、IME 候选窗定位未做。
   - AppearanceType::Svg 没有画法（配置能写，运行期静默退回纯色 color）。
-  - **没有 portal**：层级虽然是局部的（树序 + 兄弟内 z），但子节点的 z 盖不过**父级的
-    兄弟**。要压住同一容器之外的内容，抬**容器自己**（`Select` 的 `expandedZIndex` 就这么用）。
-  - **运行期换肤只覆盖颜色，且只覆盖三处**：按钮三态、面板两态、标签文字色。
-  - **字号 token 是编译期的**：改字号要重新生成（那是几何：重排 + 重烘命中表 + 字图集）。
-  - 包内不含 SDL3 / FFmpeg 的 DLL（运行期依赖，由使用方提供）。
+  - 没有 portal：子的 z 盖不过父级的兄弟，要压就抬容器自己。
+  - 运行期换肤只覆盖颜色（按钮三态 / 面板两态 / 标签文字色）；字号 token 是编译期的。
+  - 透明窗口只在部分后端成立（D3D11 实测可用；D3D12 / Vulkan 多数不行）。
 
 许可
-  本仓库自身代码：MIT，全文见本包 LICENSE。
-  第三方依赖：
-    SDL3 / SDL3_image / SDL3_ttf / SDL3_mixer   zlib：保留版权声明即可
-    FFmpeg                                     LGPL-2.1+：**必须动态链接**，分发时
-                                               需一并提供其许可与源码获取方式
-  若改用静态链接或 GPL 配置的 FFmpeg，整个作品的许可约束会跟着变。
+  本仓库自身代码：MIT，全文见包根 LICENSE。
+  第三方（随包 DLL）：许可见 licenses/<组件>/，清单与源码获取方式见
+  licenses/THIRD-PARTY-NOTICES.md。LGPL 组件均为动态链接，替换 DLL 即可。
+  若启用 FFmpeg 分支：LGPL-2.1+ 要求动态链接，并随分发提供其许可与源码获取方式。

@@ -21,9 +21,10 @@
 //         `HitTest`，然后**推**给按钮（MouseHover / MousePress / MouseRelease）。
 //         z 序、遮挡、抓取（按下之后指针滑出去还算它按着）全在场景那边。
 //
-//   动态：`DispatchPointer` 明确跳过动态节点（动态组件不进表、也不被遍历，
-//         docs/InputDesign.md §2 / §7），所以**没人会喂它**。它每帧在自己的
-//         `Tick` 里**读**场景的指针状态（GetPointerX/Y / IsPointerDown /
+//   动态：`DispatchPointer` 明确跳过动态节点的**推**通道（不走
+//         `PushPointerHover/Press/Click`），所以**没人替它判**。场景只在指针
+//         真的变了的那一帧推一次 `onPointerStateChanged`（0.4.1 T-02），它在那
+//         一趟里**读**场景的指针状态（GetPointerX/Y / IsPointerDown /
 //         IsPointerInside）、自己问自己的形状、自己推三态、抬起时自己触发点击。
 //
 // 「自己拉」不是实现偷懒，是这一档的前提：几何每帧都在变，谁都没法替它维护
@@ -36,10 +37,11 @@
 //     一个顺带的好处：现在那条线性扫的临时实现里，动态节点**仍然参与**"谁在最
 //     上面"的判断，所以它压住的那块静态组件不会被悬停 / 点击——遮挡这件事在
 //     派发那一侧已经是对的，只是"事件由谁接手"由动态组件自己决定。
-//   - **采样率 = 逻辑步**：Tick 走的是固定逻辑步（默认 50Hz），而指针状态是每
-//     渲染帧更新的，所以"按下与抬起落在同一个逻辑步里"（短于 20ms 的点击）
-//     看不出来。人手的点击是 80ms 起步，够用；要更稳得等输入机制那一轮把
-//     帧计数落下来（docs/InputDesign.md §5），那时这里也不必改。
+//   - **采样时机 = 指针变化的那一帧**（0.4.1 改）：以前是"每个逻辑步（50Hz）
+//     自己拉"，会白算（鼠标没动也在判）也会晚判（最多差一个逻辑步，短于 20ms
+//     的点击直接漏掉）。现在由场景判"指针真的变了"再推信号，鼠标不动就不推。
+//     代价是至多**一帧错位**：通知发生在帧首，组件若在通知里改了几何，本帧的
+//     命中仍按旧列表算——这是有意接受的，不是缺陷。
 //
 // ---------------------------------------------------------------------------
 // 三态 / 过渡 / 点击事件**不在这个类里**：它们住在 `InkingButtonLike.h`
@@ -58,6 +60,7 @@
 // （CXXCSS.md §4）。生成类的用法与静态版一样：`inking::cxxcss::DynamicTestButton b{parent};`
 
 #include <button/InkingButtonLike.h>
+#include <detail/InkingPointerProbe.h>
 #include <widget/InkingDynamicWidget.h>
 
 #include <cstdint>
@@ -166,8 +169,11 @@ public:
      * `MouseHover` / `MousePress` / `MouseRelease`——由场景派发推过来；
      * 本类没有那三个推的入口（它们继承来了，但**没人会调**），只有这一个
      * "拉"的入口：它从所属场景读指针状态，自己判命中、自己推三态
-     * （调继承来的 `MouseHover` / `MousePress`）。`onTick` 里每步调一次，
-     * 自检也可以手动调。
+     * （调继承来的 `MouseHover` / `MousePress`）。
+     *
+     * **谁调它**：`onPointerStateChanged()`——场景只在指针真的变了的那一帧
+     * 推一次信号（0.4.1 T-02）。以前是 `onTick` 里每个逻辑步调一次，那条路
+     * 会白算（没动也判）也会晚判（最多差一个逻辑步）。自检仍可手动调。
      *
      * 幂等：同一份指针状态连着调两次，第二次什么都不做。
      *
@@ -192,10 +198,20 @@ protected:
         SyncButtonLookSize(_width, _height);
     }
 
-    /// **每帧一次的逻辑钩子**：输入在这里发生。
-    ///
-    /// 动态组件的 Tick 由 `InkingScene::TickLogic` 按固定逻辑步派发
-    /// （静态组件压根没有这个入口）。本类只做一件事：`JudgePointer()`。
+    /**
+     * **指针变化了**（0.4.1 T-02）：动态档的输入入口。
+     *
+     * 场景在指针真的变了的那一帧推一次（`DispatchPointer` 的第 0 步），
+     * 鼠标不动就不推——所以它既不是"每帧"，也不是"每个逻辑步"。
+     */
+    void onPointerStateChanged() override;
+
+    /**
+     * 每逻辑步一次。**本类不再在这里判输入**（那是上一版的落点）。
+     *
+     * 它留给"几何 / 计时"那类每步推进：派生类（自检里的 `Mover`）重写它去
+     * 改 offset，所以这条通道还在，只是和输入无关了。
+     */
     void onTick(float deltaSeconds) override;
 
     /**
@@ -230,16 +246,14 @@ private:
 
     ButtonData _data{};
 
-    /// 上一次判定时"左键按着没"。按下 / 抬起是**边沿**，动态组件自己记：
-    /// 静态版这份历史在场景那边（`_pointerWasDown`）。
-    bool _wasDown = false;
-
-    /// 这次按下是**在按钮上**按下去的吗。按下之后指针滑出去仍然算它按着
-    /// （"抓取"语义，和静态版的 `_pressedNode` 对应），所以这份状态也得自己存。
-    bool _pressedOnButton = false;
-
-    /// 上一次判定里"指针在按钮上"（自检观测口，也用来判抬起是否算点击）。
-    bool _pointerOver = false;
+    /**
+     * 边沿 / 捕获 / 点击的判定状态（0.4.1 T-03）。
+     *
+     * 以前这里是三个裸字段（`_wasDown` / `_pressedOnButton` / `_pointerOver`），
+     * 和定点浮窗要写的那份一模一样——第三份（列表行 / 树节点）必然走形。
+     * 现在住在 `detail::PointerProbe` 里，语义与静态档同一套。
+     */
+    detail::PointerProbe _probe;
 };
 
 }  // namespace inking

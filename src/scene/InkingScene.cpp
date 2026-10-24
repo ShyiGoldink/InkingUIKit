@@ -437,7 +437,9 @@ void InkingScene::ConsumeFrameDirty() noexcept {
     }
 
     // 指针那一半：这一帧的悬停判断已经做过了（T-4 起由 query 消费）。
+    // `_pointerNotified` 与它成对：0.4.1 T-02 的"通知动态节点"每帧最多一次。
     _pointerDirty = false;
+    _pointerNotified = false;
 
     // 滚轮那一半（A4）：滚轮是**一次性量**，帧末一律结清——没人收也丢掉，
     // 攒到下一帧就会变成"移动鼠标之后莫名滚了一下"。
@@ -677,6 +679,11 @@ void InkingScene::SetPointerState(float designX, float designY, bool down,
 
     if (moved) {
         _pointerDirty = true;
+        // 指针又变了一次 ⇒ 上一份状态的"已通知"作废，下一次 `DispatchPointer`
+        // 要为新状态再通知一次。主循环里 `SetPointerState` 每帧只调一次，所以
+        // 它与"每帧最多通知一次"等价；自检 / 手动跑帧会在一"帧"里连着改状态，
+        // 这时按状态算比按帧算更接近"指针变了就通知"的本意。
+        _pointerNotified = false;
     }
 }
 
@@ -949,17 +956,25 @@ HitResult InkingScene::QueryHit(float designX, float designY) noexcept {
     // 是谁"——容器里的按钮 / 输入框靠这一步才收得到 hover / 点击 / 滚轮 / 拖动，
     // 也才拿得到键盘焦点（焦点是"点击获得"的，见上面的 `SetKeyboardFocus`）。
     //
-    // 只在"表答的是 Block、且它是个容器"时替换，而且只在容器真的指出一个
-    // **Block 子孙**时才换：容器返回 nullptr（子树里只有标签那类 PassThrough 命中）
-    // 就保留原答案。**全局三态没有变**——容器在表里仍然只是一条 Block 条目，
-    // "容器里的东西盖住容器外的兄弟"是局部层级（A8b，暂缓）。
-    if (staticResult.kind == HitKind::Block && staticResult.target != nullptr
-        && staticResult.target->OwnsSubtreeHit()) {
-        if (InkingWidget* deep
-            = staticResult.target->HitTestNode(designX, designY)) {
-            staticResult.target = deep;
+    // **静态与动态同一套**（0.4.1 T-01）：以前这段只写在静态那一侧，于是
+    // `OwnsSubtreeHit() == true` 的**动态**容器（定点浮窗）里的按钮看得见、
+    // 点不到——探针实测 `QueryHit` 返回容器而不是那个按钮。两档的差别只该在
+    // "谁把事件送到手上"（静态推结果 / 动态发通知），不该在"答案是容器还是子孙"。
+    //
+    // 只有 **Block** 才深挖：PassThrough 的容器声明的是"我不吃"，替它深挖出
+    // 子孙等于把它变相变成了 Block。容器返回 nullptr 时保留原答案（子树里只有
+    // 标签那类 PassThrough 命中）。**全局三态没有变**——容器在表里仍然只是一条
+    // Block 条目，"容器里的东西盖住容器外的兄弟"是局部层级（A8b，暂缓）。
+    const auto normalize = [designX, designY](HitKind kind, InkingWidget* node) {
+        if (kind != HitKind::Block || node == nullptr
+            || !node->OwnsSubtreeHit()) {
+            return node;
         }
-    }
+        InkingWidget* deep = node->HitTestNode(designX, designY);
+        return deep != nullptr ? deep : node;
+    };
+
+    staticResult.target = normalize(staticResult.kind, staticResult.target);
 
     // 点不在任何动态洞里 → 静态表的答案就是最终答案，动态层一次都不用问。
     // 这就是"洞"的全部价值（§13：`isDirty == false` 时每帧 0 次 query 的加强版——
@@ -973,6 +988,10 @@ HitResult InkingScene::QueryHit(float designX, float designY) noexcept {
     if (dynamicHit == nullptr) {
         return staticResult;
     }
+
+    // 动态那一侧同样深挖（0.4.1 T-01）：和上面是同一个 `normalize`，所以
+    // "动态容器里的静态按钮"与"静态容器里的按钮"走完全相同的路径。
+    dynamicHit = normalize(dynamicKind, dynamicHit);
 
     // 静态与动态**按同一套层级规则合并**（§6）。动态组件压在静态组件上面时，
     // 静态表仍会算出它自己那一份答案，所以这一步不能省。
@@ -1014,6 +1033,41 @@ void InkingScene::DispatchPointer() {
     // 场景的骨架可能刚变过（增删、换 z），命中要按最新的顺序问。
     sortDrawList();
 
+    // ---- 0. 动态节点的输入时机：指针变了才通知（0.4.1 T-02）----
+    //
+    // 动态档的输入是"自己拉"（`docs/InputDesign.md` §7）：不进命中表、场景不替
+    // 它判。但"什么时候拉"以前是它在 `onTick` 里每 20ms 自己判一次——逻辑步
+    // 50Hz、与渲染帧不同拍，结果既会白算（鼠标不动也在判）也会晚判（最多差
+    // 一个逻辑步，短于 20ms 的点击直接漏掉）。现在改由这里**在指针真的变了
+    // 的那一帧**给一次信号：鼠标不动就一次都不给。
+    //
+    // 判据直接用 `_pointerDirty`——`SetPointerState` 只在位置 / down / inside
+    // 真变时置位，所以"每帧都喂同一个坐标"不会让它变成每帧通知。
+    //
+    // 位置**必须在 `QueryHit` 之前**：本帧命中读到的就是刚更新过的动态状态。
+    // 放在 `sortDrawList` 之前则更糟——遍历到的还是旧列表（新挂的节点没进去）。
+    //
+    // 回调里可能析构节点（它会被 `RemoveDrawNode` 从列表摘掉），所以每轮重查
+    // `size()`，并且结构代次一变就停：剩下的下一帧照常，不在这里硬撑。
+    if (_pointerDirty && !_pointerNotified) {
+        // 同一份状态只通知一次：`SetPointerState` 在真的变了时会把
+        // `_pointerNotified` 清回去，所以"变一次 ⇒ 通知一次"；
+        // 状态没变就重复调本函数（自检 / 手动跑帧）不会重复通知。
+        _pointerNotified = true;
+        const std::uint64_t generation = _structureGeneration;
+        for (std::size_t i = 0; i < _drawList.size(); ++i) {
+            InkingWidget* node = _drawList[i].node;
+            if (node == nullptr || !node->IsDynamic()
+                || !node->IsVisibleInTree()) {
+                continue;
+            }
+            node->PushPointerStateChanged();
+            if (_structureGeneration != generation) {
+                break;
+            }
+        }
+    }
+
     // 通用指针派发（A1 补齐）：**不再只认 Button**。
     //
     // 改之前这里把任何非动态节点 `static_cast<InkingStaticButton*>` 再调
@@ -1023,8 +1077,9 @@ void InkingScene::DispatchPointer() {
     // 没重写的拿默认空实现。**场景层从此不认识任何具体组件**
     // （本文件上面那个 `#include <button/InkingStaticButton.h>` 也一起删掉了）。
     //
-    // 动态组件仍然跳过：它们的输入是自己在 `Tick` 里**拉**的
-    // （`docs/InputDesign.md` §7），场景推过去反而会和它自己那份判定打架。
+    // 动态组件不走这三个推的钩子：它们由上面第 0 步的通知唤起，自己读状态判
+    // （`docs/InputDesign.md` §7）。所以这里返回 nullptr 不是"不许收输入"，
+    // 而是"这条投递通道不适用"，**别把它当成动态组件收不到事件的证据**。
     const auto dispatchTarget = [](InkingWidget* node) -> InkingWidget* {
         if (node == nullptr || node->IsDynamic()) {
             return nullptr;

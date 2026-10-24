@@ -2,12 +2,14 @@
 
 **一个用 SDF 形状 + 锚点定位写 UI 的 C++20 前端框架（动态链接库）。**
 
-> ## ⚠ 当前状态：**测试版本**（`0.1.0-test`）
+> ## ✅ 当前版本：**0.4.0 发布版**（`0.4.0-release`）
 >
-> - 接口 / ABI / 行为在 `1.0.0` 之前**不承诺稳定**，升级请对照
->   [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)。
+> - 0.x 期间接口 / ABI / 行为仍可能在次版本变化，升级请对照
+>   [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)；`1.0.0` 起才冻结。
+> - 预编译包 [`dist/inking-0.4.0-win64.zip`](dist/) **自带运行期 DLL**，
+>   解压即可运行示例；编译自己的工程仍需 MSYS2 UCRT64（MinGW ABI）。
 > - 只在 **Windows + MSYS2 UCRT64 + Ninja** 上构建过；Linux / macOS 未验证。
-> - **请勿使用现版本进行生产。** 正式 `1.0.0` 预计 2026 年 11 月底前推出。
+> - 可用于内部评估与产品集成验证；正式 `1.0.0` 预计 2026 年 11 月底前推出。
 
 ---
 
@@ -76,7 +78,7 @@ cmake --build build -j
 == 失败项：0 ==
 ```
 
-**看这一行，不要只看退出码。** 当前实测 **217 项 ok / 0 项失败**（退出码也等于失败项数，
+**看这一行，不要只看退出码。** 当前实测 **232 项 ok / 0 项失败**（退出码也等于失败项数，
 可以直接用；项数会随环境略有浮动——没有可读字体时文字高清那几条会打成 `[skip]`）。
 
 自检不需要显示器：`0.4.0` 起可以直接 `InkingWindow::Open()` + `RunFrames(n)` 手动跑帧，
@@ -114,34 +116,41 @@ PUBLIC**——两者都会改公开头里 `inline` 函数的**内容**（`kDefau
 | `build/bin/inking_demo_selftest.exe` | 无头自检 |
 | `build/inkgen/all/button_service.h` | 生成结果（看得见就能审） |
 
-导出方式：`WINDOWS_EXPORT_ALL_SYMBOLS`（CMake 生成 `.def`），当前导出 **1943** 个符号。
+导出方式：`WINDOWS_EXPORT_ALL_SYMBOLS`（CMake 生成 `.def`），当前导出 **1245** 个符号。
 **不**逐类标 `__declspec(dllexport)`，也**不**加 `-fvisibility=hidden`——两套机制混用是
 自相矛盾的（MinGW 上会让 `.def` 收不到符号）。
 
 ### 发布包（`dist/`）
 
-最小的可分发包（**测试版本，不要用于生产**）：
+最小的可分发包：
 
 ```bash
 cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-release --clean-first -j
-# 组装：见下表的目录约定；包根放 BUILD.txt 记录工具链 / 校验和 / 验证结果
+tools/package.sh          # 搬运 + 收 DLL 闭包 + 许可 + 校验和 + zip
 ```
 
 ```
-inking-0.1.0-test-win64/
+inking-0.4.0-win64/
 ├─ BUILD.txt            版本阶段、工具链、依赖版本、SHA-256、验证记录、已知限制、许可
 ├─ README.md            本文件
-├─ bin/                 libinking.dll · inking_demo.exe · inking_demo_selftest.exe · inkgen.exe
-├─ lib/                 libinking.dll.a（导入库）
-├─ include/             82 个公开头（`#include <widget/InkingWidget.h>` 的搜索根）
+├─ bin/                 libinking.dll · inking_demo.exe · inking_demo_selftest.exe
+│                       inkgen.exe · 19 个运行期 DLL（SDL3 及其传递依赖）
+├─ lib/                 libinking.dll.a（导入库）· cmake/inking/（find_package 配置）
+├─ include/             84 个公开头（`#include <widget/InkingWidget.h>` 的搜索根）
 ├─ docs/                API 文档（`API.md` + `api/`）、配置格式、变更记录
-└─ examples/CXXCSS/     配置样例（喂给 `inkgen.exe`）
+├─ examples/CXXCSS/     配置样例（喂给 `inkgen.exe`）
+├─ examples/minimal/    最小可运行工程（只依赖本包，验证 find_package）
+└─ licenses/            第三方许可原文 + THIRD-PARTY-NOTICES.md
 ```
 
-包内**不含** SDL3 / SDL3_ttf / SDL3_image / SDL3_mixer / FFmpeg 的 DLL——它们是运行期
-依赖，请由使用方自行提供（MSYS2 UCRT64 的 `mingw-w64-ucrt-x86_64-*` 包即可）。
-包内 `bin/inking_demo_selftest.exe` 可直接跑，`失败项：0` 即说明这份 DLL 是好的。
+`bin/` 自带**运行期 DLL 闭包**（SDL3 / SDL3_image / SDL3_ttf / SDL3_mixer、FreeType、
+HarfBuzz、GLib 等），所以示例**解压即跑**，不需要装 MSYS2、也不需要改 PATH。
+`bin/inking_demo_selftest.exe` 可直接跑，`失败项：0` 即说明这份 DLL 是好的。
+
+> 编译**自己的**工程仍需要 MSYS2 UCRT64（本包是 MinGW ABI）。原因不是缺运行库，
+> 而是缺编译器、SDL3 头文件与导入库；`find_package(inking)` 会继续 `find_dependency`
+> 它们。
 
 ### 在自己的工程里用
 
@@ -157,19 +166,24 @@ target_link_libraries(my_app PRIVATE inking::inking)
 
 ## 用预编译包（不编译源码）
 
-把 `inking-0.1.0-test-win64.zip` 解到任意目录，那个目录就是 **SDK 根**（下文写 `<SDK>`）：
+把 `inking-0.4.0-win64.zip` 解到任意目录，那个目录就是 **SDK 根**（下文写 `<SDK>`）：
 
 ```
 <SDK>/
-├─ bin/                 libinking.dll · inkgen.exe
-├─ include/             82 个公开头（#include <widget/InkingWidget.h> 的搜索根）
+├─ bin/                 libinking.dll · inkgen.exe · 19 个运行期 DLL
+├─ include/             84 个公开头（#include <widget/InkingWidget.h> 的搜索根）
 ├─ lib/                 libinking.dll.a · cmake/inking/（find_package 用）
 ├─ docs/                API 文档
 ├─ examples/CXXCSS/     配置样例（17 个 json + CXXCSS.md）
+├─ examples/minimal/    最小工程（CMakeLists.txt + main.cpp）
+├─ licenses/            第三方许可
 └─ BUILD.txt · README.md · LICENSE
 ```
 
-前提：装好 MSYS2 UCRT64 的
+**只想看效果**：直接双击 `bin/inking_demo.exe`，或命令行跑
+`bin/inking_demo_selftest.exe`（不需要 MSYS2）。
+
+**要编译自己的工程**：装好 MSYS2 UCRT64 的
 
 ```bash
 pacman -S --needed mingw-w64-ucrt-x86_64-{cmake,ninja,gcc,pkgconf} \
@@ -349,12 +363,22 @@ ERROR 日志，具体哪一项没生效写得清清楚楚（回读校验在库�
 
 ### 运行期 DLL
 
-`libinking.dll` 由上面 `POST_BUILD` 自动拷到 exe 旁。**SDL3 / FFmpeg 的 DLL 要自己在 PATH 里**：
+**用本包**：什么都不用做。`bin/` 已经带齐闭包（`libinking.dll` + SDL3 四件 + 传递依赖），
+示例程序直接跑；`examples/minimal/CMakeLists.txt` 也会把 `<SDK>/bin/*.dll` 拷到 exe 旁。
 
-- 推荐：把 `C:\msys64\ucrt64\bin` 加进系统 PATH（一次性，之后所有程序都能跑）
-- 或者：只在调试时临时加
+**自建工程**：`libinking.dll` 仍由 `POST_BUILD` 自动拷；**其余 DLL 要一起拷**，例如：
 
-找不到时的表现是**静默退出**（退出码 `0xC0000135`），没有报错窗口 —— 跑不起来先查这个。
+```cmake
+file(GLOB INKING_RUNTIME_DLLS "${INKING_SDK_DIR}/bin/*.dll")
+add_custom_command(TARGET my_app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${INKING_RUNTIME_DLLS} "$<TARGET_FILE_DIR:my_app>")
+```
+
+- 或者：把 `<SDK>/bin` 加进 PATH（只在调试时推荐）
+- 找不到时的表现是**静默退出**（退出码 `0xC0000135`），没有报错窗口 —— 跑不起来先查这个。
+- 本包**不含** FFmpeg DLL：`src/video/` 的 FFmpeg 分支（`INK_HAS_FFMPEG`）当前未开启，
+  二进制不引用其符号。构建期仍需要它的开发包（`find_package` 会检查）。
 
 ### CMake 导出了什么
 
@@ -382,10 +406,12 @@ ERROR 日志，具体哪一项没生效写得清清楚楚（回读校验在库�
 ## 目录结构
 
 ```
-include/            82 个公开头（按子系统分目录，与 src/ 一一对称）
-src/                54 个 .cpp + 3 个内部头
+include/            84 个公开头（按子系统分目录，与 src/ 一一对称）
+src/                58 个 .cpp + 3 个内部头
 examples/demo/      演示 + 无头自检（两个目标）
+examples/minimal/   最小工程（只依赖预编译包，随包分发）
 tools/inkgen/       CXXCSS → C++ 的生成器
+tools/package.sh    打包：搬运 + 收 DLL 闭包 + 许可 + 校验和 + zip
 CXXCSS/             UI 配置（Button / Panel / Label / Image / Text / Theme + 根下的 config.json）
 cmake/              SDL3 查找、inkgen 的构建规则
 docs/zh/            API 文档与变更记录
@@ -410,11 +436,12 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 | [`docs/zh/API.md`](docs/zh/API.md) | **从这里读起**：五分钟上手 + 模块地图 + 头文件全量索引 |
 | [`docs/zh/api/`](docs/zh/api/) | 16 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver + Anchor / ShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
 | [`CXXCSS/CXXCSS.md`](CXXCSS/CXXCSS.md) | 配置格式：目录与命名、公共骨架、形状层词汇表、Button 字段全表 |
-| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录 |
+| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.4.0 的逐条变化） |
+| [`examples/minimal/README.md`](examples/minimal/README.md) | 最小工程：三步构建 + 运行期 DLL 拷贝 |
 
 ---
 
-## 已知限制（测试版本）
+## 已知限制（0.x 发布版）
 
 1. **无显示 / 受限环境里的文字**：某些环境里 `SDL_IOFromFile` 对**所有**路径都失败
    （同路径 `fopen` 正常），于是 `TTF_OpenFont` 打不开字体、文字退化成占位画法。
@@ -431,7 +458,7 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 6. **编译警告**：`src/window/InkingWindow.cpp` 里重复 `#define NOMINMAX`
    （C++ 标准库的 `os_defines.h` 已经定义过）。无害，但可以先判 `#ifndef` 再定义。
 
-> **`0.1.0-test` 期间已修掉的两条历史限制**：
+> **`0.1.0-test` 之后已修掉的两条历史限制**：
 > ① `TaskQueue` 退出时 join 管家线程的死锁（以前进程"打印完失败项就不返回"，
 > 现在 1 秒退出、退出码 = 失败项数）；
 > ② 缺 CMake package config（`find_package(inking CONFIG)` 现在可用）。
@@ -447,12 +474,15 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 > | 依赖 | 许可 | 对你的要求 |
 > | --- | --- | --- |
 > | SDL3 / SDL3_image / SDL3_ttf / SDL3_mixer | zlib | 保留版权声明即可 |
-> | FFmpeg | **LGPL-2.1+**（MSYS2 包默认是动态链接的 LGPL 版） | **必须动态链接**，并随分发提供其许可与源码获取方式 |
+> | FreeType / HarfBuzz / GLib 等传递依赖 | FTL / MIT / LGPL-2.1+ | 保留声明；LGPL 组件保持动态链接 |
+> | FFmpeg | **LGPL-2.1+** | 本包不分发（二进制未引用）；若你启用 `INK_HAS_FFMPEG`，须**动态链接**并随分发提供其许可与源码获取方式 |
 >
+> 预编译包已经把随包 DLL 的许可原文放在 `licenses/`，
+> 清单与源码获取方式见 `licenses/THIRD-PARTY-NOTICES.md`。
 > 若改用**静态链接**或 GPL 配置的 FFmpeg，整个作品的许可约束会跟着变：LGPL 静态
 > 链接要求提供可重链接的目标文件，GPL 版则要求衍生作品也采用 GPL。MIT 只覆盖
 > 本仓库自己的代码，不改变这些依赖的许可。
 
 ---
 
-> 版本 `0.1.0-test`（测试版本） · 最后更新 2026-10-17
+> 版本 `0.4.0`（发布版） · 最后更新 2026-10-24

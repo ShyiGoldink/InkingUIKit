@@ -1,6 +1,6 @@
 # 组件开发指南（ComponentGuide）
 
-> ## ⚠ 本文对应版本 0.1.0-test（测试版本）
+> ## ⚠ 本文对应版本 0.4.0（0.x 发布版）
 >
 > 接口在 `1.0.0` 之前不承诺稳定；本文讲的是**写法**，具体签名以头文件与
 > `docs/zh/api/` 为准。示例代码与真实实现同源，但删减了日志与边界分支。
@@ -173,7 +173,8 @@ MarkDirty();          // 命中可能变了（同一块搬走了）
   静默不生效，不报错。
 - 钩子**不负责标脏**，也不拦截写入口。标脏是写入口的活；钩子只挂附加逻辑。
 - `onAnimationTick` 两档都收（颜色 / 变换动画与几何无关），`onTick` 只有动态档收
-  （固定逻辑步，默认 50Hz）。两条通道分开是有意的。
+  （固定逻辑步，默认 50Hz；**它管几何 / 计时，不管输入**）。`onPointerStateChanged`
+  也只有动态档收——指针真的变了才来一次（0.4.1 T-02）。三条通道分开是有意的。
 
 ### 1.6 标脏：重绘脏与命中脏是两条通道
 
@@ -265,8 +266,8 @@ void RelayoutParent() noexcept;                                    // [final] �
 | --- | --- | --- |
 | 几何写入口 | **没有**（构造即定型） | `Resize` / `ChangeSelfAnchor` / `ChangeTraceAnchor` / `ChangeOffset` |
 | 命中 | **进全局命中表** | **不进表**，自己判；占地记成"洞" |
-| 输入 | 场景**推**（`onPointer*`） | 自己在 `Tick` 里**拉**（`GetPointerX/Y`） |
-| 每帧 Tick | 不收 `onTick` | 收 `onTick`（固定逻辑步，默认 50Hz） |
+| 输入 | 场景**推结果**（`onPointer*`） | 场景在指针变化时推**通知**，自己拉状态（`onPointerStateChanged`） |
+| 每帧 Tick | 不收 `onTick` | 收 `onTick`（固定逻辑步，默认 50Hz；只管几何 / 计时） |
 | 颜色动画 | 收 `onAnimationTick` | 收 `onAnimationTick` |
 
 选择顺序：
@@ -279,6 +280,24 @@ void RelayoutParent() noexcept;                                    // [final] �
 静态档不是"不能动"：它能做颜色 / 透明度 / 变换过渡，因为那些不标命中脏。
 `src/inking.cpp` 里有编译期断言钉着"静态组件不该有 `Resize`"等四条；给静态组件
 加几何写入口，构建会当场变红。
+
+### 2.1 动态档的对照样板：`InkingFixedPopup`
+
+前面通篇拿 `InkingStaticPanel` 当样板（静态档）。动态档从 0.4.1 起有一份等价的：
+`panel/InkingFixedPopup.h`（定点浮窗）。八段式在它那里的对应关系：
+
+| 段 | 落点 |
+| - | - |
+| 数据面 | 复用 `PanelData`，只取 `closed` 那份（`open` / `startOpen` / `scroll` 忽略） |
+| 构造搬字段 | `ToAnchorData()` 搬定位字段；`OpenAt` 里再落位 |
+| 观测口 | `IsOpen` / `GetResolvedSideX/Y` / `IsClampedX/Y` / `GetShape` |
+| 写入口 | `OpenAt` / `SetTarget` / `Close`（内部走 `ChangeSelfAnchor` + `ChangeOffset`） |
+| 钩子 | `onRender`（填充 + 阴影）/ `onRenderDecoration`（描边）/ `onPointerStateChanged` |
+| 命中 | `HitTest` + `OwnsSubtreeHit() = true` + `PanelHitEnvelope`（整棵子树并集） |
+| 输入 | `onPointerStateChanged`（指针变化通知）+ `detail::PointerProbe` |
+
+与静态面板**唯一的结构差别**是档位：几何会变 ⇒ 不进命中表、命中靠 `QueryHit` 对容器深挖。
+除此之外的每一段都值得照抄——尤其是"填充与阴影在绘制趟、描边在装饰趟"那条（§1.7 的同一条理由）。
 
 ---
 
@@ -394,4 +413,4 @@ void MyButton::onPointerClick()           { TriggerClick();  }
 
 ---
 
-> 本文档对应版本：0.1.0-test（测试版本）。
+> 本文档对应版本：0.4.0（0.x 发布版）。

@@ -25,7 +25,7 @@ include("${CMAKE_CURRENT_LIST_DIR}/inkingTargets.cmake")
 #
 # 包结构是固定的：
 #   <sdk>/bin/inkgen.exe                    ← CXXCSS 生成器
-#   <sdk>/include/...                       ← 82 个公开头
+#   <sdk>/include/...                       ← 84 个公开头
 #   <sdk>/lib/cmake/inking/                 ← CMAKE_CURRENT_LIST_DIR 在这里
 #   <sdk>/examples/CXXCSS/                  ← 配置样例
 #

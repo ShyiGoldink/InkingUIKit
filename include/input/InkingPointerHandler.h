@@ -79,6 +79,21 @@ public:
         onPointerDrag(designX, designY, deltaX, deltaY);
     }
 
+    /**
+     * 指针状态变了一次（位置 / 按下 / 抬起 / 进出窗口）。转给 onPointerStateChanged。
+     *
+     * **只对动态节点推**（0.4.1 T-02）。静态节点的三件事按结果推：
+     * `PushPointerHover` / `PushPointerPress` / `PushPointerClick`——场景已经替它
+     * 判完了"你在不在下面 / 按下算不算你的"。
+     *
+     * 动态节点不进命中表、场景也不替它判，它要的不是结果而是**时机**：
+     * 一个"该重新算一次"的信号。采样点因此落在**指针变化的那一帧**，
+     * 所以鼠标不动时一次都不推（判据是 `InkingScene::_pointerDirty`）。
+     * 这一条取代了"每个逻辑步 Tick 里自己拉"：逻辑步是 50Hz 且与渲染帧
+     * 不同拍，快速划过时会多判（白算）或晚判（最多差一个逻辑步）。
+     */
+    void PushPointerStateChanged() noexcept { onPointerStateChanged(); }
+
 protected:
     // ---------------- [√] 可重写钩子 ----------------
     //
@@ -126,6 +141,22 @@ protected:
      */
     virtual void onPointerDrag(float /*designX*/, float /*designY*/,
                                float /*deltaX*/, float /*deltaY*/) {}
+
+    /**
+     * 指针状态变了一次（由 `PushPointerStateChanged` 转来）。默认什么都不做。
+     *
+     * **只有动态节点会收到**：它是"该重新读一次状态了"的信号，而静态节点
+     * 拿的是场景判好的结果（上面那五个钩子）。
+     *
+     * 不带参数是**故意的**（零状态原则）：要什么自己读——`GetScene()` 上的
+     * `GetPointerX/Y` / `IsPointerDown` / `IsPointerInside`。带坐标就等于把
+     * "哪个坐标系、哪一帧"这份约定又抄一遍，而场景已经存了一份。
+     *
+     * 频率：指针变化的那一帧一次（一帧内多次移动已合并成一次状态变化），
+     * 鼠标不动时一次都不调。所以**它不适合做"按住持续移动"**——那种逻辑
+     * 仍然读状态（`IsPointerDown`）在自己的 Tick 里跑。
+     */
+    virtual void onPointerStateChanged() {}
 };
 
 }  // namespace inking

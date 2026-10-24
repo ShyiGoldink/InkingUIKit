@@ -1,14 +1,15 @@
 # InkingFrontendDeveloper API 文档
 
-> ## ⚠ 当前为**测试版本**（Test Build）
+> ## 当前为 **0.x 发布版**（Release Build）
 >
-> 版本号 `0.1.0-test`（`inking::kVersion` / `inking::kVersionStage`）。
+> 版本号 `0.4.0`（`inking::kVersion` / `inking::kVersionStage`）。
 >
 > - **接口仍在变动**：本文档描述的类、函数、字段在 `1.0.0` 之前不承诺 ABI / API 稳定，
 >   升级请按 `docs/zh/CHANGELOG.md` 逐条对照。
 > - **行为已验证的范围**：示例工程 `inking_demo_selftest` 覆盖的项（见 §7）；
 >   未覆盖的能力一律按"可用但未验收"看待。
-> - **不要用于生产**：`0.1.0-test` 是内部联调版本，缺文档、缺错误码、缺跨平台验证。
+> - **适用范围**：`0.4.0` 是 1.0 前的发布版，文档、示例与预编译包齐备；
+>   生产集成前请先跑一遍自检，并注意尚未覆盖跨平台验证。
 
 本文件是**索引**：先读 §0 跑起来，再按 §3 的模块地图查专页。
 每个专页的写法是固定的四段：**定位说明 → 用到的数据结构 → 属性 → APIS**，
@@ -117,7 +118,7 @@ int main() {
 
 ---
 
-## 2. 测试版本的边界（"能用"与"验收过"）
+## 2. 0.x 发布版的边界（"能用"与"验收过"）
 
 | 项 | 状态 | 依据 |
 | --- | --- | --- |
@@ -125,7 +126,7 @@ int main() {
 | 无头自检（`inking_demo_selftest`） | **已验收**（失败项 0） | 见 §7 |
 | 真窗口渲染、文字栅格化、视频解码 | **可用但未逐项验收** | 沙箱内 `SDL_IOFromFile` 失败，字体打不开（见 §7 注） |
 | 跨平台（Linux / macOS） | **未验证** | 只在 Windows + MSYS2 UCRT64 上构建过 |
-| ABI 稳定性 | **不承诺** | 测试版本，见顶部横幅 |
+| ABI 稳定性 | **不承诺** | 0.x 发布版，见顶部横幅 |
 
 ---
 
@@ -168,6 +169,7 @@ int main() {
 | 页面 | 覆盖的头文件 |
 | --- | --- |
 | [api/InkingComponents.md](api/InkingComponents.md) | `button/*`、`panel/*`、`image/*`、`text/*`、`canvas/*`、`video/*`、`audio/*` |
+| [api/InkingFixedPopup.md](api/InkingFixedPopup.md) | `panel/InkingFixedPopup.h`（定点浮窗，0.4.1） |
 | [api/InkingPrefab.md](api/InkingPrefab.md) | `prefab/*` |
 | [api/InkingCxxcss.md](api/InkingCxxcss.md) | **没有头文件**：`CXXCSS/*.json` 编译期生成的那些组件类（`inking::cxxcss::OptionItem` 之类）、`RegisterAllButtons()`、语言表安装、`inkgen` 命令行 |
 
@@ -249,7 +251,7 @@ prefab（用上面的东西组装，不写新底层）
 
 ---
 
-## 7. 自检（测试版本唯一的行为依据）
+## 7. 自检（0.x 发布版唯一的行为依据）
 
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -301,5 +303,5 @@ cd build && PATH=.:$PATH ./bin/inking_demo_selftest.exe
 
 ---
 
-> 本文档对应版本：**0.1.0-test（测试版本）**。发现文档与代码不一致时，
+> 本文档对应版本：**0.4.0（0.x 发布版）**。发现文档与代码不一致时，
 > **以头文件注释为准**，并请把差异记到 `docs/zh/CHANGELOG.md`。

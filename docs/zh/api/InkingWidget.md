@@ -654,10 +654,11 @@ protected:
 ```
 
 四个几何写入口都是 `[final]`、都幂等（没变返回 false）。**不进命中表**，
-输入由它自己在 `Tick` 里从场景**拉**（`GetPointerX/Y` / `IsPointerDown` / `IsPointerInside`）。
+输入由场景在**指针变化的那一帧**推一次 `onPointerStateChanged`，它自己从场景
+**拉**状态（`GetPointerX/Y` / `IsPointerDown` / `IsPointerInside`）。
 
-`Tick` 走**固定逻辑步**（默认 50Hz），而指针状态每渲染帧更新 ⇒ 短于 20ms 的点击
-看不出来（人手点击 80ms 起步，够用）。
+`Tick` 仍走**固定逻辑步**（默认 50Hz），但**输入不再在 Tick 里判**（0.4.1 改）：
+采样跟着指针变化走，鼠标不动就一次都不判；代价是至多一帧错位。
 
 ## 常见坑
 
@@ -672,4 +673,4 @@ protected:
 
 ---
 
-> 本文档对应版本：**0.1.0-test（测试版本）**。
+> 本文档对应版本：**0.4.0（0.x 发布版）**。

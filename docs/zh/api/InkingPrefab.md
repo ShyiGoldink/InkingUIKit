@@ -16,6 +16,7 @@
 | `ListView` | 滚动容器 + 布局 + 只建可见项 | `prefab/ListView.h` |
 | `Select` | 收起按钮 + 就地展开的选项栏（+ 可选过滤框） | `prefab/Select.h` |
 | `FilePicker` | 路径框 + 快捷位置 + 列表 + 按钮栏 | `prefab/FilePicker.h` |
+| `MenuPopup` | 定点弹出的竖排菜单（项可绑局部快捷键） | `prefab/MenuPopup.h` |
 | `ListRow` | 带选中色的列表行（`InkingStaticButton`） | `prefab/ListRow.h` |
 | `PrefabTheme` | 一套配色 / 圆角 / 字体路径常量 | `prefab/PrefabTheme.h` |
 
@@ -449,4 +450,4 @@ std::string DefaultFontPath();
 
 ---
 
-> 本文档对应版本：**0.1.0-test（测试版本）**。
+> 本文档对应版本：**0.4.0（0.x 发布版）**。

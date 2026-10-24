@@ -125,9 +125,11 @@ public:
      *      状态**（会递归进入状态机）；
      *   2. 只报**目标状态**的变化（配了过渡时目标当场就变，显示值要几帧才走到）；
      *      要看"显示值"用 `onButtonDisplayAdvanced`；
-     *   3. 两档的**采样时机**不同（动态档是固定 50Hz 逻辑步、静态档由渲染帧
-     *      派发），所以"快速划过时状态什么时候更新"会有差别——见
-     *      `CXXCSS.md` §4.3 的两档差异表。
+     *   3. 两档的**采样时机**只在"同一帧内的先后"上有差别：静态档由
+     *      `DispatchPointer` 当场推结果，动态档由同一次派发推一次
+     *      `onPointerStateChanged` 再由它自己读状态（0.4.1 T-02 起这两件事
+     *      发生在**同一帧**）。鼠标不动时两档都不更新。差异表见
+     *      `CXXCSS.md` §4.3。
      */
     InkingEvent<ButtonState, ButtonState> stateChanged;
 

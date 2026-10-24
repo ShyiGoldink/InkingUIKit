@@ -24,8 +24,8 @@
 ```C++
 // inking.h
 inline constexpr const char* kProjectName = "InkingFrontendDeveloper";
-inline constexpr const char* kVersion     = "0.1.0";
-inline constexpr const char* kVersionStage = "test";   // 测试版本
+inline constexpr const char* kVersion     = "0.4.0";
+inline constexpr const char* kVersionStage = "test";   // 0.x 发布版
 std::string sdl3_version();                            // 例如 "3.4.16"
 ```
 
@@ -424,4 +424,4 @@ inking::SetActiveTheme("light");
 
 ---
 
-> 本文档对应版本：**0.1.0-test（测试版本）**。
+> 本文档对应版本：**0.4.0（0.x 发布版）**。

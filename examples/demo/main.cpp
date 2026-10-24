@@ -27,6 +27,8 @@
 #include <button/InkingStaticButton.h>
 #include <input/Shortcut.h>
 #include <prefab/MenuBar.h>
+#include <prefab/MenuPopup.h>
+#include <prefab/MenuPopupData.h>
 #include <scene/InkingScene.h>
 #include <scene/SceneLibrary.h>
 #include <text/InkingStaticLabel.h>
@@ -224,6 +226,51 @@ private:
         floatData.shape = inking::ShapeSpec::Capsule();
         floatData.offsetY = 220.0f;
         AddChild(std::make_unique<FloatingButton>(this, floatData, 220.0f));
+
+        // 6) 菜单浮窗（0.4.1）：定点弹出，内容自己组织
+        //
+        // 这里用**按钮定点**而不是右键：本版的指针派发只有左键一条通道
+        // （`MouseInput` 记了右键状态，但没有到组件的派发），所以"右键菜单"
+        // 要先给窗口层加通道——那是另一件事。`OpenAt` 本来就不关心定点从哪来。
+        _menu = std::make_unique<inking::prefab::MenuPopup>(this);
+
+        inking::ButtonData menuItem;
+        menuItem.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+                                                   0xFFFFFFFFu);
+        menuItem.hover = inking::ButtonAppearance(inking::AppearanceType::Color,
+                                                  0xFFEDE7F8u);
+        menuItem.onclicked = menuItem.hover;
+        menuItem.textColor = 0xFF33303Cu;
+        menuItem.text.fontSize = 18.0f;
+
+        // 第一项绑**局部**快捷键：菜单开着且焦点在菜单里才生效（关着时不存在）。
+        _menu->AddButton(
+            menuItem, "重置计数",
+            [this] {
+                _clicks = 0;
+                _status->SetText("点击次数：0");
+            },
+            inking::Shortcut::Parse("Ctrl+R"));
+        _menu->AddButton(menuItem, "切换全屏", [] {
+            inking::InkingWindow::Instance().ToggleFullscreen();
+        });
+        _menu->AddButton(menuItem, "退出", [] {
+            inking::InkingWindow::Instance().RequestExit();
+        });
+
+        inking::ButtonData openData = MakeButton("open_menu", 220, 64, "打开菜单",
+                                                 kGhost, kGhostHi, kGhostPr,
+                                                 12.0f);
+        openData.offsetY = 320.0f;
+        auto* opener = static_cast<inking::InkingStaticButton*>(
+            AddChild(std::make_unique<inking::InkingStaticButton>(this,
+                                                                 openData)));
+        opener->SetOnClicked([this, opener] {
+            // 定点 = 按钮左下角再往下 4 像素；靠近窗口右下时浮窗自己翻到对侧。
+            _menu->OpenAt(opener->GetAbsX(),
+                          opener->GetAbsY()
+                              + static_cast<float>(opener->GetHeight()) + 4.0f);
+        });
     }
 
     inking::InkingStaticLabel* AddLabel(const std::string& name,
@@ -242,13 +289,14 @@ private:
     inking::InkingStaticLabel* _status = nullptr;
     inking::InkingStaticButton* _button = nullptr;
     inking::prefab::MenuBar* _menuBar = nullptr;
+    std::unique_ptr<inking::prefab::MenuPopup> _menu;
     int _clicks = 0;
 };
 
 }  // namespace
 
 int main(int /*argc*/, char** /*argv*/) {
-    std::printf("[demo] Inking %s-%s（测试版本）/ 链接到的 SDL3 %s\n",
+    std::printf("[demo] Inking %s-%s / 链接到的 SDL3 %s\n",
                 inking::kVersion, inking::kVersionStage,
                 inking::sdl3_version().c_str());
     std::printf("[demo] 消息队列编译期启用：%s\n",
