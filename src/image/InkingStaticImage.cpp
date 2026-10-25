@@ -57,6 +57,9 @@ void InkingStaticImage::applyData(const ImageData& data) {
     // 也就不可能和基类的规则分叉（例如 zindex 的下限）。
     SetVisible(_data.visible);
     ChangeZIndex(_data.zIndex);
+    // 命中策略不是几何：它不标脏、不进命中表（`InkingWidget.h` 那段注释）。
+    // 整张设计稿当背景时要靠它把空白点击让给下层。
+    SetHitPassThrough(_data.hitPassThrough);
 
     ClearDirty();
     // 几何是构造期写入的，场景列表里的坐标快照要重算一次。

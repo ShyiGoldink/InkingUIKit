@@ -5,11 +5,14 @@
 #include <render/InkingDraw.h>
 #include <detail/InkLog.h>
 
+#include <render/InkingSvg.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #if defined(INK_HAS_SDL3_TTF)
@@ -67,6 +70,22 @@ struct TextLayer {
     bool ttfFailureReported = false;
     std::uint64_t texturesCreated = 0;
     std::uint64_t cacheHits = 0;
+
+    // --- SVG 纹理（0.5.1）--------------------------------------------------
+    /// 真光栅化了几次（缓存命中不算）。`AGENTS.md` §6 第 40 条：能合并的地方
+    /// 都要有可断言的计数，否则"缓存生效了没有"在画面上看不出来。
+    std::uint64_t svgRasters = 0;
+    std::uint64_t svgSecondPasses = 0;
+    std::uint64_t svgCacheHits = 0;
+    std::uint64_t svgClamps = 0;
+    std::uint64_t svgEvictions = 0;
+    std::uint64_t svgFailures = 0;
+    std::uint64_t svgUnsupportedElements = 0;
+    /// 每张图最多留几档（比例变化 = 新档）。3 档 × 23 MB 是可接受的上限。
+    std::unordered_map<std::string, std::vector<std::string>> svgKeysByName;
+    /// 失败 / 不支持元素只报一次（键 = 图名）。
+    std::unordered_set<std::string> svgFailureReported;
+    std::unordered_set<std::string> svgUnsupportedReported;
 
     /// 上一次烘字用的"1 逻辑单位 = 多少设备像素"。
     ///
@@ -128,6 +147,13 @@ std::string SizeKey(float pixelSize) {
 
 /// 上限：3 倍以上继续加清晰度收益递减，而纹理面积按 `ratio²` 涨。
 constexpr float kMaxTextRasterRatio = 3.0f;
+
+/// SVG 单张 surface 的像素上限（16M ≈ 4096×4096）。一张 3200×1800 的稿是
+/// 5.76M px（23 MB ARGB），已经够大；再往上就是拿内存换肉眼看不出的锐度。
+constexpr int kMaxSvgRasterPixels = 16 * 1024 * 1024;
+
+/// 同一张 SVG 最多保留几档（比例变化 = 新档；旧档留着只会吃内存）。
+constexpr std::size_t kMaxSvgVariants = 3;
 
 /// 渲染器当前"1 逻辑单位 = 多少设备像素"。拿不到时按 1（等于改动之前的行为）。
 float RendererDeviceRatio(SDL_Renderer* renderer) {
@@ -429,6 +455,7 @@ void EnsureRenderer(SDL_Renderer* renderer) {
         return;
     }
     state.textures.clear();
+    state.svgKeysByName.clear();
     // **字形图集也必须丢**：它的纹理同样绑在旧渲染器上。留着复用等于拿一张
     // 别的渲染器的纹理去画——SDL 不报错、图集统计也照旧正常（字形确实烘好了），
     // 只是**画不出来**：文字整段消失。而且它只在"换过渲染器、且烘字比例恰好
@@ -671,13 +698,90 @@ SDL_Surface* DecodeImageRaw(const ImageBytes&) { return nullptr; }
 SDL_Surface* BleedTransparentEdges(SDL_Surface*) { return nullptr; }
 #endif
 
-/// 取（或解码）一张图片的纹理。返回 nullptr 表示"这台机器解不出来"。
+/// 取（或解码）一张图片的纹理。返回 nullptr 表示"这台机器解不出来"；
+/// SVG 那条路的失败原因写进 `error`（调用方要发 WARN）。
 TextureEntry* AcquireImageTexture(SDL_Renderer* renderer,
-                                  const ImageBytes& image) {
+                                  const ImageBytes& image, int boxWidth,
+                                  int boxHeight, bool svg, std::string* error) {
+    if (error != nullptr) {
+        error->clear();
+    }
+    TextLayer& state = layer();
+
+    if (svg) {
+        // 键 = 名字 + 字节数 + 目标框边长：**同一个文件被多个组件引用**时共用，
+        // 比例变了就换一档（旧档留在表里，最多 `kMaxSvgVariants` 档）。
+        const int box = std::max(boxWidth, boxHeight);
+        const std::string key = "svg|" + image.name + "|"
+            + std::to_string(image.size) + "|" + std::to_string(box);
+        if (const auto found = state.textures.find(key);
+            found != state.textures.end()) {
+            ++state.svgCacheHits;
+            ++state.cacheHits;
+            return &found->second;
+        }
+
+        detail::SvgRasterResult raster = detail::RasterizeSvg(
+            image.data, image.size, boxWidth, boxHeight, kMaxSvgRasterPixels);
+        if (raster.surface == nullptr) {
+            if (error != nullptr) {
+                *error = raster.error;
+            }
+            ++state.svgFailures;
+            if (state.svgFailureReported.insert(image.name).second) {
+                INK_LOG_WARN("InkingText",
+                             "SVG 解码失败：" + image.name + "（"
+                                 + std::to_string(image.size) + " 字节），SDL 说："
+                                 + raster.error + "；这张图退回按颜色填");
+            }
+            return nullptr;
+        }
+        ++state.svgRasters;
+        state.svgSecondPasses +=
+            static_cast<std::uint64_t>(raster.secondPasses);
+        if (raster.clamped != 0) {
+            ++state.svgClamps;
+        }
+        state.svgUnsupportedElements +=
+            static_cast<std::uint64_t>(raster.unsupportedCount);
+        if (!raster.unsupportedList.empty()
+            && state.svgUnsupportedReported.insert(image.name).second) {
+            INK_LOG_WARN("InkingText",
+                         "SVG 里这些标签 / 属性不会被渲染："
+                             + raster.unsupportedList + "（" + image.name
+                             + "）；导出时请把文字转曲、展开 use");
+        }
+
+        // 档位淘汰：同一张图最多 `kMaxSvgVariants` 档（比例变化 = 新档）。
+        auto& keys = state.svgKeysByName[image.name];
+        if (keys.size() >= kMaxSvgVariants) {
+            const std::string victim = keys.front();
+            keys.erase(keys.begin());
+            if (const auto it = state.textures.find(victim);
+                it != state.textures.end()) {
+                if (it->second.texture != nullptr) {
+                    SDL_DestroyTexture(it->second.texture);
+                }
+                state.textures.erase(it);
+                ++state.svgEvictions;
+            }
+        }
+
+        // 矢量稿不做 `BleedTransparentEdges`：抗锯齿边缘通常不是 RGB=0，
+        // 而两轮全表面 3×3 遍历对 3200×1800 比光栅化本身还贵（先量再改）。
+        TextureEntry* entry = InsertTexture(renderer, key, raster.surface);
+        SDL_DestroySurface(raster.surface);
+        if (entry == nullptr) {
+            return nullptr;
+        }
+        keys.push_back(key);
+        return entry;
+    }
+
+    // 位图老路：键 / 解码 / 尺寸与 0.5.0 完全一致。
     // 键用（路径 + 字节数）：同一个文件被多个按钮引用时共用一张纹理。
     const std::string key =
         "img|" + image.name + "|" + std::to_string(image.size);
-    TextLayer& state = layer();
     auto found = state.textures.find(key);
     if (found != state.textures.end()) {
         ++state.cacheHits;
@@ -753,6 +857,13 @@ TextCacheStats TextCacheStatsSnapshot() noexcept {
     stats.texturesCreated = state.texturesCreated;
     stats.cacheHits = state.cacheHits;
     stats.fontFallbacks = state.fontFallbacks;
+    stats.svgRasters = state.svgRasters;
+    stats.svgSecondPasses = state.svgSecondPasses;
+    stats.svgCacheHits = state.svgCacheHits;
+    stats.svgClamps = state.svgClamps;
+    stats.svgEvictions = state.svgEvictions;
+    stats.svgFailures = state.svgFailures;
+    stats.svgUnsupportedElements = state.svgUnsupportedElements;
     return stats;
 }
 
@@ -1107,7 +1218,26 @@ bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
     const float mag = magnification > 0.0f ? magnification : 1.0f;
     EnsureRenderer(renderer);
 
-    TextureEntry* entry = AcquireImageTexture(renderer, image);
+    // SVG 是一种**图片格式**，不是新外观类型：在这里按字节嗅探一次，
+    // 决定"按目标像素光栅化"还是"按原始尺寸解码"。顺序不能反——
+    // 先按固有尺寸解码再放大，就是位图放大（糊）。
+    const bool svg = LooksLikeSvg(image.data, image.size);
+    int boxWidth = 0;
+    int boxHeight = 0;
+    if (svg) {
+        // 与文字高清同源：`mag × 渲染器报的设备比例`。目标框只影响**解码像素**，
+        // 不改变绘制矩形（`fit` 三模式照旧）。
+        const float ratio = currentRasterRatio(renderer);
+        const float scale = mag * ratio;
+        boxWidth = std::max(
+            1, static_cast<int>(std::lround(static_cast<float>(width) * scale)));
+        boxHeight = std::max(
+            1, static_cast<int>(std::lround(static_cast<float>(height) * scale)));
+    }
+
+    std::string decodeError;
+    TextureEntry* entry = AcquireImageTexture(renderer, image, boxWidth,
+                                              boxHeight, svg, &decodeError);
     if (entry == nullptr) {
         return false;  // 没接 SDL3_image / 字节坏了：调用方退回按颜色填
     }
@@ -1144,6 +1274,7 @@ void ReleaseTextCache() noexcept {
         }
     }
     state.textures.clear();
+    state.svgKeysByName.clear();
     state.renderer = nullptr;
 
     for (auto& item : state.fonts) {

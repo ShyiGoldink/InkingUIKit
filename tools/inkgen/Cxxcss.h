@@ -212,6 +212,9 @@ struct ImageConfig {
     /// 配置里的 `runtime`：true = 字节在**运行期**从资源根读（不进 exe）。
     bool runtimeAsset = false;
 
+    /// 配置里的 `hitPassThrough`：true = 这张图不吃点击（整张稿当背景时用）。
+    bool hitPassThrough = false;
+
     /// 配置里的 `normal` 段见过没有。
     bool sawNormal = false;
 

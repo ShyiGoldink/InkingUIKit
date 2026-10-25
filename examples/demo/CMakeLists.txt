@@ -23,3 +23,15 @@ foreach(target inking_demo inking_demo_selftest)
         RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin"
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin")
 endforeach()
+
+# 设计稿背景（0.5.1）：`assets/design.svg` 由 `InkingStaticImage` 在**运行期**
+# 从资源根读（默认 exe 旁的 `assets/`）。拷到 exe 旁边，示例才能直接跑。
+# 自检不依赖这个文件（它用内联 SVG），但保持一致：缺文件时只该看到一条 ERROR，
+# 而不是"背景图没支持"。
+foreach(target inking_demo inking_demo_selftest)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/assets"
+                "$<TARGET_FILE_DIR:${target}>/assets"
+        COMMENT "拷贝示例资源（assets/）到 $<TARGET_FILE_DIR:${target}>")
+endforeach()

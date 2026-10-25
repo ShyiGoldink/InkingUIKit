@@ -47,10 +47,12 @@ enum class AppearanceType : std::uint8_t {
  * `color` 是 `source` 解析后的结果，渲染直接用这个字段，不在每帧去解析字符串。
  *
  * **Image 已经落地**：`ButtonPaint` 用 `detail::PaintImage` 把图像按形状裁剪后
- * 画进按钮（见 `src/button/ButtonPaint.cpp`）。
- * **Svg 还没落地**：没有任何画法，配置里写成 `svg` 会**静默退回纯色 `color`**
- * ——不报错、只是看不到图。类型与字段先留着：配置里能写的东西，运行期的数据
- * 结构就得能表达，否则生成器一落地就要改接口。
+ * 画进按钮（见 `src/button/ButtonPaint.cpp`）；字节是 SVG 时按目标设备像素光栅化
+ * （0.5.1，见 `CXXCSS.md` §4.2）。
+ * **Svg 是"生成期转形状"那条路**：配置里的 `svg` 只支持**一个图形元素**、一种填充，
+ * 且几何必须正好等于组件框；生成期把几何烘成 `shape`、把 `fill` 写进 `color`，
+ * 运行期与 `color` 走同一条填色路。**整张设计稿**请走图片的 `type:"svg"`（纹理路，
+ * 支持多图元 / 渐变 / 变换），两者同名不同义，见 `CXXCSS.md` §4.1 的对照表。
  */
 struct ButtonAppearance {
     AppearanceType type = AppearanceType::Color;

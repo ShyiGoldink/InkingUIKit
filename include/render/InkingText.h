@@ -83,6 +83,22 @@ struct TextCacheStats {
      * 按**链**计数（一条链解析一次），不是按帧、也不是按字形。
      */
     std::uint64_t fontFallbacks = 0;
+
+    // --- SVG 纹理（0.5.1）--------------------------------------------------
+    /// 真的按目标像素光栅化了几次（缓存命中不算）。
+    std::uint64_t svgRasters = 0;
+    /// 为了"任一边不小于目标框"多解一次的次（最多一次/张）。
+    std::uint64_t svgSecondPasses = 0;
+    /// 按（名字 + 字节数 + 目标框）命中现成纹理的次数。
+    std::uint64_t svgCacheHits = 0;
+    /// 目标框被像素预算钳制的次数。
+    std::uint64_t svgClamps = 0;
+    /// 同一张图超过档位上限、淘汰旧档的次数。
+    std::uint64_t svgEvictions = 0;
+    /// SVG 解码失败次数（每帧重试都会 +1；WARN 只报一次）。
+    std::uint64_t svgFailures = 0;
+    /// 解析出的"不支持元素"命中总次数（text / use / image / clipPath / mask / filter）。
+    std::uint64_t svgUnsupportedElements = 0;
 };
 
 TextCacheStats TextCacheStatsSnapshot() noexcept;

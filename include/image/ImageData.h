@@ -31,6 +31,15 @@ struct ImageData : public ButtonData {
      * false = 生成期已经把字节烘进来了（`normal.source` 是绝对路径，只作缓存键）。
      */
     bool runtimeAsset = false;
+
+    /**
+     * 命中后让不让过（0.5.1）：默认 false = 图片挡住点击（0.5.0 及以前的行为）。
+     *
+     * 为什么现在要它：整张界面 SVG 当背景时，默认行为会把画布上**所有空白点击**
+     * 吃掉——按钮还在，只是点不到。置 true 后空白处继续往下找，事件归属回到
+     * 正常规则（`InkingWidget::SetHitPassThrough`，不标脏、不入命中表）。
+     */
+    bool hitPassThrough = false;
 };
 
 }  // namespace inking

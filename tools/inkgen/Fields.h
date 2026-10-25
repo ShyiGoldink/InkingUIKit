@@ -58,7 +58,7 @@ inline constexpr const char* const kKnownImageFields[] = {
     "$comment",   "name",         "width",        "height",  "normal",
     "runtime",    "shape",        "stroke",       "shadow",  "selfAnchorX",
     "selfAnchorY", "traceAnchorX", "traceAnchorY", "offsetX", "offsetY",
-    "layoutItem", "zIndex",       "visible",
+    "layoutItem", "zIndex",       "visible",      "hitPassThrough",
 };
 
 /// 语言表字段（不是组件，是全局表）。
@@ -120,7 +120,10 @@ inline constexpr const char* const kKnownPanelAppearanceFields[] = {
     "type", "source", "transition", "transform", "stroke", "shadow",
 };
 
-/// Image 的 `normal` 外观里的字段（没有三态 / 过渡 / 逐态尺寸 / svg）。
+/// Image 的 `normal` 外观里的字段（没有三态 / 过渡 / 逐态尺寸）。
+///
+/// `svg` 是**纹理路**：整份 SVG 在运行期按目标像素光栅化（0.5.1），与 Button 的
+/// `svg`（生成期转成形状、只支持单图形）**同名不同义**。
 inline constexpr const char* const kKnownImageAppearanceFields[] = {
     "type", "source", "fit",
 };
@@ -173,10 +176,10 @@ inline constexpr FieldGroup kFieldGroups[] = {
     {"Label", "text", kKnownLabelTextFields, std::size(kKnownLabelTextFields),
      "标签的文字段：整块排版（换行 / 省略 / 行距），与 Button 的 text 同名不同义"},
     {"Image", "（顶层）", kKnownImageFields, std::size(kKnownImageFields),
-     "静态图片 = 没有 onClicked 的 button：没有三态、没有 dynamic"},
+     "静态图片 = 没有 onClicked 的 button：没有三态、没有 dynamic；hitPassThrough = 背景不吃点击"},
     {"Image", "normal", kKnownImageAppearanceFields,
      std::size(kKnownImageAppearanceFields),
-     "图片外观只认 color / img；过渡、逐态尺寸、svg 都是按钮的东西"},
+     "图片外观认 color / img / svg；svg 是纹理路（整份稿光栅化），与按钮的 svg 不同"},
     {"Text", "（顶层）", kKnownTextTableFields, std::size(kKnownTextTableFields),
      "语言表（不是组件）：占位符 → 各语言的串，只允许一份"},
     {"Theme", "（顶层）", kKnownThemeFields, std::size(kKnownThemeFields),

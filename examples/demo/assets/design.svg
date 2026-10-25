@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <!-- 0.5.1 示例设计稿：只使用 nanosvg 认的元素（多图元 / g@transform / 渐变 /
+       opacity / stroke / evenodd 孔洞）。text / use / clipPath / mask / filter
+       不在这里出现——它们不会被渲染，只会在加载时打一条 WARN。 -->
+  <defs>
+    <linearGradient id="sky" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0" stop-color="#1B1F3B"/>
+      <stop offset="1" stop-color="#3A2E5C"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="720" fill="url(#sky)"/>
+
+  <g transform="translate(640,360) rotate(12)">
+    <circle cx="0" cy="0" r="210" fill="#4C6FFF" opacity="0.35"/>
+    <rect x="-120" y="-300" width="240" height="600" fill="#22CC99" opacity="0.25"/>
+  </g>
+
+  <path d="M 120 560 C 320 420 520 520 720 460 L 900 560 L 900 640 L 120 640 Z"
+        fill="#FFB45C" opacity="0.9"/>
+
+  <path d="M 980 160 H 1180 V 360 H 980 Z M 1020 200 H 1140 V 320 H 1020 Z"
+        fill="#8FE3FF" fill-rule="evenodd" opacity="0.85"/>
+
+  <rect x="80" y="80" width="240" height="120" rx="18"
+        fill="#7963D6" stroke="#FFFFFF" stroke-width="3" opacity="0.6"/>
+</svg>

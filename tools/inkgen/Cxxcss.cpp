@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -93,6 +94,89 @@ std::string ReadImageBytes(const std::string& path,
              + "）";
     }
     return {};
+}
+
+/**
+ * 一份字节**看起来**是不是 SVG（生成期校验用，运行期还会用 `IMG_isSVG` 再嗅一次）。
+ *
+ * 为什么生成期也要查：`type:"svg"` 写错指向 PNG 时，运行期会按位图解码、画出一张
+ * 静态图——看着"能用"，其实那次 `type:"svg"` 根本没生效。构建期红一次比那便宜。
+ *
+ * 规则：跳过 BOM / 空白 / `<?…?>` / `<!--…-->`，第一个内容标签必须是 `<svg`。
+ */
+std::size_t FindBytes(const std::vector<std::uint8_t>& bytes, std::size_t from,
+                      const char* needle) {
+    const std::size_t length = std::strlen(needle);
+    if (length == 0 || from >= bytes.size()) {
+        return std::string::npos;
+    }
+    for (std::size_t at = from; at + length <= bytes.size(); ++at) {
+        bool same = true;
+        for (std::size_t i = 0; i < length; ++i) {
+            if (bytes[at + i] != static_cast<std::uint8_t>(needle[i])) {
+                same = false;
+                break;
+            }
+        }
+        if (same) {
+            return at;
+        }
+    }
+    return std::string::npos;
+}
+
+bool StartsWithIgnoreCase(const std::vector<std::uint8_t>& bytes,
+                          std::size_t at, const char* text) {
+    const std::size_t length = std::strlen(text);
+    if (at + length > bytes.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < length; ++i) {
+        char a = static_cast<char>(bytes[at + i]);
+        char b = text[i];
+        if (a >= 'A' && a <= 'Z') {
+            a = static_cast<char>(a - 'A' + 'a');
+        }
+        if (b >= 'A' && b <= 'Z') {
+            b = static_cast<char>(b - 'A' + 'a');
+        }
+        if (a != b) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool LooksLikeSvgBytes(const std::vector<std::uint8_t>& bytes) {
+    std::size_t at = 0;
+    if (bytes.size() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB
+        && bytes[2] == 0xBF) {
+        at = 3;  // UTF-8 BOM
+    }
+    while (at < bytes.size()) {
+        while (at < bytes.size()
+               && std::isspace(static_cast<unsigned char>(bytes[at]))) {
+            ++at;
+        }
+        if (at >= bytes.size()) {
+            return false;
+        }
+        if (StartsWithIgnoreCase(bytes, at, "<svg")) {
+            return true;
+        }
+        if (StartsWithIgnoreCase(bytes, at, "<?")) {
+            const std::size_t end = FindBytes(bytes, at, "?>");
+            at = end == std::string::npos ? bytes.size() : end + 2;
+            continue;
+        }
+        if (StartsWithIgnoreCase(bytes, at, "<!--")) {
+            const std::size_t end = FindBytes(bytes, at, "-->");
+            at = end == std::string::npos ? bytes.size() : end + 3;
+            continue;
+        }
+        return false;  // 第一个内容标签不是 <svg>
+    }
+    return false;
 }
 
 /// SVG 子集解析出来的"原始描述"（几何按**组件框**解释，校验放到 Finish()）。
@@ -3415,6 +3499,12 @@ public:
                 } else {
                     Error(value, "visible 必须是 true 或 false");
                 }
+            } else if (key == "hitPassThrough") {
+                if (value.IsBool()) {
+                    _config.hitPassThrough = value.boolean;
+                } else {
+                    Error(value, "hitPassThrough 必须是 true 或 false");
+                }
             } else if (key == "shape") {
                 _sawShape = true;
                 ReadShape(value, _config.button.data.shape, nullptr);
@@ -3445,8 +3535,9 @@ private:
      * 这里只认三样，别的一律报错——写错地方比读不出来好查（同 §6 第 34 条那种
      * "配置写了却没生效"的坑）。
      *
-     * `svg` 外观也**明确不支持**：那要生成期把 SVG 转成"形状 + 填充色"（按钮那条
-     * 路，`_svg` 那套状态），图片这一版认 `color` 与 `img` 两种。
+     * `svg` 从 0.5.1 起支持，但它是**纹理路**：读文件字节（或运行期读），落成
+     * `AppearanceType::Image`，绘制时按目标像素光栅化。它与按钮的 svg 子集
+     * （生成期转成形状、只支持单图形）**同名不同义**，别混。
      */
     void ReadImageAppearance(const JsonValue& value) {
         if (!value.IsObject()) {
@@ -3515,10 +3606,38 @@ private:
             // runtime = true：**一个字都不读**，source 只是个路径字符串
             // （运行期由 inking::AssetLoad 去拿，见 asset/InkingAsset.h）。
         } else if (typeName == "svg") {
-            Error(*type,
-                  "图片这一版不支持 svg 外观（它要生成期把 SVG 转成形状，"
-                  "那是按钮那条路）：请用 type = color 或 img");
-            return;
+            // 0.5.1：图片的 svg 是**纹理路**——整份稿在运行期按目标像素光栅化，
+            // 不做"生成期转成形状"（那是 Button 的 svg 子集，见 CXXCSS.md §4.1
+            // 的对照表）。落成 `AppearanceType::Image` 是为了让绘制 / 缓存 / 命中
+            // 全部走同一条已有的图片通道。
+            out.type = inking::AppearanceType::Image;
+            if (source == nullptr || !source->IsString()) {
+                Error(value, "normal 的 svg 需要 source（SVG 文件路径）");
+                return;
+            }
+            out.source = source->text;
+            if (!_config.runtimeAsset) {
+                std::vector<std::uint8_t>& bytes =
+                    _config.button.imageBytes[0];
+                const std::string problem =
+                    ReadImageBytes(source->text, bytes);
+                if (!problem.empty()) {
+                    Error(*source, problem);
+                    _failed = true;
+                    return;
+                }
+                if (!LooksLikeSvgBytes(bytes)) {
+                    Error(*source,
+                          "normal 的 svg 指向的文件不是 SVG（第一个内容标签不是 "
+                          "<svg>）：要么路径写错了，要么该用 type = \"img\"");
+                    _failed = true;
+                    bytes.clear();
+                    return;
+                }
+                out.imageBytes = bytes.data();
+                out.imageSize = bytes.size();
+            }
+            // runtime = true：只留路径，运行期由 AssetLoad 读字节、PaintImage 嗅探。
         } else {
             Error(*type, "normal.type \"" + type->text
                              + "\" 不认识（只支持 color、img）");

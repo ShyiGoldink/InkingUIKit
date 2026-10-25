@@ -572,7 +572,7 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
 与回调不要。数据上它就是 `ink::ImageData : ink::ButtonData`。
 
 ```jsonc
-// CXXCSS/Image/cardArt.json
+// CXXCSS/Image/cardArt.json —— 位图（运行期读）
 {
     "name": "cardArt",
     "width": 200, "height": 120,
@@ -580,13 +580,57 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
     "normal": { "type": "img", "source": "card.png", "fit": "cover" },
     "shape": { "type": "roundedRect", "radius": 12 }
 }
+
+// CXXCSS/Image/design.json —— 整张界面设计稿当背景（0.5.1）
+{
+    "name": "design",
+    "width": 1280, "height": 720,
+    "runtime": true,
+    "normal": { "type": "svg", "source": "design.svg", "fit": "fill" },
+    "hitPassThrough": true,                             // 背景不吃点击
+    "shape": { "type": "rect" }
+}
 ```
 
-**认的字段**：`name` / `width` / `height` / `normal` / `runtime` / `shape` / `stroke` /
-`shadow` / 锚点四件 / `offsetX` / `offsetY` / `layoutItem` / `zIndex` / `visible`。
-`normal` 里**只认 `type`、`source`、`fit`**；写了 `hover` / `onclicked` / `text` /
-`transition` / `dynamic` / `layout` / `svg` 一律**报错**（图片没有三态、没有文字、没有过渡
-——静默吃掉会让人以为"悬停能换图"）。
+**认的字段**：`name` / `width` / `height` / `normal` / `runtime` / `hitPassThrough` /
+`shape` / `stroke` / `shadow` / 锚点四件 / `offsetX` / `offsetY` / `layoutItem` /
+`zIndex` / `visible`。`normal` 里**只认 `type`、`source`、`fit`**；写了 `hover` /
+`onclicked` / `text` / `transition` / `dynamic` / `layout` 一律**报错**（图片没有三态、
+没有文字、没有过渡——静默吃掉会让人以为"悬停能换图"）。
+
+**`normal.type` 的三个值**：
+
+| 值 | source | 怎么画 |
+| --- | --- | --- |
+| `color` | `"r\|g\|b\|a"` | 按形状填纯色 |
+| `img` | 图像路径（png / jpg / …） | 解码成纹理，按形状裁剪后铺进框（`fit` 三模式） |
+| `svg`（0.5.1） | **SVG 文件路径** | 运行期按**目标设备像素**光栅化成纹理，再按形状裁剪铺进框 |
+
+`svg` 支持的元素（2026-10-24 实测，nanosvg）：
+
+| 元素 / 属性 | 是否渲染 | 说明 |
+| --- | --- | --- |
+| `rect` / `circle` / `ellipse` / `line` / `polygon` / `polyline` / `path` | ✅ | 多图元；`path` 的第二个 `M` 起算新子路径 |
+| `g` / `transform` / 嵌套 `<svg>` | ✅ | 平移 / 旋转 / 缩放 |
+| `linearGradient` / `radialGradient` / `opacity` | ✅ | 组透明度也认 |
+| `stroke` / `stroke-width` / `stroke-dasharray` | ✅ | |
+| `fill-rule="evenodd"`（孔洞） | ✅ | |
+| `text` / `tspan` | ❌ | 导出前**转曲**（文字→路径） |
+| `use` / `<image href>` | ❌ | 展开 / 内联成实际图元 |
+| `clipPath` / `mask` / `filter` | ❌ | 忽略（画面可能缺裁剪 / 阴影） |
+
+不支持的元素**不会报错、只打一条 WARN**（列名字与次数，每张图一次）；
+所以"导出的稿里文字没了"是能看见的，不是静默消失。
+
+**目标像素**：`svg` 不是按固有尺寸解码再放大，而是按
+`组件设计尺寸 × 输出设备比例` 光栅化（与文字高清同源；单张上限 16M 像素，
+同一张图最多 3 档缓存）。所以窗口放大 / 高 DPI 下不糊，**但画出来的矩形**仍由
+`width` / `height` + `fit` 决定——解码像素只影响清晰度，不影响布局。
+
+**`hitPassThrough`**：默认 `false`（图片照旧挡住点击，0.5.0 及以前的行为）；
+整张设计稿当背景时置 `true`，空白处的点击被判成 `PassThrough`、继续往下找。
+注意 `svg` 与按钮外观的 `type:"svg"` **同名不同义**（按钮那条是"生成期转成形状、
+只支持单图形"），对照表见 §4.1。
 
 **两种"图从哪来"**：
 
@@ -597,8 +641,9 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
 
 `runtime: true` 时 `source` 必须是**相对资源根**的路径；写绝对路径会报错（两条路的写法不能
 混）。图片的 `name` 必须是合法标识符（它没有"按名字查"的库，生成不出类就没有用法）。
-参考配置：`Image/cardArt.json`（`runtime: true`）+ `examples/panel_demo`（构建脚本把
-`assets/card.png` 拷到 exe 旁边）——**换图不用重编**就是这条路的效果。
+参考配置：`Image/cardArt.json`（位图运行期读）、`Image/design.json`（整张 SVG 设计稿）
++ `examples/panel_demo` / `examples/demo`（构建脚本把 `assets/` 拷到 exe 旁边）——
+**换图不用重编**就是这条路的效果。
 
 ---
 
@@ -758,6 +803,16 @@ window 里的字段 "title" 不认识（…… **没有回读口的设置不收*
 现在只有一条点列，硬接会把两块用一条直线连起来；`fill-rule`（nonzero / evenodd）也还没有
 意义）；**不认** `g` / `line` / `polygon` / `use`、变换、描边、渐变、`viewBox` 缩放；一个 svg
 里只能放**一个**图形元素。不认的标签会明确报"**不支持的标签**"（说清是没实现、不是你写错了）。
+
+> **两种 `svg` 别混**（0.5.1 起同时存在）：
+>
+> | | Button 的 `type:"svg"`（本段） | Image 的 `type:"svg"`（§3.10） |
+> | --- | --- | --- |
+> | 用途 | 一个控件的**外形**（圆角 / 任意 path） | 整张界面**设计稿** |
+> | 解析时机 | **生成期**转成 `ShapeSpec`（几何 = 命中） | **运行期**光栅化成纹理 |
+> | 支持范围 | 单图形、单填充色；`rect` / `circle` / `ellipse` / `path` | 多图元、`g` / `transform`、渐变、描边、evenodd |
+> | 命中 | 形状（`ShapeContains`） | 形状（图片本来就按形状命中） |
+> | `text` / `use` / `clipPath` | 不允许（解析期报错） | 不渲染（加载期一条 WARN） |
 
 > 几何必须与组件框一致、三个状态的 svg 几何必须相同、显式写了 `shape` 时还要与它一致
 > ——三条都是**生成期**检查，错了就红。旧示例把键写成了 `"type:"`（多一个冒号），那是笔误。
@@ -1268,7 +1323,7 @@ ink::InkingWindow::Instance().Show();
 | Label | text | `wrap` |  |
 | Label | text | `overflow` |  |
 | Label | text | `maxLines` |  |
-| Image | （顶层） | `$comment` | 静态图片 = 没有 onClicked 的 button：没有三态、没有 dynamic |
+| Image | （顶层） | `$comment` | 静态图片 = 没有 onClicked 的 button：没有三态、没有 dynamic；hitPassThrough = 背景不吃点击 |
 | Image | （顶层） | `name` |  |
 | Image | （顶层） | `width` |  |
 | Image | （顶层） | `height` |  |
@@ -1286,7 +1341,8 @@ ink::InkingWindow::Instance().Show();
 | Image | （顶层） | `layoutItem` |  |
 | Image | （顶层） | `zIndex` |  |
 | Image | （顶层） | `visible` |  |
-| Image | normal | `type` | 图片外观只认 color / img；过渡、逐态尺寸、svg 都是按钮的东西 |
+| Image | （顶层） | `hitPassThrough` |  |
+| Image | normal | `type` | 图片外观认 color / img / svg；svg 是纹理路（整份稿光栅化），与按钮的 svg 不同 |
 | Image | normal | `source` |  |
 | Image | normal | `fit` |  |
 | Text | （顶层） | `$comment` | 语言表（不是组件）：占位符 → 各语言的串，只允许一份 |

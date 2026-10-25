@@ -1407,13 +1407,14 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
                 << ExtendsNote(image.extendsFrom) << "）\n";
             out << "inking::ImageData BuildImage" << i << "() {\n";
             // 逐字复用按钮那套烘法（`ImageData` 派生自 `ButtonData`）：只把
-            // 类型名换掉、末尾补一行 `runtimeAsset`。数组下标接在按钮后面，
-            // 免得两边的 `kXxxImage0` 撞名。
+            // 类型名换掉、末尾补 `runtimeAsset`（0.5.1 起还有 `hitPassThrough`）。
+            std::string tail = std::string("    data.runtimeAsset = ")
+                + (image.runtimeAsset ? "true" : "false") + ";\n";
+            if (image.hitPassThrough) {
+                tail += "    data.hitPassThrough = true;\n";
+            }
             out << ButtonBody(image.button, "    ", i + buttons.size(),
-                              "inking::ImageData",
-                              std::string("    data.runtimeAsset = ")
-                                  + (image.runtimeAsset ? "true" : "false")
-                                  + ";\n");
+                              "inking::ImageData", tail);
             out << "}\n\n";
         }
         for (std::size_t i = 0; i < panels.size(); ++i) {

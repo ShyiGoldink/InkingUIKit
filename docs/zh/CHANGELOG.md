@@ -5,6 +5,55 @@
 
 ---
 
+## 0.5.1 —— 2026-10-24（**当前：发布版**）
+
+> 来源：用户需求「支持原本的 svg 设计」；API 专页按用户裁定**后置**（实现完成后再写）。
+> 方案、核实与实测数字见 `docs/zh/plans/2026-10-24-0.5.1-svg-design.md`（探针
+> `build/probe_svg*.cpp`）。
+
+### 新增
+
+- **图片层支持 `type:"svg"`**：整张界面设计稿（多图元 / `g` / `transform` / 渐变 /
+  描边 / `fill-rule="evenodd"`）在运行期按 `组件设计尺寸 × 输出设备比例` 光栅化成纹理，
+  再按形状裁剪铺进框。同一张图最多 3 档缓存、单张上限 16M 像素；1600×900 实测首次
+  光栅化 **14 ms**（3200×1800 为 63 ms）。落点：`include/render/InkingSvg.h`、
+  `src/render/InkingSvg.cpp`、`InkingText.cpp` 的 SVG 档。
+- **`hitPassThrough`（Image 顶层字段）**：整张稿当背景时置 true，空白点击被判成
+  `PassThrough` 继续往下找；默认 false = 图片照旧挡住点击（0.5.0 行为不变）。
+- **不支持元素的 WARN**：`text` / `use` / `<image>` / `clipPath` / `mask` / `filter`
+  在加载时扫描并打一条汇总 WARN（每张图一次），同时进
+  `TextCacheStats::svgUnsupportedElements` 计数——以前这些元素**静默消失**。
+- **示例**：`CXXCSS/Image/design.json` + `examples/demo/assets/design.svg`，
+  demo 里铺满背景、上层控件照常可点。
+
+### 变更
+
+- **`Image` 的 `type:"svg"` 落成 `AppearanceType::Image`**（纹理路），不是按钮的
+  `AppearanceType::Svg`（生成期转形状、单图形）。两条路同名不同义，
+  `CXXCSS.md` §4.1 有对照表。
+- 按钮 `type:"svg"` 子集**不变**（单图形、单填充、几何等于组件框）。
+- `include/render/InkingSvg.h` 是新的"render 层内部头"（只前向声明 `SDL_Surface`）。
+
+### 文档
+
+- `CXXCSS.md` §3.10 加 `type:"svg"` 的元素矩阵、目标像素与 `hitPassThrough`；
+  §4.1 加"两种 svg"对照表；§9 字段总表随 `--dump-fields` 重生成。
+- `README.md` 已知限制 3 拆成两条（两种 svg 的边界 + 不渲染元素），版本横幅改
+  0.5.1 发布版，预编译包 `dist/inking-0.5.1-win64.zip`。
+- `include/button/ButtonData.h` 与 `src/image/InkingStaticImage.cpp` 里"没有画法"的
+  过期注释已改。
+- **API 专页（`docs/zh/api/`）不在本版**：用户裁定实现完成后再写。
+
+### 已知限制
+
+- 元素级交互（把整张稿拆成每个 `path` 一个控件）不做，0.6 再谈；0.5.1 是
+  "一张纹理 + 可穿透"。
+- `text` / `use` / `<image>` / `clipPath` / `mask` / `filter` 不渲染（nanosvg 边界），
+  只 WARN；导出时请转曲 / 展开。
+- 二次解码只补一次：框与稿比例差得极远时，短边仍可能略糊（另有 16M 像素上限）。
+
+---
+
 ## 0.5.0 —— 2026-10-24（发布版）
 
 > 来源：用户要求"补齐右键输入，触摸屏长按自动映射为右键"。方案与核实见

@@ -1,0 +1,25 @@
+{
+    "$comment": [
+        "整张界面设计稿（0.5.1 的示例）：runtime:true 表示字节在运行期从 assets/ 读，",
+        "换稿不重编；hitPassThrough:true 让空白处的点击穿到下层控件。",
+        "尺寸与 CXXCSS/config.json 的 design（1280×720）一致，viewBox 也是同一个数；",
+        "不一致时按 fit 处理（默认 fill 会拉伸）。",
+        "svg 是**纹理路**：整份稿按目标像素光栅化（矢量放大不糊），与按钮的 svg 子集",
+        "（生成期转成形状、只支持单图形）同名不同义，见 CXXCSS.md §4.1 的对照表。",
+        "不支持的标签（text / use / image / clipPath / mask / filter）只会在加载时打一条 WARN。"
+    ],
+    "name": "design",
+    "width": 1280,
+    "height": 720,
+    "runtime": true,
+    "normal": { "type": "svg", "source": "design.svg", "fit": "fill" },
+    "hitPassThrough": true,
+    "selfAnchorX": 0,
+    "selfAnchorY": 0,
+    "traceAnchorX": 0,
+    "traceAnchorY": 0,
+    "offsetX": 0,
+    "offsetY": 0,
+    "zIndex": 0,
+    "visible": true
+}

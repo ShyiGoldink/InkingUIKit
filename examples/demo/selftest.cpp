@@ -33,6 +33,8 @@
 #include <input/KeyboardInput.h>
 #include <input/Shortcut.h>
 #include <input/ShortcutRegistry.h>
+#include <image/ImageData.h>
+#include <image/InkingStaticImage.h>
 #include <panel/InkingStaticPanel.h>
 #include <panel/PanelData.h>
 #include <panel/InkingFixedPopup.h>
@@ -46,6 +48,7 @@
 #include <render/InkingBatch.h>
 #include <render/InkingGlyphAtlas.h>
 #include <render/InkingMesh.h>
+#include <render/InkingSvg.h>
 #include <render/InkingText.h>
 #include <scene/InkingScene.h>
 #include <scene/SceneLibrary.h>
@@ -2971,6 +2974,484 @@ void CheckRuntimeTheme(SDL_Renderer* renderer) {
     (void)panel;
 }
 
+// ---------------------------------------------------------------------------
+// SVG 设计稿（0.5.1）：整张稿 → 按目标像素光栅化 → 纹理 → 采样
+// ---------------------------------------------------------------------------
+//
+// 来源：`docs/zh/plans/2026-10-24-0.5.1-svg-design.md`。断言只落在**可观测的量**上
+// ——surface 尺寸、像素颜色、`TextCacheStats` 计数、`InkLog::CountOf`；
+// "看起来画出来了"不算证据（`AGENTS.md` §4 第 4 条）。
+
+std::uint32_t ReadSurfacePixel(SDL_Surface* surface, int x, int y) {
+    if (surface == nullptr) {
+        return 0xFFDEADBEu;
+    }
+    SDL_Surface* argb = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_ARGB8888);
+    if (argb == nullptr) {
+        return 0xFFDEADBEu;
+    }
+    SDL_LockSurface(argb);
+    std::uint32_t pixel = 0xFFDEADBEu;
+    if (x >= 0 && y >= 0 && x < argb->w && y < argb->h) {
+        pixel = static_cast<const std::uint32_t*>(argb->pixels)[y * argb->w + x];
+    }
+    SDL_UnlockSurface(argb);
+    SDL_DestroySurface(argb);
+    return pixel;
+}
+
+/// 从渲染器读一个**输出像素**（逻辑呈现下 = 设计坐标 × 缩放比）。
+std::uint32_t ReadOutputPixel(SDL_Renderer* renderer, int x, int y) {
+    const SDL_Rect one{x, y, 1, 1};
+    SDL_Surface* shot = SDL_RenderReadPixels(renderer, &one);
+    if (shot == nullptr) {
+        return 0xFFDEADBEu;
+    }
+    std::uint32_t pixel = 0xFFDEADBEu;
+    SDL_Surface* argb = SDL_ConvertSurface(shot, SDL_PIXELFORMAT_ARGB8888);
+    if (argb != nullptr) {
+        std::memcpy(&pixel, argb->pixels, sizeof(pixel));
+        SDL_DestroySurface(argb);
+    }
+    SDL_DestroySurface(shot);
+    return pixel;
+}
+
+/// 只比 RGB（alpha 在离屏读回里受混合影响，不参与"颜色对不对"的判断）。
+bool RgbClose(std::uint32_t got, std::uint32_t want, int tol) {
+    const auto channel = [](std::uint32_t value, int shift) {
+        return static_cast<int>((value >> shift) & 0xFFu);
+    };
+    return std::abs(channel(got, 16) - channel(want, 16)) <= tol
+        && std::abs(channel(got, 8) - channel(want, 8)) <= tol
+        && std::abs(channel(got, 0) - channel(want, 0)) <= tol;
+}
+
+/// 任务书 §2.1 的"支持矩阵"样本：多图元 + g@transform + 渐变 + evenodd 孔洞。
+const char* kSvgDesignSample =
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"200\" height=\"120\" "
+    "viewBox=\"0 0 200 120\">"
+    "<defs><linearGradient id=\"g\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"0%\">"
+    "<stop offset=\"0\" stop-color=\"#FF0000\"/>"
+    "<stop offset=\"1\" stop-color=\"#0000FF\"/></linearGradient></defs>"
+    "<rect x=\"0\" y=\"0\" width=\"200\" height=\"120\" fill=\"#101018\"/>"
+    "<g transform=\"translate(100,60) rotate(10)\">"
+    "<circle cx=\"0\" cy=\"0\" r=\"30\" fill=\"#22CC55\"/></g>"
+    "<rect x=\"10\" y=\"90\" width=\"180\" height=\"20\" fill=\"url(#g)\"/>"
+    "<path d=\"M 150 10 H 190 V 50 H 150 Z M 160 20 H 180 V 40 H 160 Z\" "
+    "fill=\"#FFB45C\" fill-rule=\"evenodd\"/>"
+    "</svg>";
+
+/// 竖长稿：目标框 200×100 时短边只有 100 → 触发一次二次解码。
+const char* kSvgTall =
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"200\" "
+    "viewBox=\"0 0 100 200\">"
+    "<rect x=\"0\" y=\"0\" width=\"100\" height=\"200\" fill=\"#00FF00\"/>"
+    "</svg>";
+
+const char* kSvgBroken = "<svg><path d=\"M 0 0 L";
+
+/// 故意含两个 `<text>` 与一个 `clip-path`：三个都"不会被渲染"，必须报出来。
+const char* kSvgUnsupported =
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"100\" height=\"100\" "
+    "viewBox=\"0 0 100 100\">"
+    "<text x=\"10\" y=\"50\">A</text><text x=\"10\" y=\"80\">B</text>"
+    "<rect x=\"0\" y=\"0\" width=\"100\" height=\"100\" fill=\"#00FF00\" "
+    "clip-path=\"url(#c)\"/>"
+    "</svg>";
+
+/// 整张 1280×720 稿（与 `examples/demo/assets/design.svg` 同内容）：
+/// 自检不依赖文件，但断言的就是示例要展示的那张图。
+const char* kSvgFullDesign =
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1280\" height=\"720\" "
+    "viewBox=\"0 0 1280 720\">"
+    "<defs><linearGradient id=\"sky\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"100%\">"
+    "<stop offset=\"0\" stop-color=\"#1B1F3B\"/>"
+    "<stop offset=\"1\" stop-color=\"#3A2E5C\"/></linearGradient></defs>"
+    "<rect x=\"0\" y=\"0\" width=\"1280\" height=\"720\" fill=\"url(#sky)\"/>"
+    "<g transform=\"translate(640,360) rotate(12)\">"
+    "<circle cx=\"0\" cy=\"0\" r=\"210\" fill=\"#4C6FFF\" opacity=\"0.35\"/>"
+    "<rect x=\"-120\" y=\"-300\" width=\"240\" height=\"600\" fill=\"#22CC99\" "
+    "opacity=\"0.25\"/></g>"
+    "<path d=\"M 120 560 C 320 420 520 520 720 460 L 900 560 L 900 640 "
+    "L 120 640 Z\" fill=\"#FFB45C\" opacity=\"0.9\"/>"
+    "<path d=\"M 980 160 H 1180 V 360 H 980 Z M 1020 200 H 1140 V 320 H 1020 Z\" "
+    "fill=\"#8FE3FF\" fill-rule=\"evenodd\" opacity=\"0.85\"/>"
+    "<rect x=\"80\" y=\"80\" width=\"240\" height=\"120\" rx=\"18\" "
+    "fill=\"#7963D6\" stroke=\"#FFFFFF\" stroke-width=\"3\" opacity=\"0.6\"/>"
+    "</svg>";
+
+const std::uint8_t* SvgBytes(const char* text) {
+    return reinterpret_cast<const std::uint8_t*>(text);
+}
+
+/// 在场景里摆一个 SVG 图片组件（调用方自己 `AddChild` 之后要 SetImageBytes）。
+inking::InkingStaticImage* AddSvgImage(inking::InkingScene& scene,
+                                       const char* name, int width, int height,
+                                       float offsetX, float offsetY,
+                                       bool hitPassThrough = false) {
+    inking::ImageData data;
+    data.name = name;
+    data.width = width;
+    data.height = height;
+    data.normal.source = name;
+    data.hitPassThrough = hitPassThrough;
+    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.offsetX = offsetX;
+    data.offsetY = offsetY;
+    return static_cast<inking::InkingStaticImage*>(
+        scene.AddChild(std::make_unique<inking::InkingStaticImage>(&scene, data)));
+}
+
+void SetSvgBytes(inking::InkingStaticImage* image, const char* svg) {
+    image->SetImageBytes(SvgBytes(svg), std::strlen(svg), image->ImageName());
+}
+
+/// 一帧离屏渲染（清屏 + 逻辑呈现 + RenderScene）。
+bool RenderSvgFrame(SDL_Renderer* renderer, inking::InkingScene& scene) {
+    inking::SceneLibrary::SetActiveScene(&scene);
+    SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
+                                     inking::DesignHeight(),
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_RenderClear(renderer);
+    return inking::SceneLibrary::RenderScene(renderer);
+}
+
+void EndSvgFrame(SDL_Renderer* renderer) {
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// T-01：光栅化矩阵（直接调内部件，不经过组件）
+// ---------------------------------------------------------------------------
+void CheckSvgRasterMatrix() {
+    std::printf("\n-- SVG 光栅化矩阵：多元素 / 渐变 / 变换 / evenodd / 坏稿（0.5.1 T-01） --\n");
+    const std::size_t size = std::strlen(kSvgDesignSample);
+    const inking::detail::SvgRasterResult full = inking::detail::RasterizeSvg(
+        SvgBytes(kSvgDesignSample), size, 200, 120, 16 * 1024 * 1024);
+    Check(full.surface != nullptr && full.error.empty(), "整张稿光栅化成功");
+    if (full.surface != nullptr) {
+        Check(full.surface->w == 200 && full.surface->h == 120,
+              "按目标框出像素（200×120，不是固有尺寸）");
+        Check(RgbClose(ReadSurfacePixel(full.surface, 5, 5), 0xFF101018u, 8),
+              "背景色与原色一致");
+        Check(RgbClose(ReadSurfacePixel(full.surface, 20, 100), 0xFFFF0000u, 40),
+              "linearGradient 左端（红）");
+        Check(RgbClose(ReadSurfacePixel(full.surface, 180, 100), 0xFF0000FFu, 40),
+              "linearGradient 右端（蓝）");
+        Check(RgbClose(ReadSurfacePixel(full.surface, 100, 60), 0xFF22CC55u, 40),
+              "g@transform 里的圆（旋转后圆心不动）");
+        Check(RgbClose(ReadSurfacePixel(full.surface, 170, 30), 0xFF101018u, 8),
+              "evenodd 孔洞露出背景（没被填满）");
+        SDL_DestroySurface(full.surface);
+    }
+
+    const inking::detail::SvgRasterResult tall = inking::detail::RasterizeSvg(
+        SvgBytes(kSvgTall), std::strlen(kSvgTall), 200, 100, 16 * 1024 * 1024);
+    Check(tall.surface != nullptr && tall.secondPasses == 1,
+          "稿比框细长时二次解码一次（最多一次）");
+    if (tall.surface != nullptr) {
+        Check(tall.surface->w >= 200 && tall.surface->h >= 100,
+              "二次解码后任一边都不小于目标框");
+        SDL_DestroySurface(tall.surface);
+    }
+
+    const inking::detail::SvgRasterResult broken = inking::detail::RasterizeSvg(
+        SvgBytes(kSvgBroken), std::strlen(kSvgBroken), 100, 100,
+        16 * 1024 * 1024);
+    Check(broken.surface == nullptr && !broken.error.empty(),
+          "坏稿返回错误串（不静默）");
+}
+
+// ---------------------------------------------------------------------------
+// T-03：组件级纹理路 + 缓存命中 + 坏稿退回颜色
+// ---------------------------------------------------------------------------
+void CheckSvgImage(SDL_Renderer* renderer) {
+    std::printf("\n-- SVG 图片组件：纹理路 / 缓存命中 / 坏稿退回颜色（0.5.1 T-03） --\n");
+    if (renderer == nullptr) {
+        return;
+    }
+    inking::InkingScene scene;
+    inking::InkingStaticImage* image = AddSvgImage(scene, "svg_probe", 200, 120,
+                                                   20.0f, 20.0f);
+    SetSvgBytes(image, kSvgDesignSample);
+
+    const inking::detail::TextCacheStats before =
+        inking::detail::TextCacheStatsSnapshot();
+    scene.TickFrame(1.0f / 60.0f);
+    const bool rendered = RenderSvgFrame(renderer, scene);
+    const inking::detail::TextCacheStats after =
+        inking::detail::TextCacheStatsSnapshot();
+    Check(rendered, "SVG 图片组件渲染一帧");
+    Check(after.svgRasters == before.svgRasters + 1,
+          "首次绘制真的光栅化了 1 次");
+
+    // 设计坐标 → 输出像素：1280×720 逻辑 → 640×360 输出 = 0.5。
+    const auto px = [&](int designX, int designY) {
+        return ReadOutputPixel(renderer, designX / 2, designY / 2);
+    };
+    Check(RgbClose(px(25, 25), 0xFF101018u, 12), "组件里的背景色正确");
+    Check(RgbClose(px(40, 120), 0xFFFF0000u, 60), "渐变左端透到屏幕（红）");
+    Check(RgbClose(px(200, 120), 0xFF0000FFu, 60), "渐变右端透到屏幕（蓝）");
+    Check(RgbClose(px(190, 50), 0xFF101018u, 12), "evenodd 孔洞透到屏幕");
+
+    // 第二帧：命中缓存，不再光栅化。
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    inking::SceneLibrary::RenderScene(renderer);
+    const inking::detail::TextCacheStats again =
+        inking::detail::TextCacheStatsSnapshot();
+    Check(again.svgRasters == after.svgRasters, "第二帧不再光栅化（缓存生效）");
+    Check(again.svgCacheHits == after.svgCacheHits + 1, "第二帧命中 SVG 档");
+
+    // 坏稿：解码失败 → 计数 + 一条 WARN；组件仍按颜色渲染（不是洞）。
+    inking::InkingStaticImage* bad =
+        AddSvgImage(scene, "svg_broken", 100, 100, 300.0f, 20.0f);
+    SetSvgBytes(bad, kSvgBroken);
+    inking::InkLog::ResetStats();
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    inking::SceneLibrary::RenderScene(renderer);
+    const inking::detail::TextCacheStats badStats =
+        inking::detail::TextCacheStatsSnapshot();
+    Check(badStats.svgFailures == after.svgFailures + 1, "坏稿计一次失败");
+    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+          "坏稿只报一条 WARN（不每帧刷）");
+
+    EndSvgFrame(renderer);
+}
+
+// ---------------------------------------------------------------------------
+// T-02：按目标像素分档（同尺寸命中 / 第 4 档淘汰 / 二次解码计数）
+// ---------------------------------------------------------------------------
+void CheckSvgCacheDensity(SDL_Renderer* renderer) {
+    std::printf("\n-- SVG 纹理分档：同尺寸命中 / 第 4 档淘汰（0.5.1 T-02） --\n");
+    if (renderer == nullptr) {
+        return;
+    }
+
+    // ① 同一张图、同一尺寸的两个组件：一次光栅化 + 一次命中。
+    {
+        inking::InkingScene scene;
+        SetSvgBytes(AddSvgImage(scene, "density_same", 100, 60, 20.0f, 20.0f),
+                    kSvgDesignSample);
+        SetSvgBytes(AddSvgImage(scene, "density_same", 100, 60, 200.0f, 20.0f),
+                    kSvgDesignSample);
+        scene.TickFrame(1.0f / 60.0f);
+        const inking::detail::TextCacheStats before =
+            inking::detail::TextCacheStatsSnapshot();
+        RenderSvgFrame(renderer, scene);
+        const inking::detail::TextCacheStats after =
+            inking::detail::TextCacheStatsSnapshot();
+        Check(after.svgRasters == before.svgRasters + 1,
+              "同尺寸的两张图共用一次光栅化");
+        Check(after.svgCacheHits == before.svgCacheHits + 1,
+              "第二个组件命中缓存");
+        EndSvgFrame(renderer);
+    }
+
+    // ② 同一张图、四个不同尺寸：四档，第 4 档插入时淘汰最早的一档。
+    {
+        inking::InkingScene scene;
+        const int sizes[4][2] = {{60, 36}, {80, 48}, {100, 60}, {120, 72}};
+        for (int i = 0; i < 4; ++i) {
+            SetSvgBytes(AddSvgImage(scene, "density_multi", sizes[i][0],
+                                    sizes[i][1], 20.0f + 160.0f * i, 200.0f),
+                        kSvgDesignSample);
+        }
+        scene.TickFrame(1.0f / 60.0f);
+        const inking::detail::TextCacheStats before =
+            inking::detail::TextCacheStatsSnapshot();
+        RenderSvgFrame(renderer, scene);
+        const inking::detail::TextCacheStats after =
+            inking::detail::TextCacheStatsSnapshot();
+        Check(after.svgRasters == before.svgRasters + 4,
+              "四个尺寸各光栅化一次");
+        Check(after.svgEvictions >= before.svgEvictions + 1,
+              "第 4 档淘汰最早一档（每图最多 3 档）");
+        EndSvgFrame(renderer);
+    }
+
+    // ③ 竖稿进横框：二次解码（直接调内部件，不经过渲染）。
+    {
+        inking::detail::SvgRasterResult tall = inking::detail::RasterizeSvg(
+            SvgBytes(kSvgTall), std::strlen(kSvgTall), 200, 100,
+            16 * 1024 * 1024);
+        Check(tall.secondPasses == 1, "竖稿进横框时二次解码");
+        Check(tall.surface != nullptr && tall.surface->w >= 200
+                  && tall.surface->h >= 100,
+              "二次解码后任一边都不小于目标框");
+        if (tall.surface != nullptr) {
+            SDL_DestroySurface(tall.surface);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T-04：不支持元素扫描（text×2 + clip-path×1）
+// ---------------------------------------------------------------------------
+void CheckSvgUnsupported(SDL_Renderer* renderer) {
+    std::printf("\n-- SVG 不支持元素：扫描计数 + 每图一条 WARN（0.5.1 T-04） --\n");
+    if (renderer == nullptr) {
+        return;
+    }
+    inking::InkingScene scene;
+    SetSvgBytes(AddSvgImage(scene, "unsupported_probe", 100, 100, 20.0f, 20.0f),
+                kSvgUnsupported);
+    scene.TickFrame(1.0f / 60.0f);
+    const inking::detail::TextCacheStats before =
+        inking::detail::TextCacheStatsSnapshot();
+    inking::InkLog::ResetStats();
+    RenderSvgFrame(renderer, scene);
+    const inking::detail::TextCacheStats after =
+        inking::detail::TextCacheStatsSnapshot();
+    Check(after.svgUnsupportedElements == before.svgUnsupportedElements + 3,
+          "text×2 + clip-path×1 计 3 次（大小写不敏感）");
+    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+          "汇总 WARN 恰好一条");
+
+    inking::InkLog::ResetStats();
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    inking::SceneLibrary::RenderScene(renderer);
+    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 0,
+          "同一张图第二次绘制不再报（缓存命中）");
+    EndSvgFrame(renderer);
+}
+
+// ---------------------------------------------------------------------------
+// T-06：背景穿透（整张稿当背景时不吃空白点击）
+// ---------------------------------------------------------------------------
+void CheckSvgBackgroundPassthrough() {
+    std::printf("\n-- SVG 背景：hitPassThrough 不挡点击（0.5.1 T-06） --\n");
+    // 场景名必须不同：同名场景的第二次构造会进"停放态"（`IsRegistered()` false），
+    // 那会让命中表不按预期建。
+    const auto build = [](const char* sceneName, bool passThrough,
+                          inking::InkingStaticImage** outImage,
+                          inking::InkingStaticButton** outButton) {
+        auto scene = std::make_unique<inking::InkingScene>(sceneName);
+        inking::InkingStaticImage* image =
+            AddSvgImage(*scene, "bg_probe", 1280, 720, 0.0f, 0.0f, passThrough);
+        SetSvgBytes(image, kSvgDesignSample);
+        inking::ButtonData data;
+        data.name = "on_bg";
+        data.width = 200;
+        data.height = 60;
+        data.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+                                              0xFF3F7FD6u);
+        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.offsetX = 540.0f;
+        data.offsetY = 330.0f;
+        auto* button = static_cast<inking::InkingStaticButton*>(
+            scene->AddChild(
+                std::make_unique<inking::InkingStaticButton>(scene.get(), data)));
+        scene->TickFrame(1.0f / 60.0f);
+        *outImage = image;
+        *outButton = button;
+        return scene;
+    };
+
+    inking::InkingStaticImage* passImage = nullptr;
+    inking::InkingStaticButton* passButton = nullptr;
+    auto passScene = build("bg_pass", true, &passImage, &passButton);
+    Check(passScene->IsRegistered(), "穿透组场景登记成功");
+    Check(passScene->QueryHit(640.0f, 360.0f).target == passButton,
+          "点按钮 → 命中按钮（背景不挡）");
+    const inking::HitResult passBlank = passScene->QueryHit(100.0f, 100.0f);
+    Check(passBlank.kind == inking::HitKind::PassThrough,
+          "点空白 → 答案被判成 PassThrough（背景让过，不挡）");
+
+    inking::InkingStaticImage* blockImage = nullptr;
+    inking::InkingStaticButton* blockButton = nullptr;
+    auto blockScene = build("bg_block", false, &blockImage, &blockButton);
+    Check(blockScene->IsRegistered(), "对照组场景登记成功");
+    const inking::HitResult blockBlank = blockScene->QueryHit(100.0f, 100.0f);
+    Check(blockBlank.kind == inking::HitKind::Block
+              && blockBlank.target == blockImage,
+          "不穿透时背景照旧吃掉空白点击（默认行为不变）");
+}
+
+// ---------------------------------------------------------------------------
+// T-07：整张 1280×720 设计稿在设备上可见（示例的自检版，不依赖 assets/）
+// ---------------------------------------------------------------------------
+void CheckSvgFullDesign(SDL_Renderer* renderer) {
+    std::printf("\n-- SVG 整张设计稿：1280×720 铺满 + 采样（0.5.1 T-07） --\n");
+    if (renderer == nullptr) {
+        return;
+    }
+    inking::InkingScene scene;
+    SetSvgBytes(AddSvgImage(scene, "design_full", 1280, 720, 0.0f, 0.0f),
+                kSvgFullDesign);
+    scene.TickFrame(1.0f / 60.0f);
+    const inking::detail::TextCacheStats before =
+        inking::detail::TextCacheStatsSnapshot();
+    const bool rendered = RenderSvgFrame(renderer, scene);
+    const inking::detail::TextCacheStats after =
+        inking::detail::TextCacheStatsSnapshot();
+    Check(rendered, "整张稿渲染一帧");
+    Check(after.svgRasters == before.svgRasters + 1, "整张稿光栅化一次");
+
+    const auto px = [&](int designX, int designY) {
+        return ReadOutputPixel(renderer, designX / 2, designY / 2);
+    };
+    // 只断言"可区分"，不追渐变的中间色：0.5 缩放 + 混合后精确值没有意义。
+    const std::uint32_t sky = px(20, 20);
+    const std::uint32_t orange = px(300, 620);
+    const std::uint32_t hole = px(1100, 280);
+    Check((sky & 0x00FFFFFFu) != 0u, "渐变背景可见（不是纯黑）");
+    Check(((orange >> 16) & 0xFFu) > 120u, "橙色 path 可见（R 通道高）");
+    Check(((hole >> 16) & 0xFFu) < 128u, "evenodd 孔洞是背景色（不是橙色块）");
+    EndSvgFrame(renderer);
+}
+
+// ---------------------------------------------------------------------------
+// T-02（高清）：2× 输出下重新光栅化一档 + 采样正确
+// ---------------------------------------------------------------------------
+void CheckSvgHiDpi() {
+    std::printf("\n-- SVG 高清：2× 输出重新光栅化（0.5.1 T-02） --\n");
+    SDL_Window* window = SDL_CreateWindow("svg-hidpi", 2560, 1440, 0);
+    SDL_Renderer* renderer =
+        window != nullptr ? SDL_CreateRenderer(window, nullptr) : nullptr;
+    Check(renderer != nullptr, "创建 2× 渲染器（2560×1440）");
+    if (renderer == nullptr) {
+        if (window != nullptr) {
+            SDL_DestroyWindow(window);
+        }
+        return;
+    }
+
+    inking::InkingScene scene;
+    SetSvgBytes(AddSvgImage(scene, "svg_hidpi", 200, 120, 20.0f, 20.0f),
+                kSvgDesignSample);
+    scene.TickFrame(1.0f / 60.0f);
+    const inking::detail::TextCacheStats before =
+        inking::detail::TextCacheStatsSnapshot();
+    const bool rendered = RenderSvgFrame(renderer, scene);
+    const inking::detail::TextCacheStats after =
+        inking::detail::TextCacheStatsSnapshot();
+    Check(rendered, "2× 下渲染一帧");
+    Check(after.svgRasters == before.svgRasters + 1,
+          "2× 下重新光栅化一档（目标框 = 设计尺寸 × 2）");
+
+    // 输出 2560×1440 / 逻辑 1280×720 = 2：设计坐标 × 2 = 输出像素。
+    const auto px = [&](int designX, int designY) {
+        return ReadOutputPixel(renderer, designX * 2, designY * 2);
+    };
+    Check(RgbClose(px(25, 25), 0xFF101018u, 12), "2× 下背景色正确");
+    Check(RgbClose(px(40, 120), 0xFFFF0000u, 60), "2× 下渐变左端（红）");
+    Check(RgbClose(px(200, 120), 0xFF0000FFu, 60), "2× 下渐变右端（蓝）");
+
+    EndSvgFrame(renderer);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+}
+
 }  // namespace
 
 int main() {
@@ -3114,6 +3595,15 @@ int main() {
 
     // ---- 运行期主题：换表 → 下一帧颜色就变（含真渲染像素） ----
     CheckRuntimeTheme(rnd);
+
+    // ---- SVG 设计稿（0.5.1）：整张稿光栅化 / 缓存分档 / 不支持元素 / 背景穿透 ----
+    CheckSvgRasterMatrix();
+    CheckSvgImage(rnd);
+    CheckSvgCacheDensity(rnd);
+    CheckSvgUnsupported(rnd);
+    CheckSvgBackgroundPassthrough();
+    CheckSvgFullDesign(rnd);
+    CheckSvgHiDpi();
 
     // ---- 树的动态性（0.4.0 A 组）：A1 / A2 / A3 / A4 / A5 / B1 / B2 / D6 / D7 ----
     CheckDynamicTree();

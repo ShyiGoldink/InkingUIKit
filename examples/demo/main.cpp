@@ -25,6 +25,9 @@
 
 #include <button/InkingDynamicButton.h>
 #include <button/InkingStaticButton.h>
+#include <config/window_config.h>
+#include <image/ImageData.h>
+#include <image/InkingStaticImage.h>
 #include <input/Shortcut.h>
 #include <prefab/MenuBar.h>
 #include <prefab/MenuPopup.h>
@@ -161,7 +164,28 @@ public:
 
 private:
     void BuildUi() {
-        // 0) 菜单栏：无边框窗口的**自绘标题栏**（拖动 + 最小化 / 关闭），
+        // 0) 整张界面设计稿当背景（0.5.1）：
+        //    一份 SVG（assets/design.svg）在运行期按目标像素光栅化成一张纹理，
+        //    `runtimeAsset = true` 表示字节在运行期从 exe 旁的 assets/ 读——
+        //    换稿不用重编。`hitPassThrough = true` 让空白点击穿到下面（否则
+        //    这块铺满全屏的图会把所有按钮都挡住，看起来像"按钮点不动"）。
+        inking::ImageData backdrop;
+        backdrop.name = "design_backdrop";
+        backdrop.width = inking::DesignWidth();
+        backdrop.height = inking::DesignHeight();
+        backdrop.runtimeAsset = true;
+        backdrop.hitPassThrough = true;
+        backdrop.normal.type = inking::AppearanceType::Image;
+        backdrop.normal.source = "design.svg";
+        backdrop.normal.imageFit = inking::ImageFit::Fill;
+        backdrop.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+        backdrop.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        backdrop.offsetX = 0.0f;
+        backdrop.offsetY = 0.0f;
+        backdrop.zIndex = inking::InkingZIndex::background;
+        AddChild(std::make_unique<inking::InkingStaticImage>(this, backdrop));
+
+        // 1) 菜单栏：无边框窗口的**自绘标题栏**（拖动 + 最小化 / 关闭），
         //    同时承担两件事——
         //      · 滚轮缩放：指针在菜单栏上滚一下就按档位缩放窗口（无边框没有系统
         //        边缘可拖，这是改尺寸的唯一入口）；
@@ -229,9 +253,11 @@ private:
 
         // 6) 菜单浮窗（0.4.1）：定点弹出，内容自己组织
         //
-        // 这里用**按钮定点**而不是右键：本版的指针派发只有左键一条通道
-        // （`MouseInput` 记了右键状态，但没有到组件的派发），所以"右键菜单"
-        // 要先给窗口层加通道——那是另一件事。`OpenAt` 本来就不关心定点从哪来。
+        // 0.5.0 起有两个定点来源，都是"同一次点击"的自然结果：
+        //   · 左键点"打开菜单"按钮 → 定点算在按钮下方（原有演示，`OpenAt` 的
+        //     "调用方给点"这条能力）；
+        //   · 右键 / 触摸长按 → 定点是**按下点**，这才是真正的上下文菜单。
+        // 两条路都只是 `OpenAt(x, y)`：浮窗自己不关心定点从哪来。
         _menu = std::make_unique<inking::prefab::MenuPopup>(this);
 
         inking::ButtonData menuItem;
@@ -270,6 +296,14 @@ private:
             _menu->OpenAt(opener->GetAbsX(),
                           opener->GetAbsY()
                               + static_cast<float>(opener->GetHeight()) + 4.0f);
+        });
+
+        // **右键菜单**（0.5.0）：坐标是按下点，场景已经按按钮分槽记好了。
+        //
+        // 触摸屏上按住这个按钮 0.5 秒会走到同一个回调——按钮不需要知道那是
+        // 手指，这正是"统一输入"的意思（组件只见 Primary / Secondary）。
+        opener->SetOnContextClicked([this](float x, float y) {
+            _menu->OpenAt(x, y);
         });
     }
 
