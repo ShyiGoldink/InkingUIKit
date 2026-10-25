@@ -3,7 +3,8 @@
 // 预制件 C5「路径 / 文件选择」（`docs/TaskGuide.md` 的 C 系列）。
 //
 // **路线已由用户裁定：组装自绘**（C3 列表 + B7 单行文本框 + C1 快捷位置 +
-// C2 按钮栏），不动框架、跨平台一致、可断言。理由写在 `FilePickerData.h` 顶上。
+// C2 按钮栏 + 盘符栏），不动框架、跨平台一致、可断言。理由写在 `FilePickerData.h`
+// 顶上。
 //
 // ---------------------------------------------------------------------------
 // 三块必须一起守的事（不然就是"能跑但会炸在中文目录里"）
@@ -17,8 +18,12 @@
 //   3. **"确定"要分清三种模式**：开文件 / 存文件要的是**选中的文件**；
 //      选目录要的是**当前目录**（选中项是次要的）。
 //
-// 第一版**不做**：原生对话框、磁盘驱动器列表、书签 / 最近位置、文件名与目录
-// 分开输入（SaveFile 也走"选中的文件"）、多列 / 图标视图。
+// **换盘符**（`FilePickerStyle::drives` + `EnumerateDrives()`）：盘符单独占一行，
+// 一行放得下十来个；这一栏是"会话内枚举一次"的（`RefreshDrives()` 手动重来），
+// 不挂系统通知——U 盘热插拔很常见，但轮询托盘不是本组件的活。
+//
+// 第一版**不做**：原生对话框、书签 / 最近位置、文件名与目录分开输入
+// （SaveFile 也走"选中的文件"）、多列 / 图标视图。
 
 #include <widget/InkingStaticWidget.h>
 #include <event/InkingEvent.h>
@@ -105,6 +110,32 @@ public:
     /// 用户主目录（快捷位置之一）。取不到时返回空 path。
     static std::filesystem::path HomeDirectory();
 
+    /**
+     * 当前能换的盘符（根路径，**带尾部分隔符**：`C:\`、`D:\` …）。
+     *
+     * - Windows：`GetLogicalDrives` + `GetDriveType`，跳过"没有根目录"的那几位
+     *   （空软驱、断开的映射盘）——列出来也只会点出一个错误；
+     * - 其它平台：**空**。盘符是 Windows 的词汇，POSIX 只有 `/`（快捷位置里的
+     *   "根目录"就是它），所以那些平台上盘符栏整条不建。
+     */
+    static std::vector<std::filesystem::path> EnumerateDrives();
+
+    /**
+     * 重新枚举盘符并重建盘符栏（插了 U 盘 / 拔了移动硬盘之后喊一声）。
+     *
+     * 幂等：盘符没变时 `SetItems` 什么都不做（不重建节点）。
+     *
+     * ⚠️ 只重建**项**，不重排布局：静态档的几何在构造期就算死了，所以"运行期
+     * 从 0 个盘符变成 1 个"不会把这一块撑出来。真要那种效果，请重新构造选择器。
+     */
+    void RefreshDrives();
+
+    /// 盘符栏现在列了几项（0 = 这个平台没有盘符 / 被 `showDrives` 关掉了）。
+    std::size_t GetDriveCount() const noexcept;
+
+    /// 当前目录所在的盘符（`C:` 这样的显示名）；`_directory` 为空时是空串。
+    std::string GetCurrentDrive() const;
+
     // ---------------- 条目与选择 ----------------
 
     const std::vector<FileEntry>& GetEntries() const noexcept { return _entries; }
@@ -146,6 +177,7 @@ public:
 
     ListView& List() noexcept { return _list; }
     OptionBar& Shortcuts() noexcept { return _shortcuts; }
+    OptionBar& Drives() noexcept { return _drives; }
     MenuBar& Buttons() noexcept { return _buttons; }
     InkingTextInput& PathInput() noexcept { return _pathInput; }
 
@@ -162,6 +194,7 @@ private:
 
     InkingTextInput _pathInput;
     OptionBar _shortcuts;
+    OptionBar _drives;
     ListView _list;
     MenuBar _buttons;
 };

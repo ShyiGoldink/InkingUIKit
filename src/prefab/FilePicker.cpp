@@ -1,3 +1,16 @@
+// Windows 的系统头要最先包含（`WIN32_LEAN_AND_MEAN` / `NOMINMAX` 必须在它之前
+// 定义，否则会被别的头抢先拉进来——那之后这两个宏就无效了）。只为了盘符枚举
+// 用到的两个函数，别的一概不从 `windows.h` 取。
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <prefab/FilePicker.h>
 
 #include "PathUtf8.h"
@@ -15,24 +28,49 @@ namespace inking::prefab {
 
 namespace {
 
-/// 四块内容在自身里的纵向位置（都从 0 起算，块之间留 `contentGap`）。
+/// 五块内容在自身里的纵向位置（都从 0 起算，块之间留 `contentGap`）。
 struct BlockLayout {
     float pathInputY = 0.0f;
     float shortcutsY = 0.0f;
+    float drivesY = 0.0f;
     float listY = 0.0f;
     float buttonsY = 0.0f;
     float totalHeight = 0.0f;
+    /// 盘符栏这一块到底占不占高度（平台上枚举不到盘符时它整条不建）。
+    bool driveBar = false;
 };
+
+/**
+ * 盘符栏要不要占位置：`showDrives` 关了就占 0，平台上没有盘符也占 0。
+ *
+ * 这里每次问都重新枚举一次系统盘符（构造期最多问六次，`GetLogicalDrives` 是
+ * 微秒级）；换来的是"布局判定"与"真正建出来的项数"永远读同一个来源，不会出现
+ * "说好的 30 高、里面一个盘符都没有"。
+ */
+bool ShouldShowDrives(const FilePickerStyle& style) {
+    return style.showDrives && !FilePicker::EnumerateDrives().empty();
+}
 
 BlockLayout ComputeBlockLayout(const FilePickerStyle& style) {
     BlockLayout out;
     const float gap = style.contentGap;
+    out.driveBar = ShouldShowDrives(style);
     out.pathInputY = 0.0f;
     out.shortcutsY = out.pathInputY + style.pathInputHeight + gap;
-    out.listY = out.shortcutsY + style.shortcutHeight + gap;
+    out.drivesY = out.shortcutsY + style.shortcutHeight + gap;
+    out.listY = out.drivesY + (out.driveBar ? style.driveBarHeight + gap : 0.0f);
     out.buttonsY = out.listY + style.listHeight + gap;
     out.totalHeight = out.buttonsY + style.buttonBarHeight;
     return out;
+}
+
+/// 盘符按钮上的字：根路径 `C:\` → `C:`（去掉尾部分隔符，一个字母加冒号才像盘符）。
+std::string DriveLabel(const std::filesystem::path& root) {
+    std::string text = PathToUtf8(root);
+    while (!text.empty() && (text.back() == '\\' || text.back() == '/')) {
+        text.pop_back();
+    }
+    return text;
 }
 
 PanelData MakePanelData(const FilePickerStyle& style) {
@@ -156,6 +194,14 @@ FilePickerStyle FilePickerStyle::MakeDefault() {
     style.shortcuts.itemLook.width = 96;
     style.shortcuts.itemLook.height = 28;
 
+    // 盘符栏：跟快捷位置同一套排列，只是**项更窄**（"C:" 只有两个字符）。
+    // 52 宽 + 4 缝 = 一行放 11 个盘符，够用且不顶出 640。
+    style.drives = style.shortcuts;
+    style.drives.panel.height = 30;
+    style.drives.itemLook.width = 52;
+    style.driveBarHeight = 30.0f;
+    style.showDrives = true;
+
     // 目录内容：默认**窗口化**（一个目录上千项很常见）。
     style.list = ListViewStyle::MakeDefault();
     style.list.panel.width = 640;
@@ -214,6 +260,21 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
           options.panel.offsetY = ComputeBlockLayout(style).shortcutsY;
           return options;
       }()),
+      _drives(this, [&style] {
+          OptionBarStyle options = style.drives;
+          options.panel.width = style.panel.width;
+          // 枚举不到盘符时这一块给 0 高：它反正会被 `SetVisible(false)`，但布局
+          // 也不能给别人留一个洞（见 `ShouldShowDrives`）。
+          options.panel.height =
+              ShouldShowDrives(style)
+                  ? static_cast<int>(style.driveBarHeight + 0.5f)
+                  : 0;
+          options.panel.traceAnchor = InkingChangeAnchor::LeftTop;
+          options.panel.selfAnchor = InkingChangeAnchor::LeftTop;
+          options.panel.offsetX = 0.0f;
+          options.panel.offsetY = ComputeBlockLayout(style).drivesY;
+          return options;
+      }()),
       _list(this, [&style] {
           ListViewStyle list = style.list;
           list.panel.width = style.panel.width;
@@ -261,6 +322,31 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
             SetDirectory(HomeDirectory());
         }
     });
+
+    // ---- 盘符栏：点一个盘符 = 直接进它的根目录 ----
+    //
+    // 项的 id 存的是**完整根路径**（`drive:C:\`），不是字母：字母拼回 `C:` 是
+    // drive-relative 路径（"当前盘上的当前目录"），不是 `C:\`——那是两回事，
+    // 而且在小写 / 大小写混写下还能骗过眼睛。
+    _drives.optionClicked.Subscribe([this](const std::string& id, std::size_t) {
+        static constexpr char kDrivePrefix[] = "drive:";
+        const std::size_t prefixLength = sizeof(kDrivePrefix) - 1;  // 不吃结尾 '\0'
+        if (id.size() <= prefixLength
+            || id.compare(0, prefixLength, kDrivePrefix) != 0) {
+            return;
+        }
+        const std::string root = id.substr(prefixLength);
+        if (!SetDirectory(Utf8ToPath(root))) {
+            INK_LOG_ERROR(std::string(kFilePickerModuleName),
+                          "这个盘符进不去：" + root);
+        }
+    });
+    RefreshDrives();
+    if (!ShouldShowDrives(_style)) {
+        // 平台没有盘符这一说（或调用方关掉了）：整条不露面，也不占高度
+        // ——高度在 `_drives` 的构造里已经给成 0。
+        _drives.SetVisible(false);
+    }
 
     // ---- 列表：点一下 = 进目录（开文件模式）/ 选中；选择变化往外说 ----
     _list.itemActivated.Subscribe([this](const std::string&, int index) {
@@ -427,6 +513,59 @@ std::filesystem::path FilePicker::HomeDirectory() {
     }
     return {};
 #endif
+}
+
+// ---------------------------------------------------------------------------
+// 盘符（换盘符 = C5 的增补能力）
+// ---------------------------------------------------------------------------
+
+std::vector<std::filesystem::path> FilePicker::EnumerateDrives() {
+    std::vector<std::filesystem::path> roots;
+#if defined(_WIN32)
+    // 位图：第 0 位 = A:，第 25 位 = Z:。
+    const DWORD mask = ::GetLogicalDrives();
+    if (mask == 0) {
+        return roots;
+    }
+    for (int index = 0; index < 26; ++index) {
+        if ((mask & (static_cast<DWORD>(1) << index)) == 0) {
+            continue;
+        }
+        const wchar_t letter = static_cast<wchar_t>(L'A' + index);
+        const wchar_t text[4] = {letter, L':', L'\\', L'\0'};
+        // 空软驱 / 断开的映射盘也会占一位：点进去只会得到一条错误日志
+        // （`SetDirectory` 不静默），不如不列。
+        if (::GetDriveTypeW(text) == DRIVE_NO_ROOT_DIR) {
+            continue;
+        }
+        roots.emplace_back(std::filesystem::path(text));
+    }
+#else
+    // 盘符是 Windows 的词汇：POSIX 的"根"只有一个 `/`，快捷位置里的"根目录"
+    // 已经覆盖它，所以这里返回空——盘符栏整条不建（而不是画一条空栏）。
+#endif
+    return roots;
+}
+
+void FilePicker::RefreshDrives() {
+    std::vector<OptionItem> items;
+    for (const std::filesystem::path& root : EnumerateDrives()) {
+        // id 存**完整根路径**（见构造里那段注释：字母拼 `C:` 是 drive-relative）。
+        items.push_back(OptionItem{"drive:" + PathToUtf8(root), DriveLabel(root),
+                                   true, 0.0f});
+    }
+    _drives.SetItems(std::move(items));
+}
+
+std::size_t FilePicker::GetDriveCount() const noexcept {
+    return _drives.GetItemCount();
+}
+
+std::string FilePicker::GetCurrentDrive() const {
+    if (_directory.empty()) {
+        return {};
+    }
+    return DriveLabel(_directory.root_path());
 }
 
 // ---------------------------------------------------------------------------

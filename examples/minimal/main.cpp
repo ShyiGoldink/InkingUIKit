@@ -40,7 +40,7 @@ private:
         data.name = "title";
         data.width = 720;
         data.height = 90;
-        data.text = "Inking 0.4.0";
+        data.text = "Inking 0.5.2";
         data.style.fontSize = 44.0f;
         data.style.align = inking::TextAlignH::Center;
         data.style.alignV = inking::TextAlignV::Middle;

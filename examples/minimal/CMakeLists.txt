@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# <SDK> = 解压出来的 inking-0.4.0-win64 目录。
+# <SDK> = 解压出来的 inking-0.5.2-win64 目录。
 #
 #   cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
 #         -DCMAKE_PREFIX_PATH="<SDK>;C:/msys64/ucrt64"

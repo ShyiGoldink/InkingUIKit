@@ -15,7 +15,7 @@
 | `OptionBar` | 布局排列的按钮组 | `prefab/OptionBar.h` |
 | `ListView` | 滚动容器 + 布局 + 只建可见项 | `prefab/ListView.h` |
 | `Select` | 收起按钮 + 就地展开的选项栏（+ 可选过滤框） | `prefab/Select.h` |
-| `FilePicker` | 路径框 + 快捷位置 + 列表 + 按钮栏 | `prefab/FilePicker.h` |
+| `FilePicker` | 路径框 + 快捷位置 + 盘符栏 + 列表 + 按钮栏 | `prefab/FilePicker.h` |
 | `MenuPopup` | 定点弹出的竖排菜单（项可绑局部快捷键） | `prefab/MenuPopup.h` |
 | `ListRow` | 带选中色的列表行（`InkingStaticButton`） | `prefab/ListRow.h` |
 | `PrefabTheme` | 一套配色 / 圆角 / 字体路径常量 | `prefab/PrefabTheme.h` |
@@ -315,8 +315,8 @@ struct SelectStyle {
 
 ## 五、FilePicker
 
-**它就是**四块拼起来：路径框（`InkingTextInput`）→ 快捷位置（`OptionBar`）→
-目录内容（`ListView`）→ 按钮栏（`MenuBar`）。
+**它就是**五块拼起来：路径框（`InkingTextInput`）→ 快捷位置（`OptionBar`）→
+盘符栏（`OptionBar`）→ 目录内容（`ListView`）→ 按钮栏（`MenuBar`）。
 
 ```C++
 struct FileEntry {
@@ -340,6 +340,11 @@ public:
     bool EnterDirectory(int entryIndex);
     static std::filesystem::path HomeDirectory();
 
+    static std::vector<std::filesystem::path> EnumerateDrives();  // C:\ D:\ …
+    void RefreshDrives();                                        // U 盘热插拔后喊一声
+    std::size_t GetDriveCount() const noexcept;
+    std::string GetCurrentDrive() const;                         // "C:"
+
     const std::vector<FileEntry>& GetEntries() const noexcept;
     std::size_t GetEntryCount() const noexcept;
     const std::vector<int>& GetSelectedIndices() const noexcept;
@@ -354,6 +359,7 @@ public:
     const FilePickerStyle& GetStyle() const noexcept;
     ListView& List() noexcept;
     OptionBar& Shortcuts() noexcept;
+    OptionBar& Drives() noexcept;
     MenuBar& Buttons() noexcept;
     InkingTextInput& PathInput() noexcept;
 
@@ -369,6 +375,7 @@ struct FilePickerStyle {
     PanelData panel{};
     TextInputData pathInput{};
     OptionBarStyle shortcuts{};
+    OptionBarStyle drives{};                 // 盘符栏（每项 52 宽："C:"）
     ListViewStyle list{};
     MenuBarStyle buttons{};
     ButtonData buttonLook{};
@@ -377,10 +384,12 @@ struct FilePickerStyle {
     FilePickMode mode = FilePickMode::OpenFile;
     bool multiSelect = false;
     bool showHidden = false;
+    bool showDrives = true;                  // 枚举不到盘符时这一栏整条不建
 
     float contentGap = 4.0f;
     float pathInputHeight = 32.0f;
     float shortcutHeight = 30.0f;
+    float driveBarHeight = 30.0f;
     float listHeight = 300.0f;
     float buttonBarHeight = 40.0f;
 
@@ -388,7 +397,7 @@ struct FilePickerStyle {
     std::string acceptText = "确定";
     std::string cancelText = "取消";
 
-    static FilePickerStyle MakeDefault();     // 640×480、竖向四块、无过滤、单文件
+    static FilePickerStyle MakeDefault();     // 640×480、竖向五块、无过滤、单文件
 };
 ```
 
@@ -401,7 +410,20 @@ struct FilePickerStyle {
 3. **"确定"要分清三种模式**：开文件 / 存文件要的是**选中的文件**；
    选目录要的是**当前目录**（选中项是次要的）。
 
-第一版**不做**：原生对话框、磁盘驱动器列表、书签 / 最近位置、文件名与目录分开输入、
+### 盘符栏（换盘符）
+
+- **枚举**：`EnumerateDrives()` → `C:\`、`D:\` …（Windows 用 `GetLogicalDrives` +
+  `GetDriveType`，跳过"没有根目录"的空软驱 / 断开的映射盘——列出来也只会点出一条错误）；
+  其它平台**返回空**，盘符栏整条不建（不是画一条空栏：布局判定和项数读同一个来源）。
+- **项的 id 是 `drive:<完整根路径>`**（`drive:C:\`），不是字母。字母拼回 `C:` 是
+  drive-relative 路径（"当前盘上的当前目录"），那是另一个位置。
+- **盘符单独占一块**（`FilePickerStyle::drives`，每项 52 宽）：选项栏每项同宽，
+  塞进快捷位置那三项（96 宽）后面就会顶出 640。盘符很短，52 宽一行放 11 个。
+- `RefreshDrives()` 重枚举（U 盘热插拔后喊一声）；幂等——盘符没变就不重建节点。
+- ⚠️ **只重建项，不重排布局**：静态档的几何在构造期就算死了，运行期从 0 个盘符
+  变成 1 个不会把这一块撑出来；要那种效果请重新构造选择器。
+
+第一版**不做**：原生对话框、书签 / 最近位置、文件名与目录分开输入、
 多列 / 图标视图。
 
 ## 六、ListRow
@@ -450,4 +472,4 @@ std::string DefaultFontPath();
 
 ---
 
-> 本文档对应版本：**0.4.0（0.x 发布版）**。
+> 本文档对应版本：**0.5.2（0.x 发布版）**。

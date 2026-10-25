@@ -1,12 +1,12 @@
 # 任务书（TaskGuide）
 
-> ## ⚠ 本文对应版本 0.4.0（0.x 发布版）
+> ## ⚠ 本文对应版本 0.5.2（0.x 发布版）
 >
-> 版本号 `0.4.0`（`inking::kVersion` / `inking::kVersionStage`）。
+> 版本号 `0.5.2`（`inking::kVersion` / `inking::kVersionStage`）。
 >
 > - **本文是重建稿**：原任务书未随仓库搬入，正文按代码注释里的引用反推，逐节标了证据。
 > - **只对编号负责**：它回答"哪个任务、落在哪、做到什么程度"，不替代 `docs/zh/api/*.md`。
-> - **不要用于生产**：`0.4.0` 是内部联调版本，任务状态会随接口调整变化。
+> - **不要用于生产**：`0.5.2` 是内部联调版本，任务状态会随接口调整变化。
 
 ## 0 这份文档是什么 / 重建说明
 
@@ -338,16 +338,22 @@ B 系列是"单个组件内部"的深度：不是新能力，而是把某一件�
 
 ### C5 文件选择（`FilePicker`）
 
-- **目标**：四块拼起来——路径框（B7）→ 快捷位置（C1）→ 目录内容（C3）→ 按钮栏（C2）。
-  路线是**组装自绘**：不动框架、跨平台一致、可断言。
+- **目标**：五块拼起来——路径框（B7）→ 快捷位置（C1）→ 盘符栏（C1，增补）→
+  目录内容（C3）→ 按钮栏（C2）。路线是**组装自绘**：不动框架、跨平台一致、可断言。
 - **落点**：`prefab/FilePicker.h`、`prefab/FilePickerData.h`。
 - **API**：`bool SetDirectory(const std::filesystem::path&)`、`GoUp()`、`EnterDirectory(int)`、
-  `bool Accept()`（按 mode 决定要什么）、`std::vector<std::string> GetSelectedPaths()`（UTF-8）。
+  `bool Accept()`（按 mode 决定要什么）、`std::vector<std::string> GetSelectedPaths()`（UTF-8）；
+  盘符：`static EnumerateDrives()`、`RefreshDrives()`、`GetDriveCount()`、`GetCurrentDrive()`、
+  `Drives()`。
 - **验收**（三条必须一起守）：① **路径全程 `std::filesystem::path`**（Windows 上就是宽字符）
   ——窄串构造 `path` 在中文目录里会**抛异常**，且发生在构造那一步，`error_code` 重载救不了；
   往界面/事件里递的字符串先过内部工具 `PathToUtf8`；② 枚举带 `error_code`，权限不足/路径消失不得崩；
   ③ `Accept()` 分清三种模式：开文件/存文件要**选中的文件**，选目录要**当前目录**。
-- **偏离**：不做原生对话框、驱动器列表、书签/最近位置、文件名与目录分开输入、多列/图标视图。
+  盘符另有一条：④ 项的 id 存**完整根路径**（`drive:C:\`），不是字母——`C:` 是
+  drive-relative，"当前盘上的当前目录"是另一个位置。
+- **偏离**：不做原生对话框、书签/最近位置、文件名与目录分开输入、多列/图标视图。
+  盘符栏由补丁加入（2026-10-25），自检 `CheckFilePickerDrives()` 钉的是"与本机枚举结果一致"，
+  不钉具体字母。
 
 ### C6 定点浮窗（`InkingFixedPopup`）
 
@@ -515,7 +521,7 @@ T 系列收口两件事：**"字符串 → 像素"**（T-1/T-2/T-3）与**"点 �
 | C2 | `prefab/MenuBar.h` | 已落地 |
 | C3 | `prefab/ListView.h`、`prefab/ListRow.h` | 已落地 |
 | C4 | `prefab/Select.h` | 已落地 |
-| C5 | `prefab/FilePicker.h` | 已落地 |
+| C5 | `prefab/FilePicker.h` | 已落地（盘符栏 2026-10-25 增补） |
 | D-1 | `button/ButtonLook.h`、`panel/PanelLook.h` | 已落地 |
 | T-1 | `dataStruct/InkingShapeSpec.h` | 已落地 |
 | T-2 | `dataStruct/InkingEasing.h` | 已落地 |
@@ -551,4 +557,4 @@ A 系列 `A1`–`A14` 全部有归属（`A5`/`A9`/`A10` 只在 §8.2 出现）�
 
 ---
 
-> 本文档对应版本：0.4.0（0.x 发布版）。
+> 本文档对应版本：0.5.2（0.x 发布版）。

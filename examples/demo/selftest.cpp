@@ -42,6 +42,7 @@
 #include <text/InkingTextInput.h>
 #include <text/LabelData.h>
 #include <widget/InkingDynamicWidget.h>
+#include <prefab/FilePicker.h>
 #include <prefab/MenuBar.h>
 #include <prefab/MenuPopup.h>
 #include <prefab/MenuPopupData.h>
@@ -2499,6 +2500,71 @@ void CheckMenuPopup() {
 }
 
 // ---------------------------------------------------------------------------
+// FilePicker：盘符栏 / 换盘符（C5 增补）
+// ---------------------------------------------------------------------------
+//
+// 盘符是**跟着机器走的东西**：判据只能钉"与本机枚举结果一致"，钉死某个字母
+// 等于把用例绑在一台机器上。
+//
+// 这条用例同时补上一个缺口——FilePicker 落到 `prefab/` 之后**一直没有任何自检
+// 和示例**（`grep FilePicker examples/` 是空的），今天之前它只是"编得过"。
+void CheckFilePickerDrives() {
+    std::printf("\n-- 文件选择：盘符栏 / 换盘符（C5 增补）--\n");
+
+    const std::vector<std::filesystem::path> drives =
+        inking::prefab::FilePicker::EnumerateDrives();
+    if (drives.empty()) {
+        // 非 Windows：盘符栏按设计整条不建。这里不是"跳过检查"，而是
+        // "平台本来就没有盘符"这条契约本身要被看见。
+        std::printf("         本平台没有盘符（POSIX 只有 /），跳过换盘符用例\n");
+        return;
+    }
+
+    inking::InkingScene scene("file_picker_drives");
+    const inking::prefab::FilePickerStyle style =
+        inking::prefab::FilePickerStyle::MakeDefault();
+    inking::prefab::FilePicker picker(&scene, style);
+
+    // ① 项数 = 枚举结果（"列出来的"与"能换的"必须是同一份）
+    Check(picker.GetDriveCount() == drives.size(),
+          "C5：盘符栏项数 = 枚举到的盘符数");
+
+    // ② 每项 id 都是 `drive:<完整根路径>`：字母拼 `C:` 是 drive-relative，
+    //    那是另一个位置（当前盘上的当前目录），不是 C 盘根。
+    bool allRoots = true;
+    for (std::size_t i = 0; i < picker.GetDriveCount(); ++i) {
+        const std::string id = picker.Drives().ItemId(i);
+        allRoots = allRoots && id.rfind("drive:", 0) == 0 && id.size() > 6;
+    }
+    Check(allRoots, "C5：每项 id 都是 drive:<根路径>（不是 drive:C）");
+
+    // ③ 点盘符 = 当前目录切到那个盘的根
+    const bool activated = picker.Drives().Activate(0);
+    Check(activated && picker.GetDirectory() == drives.front(),
+          "C5：点第一个盘符 → 当前目录切到该盘根");
+
+    // ④ 多盘机器上真的换了一次盘
+    if (drives.size() > 1) {
+        picker.Drives().Activate(drives.size() - 1);
+        Check(picker.GetDirectory() == drives.back(),
+              "C5：换到另一个盘符生效");
+    }
+
+    // ⑤ 显示名是 `C:` 这种（去掉根路径尾部分隔符）
+    const std::string current = picker.GetCurrentDrive();
+    Check(!current.empty() && current.back() == ':',
+          "C5：GetCurrentDrive 给 `C:` 这种盘符名");
+
+    // ⑥ 幂等：盘符没变 → 项数与建出来的节点数都不变
+    const std::size_t beforeCount = picker.GetDriveCount();
+    const std::size_t beforeBuilt = picker.Drives().GetBuiltItemCount();
+    picker.RefreshDrives();
+    Check(picker.GetDriveCount() == beforeCount
+              && picker.Drives().GetBuiltItemCount() == beforeBuilt,
+          "C5：RefreshDrives 幂等（项数与节点数都不变）");
+}
+
+// ---------------------------------------------------------------------------
 // 输入框：光标 clamp + 水平滚动（0.2.0 T-12）
 // ---------------------------------------------------------------------------
 //
@@ -3586,6 +3652,9 @@ int main() {
 
     // ---- 菜单浮窗：布局 / 项 / 局部快捷键（0.4.1 T-07 / T-08） ----
     CheckMenuPopup();
+
+    // ---- 文件选择：盘符栏 / 换盘符（C5 增补） ----
+    CheckFilePickerDrives();
 
     // ---- 输入框：光标 clamp + 水平滚动（0.2.0 T-12） ----
     CheckInputScroll();

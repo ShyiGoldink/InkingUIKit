@@ -2,11 +2,17 @@
 
 **一个用 SDF 形状 + 锚点定位写 UI 的 C++20 前端框架（动态链接库）。**
 
-> ## ✅ 当前版本：**0.4.0 发布版**（`0.4.0-release`）
+> ## ✅ 当前版本：**0.5.2 发布版**（`0.5.2-release`）
 >
 > - 0.x 期间接口 / ABI / 行为仍可能在次版本变化，升级请对照
 >   [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)；`1.0.0` 起才冻结。
-> - 预编译包 [`dist/inking-0.4.0-win64.zip`](dist/) **自带运行期 DLL**，
+> - **0.5.1 新增**：图片层支持 `type:"svg"`（整张界面设计稿在运行期按目标像素光栅化）
+>   与 `hitPassThrough`（背景不吃点击）；见 CHANGELOG「0.5.1」与
+>   [`CXXCSS.md` §3.10](CXXCSS/CXXCSS.md)。
+> - **0.5.0 有破坏性接口改动**：指针钩子改为
+>   `onPointerPress(PointerButton, bool)` / `onPointerClick(PointerButton, float, float)`，
+>   迁移样板见 CHANGELOG「0.5.0 / 变更」。
+> - 预编译包 [`dist/inking-0.5.2-win64.zip`](dist/) **自带运行期 DLL**，
 >   解压即可运行示例；编译自己的工程仍需 MSYS2 UCRT64（MinGW ABI）。
 > - 只在 **Windows + MSYS2 UCRT64 + Ninja** 上构建过；Linux / macOS 未验证。
 > - 可用于内部评估与产品集成验证；正式 `1.0.0` 预计 2026 年 11 月底前推出。
@@ -78,7 +84,7 @@ cmake --build build -j
 == 失败项：0 ==
 ```
 
-**看这一行，不要只看退出码。** 当前实测 **232 项 ok / 0 项失败**（退出码也等于失败项数，
+**看这一行，不要只看退出码。** 当前实测 **339 项 ok / 0 项失败**（退出码也等于失败项数，
 可以直接用；项数会随环境略有浮动——没有可读字体时文字高清那几条会打成 `[skip]`）。
 
 自检不需要显示器：`0.4.0` 起可以直接 `InkingWindow::Open()` + `RunFrames(n)` 手动跑帧，
@@ -109,14 +115,14 @@ PUBLIC**——两者都会改公开头里 `inline` 函数的**内容**（`kDefau
 
 | 文件 | 说明 |
 | --- | --- |
-| `build/bin/libinking.dll` | **动态库本体**（Release 约 1.2 MB） |
+| `build/bin/libinking.dll` | **动态库本体**（Release 约 1.6 MB） |
 | `build/lib/libinking.dll.a` | 导入库（链接用） |
 | `build/bin/inkgen.exe` | `CXXCSS/*.json` → C++ 的构建期生成器（只依赖标准库） |
 | `build/bin/inking_demo.exe` | 演示程序 |
 | `build/bin/inking_demo_selftest.exe` | 无头自检 |
 | `build/inkgen/all/button_service.h` | 生成结果（看得见就能审） |
 
-导出方式：`WINDOWS_EXPORT_ALL_SYMBOLS`（CMake 生成 `.def`），当前导出 **1245** 个符号。
+导出方式：`WINDOWS_EXPORT_ALL_SYMBOLS`（CMake 生成 `.def`），当前导出 **1309** 个符号。
 **不**逐类标 `__declspec(dllexport)`，也**不**加 `-fvisibility=hidden`——两套机制混用是
 自相矛盾的（MinGW 上会让 `.def` 收不到符号）。
 
@@ -131,13 +137,13 @@ tools/package.sh          # 搬运 + 收 DLL 闭包 + 许可 + 校验和 + zip
 ```
 
 ```
-inking-0.4.0-win64/
+inking-0.5.2-win64/
 ├─ BUILD.txt            版本阶段、工具链、依赖版本、SHA-256、验证记录、已知限制、许可
 ├─ README.md            本文件
 ├─ bin/                 libinking.dll · inking_demo.exe · inking_demo_selftest.exe
 │                       inkgen.exe · 19 个运行期 DLL（SDL3 及其传递依赖）
 ├─ lib/                 libinking.dll.a（导入库）· cmake/inking/（find_package 配置）
-├─ include/             84 个公开头（`#include <widget/InkingWidget.h>` 的搜索根）
+├─ include/             91 个公开头（`#include <widget/InkingWidget.h>` 的搜索根）
 ├─ docs/                API 文档（`API.md` + `api/`）、配置格式、变更记录
 ├─ examples/CXXCSS/     配置样例（喂给 `inkgen.exe`）
 ├─ examples/minimal/    最小可运行工程（只依赖本包，验证 find_package）
@@ -166,15 +172,15 @@ target_link_libraries(my_app PRIVATE inking::inking)
 
 ## 用预编译包（不编译源码）
 
-把 `inking-0.4.0-win64.zip` 解到任意目录，那个目录就是 **SDK 根**（下文写 `<SDK>`）：
+把 `inking-0.5.2-win64.zip` 解到任意目录，那个目录就是 **SDK 根**（下文写 `<SDK>`）：
 
 ```
 <SDK>/
 ├─ bin/                 libinking.dll · inkgen.exe · 19 个运行期 DLL
-├─ include/             84 个公开头（#include <widget/InkingWidget.h> 的搜索根）
+├─ include/             91 个公开头（#include <widget/InkingWidget.h> 的搜索根）
 ├─ lib/                 libinking.dll.a · cmake/inking/（find_package 用）
 ├─ docs/                API 文档
-├─ examples/CXXCSS/     配置样例（17 个 json + CXXCSS.md）
+├─ examples/CXXCSS/     配置样例（19 个 json + CXXCSS.md）
 ├─ examples/minimal/    最小工程（CMakeLists.txt + main.cpp）
 ├─ licenses/            第三方许可
 └─ BUILD.txt · README.md · LICENSE
@@ -406,8 +412,8 @@ add_custom_command(TARGET my_app POST_BUILD
 ## 目录结构
 
 ```
-include/            84 个公开头（按子系统分目录，与 src/ 一一对称）
-src/                58 个 .cpp + 3 个内部头
+include/            91 个公开头（按子系统分目录，与 src/ 一一对称）
+src/                61 个 .cpp + 3 个内部头
 examples/demo/      演示 + 无头自检（两个目标）
 examples/minimal/   最小工程（只依赖预编译包，随包分发）
 tools/inkgen/       CXXCSS → C++ 的生成器
@@ -434,9 +440,9 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 | --- | --- |
 | [`docs/zh/UsageGuide.md`](docs/zh/UsageGuide.md) | **手把手教程**：从设计大小、第一个场景、第一个组件（图片）到 CMake 与编译运行，CXXCSS / API 两条路线并行 |
 | [`docs/zh/API.md`](docs/zh/API.md) | **从这里读起**：五分钟上手 + 模块地图 + 头文件全量索引 |
-| [`docs/zh/api/`](docs/zh/api/) | 16 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver + Anchor / ShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
+| [`docs/zh/api/`](docs/zh/api/) | 17 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver / FixedPopup + Anchor / ShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
 | [`CXXCSS/CXXCSS.md`](CXXCSS/CXXCSS.md) | 配置格式：目录与命名、公共骨架、形状层词汇表、Button 字段全表 |
-| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.4.0 的逐条变化） |
+| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.5.2 的逐条变化） |
 | [`examples/minimal/README.md`](examples/minimal/README.md) | 最小工程：三步构建 + 运行期 DLL 拷贝 |
 
 ---
@@ -447,15 +453,19 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
    （同路径 `fopen` 正常），于是 `TTF_OpenFont` 打不开字体、文字退化成占位画法。
    自检支持环境变量 `INK_TEST_FONT` 指定可读字体；**"没字体"不是代码缺陷**。
 2. **单行输入框**：多行、撤销 / 重做、Tab 焦点遍历、输入法候选窗定位都未做。
-3. **`AppearanceType::Svg` 没有画法**：配置里能写，运行期**静默退回纯色 `color`**
-   ——不报错、只是看不到图。（`Image` 已落地：`detail::PaintImage` 按形状裁剪后画进按钮。）
-4. **没有 portal（子节点逃不出父级）**：层级是局部的（树序 + 兄弟内 z，见 A8b），
+3. **两种 `svg` 的边界不同**：按钮的 `AppearanceType::Svg` 只认**一个图形元素**、一种填充、
+   几何必须等于组件框（生成期转成 `ShapeSpec`）；整张设计稿请用 `Image` 的 `type:"svg"`
+   （运行期按目标像素光栅化，支持多图元 / 渐变 / `transform`，元素矩阵见 `CXXCSS.md` §3.10）。
+4. **SVG 里的 `text` / `use` / `<image>` / `clipPath` / `mask` / `filter` 不渲染**
+   （SDL3_image 自带 nanosvg 的边界）：加载时打一条 WARN 列出元素与次数，画面按"没有它"画
+   ——导出时请把文字转曲、`use` 展开。整张稿也**不做元素级拆解**（每个 path 不是一个控件）。
+5. **没有 portal（子节点逃不出父级）**：层级是局部的（树序 + 兄弟内 z，见 A8b），
    `zIndex` 只在兄弟之间生效、父容器永远在子孙之下。但"子节点盖住**父级的兄弟**"
    需要"提升到根层"的 portal 层，尚未提供——所以 `Select` 展开靠抬**自己**到 z=200。
-5. **音频需要显式 `AudioInit()`**：窗口层只在 `Show()` 之后每帧调 `AudioTick`、
+6. **音频需要显式 `AudioInit()`**：窗口层只在 `Show()` 之后每帧调 `AudioTick`、
    关窗时调 `AudioShutdown`，**不会**替你初始化。不调时整层空转、`AudioReady()` 为 false，
    而且不报错（`AudioInit()` 返回 false 通常意味着构建期漏了 `INK_HAS_SDL3_MIXER`）。
-6. **编译警告**：`src/window/InkingWindow.cpp` 里重复 `#define NOMINMAX`
+7. **编译警告**：`src/window/InkingWindow.cpp` 里重复 `#define NOMINMAX`
    （C++ 标准库的 `os_defines.h` 已经定义过）。无害，但可以先判 `#ifndef` 再定义。
 
 > **`0.1.0-test` 之后已修掉的两条历史限制**：
@@ -485,4 +495,4 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 
 ---
 
-> 版本 `0.4.0`（发布版） · 最后更新 2026-10-24
+> 版本 `0.5.2`（发布版） · 最后更新 2026-10-24

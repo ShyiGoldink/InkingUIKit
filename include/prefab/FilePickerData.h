@@ -3,8 +3,8 @@
 // 预制件 C5「路径 / 文件选择」的**纯数据**面。
 //
 // **路线已由用户裁定：组装自绘**（不是系统原生对话框）。所以这里的东西全是
-// 现有配件的配置：C3 列表 + B7 单行文本框 + C1 选项栏（快捷位置）+ C2 菜单栏
-// （底部按钮那一栏）。一条新的底层词汇都没有。
+// 现有配件的配置：C3 列表 + B7 单行文本框 + C1 选项栏（快捷位置 / 盘符栏）+
+// C2 菜单栏（底部按钮那一栏）。一条新的底层词汇都没有。
 //
 // 为什么不走 `IFileOpenDialog`（写在注释里，免得下次有人重开这个决定）：
 // 它要 COM 初始化 + **全程宽字符**（`AGENTS.md` §6 第 53 条），而且
@@ -50,6 +50,15 @@ struct FilePickerStyle {
     /// 快捷位置那一栏（上级目录 / 根目录 / 主目录）。
     OptionBarStyle shortcuts{};
 
+    /**
+     * 盘符那一栏（换盘符）：横向一排窄按钮（"C:" "D:" …）。
+     *
+     * 为什么单独占一块、而不是塞进 `shortcuts`：选项栏**每项同宽**（宽度来自
+     * `itemLook.width`），快捷位置那三项已经是 96 宽，再塞几个盘符就会顶出 640。
+     * 盘符很短（"C:"），自己一份 `itemLook` 给 52 宽，一行放得下 11 个盘符。
+     */
+    OptionBarStyle drives{};
+
     /// 目录内容列表。
     ListViewStyle list{};
 
@@ -74,11 +83,21 @@ struct FilePickerStyle {
     /// 显示以 "." 开头的隐藏项吗。
     bool showHidden = false;
 
+    /**
+     * 显示盘符栏吗（默认 true）。
+     *
+     * 注意它只是"想不想"：**平台上枚举不到盘符时这一栏整条不建**（不是画一条空栏）。
+     * 非 Windows 没有盘符这个词汇（根目录只有一个 `/`，快捷位置的"根目录"已经覆盖），
+     * 所以在那些平台上这一行永远不会占高度。
+     */
+    bool showDrives = true;
+
     // ---- 各块的位置与尺寸（相对选择器左上角） ----
 
     float contentGap = 4.0f;        ///< 块与块之间的缝
     float pathInputHeight = 32.0f;
     float shortcutHeight = 30.0f;
+    float driveBarHeight = 30.0f;   ///< 盘符栏；枚举不到盘符时这一块不占高度
     float listHeight = 300.0f;
     float buttonBarHeight = 40.0f;
 

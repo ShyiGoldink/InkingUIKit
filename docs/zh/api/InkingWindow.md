@@ -23,7 +23,7 @@
 
 ## 主循环的固定顺序（改之前先读这一节）
 
-这张图现在是 `stepFrame()` 的**函数体**（0.4.0 D1 把它从 `runLoop` 里拆出来了）：
+这张图现在是 `stepFrame()` 的**函数体**（0.5.0 D1 把它从 `runLoop` 里拆出来了）：
 `Show()` 是 `while (stepFrame(...))`，`PumpOnce()` 是"调一次"。两条路共用同一份顺序，
 所以**不存在"自检跑的和真机跑的不一样"**这种分叉。
 
@@ -55,7 +55,7 @@
 4. **销毁在帧末**：销毁场景会连带拆掉整棵子树，而这一帧的 Render / Tick / 派发都在遍历
    那份绘制列表——遍历中途拆容器就是悬垂。攒到这一步再删，"这一刻没有人在看它"。
 
-## 非阻塞跑帧（0.4.0 D 组）
+## 非阻塞跑帧（0.5.0 D 组）
 
 ```C++
 inking::InkingWindow& window = inking::InkingWindow::Instance();
@@ -82,7 +82,7 @@ window.RequestClose(failures);           // D5：退出码 = 失败项数，给 
 装饰笔全在内），不是"另画一份"。落盘是"先编码到内存，再 `fopen`（失败才退回 SDL 文件层）"
 ——实测受限环境里 `SDL_SavePNG(surface, path)` 会把文件名截断却返回 true。
 
-## 退出码（0.4.0 D5）
+## 退出码（0.5.0 D5）
 
 `RequestClose(code)` 记下退出码，`GetExitCode()` 读回，`Show()` 原样返回。
 被退出闸门否决（`SetExitConfirmHandler` 返回 false）时**不改退出码**，也不置关窗标志
@@ -450,4 +450,4 @@ SDL_VIDEO_DRIVER=dummy INK_CAPTURE=/tmp/shot.png INK_AUTOQUIT=1 ./inking_demo.ex
 
 ---
 
-> 本文档对应版本：**0.4.0（0.x 发布版）**。
+> 本文档对应版本：**0.5.2（0.x 发布版）**。

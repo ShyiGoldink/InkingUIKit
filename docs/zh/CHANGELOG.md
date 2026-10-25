@@ -5,7 +5,44 @@
 
 ---
 
-## 0.5.1 —— 2026-10-24（**当前：发布版**）
+## 0.5.2 —— 2026-10-25（**发布版**：C5 增补盘符栏）
+
+### 新增
+
+- **`FilePicker` 盘符栏**：快捷位置下面多一行窄按钮（"C:" "D:" …），点一下就把
+  当前目录切到那个盘的根。新增 `FilePicker::EnumerateDrives()` /
+  `RefreshDrives()` / `GetDriveCount()` / `GetCurrentDrive()` / `Drives()`；
+  样式面加 `FilePickerStyle::drives`（一份 `OptionBarStyle`）、`showDrives`、
+  `driveBarHeight`。落点 `include/prefab/FilePickerData.h`、`FilePicker.h`、
+  `src/prefab/FilePicker.cpp`。
+- **自检 `CheckFilePickerDrives()`**：盘符数 = 枚举数、id 是 `drive:<完整根路径>`、
+  点盘符切目录、`GetCurrentDrive()` 形如 `C:`、`RefreshDrives()` 幂等（六条断言）。
+  顺带补上 `FilePicker` 此前**零自检、零示例**的缺口。
+
+### 变更
+
+- 盘符**单独成块**，不复用 `shortcuts`：选项栏每项同宽（`itemLook.width`），
+  96 宽 × 3 项再塞盘符会顶出 640；盘符项 52 宽，一行放得下 11 个。
+- 非 Windows 上 `EnumerateDrives()` 返回空 ⇒ 盘符栏**整条不建**（不占高度），
+  而不是画一条空栏。
+- `MakeDefault()` 仍是 640×480：五块内容合计 448，底部留白由 66 px 变 32 px。
+
+### 文档
+
+- `docs/zh/api/InkingPrefab.md` §5 改成"五块"并补「盘符栏（换盘符）」一节；
+  `TaskGuide` C5 扩写、状态表标注增补；`UsageReport` C5 节同步。
+
+### 已知限制
+
+- **只重建项、不重排布局**：静态档几何在构造期算死，"运行期从 0 个盘符变成 1 个"
+  不会把这一块撑出来；要那种效果请重新构造选择器。
+- 盘符是**会话内枚举**的：U 盘插拔后要手动 `RefreshDrives()`，不挂系统通知
+  （托盘轮询不是本组件的活）。
+- 仍不做：原生对话框、书签 / 最近位置、多列 / 图标视图。
+
+---
+
+## 0.5.1 —— 2026-10-24（**发布版**）
 
 > 来源：用户需求「支持原本的 svg 设计」；API 专页按用户裁定**后置**（实现完成后再写）。
 > 方案、核实与实测数字见 `docs/zh/plans/2026-10-24-0.5.1-svg-design.md`（探针

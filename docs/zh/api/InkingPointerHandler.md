@@ -279,4 +279,4 @@ virtual void onPointerDrag(float designX, float designY,
 
 ---
 
-> 本文档对应版本：**0.5.0（0.x 发布版）**。
+> 本文档对应版本：**0.5.2（0.x 发布版）**。

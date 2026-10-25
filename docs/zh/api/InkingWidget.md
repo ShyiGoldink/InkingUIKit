@@ -80,7 +80,7 @@ class InkingWidget : public InkingAnchor,             // 定位：锚点公式�
 | 概念 | 函数 | 谁回答 |
 | --- | --- | --- |
 | 几何上在不在我身上 | `HitTest(worldX, worldY)` | 组件（按 SDF 形状） |
-| 我子树里最上面该收事件的是谁 | `HitTestNode(worldX, worldY)` | **基类已给通用递归**（0.4.0 A1） |
+| 我子树里最上面该收事件的是谁 | `HitTestNode(worldX, worldY)` | **基类已给通用递归**（0.5.0 A1） |
 | 命中索引用的保守包络 | `GetHitEnvelope()` | 组件（默认整块矩形） |
 | 命中之后让不让过 | `SetHitPassThrough(bool)` / `IsHitPassThrough()` | 策略，不是几何 |
 
@@ -94,13 +94,13 @@ class InkingWidget : public InkingAnchor,             // 定位：锚点公式�
 一次 `HitTestNode` 才能把事件发到容器里的按钮上——否则容器里的控件收不到 hover / 点击，
 也**拿不到键盘焦点**。
 
-> **0.4.0 改了什么**：`HitTestNode()` 的基类默认实现从"命中即自己"改成**子树优先的递归**
+> **0.5.0 改了什么**：`HitTestNode()` 的基类默认实现从"命中即自己"改成**子树优先的递归**
 > （按 `IsAbove` 取子树里最上面那个 Block，取不到才看自己）。
 > 以前这份递归只有 `InkingStaticPanel` 写了一份，于是**动态容器**子树里的静态按钮
 > 永远收不到点击：命中表里没有它（`OwnsSubtreeHit` 之下不进表），递归又断在容器上。
 > 现在"声明自己是容器"只需要 `OwnsSubtreeHit()` 返回 true，忘了重写不再是静默失效。
 
-## 语义激活（0.4.0 D7）
+## 语义激活（0.5.0 D7）
 
 ```C++
 bool InkingWidget::Activate();                 // 默认 false = "我不是能被激活的东西"
@@ -112,9 +112,9 @@ bool InkingDynamicButton::Activate() override;  // 同上
 配合 `InkingScene::Activate(名字)` 就是一句 `scene.Activate("ok")`。
 它不是写入口、不标脏、不改变三态。
 
-## 名字入口（0.4.0 B2）
+## 名字入口（0.5.0 B2）
 
-`GetName()` 一直有，写入口 `SetName(name)` 是 0.4.0 补的——以前名字只有构造期那一份，
+`GetName()` 一直有，写入口 `SetName(name)` 是 0.5.0 补的——以前名字只有构造期那一份，
 动态组件设不了，于是 `FindByName` 走不到它、自检只能按"子节点索引"定位（索引一变断言全错）。
 **不标脏**：名字不进几何、不进绘制顺序，也不参与命中。
 
@@ -673,4 +673,4 @@ protected:
 
 ---
 
-> 本文档对应版本：**0.4.0（0.x 发布版）**。
+> 本文档对应版本：**0.5.2（0.x 发布版）**。
