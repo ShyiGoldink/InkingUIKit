@@ -787,6 +787,10 @@ protected:
     // `onPointerWheel` / `onPointerDrag`）见 `InkingPointerHandler.h`；
     // 键盘 5 个（`onKeyDown` / `onKeyUp` / `onTextInput` / `onTypingChanged` /
     // `onFocusChanged`）见 `InkingKeyboardTarget.h`。**重写时要写 `override`**。
+    //
+    // 0.5.0 起 `onPointerPress` / `onPointerClick` 带 `PointerButton`：
+    // 组件只见 Primary（左键 / 轻点）/ Secondary（右键 / 长按），**看不见设备**。
+    // 重写时记得判键——不判的话右键也会走进"左键"那条逻辑。
 
     /**
      * 本节点自己的动画，**每渲染帧一次**（真实 delta）。基类什么都不做。

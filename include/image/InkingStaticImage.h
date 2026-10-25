@@ -148,8 +148,9 @@ protected:
     /// 按形状画这一笔（颜色 / 图片 + 描边阴影）。**不画文字**——那是 Label 的事。
     void onRender(float pixelX, float pixelY) const override;
 
-    /// 抬手时收尾这次拖动交互（拖动捕获由框架保证：按下即捕获、抬起 / 失焦释放）。
-    void onPointerPress(bool press) override;
+    /// 按下 / 抬起。**只认主键**：图片的拖动 / 缩放是主键手势，
+    /// 右键不该把正在进行的拖动收尾（0.5.0）。
+    void onPointerPress(PointerButton button, bool press) override;
 
     /**
      * 拖着走：移动或缩放，两者都落成一次 `SetDisplayTransform`。

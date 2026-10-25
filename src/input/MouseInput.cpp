@@ -71,6 +71,13 @@ void MouseInput::UpdateFromSDL(const union SDL_Event& event) {
     }
 
     case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+        // 来源只在**鼠标按下的那一刻**写（0.5.0），且只认左键：
+        // `SDL_HINT_TOUCH_MOUSE_EVENTS` 已在建窗前关掉，所以触摸不会走到这里；
+        // 而移动事件不写它——否则触摸屏上"边按边动鼠标"会把来源刷成 Mouse，
+        // 长按计时被反复复位。
+        if (event.button.button == SDL_BUTTON_LEFT) {
+            state_.source = PointerSource::Mouse;
+        }
         switch (event.button.button) {
         case SDL_BUTTON_LEFT:
             state_.leftButtonDown = true;
@@ -131,6 +138,9 @@ void MouseInput::UpdateFromSDL(const union SDL_Event& event) {
         state_.position.y = static_cast<int>(event.tfinger.y * windowHeight_);
         state_.leftButtonDown = true;
         state_.moved = true;
+        // 来源：手指按下（0.5.0）。场景用它决定"要不要走长按 → 次键"，
+        // 组件层看不到这个值——设备差异到此为止。
+        state_.source = PointerSource::Touch;
         break;
     }
 

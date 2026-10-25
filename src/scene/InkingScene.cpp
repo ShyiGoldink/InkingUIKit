@@ -192,6 +192,36 @@ void InkingScene::TickLogic(double fixedStepSeconds) {
         return;
     }
 
+    // ---- 触摸长按 → 次键（0.5.0）----
+    //
+    // 位置在 `onTick` **之前**：它决定本帧的输入语义，组件 Tick 里读到的
+    // 应该是裁决后的状态。
+    //
+    // 三个条件缺一不可：来源是触摸、主键按着、本次按下还没有结论。
+    // 手指一抬就整体复位（`_pointerDown.primary` 为假那条），所以下一次按下
+    // 从 0 秒开始——不需要额外的"正在计时"标志。
+    if (_pointerSource != PointerSource::Touch || !_pointerDown.primary) {
+        _longPress = LongPressState{};
+    } else if (!_longPress.resolved) {
+        _longPress.seconds += static_cast<float>(fixedStepSeconds);
+
+        // slop 的基准是**按下点**（与 click 坐标、拖动基准同一份）。
+        // 这里再记一个 origin 就会出现"slop 按 A 点算、菜单弹在 B 点"。
+        const MousePoint origin = _pressOrigin[ToIndex(PointerButton::Primary)];
+        const float dx = _pointerX - origin.x;
+        const float dy = _pointerY - origin.y;
+
+        if (dx * dx + dy * dy > _longPressSlop * _longPressSlop) {
+            // 走开了 ⇒ 这次手势是拖 / 滚，不是长按。
+            // **必须记成 resolved**：否则手指停在远处时 seconds 会重新累计，
+            // 500ms 后照样弹出菜单——"按住拖到别处松手"居然开菜单，最难理解。
+            _longPress.resolved = true;
+        } else if (_longPress.seconds >= _longPressSeconds) {
+            _longPress.resolved = true;
+            _longPressPending = true;  // 下一次 DispatchPointer 消费
+        }
+    }
+
     // 场景自己的逻辑：固定步长，和渲染解耦。静默态也照跑——
     // 后台的事情不该因为切场景就停摆。
     onTick(fixedStepSeconds);
@@ -499,8 +529,13 @@ void InkingScene::RemoveDrawNode(InkingWidget* node) noexcept {
     if (_hoveredNode == node) {
         _hoveredNode = nullptr;
     }
-    if (_pressedNode == node) {
-        _pressedNode = nullptr;
+    // **两个槽都要清**（0.5.0）：只清主键的话，"右键按住时把那个节点删掉"
+    // 就是一个野指针——`DispatchPointer` 下一帧还会拿它去推 press(false)。
+    // AGENTS §6 第 18 条那条"生命周期成对处理"在这里要按槽数一遍。
+    for (InkingWidget*& slot : _pressedNode) {
+        if (slot == node) {
+            slot = nullptr;
+        }
     }
     // 键盘焦点也一样：节点析构 / 被摘掉时绝不能留着这个指针
     // （AGENTS §6 第 18 条那条"生命周期成对处理"）。这里**只清指针**、
@@ -665,10 +700,31 @@ bool InkingScene::Activate(const std::string& name) noexcept {
 // 指针输入（今天的最小闭环）
 // ---------------------------------------------------------------------------
 
-void InkingScene::SetPointerState(float designX, float designY, bool down,
-                                  bool inside) noexcept {
+void InkingScene::SetPointerState(float designX, float designY,
+                                  const PointerDownState& down, bool inside,
+                                  PointerSource source) noexcept {
+    // ---- 按下那一刻才记的两件事（顺序不能颠倒：都要用**旧的** _pointerDown）----
+    //
+    // 1) 来源：只在按下瞬间读一次。每帧照抄的话，触摸屏上同时动鼠标就会把
+    //    来源刷成 Mouse，长按计时被打断（"长按偶尔不成立"）。
+    if (down.primary && !_pointerDown.primary) {
+        _pointerSource = source;
+    }
+    // 2) 按下点：与 `_pointerDown` 同步写，这是**唯一写点**。
+    //    放 `DispatchPointer` 里就会漏掉"只调 SetPointerState + TickLogic"的
+    //    自检路径——那时读到的是上一次交互的残留坐标，slop 越判越大。
+    for (std::size_t i = 0; i < kPointerButtonCount; ++i) {
+        const auto button = static_cast<PointerButton>(i);
+        if (down.IsDown(button) && !_pointerDown.IsDown(button)) {
+            _pressOrigin[i] = MousePoint{designX, designY};
+        }
+    }
+
     // 只有**真的变了**才算指针脏：窗口层每帧都喂一次（哪怕鼠标没动），
     // 不判一下的话"每帧都脏"就等于这个标记永远是摆设。
+    //
+    // 整包比较（含次键）：右键按下也要置脏，否则动态组件收不到通知，
+    // 定点浮窗的"点外部关闭"对右键就静默失灵。
     const bool moved = (designX != _pointerX) || (designY != _pointerY)
         || (down != _pointerDown) || (inside != _pointerInside);
 
@@ -676,6 +732,11 @@ void InkingScene::SetPointerState(float designX, float designY, bool down,
     _pointerY = designY;
     _pointerDown = down;
     _pointerInside = inside;
+
+    // 有效状态先跟物理状态对齐；长按合成的次键在 `DispatchPointer` 里叠加。
+    // 不在这儿同步的话，"喂完状态、还没派发"的那段窗口里 `GetPointerDown()`
+    // 会返回上一帧的答案——动态组件正好可能在那时被问到。
+    _effectiveDown = _pointerDown;
 
     if (moved) {
         _pointerDirty = true;
@@ -688,11 +749,20 @@ void InkingScene::SetPointerState(float designX, float designY, bool down,
 }
 
 InkingWidget* InkingScene::GetPressedNode() const noexcept {
-    return _pressedNode;
+    return _pressedNode[ToIndex(PointerButton::Primary)];
+}
+
+InkingWidget* InkingScene::GetSecondaryPressedNode() const noexcept {
+    return _pressedNode[ToIndex(PointerButton::Secondary)];
+}
+
+MousePoint InkingScene::GetPressOrigin(PointerButton button) const noexcept {
+    return _pressOrigin[ToIndex(button)];
 }
 
 InkingWidget* InkingScene::GetDraggingNode() const noexcept {
-    return _pressedNode;
+    // 拖动只认主键（不变量 3）：右键按下不产生拖动，也不改归属。
+    return _pressedNode[ToIndex(PointerButton::Primary)];
 }
 
 void InkingScene::SetPointerWheel(float deltaX, float deltaY) noexcept {
@@ -719,7 +789,19 @@ float InkingScene::GetPointerY() const noexcept {
 }
 
 bool InkingScene::IsPointerDown() const noexcept {
-    return _pointerDown;
+    // 语义与 0.5.0 之前一致（"左键按着没"）：老调用方不用改。
+    // 要整包问两个键用 `GetPointerDown()`。
+    return _pointerDown.primary;
+}
+
+bool InkingScene::IsSecondaryPointerDown() const noexcept {
+    // 读**有效**状态：触摸长按成立后，次键在语义上就是按着的，
+    // 尽管物理上什么都没按（见 `_effectiveDown`）。
+    return _effectiveDown.secondary;
+}
+
+const PointerDownState& InkingScene::GetPointerDown() const noexcept {
+    return _effectiveDown;
 }
 
 bool InkingScene::IsPointerInside() const noexcept {
@@ -1077,7 +1159,7 @@ void InkingScene::DispatchPointer() {
     // 没重写的拿默认空实现。**场景层从此不认识任何具体组件**
     // （本文件上面那个 `#include <button/InkingStaticButton.h>` 也一起删掉了）。
     //
-    // 动态组件不走这三个推的钩子：它们由上面第 0 步的通知唤起，自己读状态判
+    // 动态组件不走这三个推的钩子：它们由下面第 0b 步的通知唤起，自己读状态判
     // （`docs/InputDesign.md` §7）。所以这里返回 nullptr 不是"不许收输入"，
     // 而是"这条投递通道不适用"，**别把它当成动态组件收不到事件的证据**。
     const auto dispatchTarget = [](InkingWidget* node) -> InkingWidget* {
@@ -1087,6 +1169,109 @@ void InkingScene::DispatchPointer() {
         return node;
     };
 
+    // ---- 0a. 触摸长按成立：把这次按下**改判**成次键（0.5.0）----
+    //
+    // 长按不是"另一个事件"，是一次语义改判：这次按下从主键变成次键。所以做法
+    // 是"作废主键捕获 + 让次键在下游照常按下"，而不是发一条 `onLongPress`
+    // 让业务自己再解释一遍——那样每个组件都要写两套输入逻辑，正好违背
+    // "统一输入"（见 `PointerButton.h` 的文件头）。
+    //
+    // **必须排在第 0b 步（通知动态节点）之前**：定点浮窗要在同一帧看到次键的
+    // `downEdge` 才能判"长按点在浮窗外面 → 关掉"。排在后面的话，动态组件读到
+    // 的是物理状态（次键永远是 false），"长按点外部"就永远关不掉浮窗——
+    // 而现象只是"菜单不关"，不报错。
+    bool longPressDecided = false;
+    InkingWidget* longPressTarget = nullptr;
+
+    if (_longPressPending) {
+        _longPressPending = false;
+        _longPress.held = true;
+        longPressDecided = true;
+
+        // 命中按**按下点**重算：slop 内微动几像素不该改判目标——"按在按钮
+        // 边缘却被判成邻居"就是这么来的。
+        const MousePoint origin =
+            _pressOrigin[ToIndex(PointerButton::Primary)];
+        if (_pointerInside) {
+            const HitResult atPress = QueryHit(origin.x, origin.y);
+            longPressTarget = atPress.IsHit() ? atPress.target : nullptr;
+        }
+
+        // 次键的按下点 = 手指按下的那一点。真实右键由 `SetPointerState` 写，
+        // 长按这条是合成路径、不走那儿——不补这一行，click 带出去的坐标就是
+        // 上一次右键的残留值（菜单弹在别处的经典成因）。
+        _pressOrigin[ToIndex(PointerButton::Secondary)] = origin;
+
+        // 主键捕获当场作废：发 press(false)、**不发 click**。
+        // 漏了这一步，手指抬起时主键槽还在，会额外派发一次左键 click——
+        // 表现是"长按弹菜单，同时按钮也被点了一下"。
+        const std::size_t primaryIndex = ToIndex(PointerButton::Primary);
+        if (InkingWidget* primary = dispatchTarget(_pressedNode[primaryIndex])) {
+            primary->PushPointerPress(PointerButton::Primary, false);
+        }
+        _pressedNode[primaryIndex] = nullptr;
+
+        // **有效状态变了一次**，动态组件必须收到通知。
+        //
+        // 光靠 `SetPointerState` 不行：长按要求"手指不动"，所以位置没变、
+        // 物理按键也没变 ⇒ 它算不出 `moved`，`_pointerDirty` 是 false、
+        // `_pointerNotified` 还是上一帧的 true。不在这里强制一次，定点浮窗
+        // 就永远不知道"有人在别处长按了"——菜单关不掉，而且不报错。
+        //
+        // 这两行就是"合成状态也算状态变化"的全部代价。
+        _pointerDirty = true;
+        _pointerNotified = false;
+    }
+
+    // ---- 0b. 有效按下状态 = 物理状态 + 长按合成 ----
+    //
+    // 长按转义出来的次键没有对应的物理按键，它是场景合成的。合成规则一句话——
+    // **手指还按着，虚拟次键就还按着**。于是手指抬起那一帧 `secondary` 自动变
+    // false，下游的 `justReleased` 照常触发，不必为长按另写一条"抬起"路径。
+    //
+    // 存成成员（`_effectiveDown`）而不是局部量：动态组件通过
+    // `GetPointerDown()` 读它，必须看到同一份答案——否则定点浮窗永远收不到
+    // "长按"这一路输入。
+    _effectiveDown = _pointerDown;
+    if (_longPress.held && _pointerDown.primary) {
+        _effectiveDown.secondary = true;
+    }
+
+    // ---- 0c. 动态节点的输入时机：指针变了才通知（0.4.1 T-02）----
+    //
+    // 动态档的输入是"自己拉"（`docs/InputDesign.md` §7）：不进命中表、场景不替
+    // 它判。但"什么时候拉"以前是它在 `onTick` 里每 20ms 自己判一次——逻辑步
+    // 50Hz、与渲染帧不同拍，结果既会白算（鼠标不动也在判）也会晚判（最多差
+    // 一个逻辑步，短于 20ms 的点击直接漏掉）。现在改由这里**在指针真的变了
+    // 的那一帧**给一次信号：鼠标不动就一次都不给。
+    //
+    // 判据直接用 `_pointerDirty`——`SetPointerState` 只在位置 / down / inside
+    // 真变时置位，所以"每帧都喂同一个坐标"不会让它变成每帧通知。
+    //
+    // 位置**必须在 `QueryHit` 之前**：本帧命中读到的就是刚更新过的动态状态。
+    // 放在 `sortDrawList` 之前则更糟——遍历到的还是旧列表（新挂的节点没进去）。
+    //
+    // 回调里可能析构节点（它会被 `RemoveDrawNode` 从列表摘掉），所以每轮重查
+    // `size()`，并且结构代次一变就停：剩下的下一帧照常，不在这里硬撑。
+    if (_pointerDirty && !_pointerNotified) {
+        // 同一份状态只通知一次：`SetPointerState` 在真的变了时会把
+        // `_pointerNotified` 清回去，所以"变一次 ⇒ 通知一次"；
+        // 状态没变就重复调本函数（自检 / 手动跑帧）不会重复通知。
+        _pointerNotified = true;
+        const std::uint64_t generation = _structureGeneration;
+        for (std::size_t i = 0; i < _drawList.size(); ++i) {
+            InkingWidget* node = _drawList[i].node;
+            if (node == nullptr || !node->IsDynamic()
+                || !node->IsVisibleInTree()) {
+                continue;
+            }
+            node->PushPointerStateChanged();
+            if (_structureGeneration != generation) {
+                break;
+            }
+        }
+    }
+
     // ---- 1. 命中：谁是"指针下最上面那个" ----
     // 命中走**烘焙好的表**（T-4）：静态层查表，动态层自判，
     // 两者按同一套层级规则合并（`QueryHit` 里做的事）。
@@ -1095,57 +1280,91 @@ void InkingScene::DispatchPointer() {
         _pointerInside ? QueryHit(_pointerX, _pointerY) : HitResult{};
     InkingWidget* topmost = hit.IsHit() ? hit.target : nullptr;
 
-    // ---- 2. 按下 / 抬起 ----
+    // 长按成立那一帧的命中按**按下点**算（上面 0a 已经查过），不用当前位置。
+    if (longPressDecided) {
+        topmost = longPressTarget;
+    }
+
+    // ---- 2. 按下 / 抬起（按按钮分槽） ----
     //
     // 顺序（A4 起）：**先更新捕获，再据此算悬停**。倒过来的话，"抬起那一帧"
     // 指针下面的组件要等下一帧才亮起来——指针明明已经指着它了。
-    const bool justPressed = _pointerDown && !_pointerWasDown;
-    const bool justReleased = !_pointerDown && _pointerWasDown;
-    _pointerWasDown = _pointerDown;
+    //
+    // 用 `_effectiveDown` 而不是 `_pointerDown`：长按合成的那一份才是下游该看
+    // 的"事实"（见 0b）。
+    const PointerDownState& effective = _effectiveDown;
 
     // 指针离开窗口（移出去 / 窗口失焦）→ **这次捕获作废**。
     //
     // 和键盘那边"按着键切走、抬起事件永远不来"是同一类问题（§6 第 55 条）：
     // 抬起事件不会再来，不清掉的话拖动会永远停在"我还在拖"，而且那个节点
     // 再也不收 hover、状态也回不到 Normal——不报错，只是行为诡异。
-    const bool captureAborted = (_pressedNode != nullptr) && !_pointerInside;
+    //
+    // 分槽之后这条要**逐槽判**：左右键各自的捕获独立作废。
+    for (std::size_t i = 0; i < kPointerButtonCount; ++i) {
+        const auto button = static_cast<PointerButton>(i);
+        const bool isDown = effective.IsDown(button);
+        const bool wasDown = _pointerWasDown.IsDown(button);
+        const bool justPressed = isDown && !wasDown;
+        const bool justReleased = !isDown && wasDown;
+        InkingWidget*& slot = _pressedNode[i];
 
-    if (justPressed) {
-        // 指针在哪按下，谁就抓住这次交互（之后移出去也算它按着）。
-        _pressedNode = topmost;
+        if (justPressed) {
+            // 指针在哪按下，谁就抓住这次交互（之后移出去也算它按着）。
+            slot = topmost;
 
-        // 拖动增量从**按下点**起算：不在这里重置的话，按下后的第一帧会把
-        // "上一个位置到按下点"的位移当成拖动增量，滑块会先跳一下。
-        _lastDragX = _pointerX;
-        _lastDragY = _pointerY;
+            // 拖动基准与键盘焦点**只属于主键**（不变量 2、3）。
+            if (button == PointerButton::Primary) {
+                // 拖动增量从**按下点**起算：不在这里重置的话，按下后的第一帧
+                // 会把"上一个位置到按下点"的位移当成拖动增量，滑块会先跳一下。
+                _lastDragX = _pointerX;
+                _lastDragY = _pointerY;
 
-        // 键盘焦点规则 1 / 2：**点击获得、点别处就换**（见 SetKeyboardFocus）。
-        // 只有"想要焦点"的节点拿得到；不想要（或点了空白）就是清空——于是
-        // "点空白 = 失焦"是同一条规则的自然结果，不需要额外分支。
-        SetKeyboardFocus(topmost != nullptr && topmost->WantsKeyboardFocus()
-                             ? topmost
-                             : nullptr);
+                // 键盘焦点规则 1 / 2：**点击获得、点别处就换**（见
+                // `SetKeyboardFocus`）。只有"想要焦点"的节点拿得到；不想要
+                // （或点了空白）就是清空——于是"点空白 = 失焦"是同一条规则的
+                // 自然结果，不需要额外分支。
+                //
+                // 右键**不抢焦点**：否则右键点空白会清掉输入框焦点，
+                // 未提交的编辑被吞——Windows / macOS 都不这么做。
+                SetKeyboardFocus(topmost != nullptr
+                                         && topmost->WantsKeyboardFocus()
+                                     ? topmost
+                                     : nullptr);
+            }
 
-        if (InkingWidget* pressed = dispatchTarget(_pressedNode)) {
-            pressed->PushPointerPress(true);
+            if (InkingWidget* pressed = dispatchTarget(slot)) {
+                pressed->PushPointerPress(button, true);
+            }
         }
-    }
 
-    if (justReleased || captureAborted) {
-        InkingWidget* pressed = dispatchTarget(_pressedNode);
-        // 只有"抬起时指针还在它身上"才算点击：按下去再滑开松开是取消，
-        // 这是用户唯一能表达"我反悔了"的方式。捕获作废（指针出了窗口）
-        // 同理不算点击。
-        const bool stillOnIt = (justReleased) && (_pressedNode != nullptr)
-                            && (_pressedNode == topmost) && _pointerInside;
-        _pressedNode = nullptr;
-        if (pressed != nullptr) {
-            pressed->PushPointerPress(false);
-            if (stillOnIt) {
-                pressed->PushPointerClick();
+        const bool captureAborted = (slot != nullptr) && !_pointerInside;
+
+        if (justReleased || captureAborted) {
+            InkingWidget* pressed = dispatchTarget(slot);
+            // 只有"抬起时指针还在它身上"才算点击：按下去再滑开松开是取消，
+            // 这是用户唯一能表达"我反悔了"的方式。捕获作废（指针出了窗口）
+            // 同理不算点击。
+            const bool stillOnIt = justReleased && slot != nullptr
+                                && slot == topmost && _pointerInside;
+            // 先存坐标再清槽：下面可能派发 click，而槽一清就再也问不到"按在哪"。
+            const MousePoint origin = _pressOrigin[i];
+            slot = nullptr;
+            if (pressed != nullptr) {
+                pressed->PushPointerPress(button, false);
+                if (stillOnIt) {
+                    // 坐标是**按下点**，不是此刻的指针（不变量 7）。
+                    pressed->PushPointerClick(button, origin.x, origin.y);
+                }
+            }
+            // 虚拟次键的账在这里结清：手指抬起（或指针离开窗口）之后，
+            // 合成的"按着"必须一起结束，否则下次长按会带着旧账。
+            if (button == PointerButton::Secondary) {
+                _longPress.held = false;
             }
         }
     }
+    _pointerWasDown = effective;
 
     // ---- 2.5 存活校准：回调里可能把**这次命中的节点**析构掉 ----
     //
@@ -1180,8 +1399,14 @@ void InkingScene::DispatchPointer() {
     // 捕获者。这条和"拖动只推给捕获者"是同一个归属规则的两半。
     // 捕获者自己不受影响：指针还在它身上就保持 hover，滑出去就收 hover(false)
     // （按钮"按着滑出去要回 Normal"那条手感的来源）。
+    //
+    // 只看**主键**槽（0.5.0）：右键按下不该改变"我指着谁"，否则右键按住期间
+    // 悬停会莫名其妙消失，而用户什么都没动。
+    InkingWidget* const primaryCapture =
+        _pressedNode[ToIndex(PointerButton::Primary)];
+
     InkingWidget* hoverTarget = topmost;
-    if (_pressedNode != nullptr && topmost != _pressedNode) {
+    if (primaryCapture != nullptr && topmost != primaryCapture) {
         hoverTarget = nullptr;
     }
 
@@ -1194,9 +1419,9 @@ void InkingScene::DispatchPointer() {
             left->PushPointerHover(false);
         }
     }
-    if (_pressedNode != nullptr && _pressedNode != hoverTarget
-        && _pressedNode != _hoveredNode) {
-        if (InkingWidget* pressed = dispatchTarget(_pressedNode)) {
+    if (primaryCapture != nullptr && primaryCapture != hoverTarget
+        && primaryCapture != _hoveredNode) {
+        if (InkingWidget* pressed = dispatchTarget(primaryCapture)) {
             pressed->PushPointerHover(false);
         }
     }
@@ -1215,11 +1440,15 @@ void InkingScene::DispatchPointer() {
     // 增量相对**上一次拖动事件**，所以组件直接加到自己身上即可。指针不在
     // 窗口里时既不发拖动，也不累积基准（否则"移出去再移回来"会凭空多出一段
     // 位移）。没捕获者时这一块一次都不进——普通移动不产生任何事件。
-    if (_pressedNode != nullptr && _pointerInside) {
+    //
+    // **只推给主键捕获者**（不变量 3）：右键不产生拖动，也不改归属。
+    // `primaryCapture` 是上面捕获段之后的值，这里直接复用（别重查数组：
+    // 中间那段 hover 回调可能已经改了槽）。
+    if (primaryCapture != nullptr && _pointerInside) {
         const float dragDx = _pointerX - _lastDragX;
         const float dragDy = _pointerY - _lastDragY;
         if (dragDx != 0.0f || dragDy != 0.0f) {
-            if (InkingWidget* dragging = dispatchTarget(_pressedNode)) {
+            if (InkingWidget* dragging = dispatchTarget(primaryCapture)) {
                 dragging->PushPointerDrag(_pointerX, _pointerY, dragDx, dragDy);
             }
         }
@@ -1240,7 +1469,7 @@ void InkingScene::DispatchPointer() {
         _wheelDispatched = true;
         if (_pointerInside) {
             InkingWidget* wheelTarget =
-                (_pressedNode != nullptr) ? _pressedNode : topmost;
+                (primaryCapture != nullptr) ? primaryCapture : topmost;
             if (InkingWidget* target = dispatchTarget(wheelTarget)) {
                 // B12：滚动容器**优先**。指针底下常常是容器里的子按钮，而滚轮该滚的
                 // 是"外面那个能滚的东西"——沿父链找最近的声明者（用户裁定的手感）。

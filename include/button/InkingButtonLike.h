@@ -76,9 +76,21 @@
 #include <event/InkingEvent.h>
 
 #include <cstdint>
+#include <functional>
 #include <utility>
 
 namespace inking {
+
+/**
+ * 次键点击（右键 / 触摸长按）的回调。
+ *
+ * **带按下点**（设计坐标），因为右键的业务语义就是"在这一点的上下文"——
+ * `MenuPopup::OpenAt(x, y)` 的入参没有第二处来源。
+ *
+ * 与 `ButtonClickCallback`（左键，无参）的不对称是故意的：左键的语义是"这个按钮
+ * 被激活了"，位置无意义；右键的位置**就是**语义本身。
+ */
+using ButtonContextClickCallback = std::function<void(float designX, float designY)>;
 
 /**
  * @brief 按钮契约：三态外观 + 过渡 + 点击事件。
@@ -109,6 +121,23 @@ public:
      * 两条路落到同一份实现上。
      */
     InkingEvent<> clicked;
+
+    /**
+     * **次键点击事件槽**（0.5.0）：右键 / 触摸长按。
+     *
+     * 参数是**按下点**（设计坐标），典型用法：
+     *
+     * ```cpp
+     * btn->contextClicked.Subscribe([this](float x, float y) { menu->OpenAt(x, y); });
+     * ```
+     *
+     * 为什么单开一个槽而不是给 `clicked` 加参数：`clicked` 的订阅者已经很多，
+     * 且两边语义不同（"按钮被激活" vs "在这一点开上下文"）。混在一起会逼每个
+     * 左键回调都写一个用不到的 `(float, float)`。
+     *
+     * 与 `clicked` 一样：**同步触发**，不要回调里改同一个按钮的状态。
+     */
+    InkingEvent<float, float> contextClicked;
 
     /**
      * **状态变化事件**（0.2.0 T-11）：`stateChanged.Subscribe(...)`，参数是
@@ -203,6 +232,19 @@ public:
     }
 
     /**
+     * 设置**次键**点击回调（右键 / 触摸长按）。
+     *
+     * 语义与 `SetOnClicked` 一样是"替换"：先清空 `contextClicked` 上已有的
+     * 订阅者，再挂这一个。要挂多个就用 `contextClicked.Subscribe`。
+     */
+    void SetOnContextClicked(ButtonContextClickCallback callback) {
+        contextClicked.Clear();
+        if (callback) {
+            contextClicked.Subscribe(std::move(callback));
+        }
+    }
+
+    /**
      * 触发一次点击。
      *
      * 由组件在"抬起且指针仍在按钮内"时调；也可以直接调来模拟一次点击
@@ -218,6 +260,27 @@ public:
             return false;
         }
         clicked.Emit();
+        return true;
+    }
+
+    /// 次键点击回调挂上了吗（等价 `contextClicked.HasSubscribers()`）。
+    bool HasOnContextClicked() const noexcept {
+        return contextClicked.HasSubscribers();
+    }
+
+    /**
+     * 触发一次次键点击（右键 / 触摸长按）。
+     *
+     * 由组件在"Secondary 键抬起且指针仍在按钮内"时调，坐标传**按下点**；
+     * 也可以直接调来模拟（自检就这么用）。没有订阅者时是空操作，返回 false。
+     *
+     * @return 真的派发了才返回 true。
+     */
+    bool TriggerContextClick(float designX, float designY) {
+        if (!contextClicked.HasSubscribers()) {
+            return false;
+        }
+        contextClicked.Emit(designX, designY);
         return true;
     }
 

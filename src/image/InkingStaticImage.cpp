@@ -235,7 +235,12 @@ void InkingStaticImage::resolveDragMode(float worldX, float worldY) noexcept {
                                             worldX, worldY);
 }
 
-void InkingStaticImage::onPointerPress(bool press) {
+void InkingStaticImage::onPointerPress(PointerButton button, bool press) {
+    // 拖动 / 缩放是主键手势（0.5.0）：右键抬起绝不能把正在进行的拖动收尾，
+    // 否则"右键看着什么都不做，图片却不拖了"。
+    if (button != PointerButton::Primary) {
+        return;
+    }
     if (press) {
         // **按下当场定格模式**（不等第一次拖动事件）：否则"按在把手上、手先动了一两
         // 像素"就可能被判成移动，用户会觉得"抓把手要试两次"。

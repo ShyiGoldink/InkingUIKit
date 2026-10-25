@@ -193,7 +193,8 @@ bool InkingDynamicButton::IsPointerOver() const noexcept {
 }
 
 bool InkingDynamicButton::IsPressCaptured() const noexcept {
-    return _probe.IsCaptured();
+    // 三态只跟主键（右键不进 Pressed）：问"按住没"就是问主键捕获。
+    return _probe.IsCaptured(PointerButton::Primary);
 }
 
 // ---------------------------------------------------------------------------
@@ -215,8 +216,9 @@ bool InkingDynamicButton::JudgePointer() noexcept {
 
     const bool inside = scene->IsPointerInside();
     // 按下用的是**原始按键状态**，不折进 inside：和静态版一致——按着不放把指针
-    // 拖出窗口，仍然是"按着"（`DispatchPointer` 那边也是这么用 _pointerDown 的）。
-    const bool down = scene->IsPointerDown();
+    // 拖出窗口，仍然是"按着"（`DispatchPointer` 那边也是这么用 `_pointerDown` 的）。
+    // 0.5.0 起是**整包**两个键，`PointerProbe` 按槽各判各的。
+    const PointerDownState down = scene->GetPointerDown();
 
     // 命中自判：世界坐标 → 本地坐标，问自己的形状。
     // 指针不在窗口里时一律算"不在按钮上"（窗口外不该继续悬停）。
@@ -231,11 +233,21 @@ bool InkingDynamicButton::JudgePointer() noexcept {
     // 此刻在按钮上"——所以按着滑出去仍然是按下，和静态版的手感一致。
     // 喂入口是继承来的 `MouseHover` / `MousePress`（静态版由场景调它们，
     // 本类自己调），三态一变就会经 `onButtonStateChanged` 钩子同步基类颜色。
+    //
+    // **只喂主键**（0.5.0）：右键按下不该让按钮进 Pressed 态——那样"右键菜单"
+    // 看起来像"左键点了一下"。
     const bool hoverChanged = MouseHover(r.hovered);
-    const bool pressChanged = MousePress(down && _probe.IsCaptured());
+    const bool pressChanged =
+        MousePress(_probe.IsCaptured(PointerButton::Primary));
 
-    if (r.clicked) {
+    if (r.primary.clicked) {
         TriggerClick();
+    }
+    if (r.secondary.clicked) {
+        // 次键：带**按下点**（不是此刻的指针）。长按后手指微动时，菜单不该跟着挪。
+        const MousePoint origin =
+            scene->GetPressOrigin(PointerButton::Secondary);
+        TriggerContextClick(origin.x, origin.y);
     }
     return hoverChanged || pressChanged;
 }

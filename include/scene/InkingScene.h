@@ -18,6 +18,8 @@
 #include <widget/InkingStaticWidget.h>
 
 #include <input/KeyboardInput.h>
+#include <input/MouseInput.h>   // MousePoint（设计坐标点）：按下点用这个既有词汇
+#include <input/PointerButton.h>
 
 // 只做前向声明：公开头里不拖 SDL 进来（见 docs/AGENTS.md §6 第 8 条）。
 struct SDL_Renderer;
@@ -354,10 +356,29 @@ public:
      * 这里只存不判——真正的派发在 `DispatchPointer()`，那是"每帧只判断一次"
      * 那条设计（docs/InputDesign.md §1）的落点。
      *
+     * @param down   两个**语义键**各按着没有（Primary = 左键 / 轻点，
+     *               Secondary = 右键 / 长按）。场景层不认识设备。
      * @param inside 指针在不在窗口里。移出窗口时不该继续悬停/按下。
+     * @param source 这次按下来自鼠标还是触摸。**只在按下那一刻被读一次**
+     *               （见下面 `_pointerSource`）——每帧照抄的话，触摸屏上同时
+     *               移动鼠标就会把长按计时打断，而那种"偶尔失效"最难查。
      */
-    void SetPointerState(float designX, float designY, bool down,
-                         bool inside) noexcept;
+    void SetPointerState(float designX, float designY,
+                         const PointerDownState& down, bool inside,
+                         PointerSource source) noexcept;
+
+    /**
+     * 便捷写法：只喂**主键**（次键当作没按，来源当作鼠标）。
+     *
+     * 给"只关心左键"的调用方与自检用。它转发到上面那个完整版本，所以两者
+     * 的行为只有一处定义——这不是"两套入口"，是同一个入口的默认参数。
+     */
+    void SetPointerState(float designX, float designY, bool primaryDown,
+                         bool inside) noexcept {
+        SetPointerState(designX, designY,
+                        PointerDownState{primaryDown, false}, inside,
+                        PointerSource::Mouse);
+    }
 
     /**
      * 把这一帧的**滚轮增量**喂进来（A4）。由窗口层在主循环里调。
@@ -387,8 +408,29 @@ public:
     /// 指针的 y，设计坐标。
     float GetPointerY() const noexcept;
 
-    /// 左键按着没（**原始按键状态**，不折进"在不在窗口里"）。
+    /**
+     * 主键按着没（**原始按键状态**，不折进"在不在窗口里"）。
+     *
+     * 语义与 0.5.0 之前完全一致（那时它是"左键按着没"），所以老调用方不用改。
+     * 要整包问两个键用 `GetPointerDown()`。
+     */
     bool IsPointerDown() const noexcept;
+
+    /// 次键按着没（右键 / 触摸长按）。"次要"不等于"次要处理"——它同样有
+    /// press / release / click，事件集与主键同构。
+    bool IsSecondaryPointerDown() const noexcept;
+
+    /// 两个键的按下状态整包（动态档的 `PointerProbe::Update` 吃它）。
+    const PointerDownState& GetPointerDown() const noexcept;
+
+    /**
+     * 某个键的**按下点**（设计坐标）。click 的坐标、long press 的 slop 基准、
+     * 拖动增量基准都取自这一份。
+     *
+     * 没按过的时候是上一次按下的残留值——只在"正在按着 / 刚抬起"这两段时间里
+     * 有意义，业务不要拿它当"指针位置"用（那是 `GetPointerX/Y`）。
+     */
+    MousePoint GetPressOrigin(PointerButton button) const noexcept;
 
     /// 指针在不在窗口里。窗口外不该继续悬停。
     bool IsPointerInside() const noexcept;
@@ -415,8 +457,17 @@ public:
      */
     void DispatchPointer();
 
-    /** 现在按着哪个节点（没有时为 nullptr）。自检观测口。 */
+    /**
+     * 主键现在按着哪个节点（没有时为 nullptr）。自检观测口。
+     *
+     * 0.5.0 起捕获**按按钮分槽**，这个口返回的是主键那一槽——语义与以前一致
+     * （"谁被左键按住了"），既有调用方不用改。
+     */
     InkingWidget* GetPressedNode() const noexcept;
+
+    /// 次键现在按着哪个节点（右键 / 触摸长按）。与主键各走各的槽，
+     /// 左右同按互不覆盖。
+    InkingWidget* GetSecondaryPressedNode() const noexcept;
 
     /**
      * 拖动归属（A4）：现在谁"抓住"了这次按下（没有时为 nullptr）。
@@ -572,6 +623,22 @@ protected:
      * 在**构造函数末尾**调用，表示自身已经构造完成、可以登记了。
      */
     void registerToSceneLibrary();
+
+    // ---------------- 触摸长按的参数（派生场景可改） ----------------
+    //
+    // 放**成员**而不是 `static constexpr`：`constexpr` 的值编译期就定死了，
+    // 派生类根本改不动基类 `TickLogic` 里用的那个——"可配置"会变成一句空话。
+    // 两个 float 换一个真的能改的口子，值当。
+    //
+    // 判据：阈值是**产品决策**（不同应用手感不同），slop 是**设备决策**
+    // （手指粗细、屏幕密度）。两者都不该由库拍死。
+
+    /// 按住多久算长按（秒）。桌面触摸屏通用值 0.5；比 Android（0.4）略长，误触更少。
+    float _longPressSeconds = 0.5f;
+
+    /// 长按候选期内允许的移动量（**设计坐标**）。超过就判成拖动 / 滚动，
+    /// 不再等长按——"按住后滑走"不该弹菜单，这是唯一的依据。
+    float _longPressSlop = 8.0f;
 
     // ---------------- [√] 可重写钩子：两组每帧逻辑 ----------------
 
@@ -757,7 +824,15 @@ private:
 
     float _pointerX = 0.0f;     ///< 设计坐标
     float _pointerY = 0.0f;
-    bool _pointerDown = false;  ///< 左键按着没
+
+    /**
+     * 两个**语义键**各按着没（0.5.0：替代原来的单个 `bool`）。
+     *
+     * 为什么是"语义键"而不是"左 / 右键"：触摸长按会映射成 Secondary，场景层
+     * 因此完全不认识设备——设备差异在窗口层就被吸收干净了。
+     */
+    PointerDownState _pointerDown{};
+
     bool _pointerInside = false;///< 指针在不在窗口里
 
     /**
@@ -766,7 +841,27 @@ private:
      * 放成员不放函数内静态量：静态量会让"两个场景的按下历史"串在一起，
      * 自检里建了又拆的场景会把上一帧的状态留给下一个（实测这种串味最难查）。
      */
-    bool _pointerWasDown = false;
+    PointerDownState _pointerWasDown{};
+
+    /**
+     * 本帧的**有效**按下状态 = 物理状态 + 长按合成（0.5.0）。
+     *
+     * 与 `_pointerDown` 的差别只有一处：触摸长按成立后，次键被**合成**为按着
+     * （手指还按着 ⇒ 虚拟次键就还按着）。动态组件通过 `GetPointerDown()` 读它，
+     * 所以要存成成员而不是 `DispatchPointer` 的局部量——否则定点浮窗永远看不到
+     * "长按"这一路输入，"长按点外部关闭"就会静默失灵。
+     */
+    PointerDownState _effectiveDown{};
+
+    /**
+     * 这次按下来自鼠标还是触摸。**只在按下那一刻写一次**
+     * （`SetPointerState` 里判 `down.primary && !_pointerDown.primary`）。
+     *
+     * 不能每帧照抄：触摸屏上用户一边按着手指一边动鼠标，`MouseInput` 的
+     * 来源会被鼠标移动事件刷成 Mouse，长按计时就被打断——现象是"长按偶尔不
+     * 成立"，而且完全看用户另一只手在干什么。
+     */
+    PointerSource _pointerSource = PointerSource::Mouse;
 
     /**
      * 指针脏：指针状态变过，这一帧的悬停判断还没做。
@@ -798,8 +893,73 @@ private:
     int _repaintingNodeCount = 0;
     int _hitDirtyNodeCount = 0;
 
-    InkingWidget* _hoveredNode = nullptr;  ///< 这一帧悬停在谁身上
-    InkingWidget* _pressedNode = nullptr;  ///< 按下去时抓的是谁（拖出按钮也还是它）
+    InkingWidget* _hoveredNode = nullptr;  ///< 这一帧悬停在谁身上（**只跟主键**）
+
+    /**
+     * 捕获槽：按按钮分开（0.5.0）。
+     *
+     * `_pressedNode[Primary]` 就是 0.5.0 之前的那个 `_pressedNode`——拖动、滚轮、
+     * 悬停独占、键盘焦点仍然只看它。`[Secondary]` 只接 press / release / click。
+     *
+     * **为什么必须分槽而不是共用一个指针**：左右键同按时，右键按下会覆盖左键槽，
+     * 于是抬起时左键的 `press(false)` 永远不来——按钮永久停在 Pressed 色。
+     * 这是静默的视觉错误，比崩溃难查得多。
+     */
+    InkingWidget* _pressedNode[kPointerButtonCount] = {nullptr, nullptr};
+
+    /**
+     * 每个键的**按下点**（设计坐标）。
+     *
+     * 三处共用这一份，不许各记各的：click 的坐标、长按 slop 的基准、拖动增量的
+     * 基准。分开记必然出现"slop 按 A 点算、菜单弹在 B 点"，而两半各自看起来都对。
+     *
+     * **写点在 `SetPointerState`**，不在 `DispatchPointer` 的 `justPressed` 分支：
+     * 自检 / 手动跑帧可以只调 `SetPointerState` + `TickLogic`（不派发），写在
+     * 后者里就会读到上一次交互的残留坐标，slop 越判越大、长按永不成立且不报错。
+     */
+    MousePoint _pressOrigin[kPointerButtonCount]{};
+
+    // ---------------- 触摸长按 → 次键（0.5.0） ----------------
+    //
+    // 触摸屏上没有右键，长按是它唯一的表达方式。**这不是补偿，是映射**：
+    // 本库的跨平台立场是"组件只见 Primary / Secondary"（见 PointerButton.h），
+    // 所以长按必须产出一次**完整的次键交互**（press → release → click），
+    // 而不是一条"长按事件"让业务自己再解释一遍。
+    //
+    // 阈值与 slop 在 protected 区（派生场景可改），状态在这里。
+
+    /**
+     * 长按状态机。
+     *
+     * 只有两件事要记：已经按了多久、以及**这一次按下是否已经有结论**。
+     * 不需要"正在计时"那个标志——手指一抬 `_longPress` 就整体复位（下一次
+     * 按下从 0 开始），而"移动超 slop 就放弃"由 `resolved` 表达。
+     *
+     * 按下点**不在这里**——那是 `_pressOrigin[Primary]`，两处都记就会分叉。
+     */
+    struct LongPressState {
+        /// 本次按下已有结论（已转义成次键，或已判定为拖动而放弃）。
+        /// 置位后不再计时，直到手指抬起。
+        bool resolved = false;
+
+        /// **虚拟次键按着**（长按已成立、手指还没抬）。它让下游的 press 循环
+        /// 把这次按下当成"次键按着"来派发——不需要为长按另写一条 press 路径。
+        bool held = false;
+
+        float seconds = 0.0f;  ///< 已按住时长（固定逻辑步累加）
+    };
+
+    LongPressState _longPress{};
+
+    /**
+     * 长按已经成立、但还没派发出去（`TickLogic` 置位，下一次
+     * `DispatchPointer` 消费）。
+     *
+     * 为什么不在 `TickLogic` 里直接派发：它跑在 `timeline.Advance()` 里，
+     * 晚于 `DispatchPointer`；而派发要读本帧的命中表与捕获槽，那些东西的
+     * 一致点是 `DispatchPointer`。攒到下一帧（≈16ms）比在错误的时机抓节点安全。
+     */
+    bool _longPressPending = false;
 
     // ---------------- 滚轮与拖动（A4） ----------------
 

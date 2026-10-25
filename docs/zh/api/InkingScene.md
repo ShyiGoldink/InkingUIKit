@@ -52,7 +52,7 @@
 
 层级（`_parent`）是**唯一真相源**，场景持有的绘制列表只是它的派生索引。
 
-> **0.4.0 起这句话是字面意义上的**：`_contentDirty` 时 `sortDrawList()` 从场景根做一次
+> **0.5.0 起这句话是字面意义上的**：`_contentDirty` 时 `sortDrawList()` 从场景根做一次
 > **先序 DFS**，扫到谁就收谁（顺带把 `_scene` 认领到本场景）。以前是**增量登记**
 > （构造时沿父链登记一次），于是"先建子树、后 `AddChild`"的节点永远进不了列表
 > ——症状是**节点在、`IsVisibleInTree()` 为真、就是不画**，且不报错。树本来就在那儿，
@@ -223,7 +223,7 @@ struct Cluster { float cellSize; ... };   // 一个粗块 + 它自己的格子�
 
 ### InkingScene — Public
 
->**RebuildRenderList() / RebuildHitTable()（0.4.0 A5 / D6）**
+>**RebuildRenderList() / RebuildHitTable()（0.5.0 A5 / D6）**
 
 ```C++
 std::size_t RebuildRenderList();
@@ -236,7 +236,7 @@ std::size_t RebuildHitTable();
 自检想在"下一帧之前"断言、宿主怀疑表与树不一致、有人在树外改了父子关系。
 `QueryHit()` 自己会先推一次重建，所以"窗口 Show 之前验证某个位置点得到谁"直接可用。
 
->**FindByName(name) / Activate(name)（0.4.0 B2 配套 / D7）**
+>**FindByName(name) / Activate(name)（0.5.0 B2 配套 / D7）**
 
 ```C++
 InkingWidget* FindByName(const std::string& name) noexcept;
@@ -363,16 +363,46 @@ std::uint64_t GetStructureGeneration() const noexcept;
 
 #### 指针
 
->**SetPointerState(designX, designY, down, inside) / SetPointerWheel(deltaX, deltaY)**
+>**SetPointerState(designX, designY, down, inside[, source]) / SetPointerWheel(deltaX, deltaY)**
 
 ```C++
-void SetPointerState(float designX, float designY, bool down, bool inside) noexcept;
+// 完整版（窗口层用）：两个**语义键** + 来源
+void SetPointerState(float designX, float designY,
+                     const PointerDownState& down, bool inside,
+                     PointerSource source) noexcept;
+// 便捷版（只关心主键的调用方 / 自检用）：转发到上面那个
+void SetPointerState(float designX, float designY, bool primaryDown,
+                     bool inside) noexcept;
+
 void SetPointerWheel(float deltaX, float deltaY) noexcept;
 ```
 
 窗口层每帧调，**只存不判**。坐标是**设计坐标**（窗口层已经用渲染器换算过，含 letterbox 偏移）。
 滚轮一帧里调多次会**累加**；它是**一次性量**——本帧没派发出去也照样在帧末被清掉
 （"滚了但没人要"就是丢掉，不该攒到下一帧）。
+
+`down` 是 `PointerDownState{primary, secondary}`：**语义键**，不是设备键。
+鼠标左右键一一对应；触摸轻点 = `primary`，**长按由场景自己转义成 `secondary`**
+（见下面的"触摸长按"）。
+
+`source` **只在按下那一刻被读一次**（内部锁定）。不能每帧照抄：触摸屏上用户
+一边按着手指一边动鼠标，来源会被刷成 `Mouse`，长按计时被打断。
+
+>**触摸长按 → 次键**
+
+触摸屏上没有右键，长按是它唯一的表达方式。按住 `_longPressSeconds`（默认 **0.5 秒**）
+且移动不超过 `_longPressSlop`（默认 **8 设计像素**）时，本次按下会被**改判**成一次
+完整的次键交互：
+
+```
+按下 → Press(Primary,true)         （立刻，和轻点一样）
+0.5s → Press(Primary,false)        （主键捕获作废，**不发 click**）
+     → Press(Secondary,true)
+抬手 → Press(Secondary,false) + Click(Secondary, x, y)
+```
+
+两个参数是 `protected` 成员（派生场景可在构造函数里改）。移动超过 slop 则**放弃**
+本次长按（那是拖动 / 滚动），且**不会迟到触发**——手指停在远处继续按住也不弹菜单。
 
 >**DispatchPointer()**
 
@@ -387,18 +417,27 @@ void DispatchPointer();
 ```C++
 float GetPointerX() const noexcept;
 float GetPointerY() const noexcept;
-bool IsPointerDown() const noexcept;
+bool IsPointerDown() const noexcept;                 // 主键（语义同 0.4.x 的"左键"）
+bool IsSecondaryPointerDown() const noexcept;        // 次键（右键 / 长按）
+const PointerDownState& GetPointerDown() const noexcept;
+MousePoint GetPressOrigin(PointerButton button) const noexcept;
 bool IsPointerInside() const noexcept;
 float GetPointerWheelX() const noexcept;
 float GetPointerWheelY() const noexcept;
-InkingWidget* GetPressedNode() const noexcept;
+InkingWidget* GetPressedNode() const noexcept;           // 主键捕获槽
+InkingWidget* GetSecondaryPressedNode() const noexcept;  // 次键捕获槽
 InkingWidget* GetDraggingNode() const noexcept;
 InkingWidget* GetHoveredNode() const noexcept;
 ```
 
-静态组件的输入是**推**的，动态组件是**拉**的。`GetDraggingNode()` 与 `GetPressedNode()`
-是同一个答案（"谁被按下"本来就是"谁收这次拖动的全部后续事件"），单列一个名字是因为
-两个问题问的是不同的事。
+静态组件的输入是**推**的，动态组件是**拉**的。`GetDraggingNode()` 与
+`GetPressedNode()` 是同一个答案（"谁被按下"本来就是"谁收这次拖动的全部后续事件"），
+单列一个名字是因为两个问题问的是不同的事——**而且这条关系只对主键成立**：
+次键有捕获但不产生拖动。
+
+`GetPressOrigin(button)` 是**按下点**（设计坐标）：`onPointerClick` 的坐标、
+长按 slop 的基准、拖动增量的基准都取自这一份。它不是"指针位置"（那是
+`GetPointerX/Y`），只在"正在按着 / 刚抬起"这两段时间里有意义。
 
 #### 键盘
 
@@ -594,4 +633,4 @@ std::size_t GetMaxCellCandidates() const noexcept;
 
 ---
 
-> 本文档对应版本：**0.4.0（0.x 发布版）**。
+> 本文档对应版本：**0.5.0（0.x 发布版）**。

@@ -1773,8 +1773,18 @@ public:
 
     int notifications = 0;
 
+    /// 通知里有没有一次读到"次键按着"（0.5.0：触摸长按合成的）。
+    /// 定点浮窗就是靠这一份状态判"长按点在外部"。
+    bool sawSecondaryDown = false;
+
 protected:
-    void onPointerStateChanged() override { ++notifications; }
+    void onPointerStateChanged() override {
+        ++notifications;
+        const inking::InkingScene* scene = GetScene();
+        if (scene != nullptr && scene->GetPointerDown().secondary) {
+            sawSecondaryDown = true;
+        }
+    }
 };
 
 // ---- T-01：动态容器里的静态按钮能被命中 ----
@@ -1848,47 +1858,386 @@ void CheckPointerProbe() {
 
     inking::detail::PointerProbe probe;
 
+    // 0.5.0：`Update` 吃的是**两个键**的整包状态。这些老断言只关心主键，
+    // 所以用一个 helper 把 bool 包成"只有主键"——次键全关，语义与以前一样。
+    const auto onlyPrimary = [](bool down) {
+        return inking::PointerDownState{down, false};
+    };
+    const auto primaryCaptured = [&probe] {
+        return probe.IsCaptured(inking::PointerButton::Primary);
+    };
+
     // ① 同点按下 → 抬起 = 一次点击
-    auto r = probe.Update(true, false);
-    Check(r.hoverChanged && r.hovered && !r.clicked,
+    auto r = probe.Update(true, onlyPrimary(false));
+    Check(r.hoverChanged && r.hovered && !r.primary.clicked,
           "T-03：指针进入 → hoverChanged，无点击");
-    r = probe.Update(true, true);
-    Check(r.pressed && probe.IsCaptured(), "T-03：按下 → pressed + 捕获");
-    r = probe.Update(true, false);
-    Check(r.released && r.clicked, "T-03：同点抬起 → released + clicked");
+    r = probe.Update(true, onlyPrimary(true));
+    Check(r.primary.pressed && primaryCaptured(),
+          "T-03：按下 → pressed + 捕获");
+    r = probe.Update(true, onlyPrimary(false));
+    Check(r.primary.released && r.primary.clicked,
+          "T-03：同点抬起 → released + clicked");
 
     // ② 按下 → 滑出去 → 松开 = 取消（用户唯一的"我反悔了"）
     probe.Reset();
-    probe.Update(true, false);
-    probe.Update(true, true);
-    r = probe.Update(false, true);
-    Check(r.hoverChanged && !r.hovered && !r.released,
+    probe.Update(true, onlyPrimary(false));
+    probe.Update(true, onlyPrimary(true));
+    r = probe.Update(false, onlyPrimary(true));
+    Check(r.hoverChanged && !r.hovered && !r.primary.released,
           "T-03：按着滑出去 → 捕获不结束");
-    r = probe.Update(false, false);
-    Check(r.released && !r.clicked, "T-03：在外面松开 → released 但不 click");
+    r = probe.Update(false, onlyPrimary(false));
+    Check(r.primary.released && !r.primary.clicked,
+          "T-03：在外面松开 → released 但不 click");
 
     // ③ 没按下时重复判：第二次什么都不报（幂等）
     probe.Reset();
-    probe.Update(true, false);
-    const auto again = probe.Update(true, false);
-    Check(!again.hoverChanged && !again.pressed && !again.released
-              && !again.clicked,
+    probe.Update(true, onlyPrimary(false));
+    const auto again = probe.Update(true, onlyPrimary(false));
+    Check(!again.hoverChanged && !again.primary.pressed
+              && !again.primary.released && !again.primary.clicked,
           "T-03：无按下连判两次，第二次什么都不报");
 
     // ④ 在别处按下、按着挪进来：不算这次按下
     probe.Reset();
-    probe.Update(false, true);
-    r = probe.Update(true, true);
-    Check(!r.pressed && !probe.IsCaptured(),
+    probe.Update(false, onlyPrimary(true));
+    r = probe.Update(true, onlyPrimary(true));
+    Check(!r.primary.pressed && !primaryCaptured(),
           "T-03：在别处按下、按着挪进来 → 不算这次按下");
 
     // ⑤ "按下发生了"与"按下算在我身上"是两件事：前者给"点外部就关"用
     probe.Reset();
-    r = probe.Update(false, true);
-    Check(r.downEdge && !r.pressed,
+    r = probe.Update(false, onlyPrimary(true));
+    Check(r.anyDownEdge && !r.primary.pressed,
           "T-03：在别处按下 → downEdge 真、pressed 假");
+
+    // ⑥ 0.5.0：两个键各走各的边沿，左右同按互不覆盖
+    //
+    // 这是"分槽"的存在理由——共用一份 `wasDown` 时，后按下的那个键会把前一个
+    // 键的 `released` 吞掉，表现是按钮永久停在 Pressed 色。
+    probe.Reset();
+    probe.Update(true, onlyPrimary(false));
+    r = probe.Update(true, inking::PointerDownState{true, true});
+    Check(r.primary.pressed && r.secondary.pressed && r.anyDownEdge,
+          "0.5.0：左右同时按下 → 两个槽各自 pressed");
+    r = probe.Update(true, inking::PointerDownState{false, true});
+    Check(r.primary.released && r.primary.clicked && !r.secondary.released,
+          "0.5.0：只抬左键 → 主键 click，次键仍按着");
+    r = probe.Update(true, inking::PointerDownState{false, false});
+    Check(r.secondary.released && r.secondary.clicked && !r.primary.clicked,
+          "0.5.0：再抬右键 → 次键 click，主键不重复报");
 }
 
+// ---------------------------------------------------------------------------
+// 右键 / 触摸长按（0.5.0）
+// ---------------------------------------------------------------------------
+//
+// 这一组全部**无头**跑：长按只要推进 `TickLogic`，不需要真触摸设备。
+// 这正是"长按判定住在场景层"的收益——判定位置在窗口层的话，这里得造一串
+// SDL 事件才能验。
+
+/// 只数事件的静态按钮。
+///
+/// 三态仍然用真的 `ButtonLook`（不是假的），所以"右键不该点亮按钮"这条
+/// 断言验的是**真实现**，不是替身。
+class ButtonSpy : public inking::InkingStaticButton {
+public:
+    ButtonSpy(inking::InkingWidget* parent, const inking::ButtonData& data)
+        : inking::InkingStaticButton(parent, data) {}
+
+    struct Counts {
+        int primaryPress = 0;
+        int primaryRelease = 0;
+        int primaryClick = 0;
+        int secondaryPress = 0;
+        int secondaryRelease = 0;
+        int secondaryClick = 0;
+    };
+
+    Counts counts{};
+    float lastClickX = -1.0f;
+    float lastClickY = -1.0f;
+
+protected:
+    void onPointerPress(inking::PointerButton button, bool press) override {
+        // 先记账再交给基类：基类对 Secondary 会直接 return（不换三态），
+        // 但我们仍然要数到这次 press。
+        if (button == inking::PointerButton::Primary) {
+            press ? ++counts.primaryPress : ++counts.primaryRelease;
+        } else {
+            press ? ++counts.secondaryPress : ++counts.secondaryRelease;
+        }
+        inking::InkingStaticButton::onPointerPress(button, press);
+    }
+
+    void onPointerClick(inking::PointerButton button, float designX,
+                        float designY) override {
+        if (button == inking::PointerButton::Primary) {
+            ++counts.primaryClick;
+        } else {
+            ++counts.secondaryClick;
+            lastClickX = designX;
+            lastClickY = designY;
+        }
+        inking::InkingStaticButton::onPointerClick(button, designX, designY);
+    }
+};
+
+/// 在一个干净场景里放一个 200×100 的按钮（左下角 100,100），返回它。
+/// 场景对象由调用方持有（`SceneLibrary` 不拥有场景）。
+ButtonSpy* MakeSpyButton(inking::InkingScene& scene, const char* name) {
+    inking::ButtonData data;
+    data.name = name;
+    data.width = 200;
+    data.height = 100;
+    data.offsetX = 100.0f;
+    data.offsetY = 100.0f;
+    data.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+                                           0xFF204060u);
+    data.hover = data.normal;
+    data.onclicked = data.normal;
+    return static_cast<ButtonSpy*>(scene.AddChild(
+        std::make_unique<ButtonSpy>(&scene, data)));
+}
+
+// ---- 右键 = Primary / Secondary 两种状态 ----
+void CheckRightButton() {
+    std::printf("\n-- 右键：两种输入状态的对称（0.5.0）--\n");
+
+    const auto feed = [](inking::InkingScene& scene, float x, float y,
+                         bool primary, bool secondary,
+                         inking::PointerSource source
+                             = inking::PointerSource::Mouse) {
+        scene.SetPointerState(x, y, inking::PointerDownState{primary, secondary},
+                              true, source);
+        scene.DispatchPointer();
+    };
+
+    // ① 右键按下 / 抬起 = 一次次键点击，且**不点亮按钮**
+    {
+        inking::InkingScene scene("right_click");
+        ButtonSpy* spy = MakeSpyButton(scene, "right_btn");
+
+        feed(scene, 200.0f, 150.0f, false, false);
+        feed(scene, 200.0f, 150.0f, false, true);
+        Check(spy->counts.secondaryPress == 1
+                  && spy->counts.primaryPress == 0,
+              "0.5.0：右键按下 → 只有次键 press");
+        // 指针在按钮上 ⇒ 此刻是 Hover；关键是**不是 Pressed**。
+        Check(spy->GetState() != inking::ButtonState::Pressed,
+              "0.5.0：右键按下**不进 Pressed 态**（三态是主键手势的可视化）");
+
+        feed(scene, 200.0f, 150.0f, false, false);
+        Check(spy->counts.secondaryRelease == 1
+                  && spy->counts.secondaryClick == 1
+                  && spy->counts.primaryClick == 0,
+              "0.5.0：右键抬起 → 次键 release + click，主键零事件");
+    }
+
+    // ② 左键回归：语义与 0.5.0 之前一模一样
+    {
+        inking::InkingScene scene("left_regression");
+        ButtonSpy* spy = MakeSpyButton(scene, "left_btn");
+
+        feed(scene, 200.0f, 150.0f, true, false);
+        Check(spy->counts.primaryPress == 1
+                  && spy->GetState() == inking::ButtonState::Pressed,
+              "0.5.0：左键按下 → 主键 press + Pressed 态（回归）");
+        feed(scene, 200.0f, 150.0f, false, false);
+        Check(spy->counts.primaryClick == 1 && spy->counts.secondaryClick == 0,
+              "0.5.0：左键抬起 → 主键 click（回归）");
+    }
+
+    // ③ 左右同按再依次抬起：两个槽各走各的
+    //
+    // 这是"分槽"的存在理由。共用一份 `wasDown` 时，抬起会在第一个键上把
+    // `released` 算完，第二个键的 press(false) 就永远不来——按钮永久 Pressed。
+    {
+        inking::InkingScene scene("both_buttons");
+        ButtonSpy* spy = MakeSpyButton(scene, "both_btn");
+
+        feed(scene, 200.0f, 150.0f, true, false);
+        feed(scene, 200.0f, 150.0f, true, true);
+        Check(spy->counts.primaryPress == 1
+                  && spy->counts.secondaryPress == 1,
+              "0.5.0：左右同按 → 两个键各收到一次 press");
+
+        feed(scene, 200.0f, 150.0f, false, true);
+        Check(spy->counts.primaryRelease == 1 && spy->counts.primaryClick == 1
+                  && spy->counts.secondaryRelease == 0,
+              "0.5.0：只抬左键 → 主键 click，次键仍按着");
+
+        feed(scene, 200.0f, 150.0f, false, false);
+        Check(spy->counts.secondaryRelease == 1
+                  && spy->counts.secondaryClick == 1
+                  && spy->counts.primaryClick == 1,
+              "0.5.0：再抬右键 → 次键 click，主键不重复报");
+    }
+
+    // ④ 右键不改 hover、不抢键盘焦点
+    {
+        inking::InkingScene scene("right_no_hover");
+        ButtonSpy* spy = MakeSpyButton(scene, "hover_btn");
+
+        feed(scene, 200.0f, 150.0f, false, false);
+        inking::InkingWidget* before = scene.GetHoveredNode();
+        feed(scene, 200.0f, 150.0f, false, true);
+        Check(before == spy && scene.GetHoveredNode() == spy,
+              "0.5.0：右键按下不改变悬停（hover 是“我指着谁”）");
+        Check(scene.GetKeyboardFocus() == nullptr,
+              "0.5.0：右键**不抢键盘焦点**（否则点空白会清掉输入框焦点）");
+        feed(scene, 200.0f, 150.0f, false, false);
+    }
+
+    // ⑤ 坐标 = **按下点**，不是抬起点
+    //
+    // 用右键验（鼠标路径）；触摸长按的同一条语义在下面 ⑨ 验。
+    {
+        inking::InkingScene scene("press_origin");
+        ButtonSpy* spy = MakeSpyButton(scene, "origin_btn");
+
+        feed(scene, 150.0f, 130.0f, false, true);
+        feed(scene, 170.0f, 140.0f, false, true);   // 按住挪动，仍在按钮内
+        feed(scene, 170.0f, 140.0f, false, false);
+        Check(spy->lastClickX == 150.0f && spy->lastClickY == 130.0f,
+              "0.5.0：click 坐标是按下点 (150,130)，不是抬起点 (170,140)");
+    }
+}
+
+// ---- 触摸：轻点 = 主键，长按 = 次键 ----
+void CheckTouchLongPress() {
+    std::printf("\n-- 触摸：长按自动映射为次键（0.5.0）--\n");
+
+    const auto feed = [](inking::InkingScene& scene, float x, float y,
+                         bool primary, bool secondary,
+                         inking::PointerSource source
+                             = inking::PointerSource::Touch) {
+        scene.SetPointerState(x, y, inking::PointerDownState{primary, secondary},
+                              true, source);
+        scene.DispatchPointer();
+    };
+
+    // ① 轻点（0.3s）→ 只有主键 click
+    {
+        inking::InkingScene scene("touch_tap");
+        ButtonSpy* spy = MakeSpyButton(scene, "tap_btn");
+
+        feed(scene, 200.0f, 150.0f, true, false);
+        scene.TickLogic(0.3);
+        feed(scene, 200.0f, 150.0f, false, false);
+        Check(spy->counts.primaryClick == 1
+                  && spy->counts.secondaryClick == 0
+                  && spy->counts.secondaryPress == 0,
+              "0.5.0：触摸轻点 → 只有主键 click（与鼠标左键同构）");
+    }
+
+    // ② 长按（0.5s）→ 主键作废 + 次键按下；抬手 → 次键 click
+    {
+        inking::InkingScene scene("touch_long");
+        ButtonSpy* spy = MakeSpyButton(scene, "long_btn");
+
+        feed(scene, 200.0f, 150.0f, true, false);
+        Check(spy->counts.primaryPress == 1, "0.5.0：长按前先有一次主键 press");
+
+        scene.TickLogic(0.5);          // 计时到阈值 → 置 pending
+        scene.DispatchPointer();       // 消费：作废主键、次键按下
+
+        Check(spy->counts.primaryRelease == 1 && spy->counts.primaryClick == 0,
+              "0.5.0：长按成立 → 主键捕获作废（release）但**不发 click**");
+        Check(spy->counts.secondaryPress == 1,
+              "0.5.0：长按成立 → 次键 press");
+        Check(spy->GetState() != inking::ButtonState::Pressed,
+              "0.5.0：长按不把按钮点亮（次键不进三态）");
+
+        feed(scene, 200.0f, 150.0f, false, false);
+        Check(spy->counts.secondaryRelease == 1
+                  && spy->counts.secondaryClick == 1,
+              "0.5.0：长按后抬手 → 次键 release + click（菜单在这里弹）");
+        Check(spy->counts.primaryClick == 0,
+              "0.5.0：整趟长按 **一次左键 click 都没有**");
+    }
+
+    // ③ 长按候选期内移动超 slop → 放弃长按（那是拖动 / 滚动）
+    {
+        inking::InkingScene scene("touch_drag");
+        ButtonSpy* spy = MakeSpyButton(scene, "drag_btn");
+
+        feed(scene, 200.0f, 150.0f, true, false);
+        feed(scene, 200.0f, 175.0f, true, false);   // 25 > slop(8)，仍在按钮内
+        scene.TickLogic(1.0);
+        scene.DispatchPointer();
+        Check(spy->counts.secondaryPress == 0,
+              "0.5.0：按住滑走 25 设计像素 → 长按被放弃（不当成菜单手势）");
+
+        // 而且**不会迟到**：手指停在远处再等 1 秒也还是不触发。
+        scene.TickLogic(1.0);
+        scene.DispatchPointer();
+        Check(spy->counts.secondaryPress == 0,
+              "0.5.0：滑走之后继续按住 → 长按**不会迟到触发**");
+        feed(scene, 200.0f, 175.0f, false, false);
+    }
+
+    // ④ 来源抖动（触摸按着时传了一次 Mouse）→ 长按仍成立
+    //
+    // 场景只在**按下那一刻**锁来源。若每帧照抄，触摸屏上"边按边动鼠标"
+    // 就会把长按打断，而现象是"长按偶尔不成立"，极难复现。
+    {
+        inking::InkingScene scene("source_lock");
+        ButtonSpy* spy = MakeSpyButton(scene, "lock_btn");
+
+        feed(scene, 200.0f, 150.0f, true, false);                  // Touch
+        feed(scene, 200.0f, 150.0f, true, false,
+             inking::PointerSource::Mouse);                        // 抖成 Mouse
+        scene.TickLogic(0.5);
+        scene.DispatchPointer();
+        Check(spy->counts.secondaryPress == 1,
+              "0.5.0：来源按**按下瞬间**锁定 → 中途抖动不影响长按");
+        feed(scene, 200.0f, 150.0f, false, false);
+    }
+
+    // ⑤ 长按的 click 坐标也是**按下点**（长按后手指微动，菜单不该挪）
+    {
+        inking::InkingScene scene("long_origin");
+        ButtonSpy* spy = MakeSpyButton(scene, "long_origin_btn");
+
+        feed(scene, 160.0f, 130.0f, true, false);
+        feed(scene, 163.0f, 132.0f, true, false);   // 3px，slop 内
+        scene.TickLogic(0.6);
+        scene.DispatchPointer();
+        feed(scene, 163.0f, 132.0f, false, false);
+        Check(spy->lastClickX == 160.0f && spy->lastClickY == 130.0f,
+              "0.5.0：长按的 click 坐标仍是按下点 (160,130)");
+    }
+
+    // ⑥ 长按对**动态组件**可见（浮窗的"点外部关闭"靠它）
+    //
+    // 这是最容易漏的一条：动态组件读的是 `GetPointerDown()`。若它返回物理状态
+    // 而不是合成后的有效状态，长按在浮窗看来**从未发生**——"长按菜单外部"
+    // 就永远关不掉菜单，而且完全没有报错。
+    {
+        inking::InkingScene scene("long_dynamic_visible");
+        MakeSpyButton(scene, "behind_btn");
+
+        inking::AnchorData data;
+        data.width = 40;
+        data.height = 40;
+        data.offsetX = 600.0f;
+        data.offsetY = 600.0f;
+        auto* spy = static_cast<PointerSpy*>(
+            scene.AddChild(std::make_unique<PointerSpy>(&scene, data)));
+
+        feed(scene, 200.0f, 150.0f, true, false);
+        scene.TickLogic(0.6);
+        scene.DispatchPointer();
+        Check(spy->sawSecondaryDown,
+              "0.5.0：动态组件从 GetPointerDown() 看得到长按合成的次键");
+        feed(scene, 200.0f, 150.0f, false, false);
+    }
+}
+
+
+//
+// 纯数字断言：四方向 × "翻转后仍放不下" 一共十几种组合，靠开窗口看不出对错。
+// 这里只验四组代表 + 三条边界（两轴独立 / 非零原点 / 尺寸为 0 的退化）。
 // ---------------------------------------------------------------------------
 // 定点浮窗的落位算术（0.4.1 T-05）
 // ---------------------------------------------------------------------------
@@ -2747,6 +3096,8 @@ int main() {
     CheckPopupHitOwner();
     CheckPointerStateChannel();
     CheckPointerProbe();
+    CheckRightButton();
+    CheckTouchLongPress();
 
     // ---- 定点浮窗：落位算术 + 组件行为（0.4.1 T-05 / T-06） ----
     CheckPopupPlacement();

@@ -5,7 +5,78 @@
 
 ---
 
-## 0.4.1 —— 2026-10-24（**当前：发布版**）
+## 0.5.0 —— 2026-10-24（发布版）
+
+> 来源：用户要求"补齐右键输入，触摸屏长按自动映射为右键"。方案与核实见
+> `docs/zh/plans/2026-10-24-right-button-longpress.md`。
+> **这一版有破坏性接口改动**：指针钩子签名变了，迁移方法见"变更"第 1 条。
+
+### 新增
+
+- **两种输入状态 `Primary` / `Secondary`**（`input/PointerButton.h`）：鼠标左 / 右键
+  一一对应，**触摸轻点 = Primary、长按 = Secondary**。组件层从此只认这两个语义位，
+  **永远不需要知道输入设备**——这是本库的跨平台立场，不是对触摸的补偿。
+- **次键点击事件**（`InkingButtonLike::contextClicked`）：`InkingEvent<float, float>`，
+  参数是**按下点**。`SetOnContextClicked` 是它的便利写法。
+- **触摸长按**（`InkingScene`）：按住 0.5 秒（`_longPressSeconds`）且移动不超过
+  8 设计像素（`_longPressSlop`）即转义成一次完整的次键交互（press → release → click）。
+  两个参数是 `protected` 成员，派生场景可改。
+- **场景观测口**：`GetPointerDown()` / `IsSecondaryPointerDown()` /
+  `GetSecondaryPressedNode()` / `GetPressOrigin(button)`。
+- **`MouseState::source`**：窗口层记录这次按下来自鼠标还是触摸（场景只在按下那一刻读）。
+
+### 变更
+
+- **【破坏】指针钩子带按钮维度**：
+  ```C++
+  // 旧
+  void onPointerPress(bool press) override;
+  void onPointerClick() override;
+  // 新
+  void onPointerPress(PointerButton button, bool press) override;
+  void onPointerClick(PointerButton button, float designX, float designY) override;
+  ```
+  迁移样板（不关心右键的组件）：
+  ```C++
+  void MyWidget::onPointerPress(PointerButton button, bool press) {
+      if (button != PointerButton::Primary) { return; }
+      /* ...原来的逻辑... */
+  }
+  ```
+  不保留旧签名的理由：两套入口会让"重写了哪个、另一个还调不调"没有答案，
+  表现不是双触发就是静默不生效。
+- **捕获按按钮分槽**：`_pressedNode` 变成数组。左右同按互不覆盖——共用一份状态时
+  右键按下会顶掉左键槽，抬起时左键的 `press(false)` 永远不来，按钮永久停在 Pressed 色。
+- **`detail::PointerProbe::Update(hit, down)`**：第二个参数从 `bool` 变成
+  `const PointerDownState&`；结果按 `primary` / `secondary` 分槽，
+  顶层 `downEdge` 改名为 `anyDownEdge`。
+- **窗口层关掉触摸→鼠标合成**（`SDL_HINT_TOUCH_MOUSE_EVENTS=0`）：SDL3 默认开启，
+  会让一次触摸同时产生 `FINGER_*` 与 `MOUSE_*` 两套事件，来源抖动、长按永远不成立。
+- **`inside` 判据补 `SDL_WINDOW_INPUT_FOCUS` 与 `IsTouchActive()`**：关掉合成后
+  `SDL_WINDOW_MOUSE_FOCUS` 在纯触摸下可能不置位，只留原来那一条会让触摸**整条失效**。
+
+### 修复
+
+- **定点浮窗的"点外部关闭"对右键失灵**：判据从 `downEdge` 改成 `anyDownEdge`。
+- **右键会误结束左键拖动**：`InkingStaticImage` / `InkingStaticPanel` / `MenuBar` /
+  `InkingTextInput` 都加了主键守卫——否则"右键看着没反应，拖动却断了"。
+
+### 已知限制
+
+- 中键仍只记状态、不派发。要开的话：`PointerButton` 加一个枚举值 +
+  `kPointerButtonCount = 3`，`static_assert` 会先把需要同步的地方报出来。
+- 右键不产生 `onPointerDrag`（桌面右键拖拽是少见手势，且要和菜单关闭语义仲裁）。
+- 触摸仍然只认第一根手指（多指针的结论不变）。
+- 长按阈值 / slop 是通用值，真机手感留待有触摸设备时再调。
+
+### 文档
+
+- `api/InkingPointerHandler.md` 新增"两种输入状态"一节，钩子签名与归属表同步。
+- `plans/2026-10-24-right-button-longpress.md` 是本版的方案与验收依据。
+
+---
+
+## 0.4.1 —— 2026-10-24（0.4.0 的增补）
 
 > 来源：定点浮窗 + 菜单浮窗（用户口头更新计划）。逐条核实、取舍与实测见
 > `docs/zh/plans/2026-10-24-0.4.1-fixed-popup-menu.md`。

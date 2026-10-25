@@ -351,9 +351,13 @@ std::size_t MenuBar::GetCaptionButtonCount() const noexcept {
 // 拖动（无边框下的自绘标题栏）
 // ---------------------------------------------------------------------------
 
-void MenuBar::onPointerPress(bool press) {
+void MenuBar::onPointerPress(PointerButton button, bool press) {
+    // 无边框拖动只认主键（0.5.0）：右键按下不该让整个窗口跟着动。
+    if (button != PointerButton::Primary) {
+        return;
+    }
     _dragging = press && _style.draggable;
-    InkingStaticPanel::onPointerPress(press);  // 配了滚动时那条路照旧
+    InkingStaticPanel::onPointerPress(button, press);  // 配了滚动时那条路照旧
 }
 
 void MenuBar::onPointerDrag(float designX, float designY, float deltaX,

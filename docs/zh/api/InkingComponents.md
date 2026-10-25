@@ -135,9 +135,11 @@ static const ButtonData* FindData(const std::string& name);
 static int UnknownNameCount() noexcept;    // 取不到配置的次数（自检断言用）
 
 // 下面这些都从 InkingButtonLike 继承得来，本类一个都不转发：
-//   clicked / stateChanged / GetState / GetAppearance / GetDisplayColor / GetDisplayTransform
+//   clicked / contextClicked / stateChanged
+//   GetState / GetAppearance / GetDisplayColor / GetDisplayTransform
 //   GetDisplayWidth / GetDisplayHeight / MouseHover / MousePress / MouseRelease
-//   TriggerClick / SetOnClicked / HasOnClicked / IsTransitioning
+//   TriggerClick / TriggerContextClick / SetOnClicked / SetOnContextClicked
+//   HasOnClicked / HasOnContextClicked / IsTransitioning
 
 bool HitTest(float worldX, float worldY) const override;
 const ShapeSpec& GetShape() const noexcept;
@@ -200,6 +202,11 @@ public:
     void SetOnClicked(ButtonClickCallback callback);           // std::function<void()>
     bool TriggerClick();
 
+    // 次键（右键 / 触摸长按）：**带按下点**，典型用法是 OpenAt(x, y)
+    bool HasOnContextClicked() const noexcept;
+    void SetOnContextClicked(ButtonContextClickCallback callback);  // void(float, float)
+    bool TriggerContextClick(float designX, float designY);
+
     bool MouseHover(bool hover) noexcept;
     bool MousePress(bool press) noexcept;
     bool MouseRelease() noexcept;
@@ -211,6 +218,18 @@ protected:
     virtual void onButtonDisplayAdvanced(bool repaintDirty, bool hitDirty);
 };
 ```
+
+**两个点击事件，语义不同**（0.5.0）：
+
+| 事件 | 参数 | 谁触发 | 语义 |
+| --- | --- | --- | --- |
+| `clicked` | 无 | 左键 / 触摸轻点 | "这个按钮被激活了"——位置没有意义 |
+| `contextClicked` | `(float x, float y)` | 右键 / 触摸长按 | "在**这一点**打开上下文"——位置就是语义 |
+
+坐标是**按下点**（不是抬起点）。这个不对称是故意的：给 `clicked` 加参数会波及所有
+既有订阅者，而它们一个都用不上那两个 float。触摸屏上长按按钮会走到
+`contextClicked`——按钮**不需要知道**那是手指（见 `InkingPointerHandler` 的
+"两种输入状态"）。
 
 **尺寸观测口叫 `GetDisplayWidth/Height`**：`GetWidth/GetHeight` 已经是"锚点推导的尺寸"，
 再叫同一个名字会造成歧义。
@@ -688,4 +707,4 @@ void AudioTick(float deltaSeconds);   // 主循环每帧调（窗口层已经接
 
 ---
 
-> 本文档对应版本：**0.4.0（0.x 发布版）**。
+> 本文档对应版本：**0.5.0（0.x 发布版）**。

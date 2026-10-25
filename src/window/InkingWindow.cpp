@@ -464,17 +464,34 @@ void dispatchPointer(WindowState& s, const MouseInput& mouse) {
     }
 
     const MouseState& state = mouse.GetState();
+
     // 指针在不在窗口里：移出去时不该继续悬停，也不该在窗口外"按下"。
+    //
+    // 0.5.0 补了两条判据，缺了它们触摸会**整条失效**：
+    //   - `SDL_WINDOW_INPUT_FOCUS`：我们关掉了"触摸合成鼠标事件"，纯触摸不再
+    //     产生 `MOUSE_*`；而 `SDL_WINDOW_MOUSE_FOCUS` 是**鼠标**焦点标志，
+    //     触摸屏上可能一直不置位 ⇒ 原来那一条会一直算出 `inside=false`；
+    //   - `IsTouchActive()`：手指能按在窗口上，本身就证明指针在窗口里
+    //     （全屏触摸设备、无鼠标焦点的场景靠它兜住）。
+    const SDL_WindowFlags windowFlags =
+        s.window != nullptr ? SDL_GetWindowFlags(s.window) : 0;
     const bool inside =
         s.window != nullptr
-        && (SDL_GetWindowFlags(s.window) & SDL_WINDOW_MOUSE_FOCUS) != 0;
+        && (((windowFlags & (SDL_WINDOW_MOUSE_FOCUS | SDL_WINDOW_INPUT_FOCUS)) != 0)
+            || mouse.IsTouchActive());
 
     // 滚轮（A4）：本帧累积的滚动量。和指针位置一样"只喂不判"——派发在
     // Scene::DispatchPointer 里统一做（目标：指针下最上面那个 / 拖动捕获者）。
     scene->SetPointerWheel(state.wheelX, state.wheelY);
 
-    scene->SetPointerState(state.design.x, state.design.y, state.leftButtonDown,
-                           inside);
+    // 两个**语义键**（0.5.0）：场景层不认识设备，只认 Primary / Secondary。
+    // 触摸的长按转义发生在场景里（`TickLogic`），不在这里——窗口层只负责
+    // "事实"（哪个键按着、来自鼠标还是手指），策略在场景。
+    PointerDownState down;
+    down.primary = state.leftButtonDown;
+    down.secondary = state.rightButtonDown;
+    scene->SetPointerState(state.design.x, state.design.y, down, inside,
+                           state.source);
     scene->DispatchPointer();
 }
 
@@ -1643,6 +1660,24 @@ bool InkingWindow::Open(const std::string& sceneName) {
         INK_LOG_ERROR(kModuleName, std::string("SDL_Init 失败：") + SDL_GetError());
         return false;
     }
+
+    // -----------------------------------------------------------------------
+    // 关掉"触摸合成鼠标事件"（0.5.0）
+    //
+    // SDL3 默认值是 `"1"`：一次触摸会**同时**产生 `FINGER_*` 与 `MOUSE_*`
+    // 两套事件（本机 SDL_hints.h 实测，SDL 3.2.0 起可用）。两套都进来之后：
+    //
+    //   1. `leftButtonDown` 被两条路同时驱动，状态机每帧多走一遍；
+    //   2. `MouseState::source` 在 Touch / Mouse 之间**抖动**，而长按判定要求
+    //      "来源是触摸"——抖动一次就复位，长按**永远不成立**。
+    //
+    // 而现象只是"长按没反应"，不报错、不断言、不崩溃。所以这条必须在建窗
+    // 之前（`SDL_Init` 之后，hint 在 Init 时会被读一次）钉死。
+    //
+    // 关掉之后只剩 finger 事件，`MouseInput` 那三个 `FINGER_*` 分支才是触摸的
+    // **唯一**来源——读代码的人不必再猜"这条是不是也会被合成事件走到"。
+    // -----------------------------------------------------------------------
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 
     // C2：无边框窗口。标志必须在**建窗口那一刻**给（之后改要走
     // `SDL_SetWindowBordered`，那会有一次真实的窗口重建）。默认关——

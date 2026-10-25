@@ -249,7 +249,9 @@ protected:
     void onPointerWheel(float deltaX, float deltaY) override;
 
     /// 按下 / 抬起（B12）：按下时决定"拖滑块还是点轨道跳过去"。
-    void onPointerPress(bool press) override;
+    /// 按下 / 抬起。**只认主键**：容器吃的是滚动拖动，右键不参与（0.5.0）。
+    /// 重写时必须把 `button` 判掉，否则右键抬起会结束正在进行的左键滚动拖动。
+    void onPointerPress(PointerButton button, bool press) override;
 
     /// 拖动（B12）：把滑块中心拖到指针处。
     void onPointerDrag(float designX, float designY, float deltaX,

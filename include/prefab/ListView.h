@@ -159,7 +159,8 @@ public:
 protected:
     void onAnimationTick(float deltaSeconds) override;
     void onPointerWheel(float deltaX, float deltaY) override;
-    void onPointerPress(bool press) override;
+    /// 按下 / 抬起。**只认主键**（行选中 / 拖动滚动）；右键菜单留给下一版（0.5.0）。
+    void onPointerPress(PointerButton button, bool press) override;
     void onPointerDrag(float designX, float designY, float deltaX,
                        float deltaY) override;
 

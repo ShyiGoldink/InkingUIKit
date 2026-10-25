@@ -211,7 +211,8 @@ public:
     bool HandlesSubtreeWheel() const noexcept override;
 
 protected:
-    void onPointerPress(bool press) override;
+    /// 按下 / 抬起。**只认主键**：无边框拖动是主键手势（0.5.0）。
+    void onPointerPress(PointerButton button, bool press) override;
     void onPointerDrag(float designX, float designY, float deltaX,
                        float deltaY) override;
 

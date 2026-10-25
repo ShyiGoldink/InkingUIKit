@@ -7,6 +7,8 @@ union SDL_Event;
 
 #include <cstdint>
 
+#include <input/PointerButton.h>
+
 // MouseInput 负责维护鼠标状态；
 // 它不直接负责 hit test，也不负责渲染更新。
 // 命中检测和事件投递应由 Scene / InputRouter 在下一帧做，
@@ -33,6 +35,17 @@ struct MouseState {
     bool rightButtonDown = false;
     bool middleButtonDown = false;
     bool moved = false;
+
+    /**
+     * 这次按下来自鼠标还是触摸（0.5.0）。
+     *
+     * **只在按下那一刻有意义**：场景层也只在按下瞬间读一次
+     * （见 `InkingScene::SetPointerState`）。所以这里不需要"跨帧稳定"的保证，
+     * 但写入点仍然只有两处——`MOUSE_BUTTON_DOWN(左键)` 与 `FINGER_DOWN`。
+     * **移动事件不写**：触摸屏上用户边按边动鼠标时，写它就会把来源刷成
+     * Mouse、长按计时被打断（"长按偶尔不成立"，且看另一只手在干什么）。
+     */
+    PointerSource source = PointerSource::Mouse;
 
     /**
      * **本帧累积的滚轮增量**（A4）。

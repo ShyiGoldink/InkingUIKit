@@ -10,6 +10,33 @@
 `onPointerClick`（以及 `onPointerWheel` / `onPointerDrag`）就能收输入；
 没重写的拿默认空实现，什么都不会发生。
 
+## 两种输入状态（0.5.0）
+
+`onPointerPress` / `onPointerClick` 带 `PointerButton` 参数。上层**永远只看到
+`Primary` / `Secondary`**，不需要知道这是鼠标左键、右键，还是触摸的轻点、长按——
+设备差异在窗口层与场景层就被吸收干净了（见 `<input/PointerButton.h>` 的文件头）。
+
+| 设备输入 | 语义 |
+| --- | --- |
+| 鼠标左键 | `Primary` |
+| 鼠标右键 | `Secondary` |
+| 触摸轻点 | `Primary`（press → release → click） |
+| 触摸长按（≥ 0.5s 且没滑动） | `Secondary`（press → release → click） |
+
+这不是"给触摸做补偿"，而是本库的**跨平台立场**：两种输入状态在**所有层同构**，
+同构包括事件集、坐标、捕获规则。所以这里没有"触摸分支"，也不该出现。
+
+三个钩子的参数形状**故意不同**：
+
+| 钩子 | 参数 | 为什么 |
+| --- | --- | --- |
+| `onPointerHover` | `bool` | 只有主键有 hover——hover 是"我指着谁"，不是"我按着谁" |
+| `onPointerPress` | `PointerButton, bool` | 按下不关心位置；要位置问场景 |
+| `onPointerClick` | `PointerButton, float, float` | **必须**带坐标——它是事件，不带走就永久丢失 |
+
+坐标是**按下点**（不是抬起点）：触摸长按的锚点是按下处，手指微动几像素不该让
+菜单跟着挪；鼠标右键按下与抬起通常同点，两者无差异。
+
 ## 两条设计约束
 
 1. **零状态**：这里不存任何字段。**拖动归属（"场景记住谁被按下"）住在场景上**——
@@ -31,8 +58,9 @@
 
 | 输入 | 归谁 |
 | --- | --- |
-| **hover** | 指针下**最上面**那个（场景判出来） |
-| **按下 / 拖动**（pointer capture） | 按下时命中的那个节点**抓住**这次交互，之后指针怎么移都只推给它（跨组件不被抢、移出矩形也算它的）；**抬起或窗口失焦时释放** |
+| **hover** | 指针下**最上面**那个（场景判出来）。**只跟主键**：右键按住不改变它 |
+| **按下 / 拖动**（pointer capture） | 按下时命中的那个节点**抓住**这次交互，之后指针怎么移都只推给它（跨组件不被抢、移出矩形也算它的）；**抬起或窗口失焦时释放**。**只认主键** |
+| **次键按下 / 点击**（0.5.0） | 同样有捕获，但**按按钮分槽**：与主键各记各的，左右同按互不覆盖。次键不参与 hover / 拖动 / 滚轮 / 键盘焦点 |
 | **滚轮** | 正常给"指针下最上面那个"；若这时正按着某个节点（拖动捕获生效中），**改推给捕获者** |
 | **滚轮（容器优先）** | 谁声明了 `HandlesSubtreeWheel()`，场景就**沿父链找最近的声明者**，把滚轮先交给它 |
 
@@ -55,9 +83,9 @@
 
 ## 用到的数据结构
 
-**没有。** 本文件不定义、也不前向声明任何类型——5 个钩子的参数全是 `bool` / `float`
-（外加 `HandlesSubtreeWheel()` 返回 `bool`），`#pragma once` 之后直接进 `namespace inking`。
-它是这批输入契约里**连锁依赖都没有**的一份（键盘那份还得前向声明 `KeyEvent`）。
+`PointerButton` / `PointerSource` / `PointerDownState` / `ToIndex()`，来自
+`<input/PointerButton.h>`（纯值类型，不依赖 SDL）。本文件不再"零依赖"——0.5.0
+之前它确实不引用任何类型，因为那时只有"一个 bool 的按下"。
 
 ## 属性
 
@@ -98,26 +126,34 @@ void PushPointerHover(bool hover) noexcept;
 
 指针**进出**：`true` 进入、`false` 离开（转给 `onPointerHover`）。
 
->**PushPointerPress(press)**
+>**PushPointerPress(button, press)**
 原名:
 
 ```C++
-void PushPointerPress(bool press) noexcept;
+void PushPointerPress(PointerButton button, bool press) noexcept;
 ```
 
 **按下 / 抬起**：`true` 按下、`false` 抬起（转给 `onPointerPress`）。
 
+`button` 是**语义位**（`Primary` = 左键 / 轻点，`Secondary` = 右键 / 长按），
+不是设备位——组件既不需要、也拿不到"这是鼠标还是手指"。
+
 按下与抬起走**同一条**（而不是两个入口），因为"回哪一态 / 还算不算一次点击"
 是**组件自己的知识**：按钮按下滑出去再松开要回 Normal，不是 Hover。
 
->**PushPointerClick()**
+>**PushPointerClick(button, designX, designY)**
 原名:
 
 ```C++
-void PushPointerClick() noexcept;
+void PushPointerClick(PointerButton button, float designX,
+                      float designY) noexcept;
 ```
 
 **一次完整的点击**（按下与抬起都发生在它身上）（转给 `onPointerClick`）。
+
+`designX` / `designY` 是**按下点**（设计坐标），不是抬起时的位置。click 是**事件**：
+发生之后状态就变了，不带走那一刻的坐标就永久丢失——所以它带坐标，而
+`PushPointerPress` 不带。
 
 >**PushPointerWheel(deltaX, deltaY)**
 原名:
@@ -171,23 +207,41 @@ virtual void onPointerHover(bool hover) {}
 拖拽时按着不放、指针滑出去，组件会**先收到一次 `hover = false`，而它仍然按着**——
 这正是按钮"按下期间滑出去还是按下"这条手感的来源。
 
->**onPointerPress(press)**
+>**onPointerPress(button, press)**
 原名:
 
 ```C++
-virtual void onPointerPress(bool press) {}
+virtual void onPointerPress(PointerButton button, bool press) {}
 ```
 
 按下 / 抬起。**抬起也是这条**（`press = false`）。
 
->**onPointerClick()**
+**重写了就必须判 `button`**：按钮只在 `Primary` 时进 Pressed 态，否则右键按下会
+把按钮点亮，用户会以为左键生效了。不关心右键的组件写一行守卫即可：
+
+```C++
+if (button != PointerButton::Primary) { return; }
+```
+
+>**onPointerClick(button, designX, designY)**
 原名:
 
 ```C++
-virtual void onPointerClick() {}
+virtual void onPointerClick(PointerButton button, float designX,
+                            float designY) {}
 ```
 
 一次完整点击。默认什么都不做。
+
+最典型的用法是右键菜单：
+
+```C++
+void MyWidget::onPointerClick(PointerButton button, float x, float y) {
+    if (button == PointerButton::Secondary) {
+        _menu->OpenAt(x, y);      // 坐标就是按下点，不必再换算
+    }
+}
+```
 
 >**onPointerWheel(deltaX, deltaY)**
 原名:
@@ -225,4 +279,4 @@ virtual void onPointerDrag(float designX, float designY,
 
 ---
 
-> 本文档对应版本：**0.4.0（0.x 发布版）**。
+> 本文档对应版本：**0.5.0（0.x 发布版）**。

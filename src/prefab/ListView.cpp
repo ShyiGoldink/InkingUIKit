@@ -441,8 +441,10 @@ void ListView::onPointerWheel(float deltaX, float deltaY) {
     SyncVisibleWindow();
 }
 
-void ListView::onPointerPress(bool press) {
-    InkingStaticPanel::onPointerPress(press);
+void ListView::onPointerPress(PointerButton button, bool press) {
+    // 守卫在基类（`InkingStaticPanel` 只认主键），这里照常转发——
+    // 签名必须一致，否则右键连"什么都不做"都传不到基类那层。
+    InkingStaticPanel::onPointerPress(button, press);
     SyncVisibleWindow();
 }
 

@@ -538,7 +538,12 @@ void InkingStaticPanel::DragScrollTo(float designX, float designY) {
     }
 }
 
-void InkingStaticPanel::onPointerPress(bool press) {
+void InkingStaticPanel::onPointerPress(PointerButton button, bool press) {
+    // 容器吃的是**主键**的滚动拖动（0.5.0）。不判的话，右键抬起会把左键正在
+    // 进行的拖动结束掉——`_dragAxis = 0` 那一行就是它。
+    if (button != PointerButton::Primary) {
+        return;
+    }
     if (!press) {
         _dragAxis = 0;  // 抬起：拖动结束
         return;

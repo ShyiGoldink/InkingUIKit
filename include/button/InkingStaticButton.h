@@ -253,14 +253,23 @@ protected:
     // 下一帧 `onAnimationTick` 里报出去（见 `ButtonLook::BeginTransition`）。
     // 在这里额外标一次会把它标重，而且"没配过渡"那条路依旧只走一个出口。
 
-    /// 指针进出（由基类的 `PushPointerHover` 转来）。
+    /// 指针进出（由基类的 `PushPointerHover` 转来）。**只有主键**——右键不改变
+    /// "我指着谁"，见 `InkingPointerHandler` 的"按钮维度"。
     void onPointerHover(bool hover) override;
 
     /// 按下 / 抬起（由基类的 `PushPointerPress` 转来）。
-    void onPointerPress(bool press) override;
+    ///
+    /// **右键不进三态**（0.5.0）：三态是"主键手势"的可视化，右键按下把按钮点亮
+    /// 会让用户以为左键生效了。所以 Secondary 直接返回，什么都不做。
+    void onPointerPress(PointerButton button, bool press) override;
 
     /// 一次完整点击（由基类的 `PushPointerClick` 转来）。
-    void onPointerClick() override;
+    ///
+    /// 两个键走两个事件槽：Primary → `TriggerClick()`（`clicked`，无参，语义是
+    /// "这个按钮被激活了"）；Secondary → `TriggerContextClick(x, y)`
+    /// （`contextClicked`，带按下点，语义是"在这一点的上下文"）。
+    void onPointerClick(PointerButton button, float designX,
+                        float designY) override;
 
     /// 三态真的变了（由 `InkingButtonLike::MouseHover` / `MousePress` 同步调来）。
     /// 本类挂的副作用只有一个：把**当前显示**的颜色同步到基类那份 color。

@@ -174,7 +174,9 @@ protected:
     void onKeyDown(const KeyEvent& key) override;
     void onTextInput(const std::string& text) override;
     void onFocusChanged(bool focused) override;
-    void onPointerPress(bool press) override;
+    /// 按下 / 抬起。**只认主键**：开始编辑 / 选区都是主键手势；
+    /// 右键留给将来的"粘贴 / 全选"上下文菜单（0.5.0）。
+    void onPointerPress(PointerButton button, bool press) override;
     void onPointerDrag(float designX, float designY, float deltaX,
                        float deltaY) override;
 

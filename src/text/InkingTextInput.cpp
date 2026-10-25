@@ -516,7 +516,12 @@ void InkingTextInput::onTextInput(const std::string& text) {
 
 void InkingTextInput::onFocusChanged(bool focused) { SetFocused(focused); }
 
-void InkingTextInput::onPointerPress(bool press) {
+void InkingTextInput::onPointerPress(PointerButton button, bool press) {
+    // 开始编辑 / 选区都是**主键**手势（0.5.0）。右键留给将来的"粘贴 / 全选"
+    // 上下文菜单——那时在这个守卫之后加一条 Secondary 分支即可。
+    if (button != PointerButton::Primary) {
+        return;
+    }
     if (!press) {
         return;
     }

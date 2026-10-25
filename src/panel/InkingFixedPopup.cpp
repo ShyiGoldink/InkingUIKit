@@ -264,13 +264,17 @@ void InkingFixedPopup::onPointerStateChanged() {
     // 指针不在窗口里一律不算"在身上"（窗口外不该继续悬停）——与动态按钮同一条。
     const bool hit = scene->IsPointerInside()
                   && HitTest(scene->GetPointerX(), scene->GetPointerY());
-    const detail::PointerProbeResult r = _probe.Update(hit, scene->IsPointerDown());
+    const detail::PointerProbeResult r =
+        _probe.Update(hit, scene->GetPointerDown());
 
     // 先判"外部按下"：它可能把浮窗关掉，关掉之后就不该再抢焦点。
     //
-    // 判据是 `downEdge && !hovered`——**不是** `pressed`：后者只表示"按下算在
+    // 判据是 `anyDownEdge && !hovered`——**不是** `pressed`：后者只表示"按下算在
     // 我身上"（捕获），用在别处按下时永远为假，那样菜单就永远关不掉。
-    if (r.downEdge && !r.hovered) {
+    //
+    // 用 `anyDownEdge` 而不是 `primary.downEdge`（0.5.0）：右键点外部也该关菜单，
+    // 而且触摸长按在语义上就是次键——**这两种输入在菜单看来必须一样**。
+    if (r.anyDownEdge && !r.hovered) {
         onOutsidePressed();
     }
     if (!_open) {

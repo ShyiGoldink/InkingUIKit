@@ -293,12 +293,23 @@ void InkingStaticButton::onPointerHover(bool hover) {
     MouseHover(hover);
 }
 
-void InkingStaticButton::onPointerPress(bool press) {
+void InkingStaticButton::onPointerPress(PointerButton button, bool press) {
+    // **右键不进三态**（0.5.0）：三态是"主键手势"的可视化。让右键点亮按钮，
+    // 用户会以为左键生效了——而实际什么都没发生（右键走 contextClicked）。
+    if (button != PointerButton::Primary) {
+        return;
+    }
     MousePress(press);
 }
 
-void InkingStaticButton::onPointerClick() {
-    TriggerClick();
+void InkingStaticButton::onPointerClick(PointerButton button, float designX,
+                                         float designY) {
+    if (button == PointerButton::Primary) {
+        TriggerClick();
+    } else {
+        // 次键：带按下点，业务直接喂 `MenuPopup::OpenAt(x, y)`。
+        TriggerContextClick(designX, designY);
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@
 //
 // 它是 Widget 的一条可选能力，不是另一种节点。
 // `InkingWidget` 与它多继承，所以任何 Widget 都天然有这个契约。
-// 通过 重写 onPointerHover / onPointerPress/onPointerClick`就能收输入，
+// 通过 重写 onPointerHover / onPointerPress / onPointerClick 就能收输入，
 // 没重写的拿默认空实现、什么都不会发生。
 // 两条设计约束：
 //   1. 零状态：这里不存任何字段。拖动归属（"场景记住谁被按下"）住在场景上；
@@ -17,6 +17,35 @@
 // 派生类重写钩子时要写 override：漏了就变成"隐藏"而不是"重写"，
 // 而场景是拿基类指针调
 // 钩子静默不生效
+//
+// ---------------------------------------------------------------------------
+// 按钮维度（0.5.0）：两种输入状态，组件层看不见设备
+// ---------------------------------------------------------------------------
+// 0.5.0 起 `onPointerPress` / `onPointerClick` 带 `PointerButton` 参数。上层
+// **永远只看到 Primary / Secondary**，不需要知道这是鼠标左键、右键，还是触摸的
+// 轻点、长按——设备差异在窗口层与场景层就被吸收干净了（见 PointerButton.h 的
+// 文件头）。所以这里没有"触摸分支"，也不该出现。
+//
+// 三个钩子的参数形状是**故意不同**的：
+//
+//     onPointerHover(bool)                  只有主键有 hover：hover 是"我指着谁"，
+//                                           不是"我按着谁"，右键不该改变它
+//     onPointerPress(PointerButton, bool)   按下不关心位置：要位置问场景即可
+//     onPointerClick(PointerButton, x, y)   **必须**带坐标
+//
+// 为什么 click 带坐标而 press 不带，这两者不是同一类东西：
+//
+//   信号 / 转变（press、onPointerStateChanged）：回答"现在是什么状态"。之后还能
+//   读，所以不该带参数——带了就是把持续状态抄第二份（这正是
+//   `onPointerStateChanged` 那句"带坐标等于把约定抄一遍"的意思）。
+//
+//   事件（click、drag）：回答"发生过一次什么"。发生之后状态已经变了，不带走
+//   那一刻的坐标就**永久丢失**。`onPointerDrag` 早就带坐标，click 只是跟上。
+//
+// 坐标是**按下点**而不是抬起点：触摸长按的锚点是按下处，手指在 slop 内微动几
+// 像素不该让菜单跟着挪；鼠标右键按下与抬起通常同点，两者无差异。
+
+#include <input/PointerButton.h>
 
 namespace inking {
 
@@ -50,11 +79,25 @@ public:
      *
      * 抬起与按下走同一条（而不是两个入口），因为"回哪一态 / 还算不算一次
      * 点击"是组件自己的知识：按钮按下滑出去再松开要回 Normal，不是 Hover。
+     *
+     * `button` 是**语义位**（Primary = 左键 / 轻点，Secondary = 右键 / 长按），
+     * 不是设备位——组件不需要、也拿不到"这是鼠标还是手指"。
      */
-    void PushPointerPress(bool press) noexcept { onPointerPress(press); }
+    void PushPointerPress(PointerButton button, bool press) noexcept {
+        onPointerPress(button, press);
+    }
 
-    /** 一次完整的点击（按下与抬起都发生在它身上）。转给 onPointerClick。 */
-    void PushPointerClick() noexcept { onPointerClick(); }
+    /**
+     * 一次完整的点击（按下与抬起都发生在它身上）。转给 onPointerClick。
+     *
+     * `designX` / `designY` 是**按下点**（设计坐标），不是抬起时的位置。
+     * 理由见文件头"按钮维度"那段：click 是事件，坐标不带走就永久丢失；
+     * 而锚点取按下点，长按后手指微动才不会让右键菜单跟着挪。
+     */
+    void PushPointerClick(PointerButton button, float designX,
+                          float designY) noexcept {
+        onPointerClick(button, designX, designY);
+    }
 
     /**
      * 滚轮：转给 onPointerWheel。
@@ -108,14 +151,34 @@ protected:
      * 它只表示"场景认为指针在你身上"，不表示"你被按下了"。
      * 拖拽时按着不放、 指针滑出去，组件会先收到一次 `hover = false`，而它仍然按着。
      * 此情况正是 按钮"按下期间滑出去还是按下"这条手感的来源。
+     *
+     * **不带按钮参数**：只有主键有 hover（§1.2 不变量 1）。右键按下不改变
+     * "我指着谁"——否则右键按住期间悬停会莫名其妙消失。
      */
     virtual void onPointerHover(bool /*hover*/) {}
 
-    // 按下 / 抬起（由PushPointerPress 转来）。抬起也是这条（press = false）。
-    virtual void onPointerPress(bool /*press*/) {}
+    /**
+     * 按下 / 抬起（由 PushPointerPress 转来）。抬起也是这条（press = false）。
+     *
+     * `button` 决定这次按下属于哪个键。**重写了就必须判它**：
+     * 按钮只在 `PointerButton::Primary` 时进 Pressed 态，否则右键按下会让按钮
+     * 亮起，用户会以为左键生效了。
+     *
+     * 不关心右键的组件写一行守卫即可：
+     * `if (button != PointerButton::Primary) { return; }`
+     */
+    virtual void onPointerPress(PointerButton /*button*/, bool /*press*/) {}
 
-    // 一次完整点击（由 PushPointerClick 转来）。默认什么都不做。
-    virtual void onPointerClick() {}
+    /**
+     * 一次完整点击（由 PushPointerClick 转来）。默认什么都不做。
+     *
+     * `(designX, designY)` 是按下点（设计坐标）。最典型的用法是右键菜单：
+     * 业务在 `PointerButton::Secondary` 那一支里直接 `OpenAt(designX, designY)`。
+     *
+     * 坐标不必取整、也不必再换算——它就是 `QueryHit` 用的那一套设计坐标。
+     */
+    virtual void onPointerClick(PointerButton /*button*/, float /*designX*/,
+                                float /*designY*/) {}
 
     /**
      * 滚轮（由 `PushPointerWheel` 转来）。默认什么都不做。

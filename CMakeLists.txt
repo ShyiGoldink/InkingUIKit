@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(Inking
-    VERSION 0.4.1
+    VERSION 0.5.0
     DESCRIPTION "Inking 前端（分层重构版）—— 动态链接库"
     LANGUAGES CXX)
 
