@@ -3,8 +3,8 @@
 // 预制件 C5「路径 / 文件选择」（`docs/TaskGuide.md` 的 C 系列）。
 //
 // **路线已由用户裁定：组装自绘**（C3 列表 + B7 单行文本框 + C1 快捷位置 +
-// C2 按钮栏 + 盘符栏），不动框架、跨平台一致、可断言。理由写在 `FilePickerData.h`
-// 顶上。
+// 一条普通横排容器当按钮栏 + 盘符栏），不动框架、跨平台一致、可断言。理由写在
+// `FilePickerData.h` 顶上。
 //
 // ---------------------------------------------------------------------------
 // 三块必须一起守的事（不然就是"能跑但会炸在中文目录里"）
@@ -26,11 +26,11 @@
 // （SaveFile 也走"选中的文件"）、多列 / 图标视图。
 
 #include <widget/InkingStaticWidget.h>
+#include <button/InkingStaticButton.h>
 #include <event/InkingEvent.h>
 #include <panel/InkingStaticPanel.h>
 #include <prefab/FilePickerData.h>
 #include <prefab/ListView.h>
-#include <prefab/MenuBar.h>
 #include <prefab/OptionBar.h>
 #include <text/InkingTextInput.h>
 
@@ -136,6 +136,22 @@ public:
     /// 当前目录所在的盘符（`C:` 这样的显示名）；`_directory` 为空时是空串。
     std::string GetCurrentDrive() const;
 
+    // ---------------- 按钮栏（确定 / 取消） ----------------
+
+    /**
+     * 按钮栏里建了几个按钮（正常是 2：确定 + 取消）。
+     *
+     * 观测口：它是**普通容器**，不是菜单栏——所以全屏 / 滚轮这些窗口语义碰不到它。
+     * 自检靠这两条断言"窗口策略没有被继承回来"。
+     */
+    int GetButtonCount() const noexcept;
+
+    /// 按钮栏现在可见吗（跟父级走；全屏不该动它）。
+    bool IsButtonBarVisible() const noexcept;
+
+    /// 拿第 `index` 个按钮（0 = 确定，1 = 取消）；越界返回 nullptr。
+    InkingStaticButton* GetButton(int index) const noexcept;
+
     // ---------------- 条目与选择 ----------------
 
     const std::vector<FileEntry>& GetEntries() const noexcept { return _entries; }
@@ -178,7 +194,15 @@ public:
     ListView& List() noexcept { return _list; }
     OptionBar& Shortcuts() noexcept { return _shortcuts; }
     OptionBar& Drives() noexcept { return _drives; }
-    MenuBar& Buttons() noexcept { return _buttons; }
+
+    /**
+     * 底部按钮那一栏（确定 / 取消）。
+     *
+     * **类型是 `InkingStaticPanel`**（0.5.3 起）：早先返回 `MenuBar&`，于是对话框的
+     * 按钮行继承了菜单栏的窗口语义（全屏自隐 / 滚轮缩放 / 快捷键表）。现在它只是一条
+     * 横排容器，想细调就用 `GetStyle().buttonBar` + 这两个按钮。
+     */
+    InkingStaticPanel& Buttons() noexcept { return _buttons; }
     InkingTextInput& PathInput() noexcept { return _pathInput; }
 
 private:
@@ -196,7 +220,7 @@ private:
     OptionBar _shortcuts;
     OptionBar _drives;
     ListView _list;
-    MenuBar _buttons;
+    InkingStaticPanel _buttons;
 };
 
 }  // namespace inking::prefab

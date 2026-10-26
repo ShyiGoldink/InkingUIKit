@@ -214,18 +214,22 @@ FilePickerStyle FilePickerStyle::MakeDefault() {
     style.list.overscan = 2;
 
     // 底部按钮栏：横向、靠右（`SpaceBetween` 会把两项推到两端，这里要"偏右"）。
-    style.buttons = MenuBarStyle::MakeDefault();
-    style.buttons.panel.width = 640;
-    style.buttons.panel.height = 40;
-    style.buttons.panel.closed.color = 0x02000000u;
-    style.buttons.panel.open.color = style.buttons.panel.closed.color;
-    style.buttons.panel.openInheritsClosed = false;
-    style.buttons.panel.layout.kind = LayoutKind::Stack;
-    style.buttons.panel.layout.axis = LayoutAxis::Horizontal;
-    style.buttons.panel.layout.justify = LayoutJustify::End;
-    style.buttons.panel.layout.align = LayoutAlign::Center;
-    style.buttons.panel.layout.gap = 8.0f;
-    style.buttons.panel.layout.padding = LayoutSpacing{0.0f, 4.0f, 8.0f, 4.0f};
+    //
+    // **不用 `MenuBar`**（0.5.3）：它自带 `hideInFullscreen` / `zoomWheel` 等窗口语义，
+    // 而对话框的按钮行只是"横向排两个按钮"。这里只借它的排列口径（同一套 Stack
+    // 词汇），组件换成普通 `PanelData` —— 见 `FilePickerData.h` 的抬头。
+    style.buttonBar.name = "filePickerButtonBar";
+    style.buttonBar.width = 640;
+    style.buttonBar.height = 40;
+    style.buttonBar.closed.color = 0x02000000u;
+    style.buttonBar.open.color = style.buttonBar.closed.color;
+    style.buttonBar.openInheritsClosed = false;
+    style.buttonBar.layout.kind = LayoutKind::Stack;
+    style.buttonBar.layout.axis = LayoutAxis::Horizontal;
+    style.buttonBar.layout.justify = LayoutJustify::End;
+    style.buttonBar.layout.align = LayoutAlign::Center;
+    style.buttonBar.layout.gap = 8.0f;
+    style.buttonBar.layout.padding = LayoutSpacing{0.0f, 4.0f, 8.0f, 4.0f};
     style.buttonLook = MakeDefaultPickerButtonLook();
 
     style.mode = FilePickMode::OpenFile;
@@ -288,13 +292,13 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
           return list;
       }()),
       _buttons(this, [&style] {
-          MenuBarStyle bar = style.buttons;
-          bar.panel.width = style.panel.width;
-          bar.panel.height = static_cast<int>(style.buttonBarHeight + 0.5f);
-          bar.panel.traceAnchor = InkingChangeAnchor::LeftTop;
-          bar.panel.selfAnchor = InkingChangeAnchor::LeftTop;
-          bar.panel.offsetX = 0.0f;
-          bar.panel.offsetY = ComputeBlockLayout(style).buttonsY;
+          PanelData bar = style.buttonBar;
+          bar.width = style.panel.width;
+          bar.height = static_cast<int>(style.buttonBarHeight + 0.5f);
+          bar.traceAnchor = InkingChangeAnchor::LeftTop;
+          bar.selfAnchor = InkingChangeAnchor::LeftTop;
+          bar.offsetX = 0.0f;
+          bar.offsetY = ComputeBlockLayout(style).buttonsY;
           return bar;
       }()) {
     // ---- 路径框：一开始显示提示文字；回车换目录 ----
@@ -362,11 +366,32 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
         [this](const std::string&, int) { onListSelectionChanged(); });
 
     // ---- 底部按钮 ----
+    //
+    // 两个按钮是按钮栏的**直接子项**，位置由按钮栏的 Stack（横向 / 靠右 / 交叉轴居中）
+    // 排出来——不自己算 x。宽度必须显式来自 `buttonLook.width`：`align = Center` 只管
+    // 交叉轴，主轴尺寸仍是各自配置，留 0 会变成"两个按钮各占半条"。
     ButtonData buttonLook = _style.buttonLook.width > 0
                                 ? _style.buttonLook
                                 : PickerButtonLook();
-    _buttons.AddButton(buttonLook, _style.acceptText, [this] { Accept(); });
-    _buttons.AddButton(buttonLook, _style.cancelText, [this] { Cancel(); });
+    const auto addButton = [this, &buttonLook](const char* name, const std::string& label,
+                                               bool accept) {
+        ButtonData look = buttonLook;
+        look.name = name;
+        look.label = label;
+        auto* button = static_cast<InkingStaticButton*>(
+            _buttons.AddChild(std::make_unique<InkingStaticButton>(&_buttons, look)));
+        if (button != nullptr) {
+            button->SetOnClicked([this, accept] {
+                if (accept) {
+                    Accept();
+                } else {
+                    Cancel();
+                }
+            });
+        }
+    };
+    addButton("filePickerButton.accept", _style.acceptText, true);
+    addButton("filePickerButton.cancel", _style.cancelText, false);
 }
 
 // ---------------------------------------------------------------------------
@@ -566,6 +591,26 @@ std::string FilePicker::GetCurrentDrive() const {
         return {};
     }
     return DriveLabel(_directory.root_path());
+}
+
+// ---------------------------------------------------------------------------
+// 按钮栏（确定 / 取消）：普通容器，窗口语义碰不到它
+// ---------------------------------------------------------------------------
+
+int FilePicker::GetButtonCount() const noexcept {
+    return static_cast<int>(_buttons.GetOwnedChildCount());
+}
+
+bool FilePicker::IsButtonBarVisible() const noexcept {
+    // 按**整棵树**回答：自检问的是"全屏之后还看得见吗"，而全屏藏的是祖先或它自己。
+    return _buttons.IsVisibleInTree();
+}
+
+InkingStaticButton* FilePicker::GetButton(int index) const noexcept {
+    if (index < 0 || index >= GetButtonCount()) {
+        return nullptr;
+    }
+    return static_cast<InkingStaticButton*>(_buttons.GetChildren()[static_cast<std::size_t>(index)]);
 }
 
 // ---------------------------------------------------------------------------

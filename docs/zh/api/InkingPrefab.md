@@ -316,7 +316,12 @@ struct SelectStyle {
 ## 五、FilePicker
 
 **它就是**五块拼起来：路径框（`InkingTextInput`）→ 快捷位置（`OptionBar`）→
-盘符栏（`OptionBar`）→ 目录内容（`ListView`）→ 按钮栏（`MenuBar`）。
+盘符栏（`OptionBar`）→ 目录内容（`ListView`）→ 按钮栏（**普通横排容器**，`PanelData`）。
+
+> **按钮栏不是 `MenuBar`**（0.5.3 起）：`MenuBar` 是"贴着窗口的横条"，数据面捆着
+> `hideInFullscreen` / `zoomWheel`（默认都 true）等窗口语义，实现里还订阅窗口的
+> `fullscreenChanged`。对话框的一行按钮只要"横向排好"，所以只用 `PanelData` 的
+> `layout`，不参与全屏隐藏 / 滚轮缩放。**布局复用、策略不复用。**
 
 ```C++
 struct FileEntry {
@@ -360,8 +365,11 @@ public:
     ListView& List() noexcept;
     OptionBar& Shortcuts() noexcept;
     OptionBar& Drives() noexcept;
-    MenuBar& Buttons() noexcept;
+    InkingStaticPanel& Buttons() noexcept;   // 0.5.3 起不再是 MenuBar
     InkingTextInput& PathInput() noexcept;
+    int GetButtonCount() const noexcept;     // 正常是 2（确定 / 取消）
+    bool IsButtonBarVisible() const noexcept;// 全屏不该影响它
+    InkingStaticButton* GetButton(int index) const noexcept;
 
     InkingEvent<const std::vector<std::string>&> accepted;
     InkingEvent<> canceled;
@@ -377,8 +385,8 @@ struct FilePickerStyle {
     OptionBarStyle shortcuts{};
     OptionBarStyle drives{};                 // 盘符栏（每项 52 宽："C:"）
     ListViewStyle list{};
-    MenuBarStyle buttons{};
-    ButtonData buttonLook{};
+    PanelData buttonBar{};                   // 底部按钮栏（普通横排容器，不是 MenuBar）
+    ButtonData buttonLook{};                 // 宽度就是按钮宽度（Stack 不拉伸主轴）
 
     std::vector<std::string> extensions;     // 小写比较；空 = 全要（目录永远显示）
     FilePickMode mode = FilePickMode::OpenFile;
@@ -472,4 +480,4 @@ std::string DefaultFontPath();
 
 ---
 
-> 本文档对应版本：**0.5.2（0.x 发布版）**。
+> 本文档对应版本：**0.5.3（0.x 发布版）**。

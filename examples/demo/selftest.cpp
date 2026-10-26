@@ -68,6 +68,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -2565,6 +2567,173 @@ void CheckFilePickerDrives() {
 }
 
 // ---------------------------------------------------------------------------
+// 文件选择：按钮栏不是菜单栏（0.5.3，GoldingCore 反馈 1）
+// ---------------------------------------------------------------------------
+//
+// 反馈：「全屏后『添加』『取消』消失」。
+// 根因：底部那一栏当初为了"不新增底层词汇"复用了 `prefab::MenuBar`，而它的数据面
+// 捆着窗口语义——`hideInFullscreen` / `zoomWheel` 默认都是 true，实现里还订阅
+// `fullscreenChanged`。**布局该复用，策略不该复用**：现在换成普通 `PanelData` 横排。
+//
+// 这里断的不是"按钮还在"（那是视觉），而是三条可量的：类型上不再是 MenuBar、
+// 全屏事件不从它这里过去、排列口径没变。
+
+void CheckFilePickerButtonBar() {
+    std::printf("\n-- 文件选择：按钮栏不带窗口语义（0.5.3）--\n");
+
+    inking::InkingWindow& window = inking::InkingWindow::Instance();
+    inking::InkingScene scene("file_picker_buttons");
+    const inking::prefab::FilePickerStyle style =
+        inking::prefab::FilePickerStyle::MakeDefault();
+    inking::prefab::FilePicker picker(&scene, style);
+
+    // ① 结构上不再是菜单栏：全屏自隐 / 滚轮缩放都是 MenuBar 自己的行为，
+    //    换成普通面板之后它们**按构造**不存在（不是靠开关关掉的）。
+    Check(dynamic_cast<inking::prefab::MenuBar*>(&picker.Buttons()) == nullptr,
+          "C5：按钮栏不是 MenuBar（窗口语义按构造不存在）");
+    Check(picker.GetButtonCount() == 2, "C5：按钮栏建了两个按钮（确定 / 取消）");
+
+    // ② 全屏不再藏它（反馈 1 的现场：以前整条 SetVisible(false)）。
+    const bool wasFullscreen = window.IsFullscreen();
+    window.SetFullscreen(true);
+    Check(picker.IsButtonBarVisible(), "C5：全屏后按钮栏仍可见（反馈 1）");
+    {
+        // 构造期就已经全屏那一路：MenuBar 是"构造时查一次 IsFullscreen()"，
+        // 这里也必须新建即可见。
+        inking::prefab::FilePicker late(&scene, style);
+        Check(late.IsButtonBarVisible(), "C5：全屏状态下新建的选择器，按钮栏也可见");
+    }
+    window.SetFullscreen(wasFullscreen);
+    Check(picker.IsButtonBarVisible(), "C5：退出全屏后仍可见（没有被谁记成隐藏）");
+
+    // ③ 排列口径没变：两个 96 宽按钮靠右、间隔 8、右边距 8。
+    //    这条钉住"换了容器但排出来一样"——只验结构会把视觉改坏还全绿。
+    const int barWidth = picker.Buttons().GetWidth();
+    const inking::InkingStaticButton* accept = picker.GetButton(0);
+    const inking::InkingStaticButton* cancel = picker.GetButton(1);
+    const bool layoutOk =
+        accept != nullptr && cancel != nullptr && accept->GetWidth() == 96 && cancel->GetWidth() == 96
+        && std::fabs((cancel->GetX() + static_cast<float>(cancel->GetWidth()))
+                     - (static_cast<float>(barWidth) - 8.0f)) < 0.51f
+        && std::fabs((cancel->GetX() - (accept->GetX() + static_cast<float>(accept->GetWidth()))) - 8.0f)
+               < 0.51f;
+    Check(layoutOk, "C5：两个按钮仍靠右排（宽 96 / 间隔 8 / 右边距 8）");
+
+    // ④ 「取消」仍然真的接在 `canceled` 上（换容器最容易丢的就是这层接线）。
+    bool canceled = false;
+    const auto token = picker.canceled.Subscribe([&canceled] { canceled = true; });
+    if (cancel != nullptr) {
+        scene.Activate("filePickerButton.cancel");
+    }
+    Check(canceled, "C5：语义点「取消」→ canceled 事件发出");
+    picker.canceled.Unsubscribe(token);
+
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// 滚动：内容尺寸的口径（0.5.3，GoldingCore 反馈 2）
+// ---------------------------------------------------------------------------
+//
+// 反馈：「文件选择器默认界面没有滑块，进子目录再退回才有」。
+// 两个根因，各有一条断言：
+//   ① 内容尺寸按 `IsVisibleInTree()` 统计 ⇒ 在**隐藏的弹窗**里填好的列表内容高恒为 0，
+//      而弹窗转可见之后没有人重量（`ListView::rebuildVisible` 在可见区间没变时早退）；
+//   ② 统计时又减了一次面板自己的 `GetX()/GetY()`（子项坐标本来就是父级相对）
+//      ⇒ 列表在 FilePicker 里 y=70，内容高就少 70，末尾永远滚不到。
+
+void CheckScrollContentMeasurement() {
+    std::printf("\n-- 滚动：内容尺寸的口径（0.5.3）--\n");
+
+    inking::InkingScene scene("selftest-scroll-measure");
+
+    // 容器放在父级 (0, 70)：这正是列表在 FilePicker 里的位置（② 的现场）。
+    inking::PanelData hostData;
+    hostData.name = "measure_host";
+    hostData.width = 300;
+    hostData.height = 500;
+    auto* host = static_cast<inking::InkingStaticPanel*>(
+        scene.AddChild(std::make_unique<inking::InkingStaticPanel>(&scene, hostData)));
+
+    inking::PanelData listData;
+    listData.name = "measure_list";
+    listData.width = 300;
+    listData.height = 200;
+    listData.offsetY = 70.0f;
+    listData.scroll.enabled = true;
+    auto* list = static_cast<inking::InkingStaticPanel*>(
+        host->AddChild(std::make_unique<inking::InkingStaticPanel>(host, listData)));
+
+    for (int i = 0; i < 10; ++i) {
+        inking::PanelData row;
+        row.name = "measure_row" + std::to_string(i);
+        row.width = 300;
+        row.height = 26;
+        row.offsetY = static_cast<float>(i) * 26.0f;
+        list->AddChild(std::make_unique<inking::InkingStaticPanel>(list, row));
+    }
+
+    list->UpdateScrollRange();
+    Check(std::fabs(list->GetContentHeight() - 260.0f) < 0.01f,
+          "scroll_measure：内容高 = 10 × 26 = 260（不再扣掉自身 y=70）");
+    Check(std::fabs(list->GetScrollRangeY() - (260.0f - list->ContentViewportHeight())) < 0.01f,
+          "scroll_measure：可滚范围 = 内容 − 内容视口（差 70 时这条立刻红）");
+
+    // ① 父级隐藏时照样量得准：这正是"弹窗先建、后显示"那一路。
+    host->SetVisible(false);
+    list->UpdateScrollRange();
+    Check(std::fabs(list->GetContentHeight() - 260.0f) < 0.01f,
+          "scroll_measure：父级隐藏时仍量得准（不按整棵树判可见）");
+    host->SetVisible(true);
+
+    // 边界：子项自己被 SetVisible(false) **仍占位**（与布局同一口径），内容高不变。
+    list->GetChildren().back()->SetVisible(false);
+    list->UpdateScrollRange();
+    Check(std::fabs(list->GetContentHeight() - 260.0f) < 0.01f,
+          "scroll_measure：自身隐藏的项仍计入内容高（与「隐藏仍占位」一致）");
+
+    // ---- 端到端：隐藏的容器里填一个 30 项目录，转可见后就该有滑块 ----
+    // 目录建在**当前工作目录**下，不用 `temp_directory_path()`：后者在 `env -i`
+    // 这类干净环境里会退到系统的共享临时目录（`TEMP/TMP` 未设），那里本来就有一堆
+    // 别人的文件，"枚举到 30 项"这条断言立刻不成立（包内验收实测踩到）。
+    std::error_code ec;
+    const std::filesystem::path dir = std::filesystem::current_path() / L"selftest-picker-scroll";
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    for (int i = 0; i < 30; ++i) {
+        std::ofstream file(dir / (std::string("f") + std::to_string(i) + ".bin"), std::ios::binary);
+        file << "x";
+    }
+
+    inking::InkingScene popupScene("selftest-picker-popup");
+    inking::PanelData popupData;
+    popupData.name = "picker_popup";
+    popupData.width = 920;
+    popupData.height = 640;
+    popupData.clipChildren = true;
+    popupData.visible = false;  // 与 golding.popup 同序：先建成隐藏、create 返回后才显示
+    auto* popup = static_cast<inking::InkingStaticPanel*>(
+        popupScene.AddChild(std::make_unique<inking::InkingStaticPanel>(&popupScene, popupData)));
+
+    inking::prefab::FilePicker picker(popup, inking::prefab::FilePickerStyle::MakeDefault());
+    picker.SetDirectory(dir);   // ← 此刻整棵子树不可见（反馈 2 的现场）
+    popup->SetVisible(true);
+
+    const float expected =
+        static_cast<float>(picker.GetEntryCount()) * picker.List().GetRowHeight();
+    // `>=` 而不是 `==`：万一上面那条目录没清干净（上一次异常退出的残留），
+    // 这条仍然成立，而下面的"内容高 = 项数 × 行高"照样是精确等式。
+    Check(picker.GetEntryCount() >= 30, "C5：临时目录至少枚举到 30 项");
+    Check(std::fabs(picker.List().GetContentHeight() - expected) < 0.01f,
+          "C5：隐藏期填的目录，内容高 = 项数 × 行高（不是 0）");
+    Check(picker.List().GetBarMetrics(true).visible,
+          "C5：转可见后滑块就出现（反馈 2：不必先点进子目录）");
+
+    std::filesystem::remove_all(dir, ec);
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
 // 输入框：光标 clamp + 水平滚动（0.2.0 T-12）
 // ---------------------------------------------------------------------------
 //
@@ -3655,6 +3824,10 @@ int main() {
 
     // ---- 文件选择：盘符栏 / 换盘符（C5 增补） ----
     CheckFilePickerDrives();
+
+    // ---- 文件选择：按钮栏不带窗口语义 + 内容尺寸的口径（0.5.3） ----
+    CheckFilePickerButtonBar();
+    CheckScrollContentMeasurement();
 
     // ---- 输入框：光标 clamp + 水平滚动（0.2.0 T-12） ----
     CheckInputScroll();

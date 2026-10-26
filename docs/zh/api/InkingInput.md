@@ -274,4 +274,4 @@ static std::size_t NextCodePoint(std::string_view text, std::size_t pos);
 
 ---
 
-> 本文档对应版本：**0.5.2（0.x 发布版）**。
+> 本文档对应版本：**0.5.3（0.x 发布版）**。

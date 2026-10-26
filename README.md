@@ -2,17 +2,22 @@
 
 **一个用 SDF 形状 + 锚点定位写 UI 的 C++20 前端框架（动态链接库）。**
 
-> ## ✅ 当前版本：**0.5.2 发布版**（`0.5.2-release`）
+> ## ✅ 当前版本：**0.5.3 发布版**（`0.5.3-release`）
 >
 > - 0.x 期间接口 / ABI / 行为仍可能在次版本变化，升级请对照
 >   [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)；`1.0.0` 起才冻结。
+> - **0.5.3 修复**：`FilePicker` 的按钮栏不再复用 `MenuBar`——全屏下"确定 / 取消"
+>   曾整条消失（`hideInFullscreen` 默认 true）、滚轮落在按钮行会缩放窗口
+>   （`zoomWheel` 默认 true）；字段随之更名为 `style.buttonBar`（`PanelData`）。
+>   同时修准滚动容器的内容尺寸：不再受可见性影响（隐藏的弹窗里填好的列表现在
+>   当场就有滑块），也不再少算容器自身的偏移（末尾那截滚不到）。见 CHANGELOG「0.5.3」。
 > - **0.5.1 新增**：图片层支持 `type:"svg"`（整张界面设计稿在运行期按目标像素光栅化）
 >   与 `hitPassThrough`（背景不吃点击）；见 CHANGELOG「0.5.1」与
 >   [`CXXCSS.md` §3.10](CXXCSS/CXXCSS.md)。
 > - **0.5.0 有破坏性接口改动**：指针钩子改为
 >   `onPointerPress(PointerButton, bool)` / `onPointerClick(PointerButton, float, float)`，
 >   迁移样板见 CHANGELOG「0.5.0 / 变更」。
-> - 预编译包 [`dist/inking-0.5.2-win64.zip`](dist/) **自带运行期 DLL**，
+> - 预编译包 [`dist/inking-0.5.3-win64.zip`](dist/) **自带运行期 DLL**，
 >   解压即可运行示例；编译自己的工程仍需 MSYS2 UCRT64（MinGW ABI）。
 > - 只在 **Windows + MSYS2 UCRT64 + Ninja** 上构建过；Linux / macOS 未验证。
 > - 可用于内部评估与产品集成验证；正式 `1.0.0` 预计 2026 年 11 月底前推出。
@@ -137,7 +142,7 @@ tools/package.sh          # 搬运 + 收 DLL 闭包 + 许可 + 校验和 + zip
 ```
 
 ```
-inking-0.5.2-win64/
+inking-0.5.3-win64/
 ├─ BUILD.txt            版本阶段、工具链、依赖版本、SHA-256、验证记录、已知限制、许可
 ├─ README.md            本文件
 ├─ bin/                 libinking.dll · inking_demo.exe · inking_demo_selftest.exe
@@ -172,7 +177,7 @@ target_link_libraries(my_app PRIVATE inking::inking)
 
 ## 用预编译包（不编译源码）
 
-把 `inking-0.5.2-win64.zip` 解到任意目录，那个目录就是 **SDK 根**（下文写 `<SDK>`）：
+把 `inking-0.5.3-win64.zip` 解到任意目录，那个目录就是 **SDK 根**（下文写 `<SDK>`）：
 
 ```
 <SDK>/
@@ -442,7 +447,7 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 | [`docs/zh/API.md`](docs/zh/API.md) | **从这里读起**：五分钟上手 + 模块地图 + 头文件全量索引 |
 | [`docs/zh/api/`](docs/zh/api/) | 17 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver / FixedPopup + Anchor / ShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
 | [`CXXCSS/CXXCSS.md`](CXXCSS/CXXCSS.md) | 配置格式：目录与命名、公共骨架、形状层词汇表、Button 字段全表 |
-| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.5.2 的逐条变化） |
+| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.5.3 的逐条变化） |
 | [`examples/minimal/README.md`](examples/minimal/README.md) | 最小工程：三步构建 + 运行期 DLL 拷贝 |
 
 ---
@@ -495,4 +500,4 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 
 ---
 
-> 版本 `0.5.2`（发布版） · 最后更新 2026-10-24
+> 版本 `0.5.3`（发布版） · 最后更新 2026-10-24

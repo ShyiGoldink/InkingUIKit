@@ -1,16 +1,19 @@
-inking 0.5.1（发布版）—— Windows x64 构建信息
+inking 0.5.3（发布版）—— Windows x64 构建信息
 ================================================================
 
-版本号      0.5.1
+版本号      0.5.3
 版本阶段    release          ← 0.x 发布版：可用、可集成，但 1.0 前不承诺跨版本 ABI 兼容
-构建日期    2026-10-24 22:37（GMT+8）
+构建日期    2026-10-26 20:20（GMT+8）
 构建类型    Release（CMake + Ninja）
 许可        MIT（本仓库代码，见包根 LICENSE；第三方见 licenses/）
 
 !! 升级提示
-   0.5.1 **没有破坏性接口改动**：图片层新增 `type:"svg"`（整张设计稿运行期光栅化）与
-   可选的 `hitPassThrough`（背景不吃点击）；按钮的 `svg` 子集与既有配置语义不变。
-   但**从 0.5.0 之前升级**仍要处理 0.5.0 的指针钩子签名变化：
+   0.5.3 **有一处源码级改名**（不涉及其他组件的 ABI）：
+     FilePickerStyle::buttons（MenuBarStyle）  →  buttonBar（PanelData）
+     FilePicker::Buttons()                     →  返回 InkingStaticPanel&（原 MenuBar&）
+   自定义过 `style.buttons.hideInFullscreen` / `zoomWheel` 的宿主把它删掉即可——
+   按钮栏已经不是菜单栏，全屏不再藏它、滚轮也不再缩放窗口。
+   从 0.5.0 之前升级仍要处理 0.5.0 的指针钩子签名变化：
      旧  void onPointerPress(bool press) / void onPointerClick()
      新  void onPointerPress(PointerButton, bool) /
          void onPointerClick(PointerButton, float designX, float designY)
@@ -34,15 +37,15 @@ inking 0.5.1（发布版）—— Windows x64 构建信息
   FFmpeg            仅构建期检查（当前二进制未引用，见下）
 
 产物（包内路径 / 字节数 / SHA-256）
-  bin/libinking.dll               1,639,277  6C3BBCB4AF795E955F2587CF509E8D8412A995CA398220D03871E439C9C09D9A
-  lib/libinking.dll.a             1,098,108  6A21DF34561CCA846350874196E3B5C81DFE25FA0C87334E8B999DADF69CA12A
-  bin/inking_demo.exe               161,483  13996C1BD2223444363DFE98A57032CF81BFE41AB86490F32BC21D8735FA3926
-  bin/inking_demo_selftest.exe      372,764  8F2F915B262AEC1309D8865243650CE59E6B1457A9BFDB4D1DF9FF6F98EC1B90
-  bin/inkgen.exe                    613,021  8B531C59C415F16888D78132BB6974A039A8249197B3EEB09DBA6FEA5CCB3F66
+  bin/libinking.dll               1,632,787  04B32BDC524DE425CFDBC3A370354D9E8507E1CAD8CFF7A9E33F3609D0C9D22A
+  lib/libinking.dll.a             1,108,992  34F26638CFAFC1FB5C84AFCF6152BBD8E1E4B32028D209D834ED4FCB1756A708
+  bin/inking_demo.exe               161,483  0956DBB11BA5EFD9C36DE082AE6E389DEAFD66DD07DF45153F3F899B0218C98D
+  bin/inking_demo_selftest.exe      437,952  E2B54B1BBC5590161BE9B9897A1D6B7E343D3F31B4519BC36D2937771392A1B0
+  bin/inkgen.exe                    613,021  0912138CA0C11FB310870BFA665EAFC109DA37FDB9F5D6944D84CA0BB3EB6A80
   lib/cmake/inking/                 5 个文件  find_package 配置 + CXXCSS 生成模块
 
-  导出符号 ~1317 个（WINDOWS_EXPORT_ALL_SYMBOLS 生成的 .def；0.5.0 为 1309，
-  差额来自新的 SVG 光栅化件与 `SvgRasterResult` 的构造 / 析构）。
+  导出符号 1,559 个（口径：`nm -g --defined-only bin/libinking.dll | grep ' T '`；
+  本版新增的 GetButtonCount / IsButtonBarVisible / GetButton 三个观测口计在内）。
 
 运行期 DLL（本包**已含**，共 19 个，约 14.1 MiB）
   SDL3.dll · SDL3_image.dll · SDL3_ttf.dll · SDL3_mixer.dll
@@ -63,15 +66,25 @@ inking 0.5.1（发布版）—— Windows x64 构建信息
   zh/api/                          17 个专页（Widget / Scene / Window / Input / Render /
                                    Components / Prefab / CXXCSS 生成物 / Runtime /
                                    LayoutSolver / FixedPopup + 6 个基础类型页）
-  zh/CHANGELOG.md                  变更记录（0.1.1 → 0.5.1 逐条，含破坏性改动迁移）
+  zh/CHANGELOG.md                  变更记录（0.1.1 → 0.5.3 逐条，含破坏性改动迁移）
   zh/SKILL.md · ComponentGuide.md · InputDesign.md · TaskGuide.md · UsageReport.md
-  zh/plans/                        6 份需求书与取舍记录（含 0.5.1 整张 SVG 设计稿方案）
+  zh/plans/                        8 份需求书与取舍记录（含 0.5.3 按钮栏 / 内容尺寸口径）
   AGENTS.md                        工程约定与踩坑记录
   CXXCSS.md                        配置格式：目录命名、形状层、层级、Button/Image 字段全表
   examples/CXXCSS/                 19 份配置样例 + CXXCSS.md + config.json
   examples/minimal/                最小可运行工程（三步构建，验证 find_package）
 
 本版内容
+  0.5.3（FilePicker 两处修复）
+    - 按钮栏不再复用 MenuBar：它捆着 hideInFullscreen / zoomWheel（默认都 true）等
+      窗口语义 ⇒ 全屏下「确定 / 取消」整条消失、滚轮落在按钮行会缩放窗口。
+      改为普通 PanelData 横排容器，排列口径不变（Stack/Horizontal/End/Center/gap 8）。
+      字段更名 style.buttons → style.buttonBar；新增 GetButtonCount / IsButtonBarVisible /
+      GetButton(index) 三个观测口。
+    - 滚动容器内容尺寸：不再按"整棵树可见"过滤（隐藏的弹窗里填好的列表现在当场算出
+      非 0 内容高，转可见即有滑块），也不再少算容器自身的偏移（末尾那截滚不到）。
+    - 新增自检 19 条：CheckFilePickerButtonBar 7 条（含"结构上不是 MenuBar"与全屏三条）
+      + CheckScrollContentMeasurement 12 条（含 30 项目录端到端"隐藏期填充 → 转可见即有滑块"）。
   0.5.1（整张 SVG 设计稿）
     - 图片层支持 type:"svg"：整份稿在运行期按「组件尺寸 × 输出设备比例」光栅化成纹理，
       再按形状裁剪铺进框；同一张图最多 3 档缓存、单张上限 16M 像素。
@@ -100,9 +113,10 @@ inking 0.5.1（发布版）—— Windows x64 构建信息
   1. 构建：`cmake --build build-release -j` 全部目标通过，无 error（只有一条已知的
      NOMINMAX 重定义警告）。
   2. ctest：4/4 passed（inkgen 配置校验 / 字段表对账 / 生成链路编译 / 静默失效清单对账）。
-  3. 自检（构建树）：`bin/inking_demo_selftest.exe` —— **339 项 [ok] / 0 项 [skip] /
-     失败项 0**，退出码 0。新增的 45 条集中在 SVG（光栅化矩阵 9 / 缓存分档 4 /
-     高清 6 / 组件 10 / 不支持元素 3 / 背景穿透 5 / 整稿 5 / 其他）与生成链路。
+  3. 自检（构建树）：`bin/inking_demo_selftest.exe` —— **356 项 [ok] / 2 项 [skip] /
+     失败项 0**，退出码 0。本版新增 19 条（按钮栏 7 / 内容尺寸与滚动 12）。
+     2 条 [skip] 是字体相关用例（构建树里读不到字体时退化画法无从验，
+     可用 `INK_TEST_FONT` 指定；包内运行这两条会 [ok]，见第 7 条）。
   4. 截图冒烟：`INK_CAPTURE=... INK_AUTOQUIT=1 bin/inking_demo.exe` ⇒ 1280×720 PNG，
      80,529 字节，退出码 0；画面里设计稿背景与上层控件同屏。
   5. 二进制判据：libinking.dll 的导入表含 SDL3 / SDL3_image / SDL3_mixer / SDL3_ttf 四件；
@@ -110,7 +124,7 @@ inking 0.5.1（发布版）—— Windows x64 构建信息
   6. `cmake --install` 产物齐全：lib/cmake/inking/ 5 个文件，find_package(inking CONFIG) 可用。
   7. 包内验收（`env -i`，PATH 只留 `C:\Windows\system32` 与 `C:\Windows`；
      不含 MSYS2 / 工具链 / Python，模拟只拿到 zip 的机器）：
-     - bin/inking_demo_selftest.exe ⇒ **339 项 ok / 0 skip / 失败项 0**，退出码 0
+     - bin/inking_demo_selftest.exe ⇒ **359 项 ok / 0 skip / 失败项 0**，退出码 0
      - bin/inking_demo.exe（dummy 视频 + INK_CAPTURE）⇒ 1280×720 PNG，退出码 0
      - examples/minimal 拷到包外构建 ⇒ configure / build / 运行全通过（MinGW 工具链下）
   8. 包完整性：**206 个文件**，zip 约 8.2 MB，SHA256SUMS 逐条可校验

@@ -4,17 +4,25 @@
 //
 // **路线已由用户裁定：组装自绘**（不是系统原生对话框）。所以这里的东西全是
 // 现有配件的配置：C3 列表 + B7 单行文本框 + C1 选项栏（快捷位置 / 盘符栏）+
-// C2 菜单栏（底部按钮那一栏）。一条新的底层词汇都没有。
+// 一条**普通横排容器**放底部按钮。一条新的底层词汇都没有。
+//
+// 底部按钮那一栏**不用 `MenuBar`**（0.5.3 改）：`MenuBar` 是"贴着窗口的横条"，
+// 数据面里捆着 `hideInFullscreen` / `zoomWheel` / `draggable` / `captionButtons`
+// 四件窗口语义（前两个默认 **true**），实现里还订阅窗口的全屏事件、绑快捷键表。
+// 对话框的一行按钮只是"横向排两个按钮"，这些策略一条都不该继承——早先为了
+// "不新增底层词汇"复用它，结果是全屏下整行消失（`hideInFullscreen`）、滚轮落在
+// 按钮上变成窗口缩放（`zoomWheel`）。布局该复用，策略不该复用：现在只用
+// `PanelData`（Stack / Horizontal / End）排，窗口语义按构造不存在。
 //
 // 为什么不走 `IFileOpenDialog`（写在注释里，免得下次有人重开这个决定）：
 // 它要 COM 初始化 + **全程宽字符**（`AGENTS.md` §6 第 53 条），而且
 // **自检拿不到确定性判据**（弹窗要人点）——本项目的验收纪律是"能变成数值判据的
 // 自己验"，原生路线那一条直接出局。它真正多给的只有"最近位置"这类便利。
 
+#include <button/ButtonData.h>
 #include <dataStruct/InkingLayout.h>
 #include <panel/PanelData.h>
 #include <prefab/ListViewData.h>
-#include <prefab/MenuBarData.h>
 #include <prefab/OptionBarData.h>
 #include <text/InkingTextInput.h>
 
@@ -37,7 +45,7 @@ enum class FilePickMode : std::uint8_t {
 /**
  * @brief 文件选择器的外观与行为。
  *
- * 四块内容从上到下：路径框（B7）→ 快捷位置（C1）→ 目录内容（C3）→ 按钮栏（C2）。
+ * 四块内容从上到下：路径框（B7）→ 快捷位置（C1）→ 目录内容（C3）→ 按钮栏。
  * 每块的位置与尺寸都在这里配（设计坐标，相对选择器左上角）。
  */
 struct FilePickerStyle {
@@ -62,10 +70,17 @@ struct FilePickerStyle {
     /// 目录内容列表。
     ListViewStyle list{};
 
-    /// 底部按钮那一栏（确定 / 取消）。
-    MenuBarStyle buttons{};
+    /**
+     * 底部按钮那一栏（确定 / 取消）：**一条普通横排容器**，不是 `MenuBar`。
+     *
+     * 只用 `PanelData` 的 `layout`（`Stack / Horizontal / justify=End / align=Center`）
+     * 排两个按钮。为什么不用 `MenuBar`（0.5.3 的改动，理由也在文件抬头）：
+     * 它自带窗口语义——`hideInFullscreen` / `zoomWheel` 默认都是 true，还会订阅
+     * 窗口的全屏事件、绑快捷键表。对话框的按钮行只要"横向排好"，不要那些。
+     */
+    PanelData buttonBar{};
 
-    /// 底部那两个按钮的外观模板（"确定" / "取消"）。
+    /// 底部那两个按钮的外观模板（"确定" / "取消"）。宽度就是按钮宽度（Stack 不拉伸主轴）。
     ButtonData buttonLook{};
 
     /**

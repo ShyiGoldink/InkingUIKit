@@ -318,4 +318,4 @@ float LineOffsetX(float lineWidth, float availableWidth, TextAlignH align);
 
 ---
 
-> 本文档对应版本：**0.5.2（0.x 发布版）**。
+> 本文档对应版本：**0.5.3（0.x 发布版）**。

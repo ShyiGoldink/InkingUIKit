@@ -374,20 +374,26 @@ void InkingStaticPanel::UpdateScrollRange() {
     // 内容尺寸 = 子节点矩形的并集（**相对容器左上角**）。
     // 只算子节点本体：描边 / 阴影 / 文字溢出都不算——否则"内容多大"会随
     // 观感细节漂移，而滚动条该反映的是"看得见的那块有多大"。
-    const float originX = static_cast<float>(GetX());
-    const float originY = static_cast<float>(GetY());
+    //
+    // 两条口径（0.5.3 更正，两个都是 bug）：
+    //   ① **不看可见性**。原先按 `IsVisibleInTree()` 过滤，后果是"在隐藏的弹窗里
+    //      填好的列表，内容高恒为 0"——而弹窗转可见之后没有任何人重量
+    //      （`ListView::rebuildVisible` 在可见区间没变时就早退），滚动条于是永远
+    //      不出现。几何与布局从来不看可见性（"`SetVisible(false)` 的项仍占位"是
+    //      既有规矩），测量也只有跟同一条口径，才不会出现"隐藏一下内容就变短"。
+    //   ② 不再减面板自己的 `GetX()/GetY()`。子项坐标本来就是**相对父级**的
+    //      （`InkingAnchor.h` 的锚点公式），再减一次面板在父级里的位置等于凭空
+    //      少算一截（列表在 FilePicker 里 y=70 ⇒ 内容高少 70，末尾永远滚不到）。
     float maxRight = 0.0f;
     float maxBottom = 0.0f;
     for (const InkingWidget* child : GetChildren()) {
-        if (child == nullptr || !child->IsVisibleInTree()) {
+        if (child == nullptr) {
             continue;
         }
-        maxRight = std::max(
-            maxRight, static_cast<float>(child->GetX())
-                          + static_cast<float>(child->GetWidth()) - originX);
-        maxBottom = std::max(
-            maxBottom, static_cast<float>(child->GetY())
-                           + static_cast<float>(child->GetHeight()) - originY);
+        maxRight = std::max(maxRight,
+                            static_cast<float>(child->GetX()) + static_cast<float>(child->GetWidth()));
+        maxBottom = std::max(maxBottom,
+                             static_cast<float>(child->GetY()) + static_cast<float>(child->GetHeight()));
     }
     _contentWidth = maxRight;
     _contentHeight = maxBottom;

@@ -5,7 +5,59 @@
 
 ---
 
-## 0.5.2 —— 2026-10-25（**发布版**：C5 增补盘符栏）
+## 0.5.3 —— 2026-10-26（**当前：发布版**：FilePicker 按钮栏脱离 MenuBar + 内容高量准）
+
+> 来源：GoldingCore 侧 appmanager 插件的两条实测反馈（全屏后「添加 / 取消」消失；
+> 文件选择器首次没有滑块，进子目录再退回才有）。核实与取舍见
+> `docs/zh/plans/2026-10-26-0.5.3-picker-buttons-and-scroll.md`。
+
+### 变更
+
+- **`FilePickerStyle::buttons`（`MenuBarStyle`）→ `buttonBar`（`PanelData`）**，
+  `FilePicker::Buttons()` 的返回类型随之改为 `InkingStaticPanel&`。底部按钮栏不再
+  复用 `prefab::MenuBar`：那是"贴着窗口的横条"，数据面捆着 `hideInFullscreen` /
+  `zoomWheel`（两者默认都是 **true**）以及 `draggable` / `captionButtons`，实现里
+  还订阅窗口的 `fullscreenChanged`、绑快捷键表。对话框的一行按钮只要"横向排两个
+  按钮"，这些策略一条都不该继承——**布局该复用，策略不该复用**。排列口径不变
+  （`Stack` + `Horizontal` + `justify=End` + `align=Center` + `gap 8` + `padding {0,4,8,4}`）。
+- 新增观测口 `FilePicker::GetButtonCount()` / `IsButtonBarVisible()` / `GetButton(index)`
+  ——自检靠它们断言"窗口策略没有被继承回来"。
+
+### 修复
+
+- **全屏后「确定 / 取消」消失**：按钮栏是 `MenuBar`，而 `MenuBarStyle::hideInFullscreen`
+  默认 true ⇒ 构造时查一次 `IsFullscreen()`、之后订阅 `fullscreenChanged` 自行
+  `SetVisible(false)`。换成普通面板后，全屏与它无关（启动即全屏、运行期切全屏、
+  全屏状态下新建选择器三条路都验过）。
+- **滚轮落在按钮行会缩放窗口**（同一条根因，未被上报）：`MenuBarStyle::zoomWheel`
+  默认 true，`MenuBar::onPointerWheel` 直接调 `InkingWindow::ZoomBy`；按钮栏占选择器
+  底部 40px，指针落在那一带滚轮 = 窗口跳档、列表不动。
+- **首次填充没有滚动条**：`InkingStaticPanel::UpdateScrollRange()` 原先按
+  `child->IsVisibleInTree()` 统计内容尺寸 ⇒ 在**隐藏的弹窗**里 `SetDirectory()` 建好的
+  列表内容高恒为 0，而弹窗转可见之后没有任何人重量（`ListView::rebuildVisible` 在
+  可见区间没变时就早退）⇒ 滑块不出现，只有换目录触发一次全量重建才量到。
+  现在内容尺寸**不看可见性**（几何与布局本来就不看，"`SetVisible(false)` 的项仍占位"
+  是既有规矩），隐藏期填的目录一样算得准。
+- **内容高恒定少算面板自身的偏移**：`UpdateScrollRange()` 把**已是父级相对**的子项
+  坐标又减了一次面板自己的 `GetX()/GetY()` ⇒ 列表在 FilePicker 里 y=70 时，37 项目录
+  真值 962 量到 892、`rangeY` 592 而非 662，末尾那 70px 永远滚不到（0.5.2 的盘符栏
+  把这个偏移推到 104）。现在直接取子项并集。
+
+### 文档
+
+- `docs/zh/api/InkingPrefab.md` §5 的"按钮栏（`MenuBar`）"改为普通横排容器，并补一句
+  "不参与全屏隐藏 / 滚轮缩放"；`FilePickerStyle` 字段表同步改。
+- `CHANGELOG` / `README` / `API.md` 版本横幅 0.5.2 → 0.5.3。
+
+### 已知限制
+
+- `FilePickerStyle::buttonBar` 只表达"这条多高、什么底、怎么排"，**不再**借道
+  `MenuBarStyle`：需要标题栏式行为（拖动窗口 / 自绘最小化）的地方请直接用 `MenuBar`。
+- 静态档几何仍在构造期定型：`buttonBar` 改尺寸要重建选择器。
+
+---
+
+## 0.5.2 —— 2026-10-25（发布版：C5 增补盘符栏）
 
 ### 新增
 
