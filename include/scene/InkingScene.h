@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -64,8 +65,9 @@ namespace inking {
  *
  * "需要不渲染但逻辑动"的场景，用 onTick 就行——它不依赖活跃态；
  * 反过来"不渲染就彻底别动"，把逻辑放 onRenderBoundTick。
- * 更细的频率（例如 24fps 的动画）不走这两个钩子，去订阅 `inking::Timeline`
- * （include/timeline/Timeline.h），那里按需采样。
+ * 更细的频率（例如 24fps 的动画）不走这两个钩子，去订阅**场景自己的动画时钟**
+ * （`SubscribeAnimation`，见本类"动画时钟与频率订阅"一节）——`Timeline` 实例
+ * 在窗口里、随重建失效，组件拿不到。
  *
  * ---------------------------------------------------------------------------
  * 渲染树（骨架 + 扁平绘制列表）
@@ -191,6 +193,81 @@ public:
      * 插值、和画面同步的东西放这里。静默 / 停放 / 关闭都不跑。
      */
     void TickFrame(double deltaSeconds);
+
+    // ---------------- 动画时钟与频率订阅（0.6.0 T-01） ----------------
+    //
+    // 为什么要有这一层：组件需要"按我自己的频率推进"（12fps 的帧动画、24fps 的
+    // 采样），而 `inking::Timeline` 虽然有自定义频率订阅，但**实例在窗口里**
+    // （`WindowState` 成员），重开窗口就重建——把句柄发给组件，等于把生命周期
+    // 事故发给组件。所以时钟挪到场景这一级：场景活着，订阅就活着；场景析构，
+    // 回调跟着一起没，不会留下指向已析构对象的订阅。
+    //
+    // 语义与 `Timeline::Subscribe` **同构**（照抄语义、不照抄代码）：
+    // 累加器追赶，回调收到的是**声明的时间隔**而不是墙上 delta，于是慢帧只会
+    // 让这一帧多派发几次，不会让动画相对墙上时间走偏。
+    //
+    // 两层分工，别混：
+    //   - `AnimationSeconds()` 是**时间本身**，每渲染帧累加，单调不减；
+    //   - 订阅只是"到点了，该检查了"的**通知**，它不携带"第几帧"的语义。
+    //     帧号必须是时间的纯函数（`floor(t × fps) % count`）——若把订阅当成
+    //     "收一次回调就 +1 帧"，一次补发两次回调就会跳帧，动画与绘制帧率挂钩。
+    //
+    // 谁都走这条通道：`TickFrame` 只对**活跃**场景派发 ⇒ 切走的场景动画自动冻结
+    // （不补帧），这是现成的语义，不需要额外的暂停开关。
+
+    /** 动画订阅句柄。0 表示无效（间隔非正 / 回调为空 / 已被退订）。 */
+    using AnimationHandle = std::uint64_t;
+
+    /**
+     * 动画订阅回调：入参是**声明的间隔**（秒），不是墙上 delta。
+     *
+     * 与 `Timeline::SampleCallback` 同一个约定：拿到 1/12 就代表"又过了 1/12 秒"，
+     * 不保证这一帧真的画了那么多时间。
+     */
+    using AnimationCallback = std::function<void(double stepSeconds)>;
+
+    /**
+     * 场景动画时钟（秒）：从第一次 `TickFrame` 起单调累加。
+     *
+     * 静默 / 停放 / 关闭的场景不走 `TickFrame` ⇒ 时钟冻结。所以它可以当
+     * "这个场景的本地时间"用，跨场景共享的绝对时间请自己存。
+     *
+     * 名字不带 `Get`：与 `Timeline::SubscriberCount()` 同一档——它读的是一个
+     * **量**（时间），不是"取某个对象的状态"。
+     */
+    double AnimationSeconds() const noexcept;
+
+    /**
+     * 订阅一个动画频率（12fps 传 `1.0 / 12`）。
+     *
+     * @param intervalSeconds 派发间隔，必须 > 0；否则返回 0（无效句柄）。
+     * @param callback        到期回调；为空返回 0。
+     * @return 句柄。**句柄只增不复用**，所以"退订后又被复用的句柄"这种事故
+     *         不可能发生（与 `Timeline::Handle` 同一条规矩）。
+     *
+     * **回调里不许增删节点**（`AddChild` / `RemoveChild` / 构造 / 析构 /
+     * `SetParent` 都算）：派发期间遍历的是订阅表本身，树一变，同帧后续的处理
+     * 就可能踩到刚析构的节点。场景会在每次回调之后比对结构代次，变了就停掉
+     * 本轮剩下的订阅并记一条 DEBUG——那是**护栏，不是许可**：能拦住崩溃，
+     * 但这一帧剩下的动画会少走一步。
+     */
+    AnimationHandle SubscribeAnimation(double intervalSeconds,
+                                       AnimationCallback callback);
+
+    /** 退订。句柄无效或已被退订时返回 false。 */
+    bool UnsubscribeAnimation(AnimationHandle handle);
+
+    /** 当前有多少个**活着**的动画订阅（墓碑不算）。自检用。 */
+    std::size_t AnimationSubscriberCount() const noexcept;
+
+    /**
+     * 丢掉过多少次"追不上"的欠账。
+     *
+     * 计数发生在两处：单帧补发超过上限（`kMaxAnimationCatchUpPerFrame`），
+     * 以及一个订阅在两次派发之间攒下的步数超过上限。丢掉的是**欠的步**，
+     * 不是时间基准——同 `Timeline::GetCatchUpDropCount()`。
+     */
+    std::uint64_t GetAnimationCatchUpDropCount() const noexcept;
 
     // ---------------- 绘制列表（框架内部与自检用） ----------------
 
@@ -748,6 +825,14 @@ private:
     InkingWidget* hitTestTopmost(float designX, float designY) noexcept;
 
     /**
+     * 派发到点的动画订阅（`TickFrame` 里紧跟时钟累加之后、**早于**节点动画）。
+     *
+     * 顺序是硬要求：组件在 `onAnimationTick` 里读 `AnimationSeconds()`，若订阅
+     * 派发排在节点之后，读到的就是上一帧的时间（12fps 上就是半帧相位错）。
+     */
+    void dispatchAnimations(double deltaSeconds);
+
+    /**
      * 重建命中表。由 `sortDrawList()` 在**真的重建了列表之后**调——
      * 表与列表必须同生同灭：顺序或内容一变，候选的 z 序与包络就都过期了。
      *
@@ -1005,6 +1090,41 @@ private:
      * （和 `_pointerWasDown` 同一个理由）。
      */
     bool _keyboardTyping = false;
+
+    // ---------------- 动画时钟与订阅（0.6.0 T-01） ----------------
+
+    /** 一个动画订阅。形态照 `Timeline::Subscriber`，少一个"墓碑标记"字段——
+     *  这里的 tombstone 就是 `handle == 0` 本身（0 永远不是合法句柄）。 */
+    struct AnimationSubscriber {
+        AnimationHandle handle = 0;
+        double interval = 0.0;
+        double accumulator = 0.0;
+        AnimationCallback callback;
+    };
+
+    /**
+     * 订阅表。
+     *
+     * 退订**不真的删元素**，只把 handle 清成 0 当墓碑（派发期间按索引遍历，
+     * 删元素会让后面的人前移、当前位置换人）。墓碑在**下一次派发的开头**统一
+     * 清掉——放在 `SubscribeAnimation` 里清有个隐患：回调里订阅会触发
+     * `remove_if`，索引当场就错位了。
+     */
+    std::vector<AnimationSubscriber> _animationSubscribers;
+
+    /** 下一个句柄。只增不复用（见 `SubscribeAnimation` 的说明）。 */
+    AnimationHandle _nextAnimationHandle = 1;
+
+    /**
+     * 场景本地时间（秒）。
+     *
+     * 用 `double` 不用 `float`：这是**时间基准**，1 小时后 float 的精度只剩
+     * 约 0.2ms，而 `frame = floor(t × fps)` 会把这点误差放大成相位跳变。
+     */
+    double _animationSeconds = 0.0;
+
+    /** 追不上丢掉欠账的次数（观测口，`GetAnimationCatchUpDropCount` 读它）。 */
+    std::uint64_t _animationCatchUpDrops = 0;
 };
 
 }  // namespace inking

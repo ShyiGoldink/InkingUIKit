@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <any>
+#include <cmath>
 #include <vector>
 
 namespace inking {
@@ -23,6 +24,24 @@ namespace inking {
 namespace {
 
 constexpr const char* kModuleName = "InkingScene";
+
+/**
+ * 单帧最多给**一个**动画订阅补发多少步。
+ *
+ * 纯保险：入口的时间已被 `Timeline` 截断到 `kMaxCatchUpSeconds`（0.25s），
+ * 12fps 也就是 3 步。真到 64 步说明间隔被配成了 4ms 以下，那本身是配置错误，
+ * 与其在一帧里空转，不如丢掉欠账并计数——同 `Timeline` 的 catch-up 处理。
+ */
+constexpr int kMaxAnimationCatchUpPerFrame = 64;
+
+/**
+ * 累加器比较的容差。
+ *
+ * `1/60` 在二进制浮点里是无限循环小数，60 次相加不恰好等于 1（差约 1e-16），
+ * 严格的 `accumulator >= interval` 会让"12fps 跑满 1 秒"派发 **11** 次而不是 12。
+ * 1e-9 秒比任何真实帧间隔小 6 个数量级，放行它不会造成"提前一帧"。
+ */
+constexpr double kAnimationEpsilon = 1e-9;
 
 /**
  * 设计坐标 → 设备像素的换算。
@@ -264,6 +283,18 @@ void InkingScene::TickFrame(double deltaSeconds) {
         return;
     }
 
+    // ---- 0. 动画时钟 + 订阅派发（0.6.0 T-01）----
+    //
+    // **顺序不能反**：先走时钟，再派发。组件在回调 / `onAnimationTick` 里读
+    // `AnimationSeconds()`，必须读到**本帧**的值；倒过来就是永远慢一帧
+    // （12fps 上等于半帧相位错，而且只表现为"动画有点飘"，最难查）。
+    //
+    // 负 delta（时钟回拨 / 第一帧）不倒着走，和 `Timeline::Advance` 同一条规矩。
+    // 夹一次、只夹一次：时钟与订阅必须看到**同一个** delta，否则两者会慢慢错开。
+    const double animationDelta = deltaSeconds > 0.0 ? deltaSeconds : 0.0;
+    _animationSeconds += animationDelta;
+    dispatchAnimations(animationDelta);
+
     onRenderBoundTick(deltaSeconds);
 
     // 再把这一帧的真实 delta 分发给**所有**节点（静态也要）：
@@ -291,6 +322,144 @@ void InkingScene::TickFrame(double deltaSeconds) {
             break;
         }
         node->TickAnimation(delta);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 动画时钟与频率订阅（0.6.0 T-01）
+// ---------------------------------------------------------------------------
+
+double InkingScene::AnimationSeconds() const noexcept {
+    return _animationSeconds;
+}
+
+std::size_t InkingScene::AnimationSubscriberCount() const noexcept {
+    return static_cast<std::size_t>(
+        std::count_if(_animationSubscribers.begin(), _animationSubscribers.end(),
+                      [](const AnimationSubscriber& subscriber) {
+                          return subscriber.handle != 0;
+                      }));
+}
+
+std::uint64_t InkingScene::GetAnimationCatchUpDropCount() const noexcept {
+    return _animationCatchUpDrops;
+}
+
+InkingScene::AnimationHandle InkingScene::SubscribeAnimation(
+    double intervalSeconds, AnimationCallback callback) {
+    // 间隔非正 / 回调为空：返回无效句柄，不抛不报——与 `Timeline::Subscribe`
+    // 同一条规矩。调用方要么把 0 当"没订上"，要么自己保证参数合法。
+    if (!(intervalSeconds > 0.0) || !callback) {
+        return 0;
+    }
+
+    AnimationSubscriber subscriber;
+    subscriber.handle = _nextAnimationHandle++;
+    subscriber.interval = intervalSeconds;
+    subscriber.callback = std::move(callback);
+    _animationSubscribers.push_back(std::move(subscriber));
+    return _animationSubscribers.back().handle;
+}
+
+bool InkingScene::UnsubscribeAnimation(AnimationHandle handle) {
+    if (handle == 0) {
+        return false;
+    }
+
+    const auto it = std::find_if(_animationSubscribers.begin(),
+                                 _animationSubscribers.end(),
+                                 [handle](const AnimationSubscriber& subscriber) {
+                                     return subscriber.handle == handle;
+                                 });
+    if (it == _animationSubscribers.end()) {
+        return false;
+    }
+
+    // 只立墓碑，不删元素：派发期间按索引遍历，删元素会让后面的订阅前移，
+    // 当前位置换成别人（要么重复派发、要么整条跳过）。真正清理在
+    // `dispatchAnimations` 的开头。
+    it->handle = 0;
+    it->callback = nullptr;
+    return true;
+}
+
+void InkingScene::dispatchAnimations(double deltaSeconds) {
+    // 空表早退：这是"没有动画的场景每帧零成本"的落点——只多一次
+    // `_animationSeconds += delta`，没有遍历、没有分配。
+    if (_animationSubscribers.empty()) {
+        return;
+    }
+
+    // 清墓碑。放在派发**开头**而不是 `SubscribeAnimation` 里：回调里订阅是允许
+    // 的（只是不许改树），而 `remove_if` 会把索引整块搬走，正在遍历的 i 就指到
+    // 别人身上了。
+    const auto tombstone = std::remove_if(
+        _animationSubscribers.begin(), _animationSubscribers.end(),
+        [](const AnimationSubscriber& subscriber) {
+            return subscriber.handle == 0;
+        });
+    _animationSubscribers.erase(tombstone, _animationSubscribers.end());
+
+    const std::uint64_t generation = _structureGeneration;
+
+    for (std::size_t i = 0; i < _animationSubscribers.size(); ++i) {
+        const AnimationHandle handle = _animationSubscribers[i].handle;
+
+        _animationSubscribers[i].accumulator += deltaSeconds;
+
+        int dispatched = 0;
+        while (dispatched < kMaxAnimationCatchUpPerFrame) {
+            // 每次循环**重新按下标取**，不留引用：回调里 `SubscribeAnimation`
+            // 会 push_back，表一旦扩容，先前拿到的引用就悬垂。
+            if (i >= _animationSubscribers.size()
+                || _animationSubscribers[i].handle != handle) {
+                break;
+            }
+
+            const double interval = _animationSubscribers[i].interval;
+            if (_animationSubscribers[i].accumulator + kAnimationEpsilon
+                < interval) {
+                break;
+            }
+
+            // 回调**先拷出来再调**：`operator()` 执行期间表可能重分配，
+            // 而那正是 std::function 对象自己所在的内存（Timeline 那边靠
+            // "调用完立刻回查索引"绕开，这里连这一层都不留）。
+            const AnimationCallback callback = _animationSubscribers[i].callback;
+            _animationSubscribers[i].accumulator -= interval;
+            // epsilon 放行的那一步会有 -1e-16 这种负余量，夹回 0（否则它会
+            // 一直留在累加器里，虽然不影响判定，但读起来像 bug）。
+            if (_animationSubscribers[i].accumulator < 0.0) {
+                _animationSubscribers[i].accumulator = 0.0;
+            }
+
+            if (callback) {
+                callback(interval);
+            }
+            ++dispatched;
+
+            // 回调里改了树：本轮剩下的订阅不再派发。快照挡的是容器失效，
+            // 挡不住"回调把后面的节点析构掉"——和 TickLogic / TickFrame 那边
+            // 同一个理由（`AGENTS.md` §6 第 103 条）。
+            if (_structureGeneration != generation) {
+                INK_LOG_DEBUG(kModuleName,
+                              "动画订阅里骨架变了：本轮剩下的订阅不再派发（回调里"
+                              "不该增删节点，见 InkingScene.h 的 SubscribeAnimation）");
+                return;
+            }
+        }
+
+        // 撞上单帧上限：剩下的欠账按自己的间隔截断，记一次。
+        // 不截断的话，下一个跑到这里的订阅会拿到一个永远追不完的累加器。
+        if (i < _animationSubscribers.size()
+            && _animationSubscribers[i].handle == handle
+            && _animationSubscribers[i].accumulator + kAnimationEpsilon
+                   >= _animationSubscribers[i].interval) {
+            _animationSubscribers[i].accumulator = std::fmod(
+                _animationSubscribers[i].accumulator,
+                _animationSubscribers[i].interval);
+            ++_animationCatchUpDrops;
+        }
     }
 }
 

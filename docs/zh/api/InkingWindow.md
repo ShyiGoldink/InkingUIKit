@@ -249,6 +249,25 @@ bool IsBorderless() const noexcept;
 
 默认 `false`。幂等：真的改了才返回 true。
 
+>**SetAlwaysOnTop(alwaysOnTop) / IsAlwaysOnTop()（0.6.0）**
+
+```C++
+bool SetAlwaysOnTop(bool alwaysOnTop);
+bool IsAlwaysOnTop() const noexcept;
+```
+
+窗口置顶（默认 `false`），幂等。与无边框不同，**运行期可切**：窗口已开出就直接
+`SDL_SetWindowAlwaysOnTop`；还没开就记账，建窗时带 `SDL_WINDOW_ALWAYS_ON_TOP`。
+
+`IsAlwaysOnTop()` 是**请求值**——平台到底照不照做读不回来（和 `IsTransparentApplied()`
+那种"能回读"的不同）。
+
+典型用途：桌宠、悬浮歌词、看板、计时器。配合 `SetBorderless(true)` + `SetTransparent(true)`
+才是"贴在桌面上的一块角色"。⚠️ 透明在 Windows 上**只有 D3D11 后端成立**
+（SDL 只给那条路补了透明 swapchain）；后端挑到 D3D12 / Vulkan 时窗口会是
+"置顶、无边框、背景一整块黑"。需要透明请自己 `SDL_SetHint(SDL_HINT_RENDER_DRIVER, "d3d11")`
+（`examples/pet/main.cpp` 就是这么写的）。
+
 >**GetWindowX() / GetWindowY() / MoveWindowBy(dx, dy)**
 
 ```C++
@@ -450,4 +469,4 @@ SDL_VIDEO_DRIVER=dummy INK_CAPTURE=/tmp/shot.png INK_AUTOQUIT=1 ./inking_demo.ex
 
 ---
 
-> 本文档对应版本：**0.5.3（0.x 发布版）**。
+> 本文档对应版本：**0.6.6（0.x 发布版）**。

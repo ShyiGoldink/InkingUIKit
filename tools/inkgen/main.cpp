@@ -135,6 +135,7 @@ void PrintUsage() {
         "组件类型由**目录名**决定（CXXCSS.md §1）：Button/buttons → 按钮，\n"
         "Panel/panels → 面板，Label/labels → 静态标签，Text/texts → 语言表\n"
         "（它不是组件，是「占位符 → 各语言的串」那张全局表，只允许一份），\n"
+        "Atlas/atlases → 图集描述（一张图多个动画，0.6.5），\n"
         "Theme/themes → 主题表（语义色 / 语义字号，是**生成器的输入**，\n"
         "配置里的 $token 在生成期就换成具体值——换主题要重新生成）；\n"
         "Config/configs → 全局配置（设计画布尺寸，只允许一份；也可以直接\n"
@@ -226,7 +227,7 @@ int main(int argc, char** argv) {
         if (inputs.empty()) {
             std::fprintf(stderr,
                          "[错误] %s 下没有扫到任何配置（认的目录：Button / Panel "
-                         "/ Label / Image / Text / Theme，外加根下 config.json；"
+                         "/ Label / Image / Atlas / Text / Theme，外加根下 config.json；"
                          "*.example.json 不参与生成）\n",
                          dirPath.c_str());
             return 1;
@@ -295,6 +296,19 @@ int main(int argc, char** argv) {
         for (const std::string& warning : label.warnings) {
             std::printf("[警告] %s：%s\n", label.filePath.c_str(),
                         warning.c_str());
+        }
+    }
+    for (const inkgen::AtlasConfig& atlas : loaded.atlases) {
+        std::printf("[配置] %s  图集 %zu 个动画  %s\n", atlas.name.c_str(),
+                    atlas.data.animations.size(), atlas.identifier.c_str());
+        for (const inking::AtlasAnimation& animation : atlas.data.animations) {
+            std::printf("         · %-8s %zu 帧  %.0ffps  loop=%d  source=%s\n",
+                        animation.name.c_str(), animation.frames.size(),
+                        animation.fps, animation.loop ? 1 : 0,
+                        animation.source.c_str());
+        }
+        for (const std::string& warning : atlas.warnings) {
+            std::printf("[警告] %s：%s\n", atlas.filePath.c_str(), warning.c_str());
         }
     }
     for (const inkgen::TextConfig& text : loaded.textTables) {
@@ -377,12 +391,23 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // 图片与帧动画分开报数：一分配了 `frames` / `sheet` 的 Image 配置生成出来是
+    // `InkingSprite`，那正是"到底有没有认到我的帧"最容易搞混的地方（0.6.1 T-06）。
+    std::size_t spriteCount = 0;
+    for (const inkgen::ImageConfig& image : loaded.images) {
+        if (image.isSprite) {
+            ++spriteCount;
+        }
+    }
+
     if (validateOnly) {
         std::printf("[完成] 校验通过：%zu 个按钮 + %zu 个面板 + %zu 个标签 + "
-                    "%zu 张语言表 + %zu 份主题表 + %zu 份全局配置，未写文件\n",
+                    "%zu 张图片（其中 %zu 张帧动画）+ %zu 张语言表 + "
+                    "%zu 份主题表 + %zu 份全局配置，未写文件\n",
                     loaded.buttons.size(), loaded.panels.size(),
-                    loaded.labels.size(), loaded.textTables.size(),
-                    loaded.themes.size(), loaded.configs.size());
+                    loaded.labels.size(), loaded.images.size(), spriteCount,
+                    loaded.textTables.size(), loaded.themes.size(),
+                    loaded.configs.size());
         return 0;
     }
 
@@ -392,11 +417,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    std::printf("[完成] 生成 %zu 个按钮 + %zu 个面板 + %zu 个标签 + %zu 张语言表"
+    std::printf("[完成] 生成 %zu 个按钮 + %zu 个面板 + %zu 个标签 + %zu 张图片"
+                "（其中 %zu 张帧动画）+ %zu 张语言表"
                 "（主题表 %zu 份，$token 已在生成期替换；全局配置 %zu 份）：\n"
                 "  %s\n  %s\n",
                 loaded.buttons.size(), loaded.panels.size(),
-                loaded.labels.size(), loaded.textTables.size(),
+                loaded.labels.size(), loaded.images.size(), spriteCount,
+                loaded.textTables.size(),
                 loaded.themes.size(), loaded.configs.size(),
                 emitted.headerPath.c_str(), emitted.sourcePath.c_str());
     return 0;

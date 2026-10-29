@@ -187,6 +187,26 @@ public:
     /// 现在是无边框吗。
     bool IsBorderless() const noexcept;
 
+    // ---------------- 置顶（0.6.0 桌宠 demo 的配套） ----------------
+    //
+    // 为什么落在窗口层而不是示例里：`SDL_Window*` 是窗口层的私有成员，示例拿不到。
+    // 而"置顶"是**窗口属性**（和边框、透明同一族），不是某个场景的玩法——
+    // 桌宠只是第一个用到它的场景，看板 / 悬浮歌词 / 计时器都要它。
+    //
+    // 与无边框不同的是：SDL 支持**运行期**切换（`SDL_SetWindowAlwaysOnTop`），
+    // 所以这里两种时机都能用——建窗前记下来（建窗带 `SDL_WINDOW_ALWAYS_ON_TOP`），
+    // 建窗后立刻调一次 SDL。
+
+    /**
+     * 窗口置顶（默认 **false**）。
+     *
+     * @return 值真的变了才返回 true（幂等）。
+     */
+    bool SetAlwaysOnTop(bool alwaysOnTop);
+
+    /// 现在是置顶吗（请求值，不是平台是否真的照做——后者读不回来）。
+    bool IsAlwaysOnTop() const noexcept;
+
     // ---------------- 透明窗口 ----------------
     //
     // **为什么需要它**：`SetBackgroundColor` 收的是 `0xAARRGGBB`，最高字节看起来
@@ -492,6 +512,9 @@ private:
 
     /// 无边框开关（C2）。`Show()` 之前设置就是"建窗口时带上标志"。
     bool _borderless = false;
+
+    /// 置顶开关（0.6.0）。建窗前记账 + 建窗后立刻调一次 SDL（两者都支持）。
+    bool _alwaysOnTop = false;
 
     /// 透明窗口的**请求值**：`Show()` 之前设置就是"建窗口时带上标志"。
     bool _transparent = false;

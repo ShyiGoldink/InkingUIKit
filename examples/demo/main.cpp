@@ -9,13 +9,19 @@
 //   <button/InkingStaticButton.h>  静态按钮（三态只换颜色 → 进命中表）
 //   <button/InkingDynamicButton.h> 动态按钮（几何自己动 → 不进表，每帧 Tick）
 //   <text/InkingStaticLabel.h>     只读文字
+//   <image/InkingSprite.h>         帧动画（序列帧 / 图集，0.6.x）
+//   <image/InkingSpriteGroup.h>    动画组（一个角色多个动作，0.6.6）
 //
 // 三件事在这份代码里各演示一条：
 //   1. **两种按钮的分工**：静态按钮走点击回调；动态按钮在 `onTick` 里自己
 //      挪位置（`ChangeOffset` 是动态档独有的几何写入口）；
 //   2. **场景「构造即登记」**：`DemoScene` 一构造就进了 `SceneLibrary`，
 //      `Show("demo")` 按名字找到它、激活它、跑主循环；
-//   3. **链接库边界**：示例不包含任何 `src/` 下的实现，全部经 DLL 调用。
+//   3. **链接库边界**：示例不包含任何 `src/` 下的实现，全部经 DLL 调用；
+//   4. **帧动画（0.6.x）**：左上角是序列帧（8 张内联 SVG，12fps 转一圈），
+//      左下角是图集（`assets/walk.png` 切 4 格）——后者还挂了帧事件，
+//      每迈一步就把计数写进标签。两条素材路共用同一套帧号，只是"换字节"与
+//      "换源矩形"的区别。
 //
 // 注意：文字由纹理层画。机器默认字体若没有对应字形，会**退化成占位方块**
 // （那是纹理层有意的兜底，不是本示例的问题）。
@@ -27,7 +33,10 @@
 #include <button/InkingStaticButton.h>
 #include <config/window_config.h>
 #include <image/ImageData.h>
+#include <image/InkingSprite.h>
+#include <image/InkingSpriteGroup.h>
 #include <image/InkingStaticImage.h>
+#include <image/SpriteData.h>
 #include <input/Shortcut.h>
 #include <prefab/MenuBar.h>
 #include <prefab/MenuPopup.h>
@@ -38,8 +47,10 @@
 #include <text/LabelData.h>
 #include <window/InkingWindow.h>
 
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <string>
 
@@ -146,6 +157,33 @@ private:
 };
 
 /**
+ * 序列帧素材：8 张内联 SVG，每张把指针转 45°。
+ *
+ * 为什么内联而不是带 8 个文件：序列帧的**每帧就是一份字节**，演示这个机制不需要
+ * 外部资源；`static` 的生命周期是整个进程，正好对上"帧只借视图不拷贝字节"。
+ */
+const std::array<std::string, 8>& SpinnerFrames() {
+    static const std::array<std::string, 8> frames = [] {
+        std::array<std::string, 8> out;
+        for (int i = 0; i < 8; ++i) {
+            char rotate[48];
+            std::snprintf(rotate, sizeof(rotate), "rotate(%d 42 42)", i * 45);
+            out[static_cast<std::size_t>(i)] =
+                std::string(
+                    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"84\" "
+                    "height=\"84\">"
+                    "<circle cx=\"42\" cy=\"42\" r=\"30\" fill=\"#232A3C\"/>"
+                    "<rect x=\"40\" y=\"14\" width=\"4\" height=\"28\" rx=\"2\" "
+                    "fill=\"#5A9BF0\" transform=\"") + rotate
+                + "\"/>"
+                  "<circle cx=\"42\" cy=\"42\" r=\"5\" fill=\"#7FB0FF\"/></svg>";
+        }
+        return out;
+    }();
+    return frames;
+}
+
+/**
  * 示例场景。
  *
  * **构造即登记**：`InkingScene("demo")` 这一步就把自己挂进 `SceneLibrary`
@@ -212,6 +250,8 @@ private:
         bar->AddButton(item, "全屏",
                        [] { inking::InkingWindow::Instance().ToggleFullscreen(); },
                        inking::Shortcut::Parse("Ctrl+Enter"));
+        bar->AddButton(item, "切换动作", [this] { ToggleWalkerGroup(); },
+                       inking::Shortcut::Parse("F2"));
         bar->AddButton(item, "退出",
                        [] { inking::InkingWindow::Instance().RequestExit(); },
                        inking::Shortcut::Parse("Ctrl+Q"));
@@ -305,14 +345,150 @@ private:
         opener->SetOnContextClicked([this](float x, float y) {
             _menu->OpenAt(x, y);
         });
+
+        // 7) 帧动画（0.6.x）：两种素材各一个 + 一个动画组（0.6.6）
+        AddSpinner();
+        AddWalker();
+        AddWalkerGroup();
+    }
+
+    /**
+     * **序列帧**：每帧一份独立字节，换帧 = 换字节视图。
+     *
+     * 12fps、8 帧 ⇒ 1.5 秒转一圈。帧号是**时间的纯函数**（场景动画时钟），
+     * 所以它和同屏其它 sprite 永远同步，不会各自漂。
+     */
+    void AddSpinner() {
+        const auto& frames = SpinnerFrames();
+        inking::SpriteData data;
+        data.name = "spinner";
+        data.width = 84;
+        data.height = 84;
+        data.fps = 12.0;
+        data.loop = true;
+        data.autoplay = true;
+        data.selfAnchor = inking::InkingChangeAnchor::Center;
+        data.traceAnchor = inking::InkingChangeAnchor::Center;
+        data.offsetX = -520.0f;
+        data.offsetY = -250.0f;
+        for (std::size_t i = 0; i < frames.size(); ++i) {
+            inking::ButtonAppearance frame(inking::AppearanceType::Image,
+                                           0xFF000000u);
+            // 缓存键 = 帧名：同名字才会复用纹理（8 帧各一份，所以各一个键）。
+            frame.source = "spinner#" + std::to_string(i);
+            frame.imageBytes =
+                reinterpret_cast<const std::uint8_t*>(frames[i].data());
+            frame.imageSize = frames[i].size();
+            data.frames.push_back(frame);
+        }
+        _spinner = static_cast<inking::InkingSprite*>(
+            AddChild(std::make_unique<inking::InkingSprite>(this, data)));
+    }
+
+    /**
+     * **图集**：一张 `assets/walk.png` 切 4 格，换帧只改**源矩形**
+     * （零解码、零新建纹理）。8fps 走两步，再挂两个帧事件把"迈步"数出来。
+     *
+     * `runtimeAsset = true`：字节在运行期从 exe 旁的 `assets/` 读——换美术
+     * 不用重编（`CXXCSS/Image/walker.json` 是同一个配置的"生成器"版本）。
+     */
+    void AddWalker() {
+        inking::SpriteData data;
+        data.name = "walker";
+        data.width = 96;   // 显示放大一倍（每格 48）
+        data.height = 96;
+        data.runtimeAsset = true;
+        data.normal.type = inking::AppearanceType::Image;
+        data.normal.source = "walk.png";
+        data.sheet.frameWidth = 48;
+        data.sheet.frameHeight = 48;
+        data.sheet.columns = 4;
+        data.sheet.rows = 1;
+        data.fps = 8.0;
+        // 第 0 / 2 帧是"脚落地"的两帧——帧事件由**帧号变化**驱动，
+        // 掉帧也不会少算（这一点和"按时间到点触发"是两回事）。
+        data.events = {{0, "step"}, {2, "step"}};
+        data.selfAnchor = inking::InkingChangeAnchor::Center;
+        data.traceAnchor = inking::InkingChangeAnchor::Center;
+        data.offsetX = -520.0f;
+        data.offsetY = 40.0f;
+        auto* walker = static_cast<inking::InkingSprite*>(
+            AddChild(std::make_unique<inking::InkingSprite>(this, data)));
+        walker->frameEvent.Subscribe([this](const std::string& name,
+                                            std::size_t /*frame*/) {
+            if (name != "step" || _stepsLabel == nullptr) {
+                return;
+            }
+            ++_steps;
+            _stepsLabel->SetText("脚步 " + std::to_string(_steps));
+        });
+
+        _stepsLabel = AddLabel("walker_steps", "脚步 0", 320, 40, 20.0f, kTextDim,
+                               110.0f, -520.0f);
+    }
+
+    /**
+     * **动画组**（0.6.6 T-18）：一个角色两个动作，`SwitchTo()` 换的是**配置**不是节点。
+     *
+     * 两个动作都用同一张 `walk.png`（只有速率与显示尺寸不同）：素材不够四个方向时，
+     * 这足以说明"组"的形状——切过去帧率 / 尺寸一起变，而**节点数仍是 1**
+     * （没有 N−1 个隐藏节点参与绘制遍历与命中）。
+     *
+     * 切换入口挂在菜单栏的「切换动作」（F2）上：那是全局快捷键，正好演示
+     * "一个入口改一组状态"。
+     */
+    void AddWalkerGroup() {
+        const auto makeAnimation = [](const char* name, double fps, int size) {
+            inking::SpriteData data;
+            data.name = name;
+            data.width = size;
+            data.height = size;
+            data.runtimeAsset = true;
+            data.normal.type = inking::AppearanceType::Image;
+            data.normal.source = "walk.png";
+            data.sheet.frameWidth = 48;
+            data.sheet.frameHeight = 48;
+            data.sheet.columns = 4;
+            data.sheet.rows = 1;
+            data.fps = fps;
+            data.selfAnchor = inking::InkingChangeAnchor::Center;
+            data.traceAnchor = inking::InkingChangeAnchor::Center;
+            data.offsetX = -300.0f;
+            data.offsetY = 180.0f;
+            return data;
+        };
+
+        inking::SpriteGroupData group;
+        group.animations.emplace_back("walk", makeAnimation("walk", 8.0, 96));
+        group.animations.emplace_back("run", makeAnimation("run", 20.0, 120));
+
+        _walkerGroup = static_cast<inking::InkingSpriteGroup*>(AddChild(
+            std::make_unique<inking::InkingSpriteGroup>(this, group, "walk")));
+        _actionLabel = AddLabel("walker_action", "动作：walk（F2 切换）", 360, 40,
+                                20.0f, kTextDim, 300.0f, -300.0f);
+    }
+
+    /// 菜单「切换动作」用：在 walk / run 之间来回（真正的多动作角色有 4 个以上，
+    /// 这里只演示切换本身）。
+    void ToggleWalkerGroup() {
+        if (_walkerGroup == nullptr || _actionLabel == nullptr) {
+            return;
+        }
+        const std::string next =
+            _walkerGroup->GetCurrentAnimation() == "walk" ? "run" : "walk";
+        if (_walkerGroup->SwitchTo(next)) {
+            _actionLabel->SetText("动作：" + next + "（F2 切换）");
+        }
     }
 
     inking::InkingStaticLabel* AddLabel(const std::string& name,
                                         const std::string& text, int width,
                                         int height, float fontSize,
-                                        std::uint32_t color, float offsetY) {
+                                        std::uint32_t color, float offsetY,
+                                        float offsetX = 0.0f) {
         inking::LabelData data =
             MakeLabel(name, width, height, text, fontSize, color);
+        data.offsetX = offsetX;
         data.offsetY = offsetY;
         return static_cast<inking::InkingStaticLabel*>(
             AddChild(std::make_unique<inking::InkingStaticLabel>(this, data)));
@@ -321,7 +497,12 @@ private:
     inking::InkingStaticLabel* _title = nullptr;
     inking::InkingStaticLabel* _hint = nullptr;
     inking::InkingStaticLabel* _status = nullptr;
+    inking::InkingStaticLabel* _stepsLabel = nullptr;
     inking::InkingStaticButton* _button = nullptr;
+    inking::InkingSprite* _spinner = nullptr;
+    inking::InkingSpriteGroup* _walkerGroup = nullptr;
+    inking::InkingStaticLabel* _actionLabel = nullptr;
+    int _steps = 0;
     inking::prefab::MenuBar* _menuBar = nullptr;
     std::unique_ptr<inking::prefab::MenuPopup> _menu;
     int _clicks = 0;

@@ -95,6 +95,27 @@ struct ButtonAppearance {
     ImageFit imageFit = ImageFit::Fill;
 
     /**
+     * @brief 这个外观只画纹理的**哪一块**（像素矩形，0.6.1 T-04）。
+     *
+     * **全零 = 整张纹理**，也就是 0.6.1 之前所有图片的行为；图集只是在同一个
+     * 纹理上换这块矩形（换帧零解码、零 `SDL_CreateTexture`）。
+     *
+     * 两条容易踩的：
+     *   - 单位是**纹理像素**，不是设计坐标、也不乘展示倍率；
+     *   - 它描述"取哪块"，不描述"画多大"——画多大仍是 `width`/`height` 加
+     *     `imageFit` 的事（`ImageFitSpec::DrawnRect` 用**这块的宽高**算等比）。
+     *
+     * 由 `InkingStaticImage::SetRenderSourceRect()` 写（protected，派生类专用）：
+     * 派生类不该直接碰 `_renderAppearance`（那是 private 段）。
+     */
+    ShapeBounds srcRect{};
+
+    /// 给过源矩形吗（宽高都 > 0）；假 = 画整张。
+    bool HasSourceRect() const noexcept {
+        return srcRect.width > 0.0f && srcRect.height > 0.0f;
+    }
+
+    /**
      * **进入这个状态时**的过渡时长（秒）。0 = 瞬间切换（配置里没写 `transition`）。
      *
      * 写在状态自己身上，是因为"过场段各自带时长"（`TaskGuide.md` 的 D-1）：

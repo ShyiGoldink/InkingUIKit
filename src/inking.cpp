@@ -11,7 +11,9 @@
 #include <canvas/CanvasContext.h>
 #include <canvas/InkingCanvasPainter.h>
 #include <canvas/InkingStaticCanvas.h>
+#include <image/InkingSprite.h>
 #include <image/InkingStaticImage.h>
+#include <image/SpriteData.h>
 #include <video/InkingVideo.h>
 #include <event/InkingEvent.h>
 #include <input/KeyboardInput.h>
@@ -292,6 +294,27 @@ static_assert(HasChangeZIndex<InkingStaticImage>, "层级是骨架变化，两�
 // 那时要一起想清楚"AnchorData 加字段要同步几处"（AGENTS §6 第 83 条）。
 static_assert(std::is_base_of_v<ButtonData, ImageData>,
               "ImageData 复用 ButtonData：img 是没有 onClicked 的 button");
+
+// ---------------------------------------------------------------------------
+// 帧动画（0.6.0 T-03）：**静态档**——换帧只换"用哪份字节"
+//
+// 钉住这条：帧与帧同尺寸，换帧不碰几何 ⇒ 命中表不用重烘。哪天有人把"换帧"
+// 实现成"改几何"（那就拿到了 Resize / ChangeOffset），下面这几条会当场红——
+// 而不是等"画面在动、点到的却是老位置"才发现。
+static_assert(std::is_base_of_v<InkingStaticImage, InkingSprite>,
+              "帧动画复用图片那条绘制：每一帧都是一张图");
+static_assert(std::is_base_of_v<InkingStaticWidget, InkingSprite>,
+              "帧动画是静态组件：换帧只标重绘脏");
+static_assert(!std::is_base_of_v<InkingDynamicWidget, InkingSprite>,
+              "静态 / 动态是二选一，不能既进表又不进表");
+static_assert(!HasResize<InkingSprite>, "静态组件不该有 Resize");
+static_assert(!HasChangeSelfAnchor<InkingSprite>,
+              "静态组件不该有 ChangeSelfAnchor");
+static_assert(!HasChangeTraceAnchor<InkingSprite>,
+              "静态组件不该有 ChangeTraceAnchor");
+static_assert(!HasChangeOffset<InkingSprite>, "静态组件不该有 ChangeOffset");
+static_assert(HasSetVisible<InkingSprite>, "可见性是骨架变化，两版都该有");
+static_assert(HasChangeZIndex<InkingSprite>, "层级是骨架变化，两版都该有");
 
 // ---------------------------------------------------------------------------
 // Canvas（A12）：一块"谁都能画"的表面

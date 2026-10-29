@@ -89,7 +89,28 @@ void InkingStaticImage::refreshRenderAppearance() {
         _renderAppearance.type = AppearanceType::Image;
         _renderAppearance.imageBytes = _assetBytes.data();
         _renderAppearance.imageSize = _assetBytes.size();
+        // **纹理缓存键必须跟着当前字节走**（0.6.0 T-03 修）。
+        //
+        // 绘制那边（`ButtonPaint.cpp`）拿 `appearance.source` 当缓存键。原来这里
+        // 只换字节不换键，于是 `_renderAppearance.source` 永远是 `_data.normal.source`
+        // ——`SetImageBytes(data, size, name)` 的 `name` 只进了 `_imageName`，
+        // 从没落到真正的键上。后果：**同尺寸换图会一直命中第一张的纹理**
+        // （帧动画表现为"每一帧都画第一帧"），而且不报错、画面还"有东西"。
+        _renderAppearance.source = _imageName;
     }
+    // 切格信息**总是**从这里回填（0.6.1 T-04）：上面整份拷贝的是 `normal`，
+    // 而 `srcRect` 是运行期状态（换帧），不在配置里。
+    _renderAppearance.srcRect = _renderSourceRect;
+}
+
+void InkingStaticImage::SetRenderSourceRect(const ShapeBounds& srcRect) {
+    _renderSourceRect = srcRect;
+    _renderAppearance.srcRect = srcRect;
+    MarkRepaintDirty();  // 画面变了；几何没动，所以不标命中脏
+}
+
+const ShapeBounds& InkingStaticImage::GetRenderSourceRect() const noexcept {
+    return _renderSourceRect;
 }
 
 // ---------------------------------------------------------------------------

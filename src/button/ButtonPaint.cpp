@@ -138,7 +138,8 @@ void PaintButtonAppearance(const InkingAnchor& node, const ShapeSpec& shape,
         const std::uint32_t tint = 0xFFFFFFFFu;
         if (PaintImage(renderer, image, shape, node.GetWidth(),
                        node.GetHeight(), Magnify(node), pixelX, pixelY,
-                       transform, appearance.imageFit, tint)) {
+                       transform, appearance.imageFit, tint,
+                       appearance.srcRect)) {
             painted = true;  // 图片画上了，就走不到"按颜色填"
         }
         // 解不出来：落回"按颜色填"（按钮还是个按钮，不是个洞）。

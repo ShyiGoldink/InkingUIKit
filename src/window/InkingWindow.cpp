@@ -44,6 +44,15 @@ constexpr DWORD kDwmwaWindowCornerPreference = 33;
 constexpr int kDwmcpRound = 2;      ///< `DWMWCP_ROUND`
 constexpr int kDwmcpDoNotRound = 1; ///< `DWMWCP_DONOTROUND`
 
+/// `DWMWA_BORDER_COLOR`：DWM 沿窗口画的那一圈 1px 边的颜色。
+///
+/// `DWMWA_COLOR_NONE`（0xFFFFFFFE）= **不画**。这是"无边框窗口真的没有边"的
+/// 最后一公里（0.6.0 桌宠实验发现）：`SDL_WINDOW_BORDERLESS` + 清掉
+/// `WS_CAPTION` 之后，Win11 仍会由 DWM 沿窗口矩形画一圈细边，透明窗口上看着
+/// 就是"角色周围多了一道框"。
+constexpr DWORD kDwmwaBorderColor = 34;
+constexpr DWORD kDwmColorNone = 0xFFFFFFFEu;
+
 using DwmSetWindowAttributeFn = HRESULT(WINAPI*)(HWND, DWORD, LPCVOID, DWORD);
 using DwmGetWindowAttributeFn = HRESULT(WINAPI*)(HWND, DWORD, PVOID, DWORD);
 
@@ -108,6 +117,38 @@ bool RequestRoundedCorners(SDL_Window* window, bool rounded) {
     return actual == preference;
 }
 
+/**
+ * 去掉 DWM 画在窗口矩形上的那圈 1px 边（Win11 的"边框色"）。
+ *
+ * 为什么需要：`SDL_WINDOW_BORDERLESS` 只是不要**系统标题栏与可拖边框**，
+ * 而 Win11 的 DWM 会给每个顶层窗口再描一圈边（默认取系统强调色 / 深灰）。
+ * 不透明窗口上那一圈看不太出来；透明窗口上它非常显眼——"角色飘在桌面上，
+ * 但外面套了个空框"。
+ *
+ * 顺带把圆角也定成"不圆"：透明 + 圆角时，DWM 会把四个角**裁掉**（那圈边没了
+ * 之后尤其明显：内容被切掉一个角）。
+ *
+ * @return 至少一条属性设置成功（读不回来，DWM 没有对应的 get 语义）。
+ */
+bool RequestNoDwmFrame(SDL_Window* window) {
+    HWND hwnd = NativeWindowHandle(window);
+    if (hwnd == nullptr || dwmApi().setAttribute == nullptr) {
+        return false;
+    }
+
+    bool ok = false;
+    if (SUCCEEDED(dwmApi().setAttribute(hwnd, kDwmwaBorderColor, &kDwmColorNone,
+                                        sizeof(kDwmColorNone)))) {
+        ok = true;
+    }
+    const int square = kDwmcpDoNotRound;
+    if (SUCCEEDED(dwmApi().setAttribute(hwnd, kDwmwaWindowCornerPreference,
+                                        &square, sizeof(square)))) {
+        ok = true;
+    }
+    return ok;  // Win10 之类的旧系统：不认这两条，静默无效
+}
+
 }  // namespace
 
 #else
@@ -116,6 +157,9 @@ namespace {
 
 /// 非 Windows：没有这件事，一律"没生效"（调用方不需要分支）。
 bool RequestRoundedCorners(SDL_Window*, bool) { return false; }
+
+/// 非 Windows：DWM 是 Windows 的东西（见上面同名函数的注释）。
+bool RequestNoDwmFrame(SDL_Window*) { return false; }
 
 }  // namespace
 
@@ -1157,6 +1201,9 @@ bool InkingWindow::SetBorderless(bool borderless) {
             INK_LOG_WARN(kModuleName,
                          std::string("SDL_SetWindowBordered 失败：")
                              + SDL_GetError());
+        } else if (_borderless) {
+            // 同上：样式清了不等于 DWM 那圈边没了。
+            RequestNoDwmFrame(s.window);
         }
     }
     INK_LOG_INFO(kModuleName,
@@ -1165,6 +1212,30 @@ bool InkingWindow::SetBorderless(bool borderless) {
 }
 
 bool InkingWindow::IsBorderless() const noexcept { return _borderless; }
+
+bool InkingWindow::SetAlwaysOnTop(bool alwaysOnTop) {
+    if (_alwaysOnTop == alwaysOnTop) {
+        return false;  // 幂等
+    }
+    _alwaysOnTop = alwaysOnTop;
+
+    // 与边框不同，置顶**运行期可切**：SDL 有 `SDL_SetWindowAlwaysOnTop`。
+    // 所以这里不区分"建窗前 / 建窗后"——窗口在就直接调，不在就等建窗时带标志。
+    WindowState& s = state();
+    if (s.window != nullptr) {
+        if (!SDL_SetWindowAlwaysOnTop(s.window, _alwaysOnTop)) {
+            INK_LOG_WARN(kModuleName,
+                         std::string("SDL_SetWindowAlwaysOnTop 失败：")
+                             + SDL_GetError());
+        }
+    }
+    INK_LOG_INFO(kModuleName,
+                 std::string("窗口置顶 = ") + (_alwaysOnTop ? "开" : "关"));
+    return true;
+}
+
+bool InkingWindow::IsAlwaysOnTop() const noexcept { return _alwaysOnTop; }
+
 
 bool InkingWindow::SetTransparent(bool transparent) {
     WindowState& s = state();
@@ -1689,7 +1760,8 @@ bool InkingWindow::Open(const std::string& sceneName) {
     const SDL_WindowFlags windowFlags =
         SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY
         | (_borderless ? SDL_WINDOW_BORDERLESS : 0)
-        | (_transparent ? SDL_WINDOW_TRANSPARENT : 0);
+        | (_transparent ? SDL_WINDOW_TRANSPARENT : 0)
+        | (_alwaysOnTop ? SDL_WINDOW_ALWAYS_ON_TOP : 0);
 
     s.window = SDL_CreateWindow("InkingWindow", _windowWidth, _windowHeight,
                                 windowFlags);
@@ -1705,10 +1777,28 @@ bool InkingWindow::Open(const std::string& sceneName) {
     _transparentApplied =
         _transparent
         && (SDL_GetWindowFlags(s.window) & SDL_WINDOW_TRANSPARENT) != 0;
+
     if (_transparent && !_transparentApplied) {
         INK_LOG_WARN(kModuleName,
                      "window.transparent 请求了，但 SDL_WINDOW_TRANSPARENT 没有"
                      "进窗口标志：这个平台 / 视频驱动上背景不会真的透出桌面");
+    }
+
+    // 无边框要**再显式落一次**（0.6.0 桌宠实验发现）。
+    //
+    // `SDL_WINDOW_BORDERLESS` 进了建窗标志不等于样式里没有标题栏位：SDL3 在
+    // Win32 上建完窗口之后，`GetWindowLong(GWL_STYLE)` 里 `WS_CAPTION` /
+    // `WS_THICKFRAME` 仍然在（实测 0x96CF0000），于是 DWM 沿着窗口画出一圈边
+    // ——表现就是"透明了，但角色旁边还有一道框"。显式调一次
+    // `SDL_SetWindowBordered(false)` 才是干净的样式。
+    if (_borderless) {
+        if (!SDL_SetWindowBordered(s.window, false)) {
+            INK_LOG_WARN(kModuleName,
+                         std::string("建窗后清标题栏失败：") + SDL_GetError());
+        }
+        // 再往下是 DWM 那一层：Win11 的 1px 边框与圆角**不是** Win32 样式，
+        // 清了样式也还在（见 `RequestNoDwmFrame` 的注释）。
+        RequestNoDwmFrame(s.window);
     }
 
     // 窗口位置取回来：自绘标题栏的拖动是"在当前坐标上累加"，起点必须是真的

@@ -1,5 +1,7 @@
 #include <asset/InkingAsset.h>
 
+#include <util/InkingJson.h>
+
 #include <detail/InkLog.h>
 
 #include <cstdio>
@@ -334,8 +336,43 @@ std::string AssetLoadText(const std::string& relative) {
     return std::string(bytes.begin(), bytes.end());
 }
 
-bool AssetIsObfuscated(const std::uint8_t* data, std::size_t size) noexcept {
-    if (data == nullptr || size < kHeaderSize) {
+// ---------------------------------------------------------------------------
+// `inking::json::ParseAsset`：读资源根里的 json 再解析（0.6.5 T-15）
+// ---------------------------------------------------------------------------
+//
+// **为什么定义在资产层而不是 `src/util/InkingJson.cpp`**：那份 util 源也被生成器
+// 编一份（`cmake/inkgen.cmake`，工具不链接 DLL），而生成器**不该**为了一个它不调的
+// 包装函数去拖资产层（那里有 SDL 的文件 IO）。放这里，边界就干净：
+// `util/` 只认字符串，谁要"从资源根读"谁自己承担资产层。
+
+// 注意：这里已经在 `namespace inking` 里面，所以写 `namespace json {` 就是
+// `inking::json`。写成 `namespace inking::json` 会变成 inking::inking::json
+// （GCC 不报错，只在用到名字时才暴露——第一次就是这么红的）。
+namespace json {
+
+Result ParseAsset(const std::string& relative) {
+    Result result;
+    const std::string text = AssetLoadText(relative);
+    if (text.empty()) {
+        // 读不到与"文件是空的"在这里分不开（`AssetLoadText` 两种都返回空串），
+        // 所以文案把两种可能都说出来——猜一个反而误导。
+        result.ok = false;
+        result.error = "读不到资源或文件是空的：" + relative + "（资源根 "
+                       + AssetRoot() + "）";
+        return result;
+    }
+
+    result = Parse(text);
+    if (!result.ok) {
+        // 与工具的 `LoadJsonFile` 同一条规矩：错误里已有行列号，只补来源前缀。
+        result.error = relative + "：" + result.error;
+    }
+    return result;
+}
+
+}  // namespace json
+
+bool AssetIsObfuscated(const std::uint8_t* data, std::size_t size) noexcept {    if (data == nullptr || size < kHeaderSize) {
         return false;
     }
     return std::memcmp(data, kMagic, sizeof(kMagic)) == 0;

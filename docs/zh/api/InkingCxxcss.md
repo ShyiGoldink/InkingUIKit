@@ -60,7 +60,7 @@ public:
 | `Button/` | 一个按钮类 | `InkingStaticButton`（默认）/ `InkingDynamicButton`（`"dynamic": true`） | **有** |
 | `Panel/` | 一个面板类 | `InkingStaticPanel` | 无 |
 | `Label/` | 一个标签类 | `InkingStaticLabel` | 无 |
-| `Image/` | 一个图片类 | `InkingStaticImage` | 无 |
+| `Image/` | 一个图片类 | `InkingStaticImage`；配了 `frames` / `sheet` 则是 `InkingSprite`（0.6.1） | 无 |
 | `Text/` | **语言表静态数据 + 安装函数**（不是类） | — | — |
 | `Theme/` | **什么都不生成**（它是生成器的输入） | — | — |
 
@@ -72,7 +72,7 @@ public:
 > `Theme` 是**生成器的输入**、不是组件——组件配置里写 `"$token"`，主题在**生成期**
 > 就被换成具体颜色，所以**换主题要重新生成**，运行期改不了。
 
-本项目当前的生成结果（`CXXCSS/` 16 个 json，去掉 3 个 `.example.json`）：
+本项目当前的生成结果（`CXXCSS/` 20 个 json，去掉 3 个 `.example.json` 后 17 份生效）：
 
 | 类 | 来自 | 类型 |
 | --- | --- | --- |
@@ -80,6 +80,8 @@ public:
 | `ClipWindow` / `ColumnPanel` / `DrawerPanel` / `LabelBoard` / `ScrollPanel` | `Panel/*.json` | 静态面板 |
 | `EllipsisNote` / `HintBody` / `LangBadge` / `MenuTitle` | `Label/*.json` | 静态标签 |
 | `CardArt` | `Image/cardArt.json` | 静态图片 |
+| `Design` | `Image/design.json` | 静态图片（整张 SVG 设计稿，`hitPassThrough`） |
+| `Walker` | `Image/walker.json` | **帧动画**（图集 4×1，8fps） |
 | （语言表） | `Text/ui.json` | 2 门语言 / 4 条占位符 |
 | （不生成） | `Theme/lavender.json` | 主题输入（现代浅紫） |
 
@@ -190,5 +192,5 @@ CMake 侧不用手写这些参数：`ink_add_generated(<目标> OUT_DIR ... SOUR
 
 ---
 
-> 本文档对应版本：**0.5.3（0.x 发布版）**。配置字段的权威说明在
+> 本文档对应版本：**0.6.6（0.x 发布版）**。配置字段的权威说明在
 > [`CXXCSS/CXXCSS.md`](../../../CXXCSS/CXXCSS.md)。

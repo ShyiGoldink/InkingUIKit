@@ -27,6 +27,19 @@ std::string Float(double value) {
     return buffer;
 }
 
+/**
+ * `double` 字面量（**不带 `f` 后缀**）。`fps` 与 `startOffsetSeconds` 是 double：
+ * 用 `Float()` 那个 `%.6f` 会把时间截断到微秒、还多一个 `f` 后缀（编译能过，
+ * 只是值变了一点——典型的"看起来对"）。
+ *
+ * 用 `%.17g`（double 的 `max_digits10`）保证"生成 → 读回"逐位无损。
+ */
+std::string Double(double value) {
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.17g", value);
+    return buffer;
+}
+
 /// 布局字段（A6）的赋值块。定义在下面——这里先声明一次，
 /// `ButtonBody` 与 `PanelBody` 都能用（它们在定义之前）。
 std::string LayoutAssignments(const inking::LayoutSpec& spec,
@@ -56,6 +69,21 @@ std::string Quote(const std::string& text) {
     }
     out += "\"";
     return out;
+}
+
+/**
+ * 序列帧每帧字节的数组名（0.6.1 T-06）。
+ *
+ * 与 `ImageArrayName` 同一套命名规则（标识符非法就按下标命名）：帧不属于任何
+ * "状态"，所以带的是帧号而不是 normal / hover / onclicked。
+ */
+std::string SpriteFrameArrayName(const ButtonConfig& button, std::size_t index,
+                                 std::size_t frame) {
+    if (button.identifier.empty()) {
+        return "kImage" + std::to_string(index) + "Frame"
+            + std::to_string(frame);
+    }
+    return "k" + button.identifier + "Frame" + std::to_string(frame);
 }
 
 /// 图像字节数组的名字。标识符非法（生成不出类）时退回按下标命名。
@@ -298,6 +326,100 @@ std::string ShapeAssignment(const inking::ShapeSpec& shape,
         default:
             out << indent << target << " = inking::ShapeSpec::Rect();\n";
             break;
+    }
+    return out.str();
+}
+
+/**
+ * `SpriteData` 的**帧表 / 图集 / 播放参数**（0.6.1 T-06）。
+ *
+ * `ButtonBody` 已经把基础字段烘好了（`SpriteData` 派生自 `ImageData`，那部分
+ * 逐字相同：`normal` 的外观与字节、形状、锚点、`runtime`、`hitPassThrough`）。
+ * 这里只补这一层独有的三样东西，**不重抄基础字段**——重抄一遍就等着走偏。
+ *
+ * 默认值一律不写（fps 12 / loop / autoplay / 第 0 帧 / 相位 0）：生成物短一点，
+ * 也让"改过什么"在产物里一眼看得出来。
+ */
+std::string SpriteBody(const ImageConfig& image, std::size_t imageIndex) {
+    const inking::SpriteData& sprite = image.sprite;
+    std::ostringstream out;
+
+    if (!sprite.frames.empty()) {
+        out << "    data.frames.resize(" << sprite.frames.size() << ");\n";
+        for (std::size_t i = 0; i < sprite.frames.size(); ++i) {
+            const inking::ButtonAppearance& frame = sprite.frames[i];
+            const std::string array =
+                SpriteFrameArrayName(image.button, imageIndex, i);
+            const bool hasBytes = i < image.spriteFrameBytes.size()
+                && !image.spriteFrameBytes[i].empty();
+            out << "    data.frames[" << i
+                << "].type = inking::AppearanceType::Image;\n";
+            if (!frame.source.empty()) {
+                out << "    data.frames[" << i << "].source = "
+                    << Quote(frame.source) << ";\n";
+            }
+            if (hasBytes) {
+                out << "    data.frames[" << i << "].imageBytes = " << array
+                    << ";\n";
+                out << "    data.frames[" << i << "].imageSize = sizeof("
+                    << array << ");\n";
+            }
+            if (frame.imageFit != inking::ImageFit::Fill) {
+                out << "    data.frames[" << i
+                    << "].imageFit = inking::ImageFit::"
+                    << (frame.imageFit == inking::ImageFit::Contain ? "Contain"
+                                                                   : "Cover")
+                    << ";\n";
+            }
+        }
+    } else {
+        const inking::SpriteData::SpriteSheet& sheet = sprite.sheet;
+        if (!sheet.source.empty()) {
+            out << "    data.sheet.source = " << Quote(sheet.source) << ";\n";
+        }
+        out << "    data.sheet.frameWidth = " << sheet.frameWidth << ";\n";
+        out << "    data.sheet.frameHeight = " << sheet.frameHeight << ";\n";
+        out << "    data.sheet.columns = " << sheet.columns << ";\n";
+        out << "    data.sheet.rows = " << sheet.rows << ";\n";
+        // count 不写就是 rows × columns（运行期 `Normalize()` 补）；只有显式写小了
+        // （末尾几格是空的）才需要烘出来。
+        if (sheet.count > 0 && sheet.count != sheet.columns * sheet.rows) {
+            out << "    data.sheet.count = " << sheet.count << ";\n";
+        }
+        // 起始格（0.6.4 T-11）：默认 0 不烘——既有配置的产物因此一个字节都不动。
+        if (sheet.firstFrame != 0) {
+            out << "    data.sheet.firstFrame = " << sheet.firstFrame << ";\n";
+        }
+        if (sheet.margin != 0) {
+            out << "    data.sheet.margin = " << sheet.margin << ";\n";
+        }
+        if (sheet.spacing != 0) {
+            out << "    data.sheet.spacing = " << sheet.spacing << ";\n";
+        }
+    }
+
+    // 帧事件：一帧可以挂多个，顺序按配置原样烘（运行期按帧号升序扫，
+    // 同帧内保持这个顺序）。
+    for (const inking::SpriteData::SpriteEvent& event : sprite.events) {
+        out << "    data.events.push_back(inking::SpriteData::SpriteEvent{"
+            << event.frame << ", " << Quote(event.name) << "});\n";
+    }
+
+    if (sprite.fps != 12.0) {
+        out << "    data.fps = " << Double(sprite.fps) << ";\n";
+    }
+    if (!sprite.loop) {
+        out << "    data.loop = false;\n";
+    }
+    if (!sprite.autoplay) {
+        out << "    data.autoplay = false;\n";
+    }
+    if (sprite.startFrame != 0) {
+        out << "    data.startFrame = " << sprite.startFrame << ";\n";
+    }
+    if (sprite.startOffsetSeconds != 0.0) {
+        out << "    data.startOffsetSeconds = "
+            << Double(sprite.startOffsetSeconds) << ";\n";
     }
     return out.str();
 }
@@ -911,6 +1033,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
     const std::vector<PanelConfig>& panels = loaded.panels;
     const std::vector<LabelConfig>& labels = loaded.labels;
     const std::vector<ImageConfig>& images = loaded.images;
+    const std::vector<AtlasConfig>& atlases = loaded.atlases;
     const std::vector<TextConfig>& textTables = loaded.textTables;
     const std::vector<std::string> parts = SplitNamespace(options.nameSpace);
     std::ostringstream out;
@@ -919,6 +1042,9 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
     out << "// 来源：CXXCSS/<组件类型>/*.json（本次 " << buttons.size()
         << " 个按钮 + " << panels.size() << " 个面板 + " << labels.size()
         << " 个标签 + " << textTables.size() << " 张语言表";
+    if (!atlases.empty()) {
+        out << " + " << atlases.size() << " 份图集描述";
+    }
     if (!loaded.configs.empty()) {
         out << " + 1 份全局配置";
     }
@@ -947,9 +1073,22 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "#include <text/InkingStaticLabel.h>\n";
         out << "#include <text/LabelData.h>\n";
     }
+    if (!atlases.empty()) {
+        out << "#include <image/InkingAtlas.h>\n";
+    }
     if (!images.empty()) {
         out << "#include <image/ImageData.h>\n";
         out << "#include <image/InkingStaticImage.h>\n";
+        // 帧动画那份只在这一批真有 sprite 配置时 include：没有动画的项目
+        // 不必多拖一个头。（0.6.1 T-06）
+        bool anySprite = false;
+        for (const ImageConfig& image : images) {
+            anySprite = anySprite || image.isSprite;
+        }
+        if (anySprite) {
+            out << "#include <image/InkingSprite.h>\n";
+            out << "#include <image/SpriteData.h>\n";
+        }
     }
     if (!textTables.empty()) {
         out << "#include <text/InkingTextTable.h>\n";
@@ -1194,16 +1333,23 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
 
     for (const ImageConfig& image : images) {
         out << "\n/// " << image.name << "（来自 " << PathToUtf8(image.filePath)
-            << "，静态图片" << ExtendsNote(image.extendsFrom) << "）\n";
+            << (image.isSprite ? "，帧动画" : "，静态图片")
+            << ExtendsNote(image.extendsFrom) << "）\n";
         out << "class " << image.identifier
-            << " : public inking::InkingStaticImage {\n";
+            << " : public "
+            << (image.isSprite ? "inking::InkingSprite"
+                              : "inking::InkingStaticImage")
+            << " {\n";
         out << "public:\n";
         out << "    /// 查找键（= json 的 name 字段）。\n";
         out << "    static constexpr const char* kName = " << Quote(image.name)
             << ";\n\n";
         out << "    explicit " << image.identifier
             << "(inking::InkingWidget* parent)\n";
-        out << "        : inking::InkingStaticImage(parent, Data()) {}\n\n";
+        out << "        : "
+            << (image.isSprite ? "inking::InkingSprite"
+                              : "inking::InkingStaticImage")
+            << "(parent, Data()) {}\n\n";
         out << "    /**\n";
         out << "     * 这份配置。值全是字面量（或一个 assets 相对路径），烘在构建产物里。\n";
         out << "     *\n";
@@ -1211,7 +1357,9 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "     * 运行期的 `inking::AssetLoad` 从资源根读（换图不用重编，exe 也不随\n";
         out << "     * 图片数量膨胀）。\n";
         out << "     */\n";
-        out << "    static const inking::ImageData& Data();\n";
+        out << "    static const inking::"
+            << (image.isSprite ? "SpriteData" : "ImageData")
+            << "& Data();\n";
         out << "};\n";
     }
 
@@ -1262,6 +1410,34 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "void InstallGeneratedThemes();\n";
     }
 
+    if (!atlases.empty()) {
+        out << "\n// ---------------------------------------------------------------------------\n";
+        out << "// 图集描述（Atlas）：一张图里的多个具名动画\n";
+        out << "//\n";
+        out << "// 它不是组件：产物里没有类，只有一个 `inking::AtlasData`。用法是把它转成某个\n";
+        out << "// `InkingSprite` 的配置——**同一份图集可以被多个 sprite 共用**（字节只有一份、\n";
+        out << "// 纹理只有一张）：\n";
+        out << "//\n";
+        out << "//     const inking::AtlasData& atlas = AtlasSlime();\n";
+        out << "//     const inking::SpriteData walkData = inking::MakeSpriteData(\n";
+        out << "//         atlas, atlas.FindIndex(\"walk\"), bytes, size);\n";
+        out << "//     auto* sprite = scene.AddChild(\n";
+        out << "//         std::make_unique<inking::InkingSprite>(&scene, walkData));\n";
+        out << "// ---------------------------------------------------------------------------\n";
+        for (const AtlasConfig& atlas : atlases) {
+            out << "\n/// 图集 \"" << atlas.name << "\"（" << atlas.data.animations.size()
+                << " 个动画：";
+            for (std::size_t i = 0; i < atlas.data.animations.size(); ++i) {
+                out << (i == 0 ? "" : " / ") << atlas.data.animations[i].name;
+            }
+            out << "）。\n";
+            out << "const inking::AtlasData& " << atlas.identifier << "();\n";
+        }
+        out << "\n/// 本次生成里有多少份图集描述。\n";
+        out << "inline constexpr std::size_t kAtlasCount = " << atlases.size()
+            << ";\n";
+    }
+
     out << "\n/// 本次生成里有多少个按钮。\n";
     out << "inline constexpr std::size_t kButtonCount = " << buttons.size()
         << ";\n";
@@ -1290,6 +1466,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
     const std::vector<PanelConfig>& panels = loaded.panels;
     const std::vector<LabelConfig>& labels = loaded.labels;
     const std::vector<ImageConfig>& images = loaded.images;
+    const std::vector<AtlasConfig>& atlases = loaded.atlases;
     const std::vector<TextConfig>& textTables = loaded.textTables;
     const std::vector<ThemeConfig>& themes = loaded.themes;
     const std::vector<std::string> parts = SplitNamespace(options.nameSpace);
@@ -1403,9 +1580,41 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
         }
         for (std::size_t i = 0; i < images.size(); ++i) {
             const ImageConfig& image = images[i];
+            // 序列帧每帧的字节：与"按钮三态的字节"同一种烘法，只是数组名带帧号。
+            for (std::size_t frame = 0; frame < image.spriteFrameBytes.size();
+                 ++frame) {
+                const std::vector<std::uint8_t>& bytes =
+                    image.spriteFrameBytes[frame];
+                if (bytes.empty()) {
+                    continue;
+                }
+                out << "/// " << image.name << " 第 " << frame << " 帧字节（"
+                    << bytes.size() << " 字节）\n";
+                out << "const unsigned char "
+                    << SpriteFrameArrayName(image.button, i + buttons.size(),
+                                            frame)
+                    << "[] = {\n";
+                for (std::size_t at = 0; at < bytes.size(); ++at) {
+                    if (at % 16 == 0) {
+                        out << "    ";
+                    }
+                    out << "0x" << std::hex << std::setw(2)
+                        << std::setfill('0')
+                        << static_cast<unsigned>(bytes[at]) << std::dec;
+                    if (at + 1 < bytes.size()) {
+                        out << ", ";
+                    }
+                    if (at % 16 == 15 || at + 1 == bytes.size()) {
+                        out << "\n";
+                    }
+                }
+                out << "};\n\n";
+            }
             out << "/// " << image.name << "（来自 " << PathToUtf8(image.filePath)
                 << ExtendsNote(image.extendsFrom) << "）\n";
-            out << "inking::ImageData BuildImage" << i << "() {\n";
+            out << "inking::"
+                << (image.isSprite ? "SpriteData" : "ImageData")
+                << " BuildImage" << i << "() {\n";
             // 逐字复用按钮那套烘法（`ImageData` 派生自 `ButtonData`）：只把
             // 类型名换掉、末尾补 `runtimeAsset`（0.5.1 起还有 `hitPassThrough`）。
             std::string tail = std::string("    data.runtimeAsset = ")
@@ -1413,8 +1622,16 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
             if (image.hitPassThrough) {
                 tail += "    data.hitPassThrough = true;\n";
             }
+            // 帧表 / 图集 / 播放参数**必须进 `tail`**：`ButtonBody` 最后一行是
+            // `return data;`，追在调用之后写就成了**永远跑不到的死代码**
+            // （编译期不报错，只是帧表悄悄是空的——T-06 踩过一次）。
+            if (image.isSprite) {
+                tail += SpriteBody(image, i + buttons.size());
+            }
             out << ButtonBody(image.button, "    ", i + buttons.size(),
-                              "inking::ImageData", tail);
+                              image.isSprite ? "inking::SpriteData"
+                                             : "inking::ImageData",
+                              tail);
             out << "}\n\n";
         }
         for (std::size_t i = 0; i < panels.size(); ++i) {
@@ -1487,10 +1704,12 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
     // 每个图片类：同样只有 Data()（图片也没有按名字查的库）。
     for (std::size_t i = 0; i < images.size(); ++i) {
         const ImageConfig& image = images[i];
-        out << "\nconst inking::ImageData& " << image.identifier
-            << "::Data() {\n";
-        out << "    static const inking::ImageData data = BuildImage" << i
-            << "();\n";
+        out << "\nconst inking::"
+            << (image.isSprite ? "SpriteData" : "ImageData") << "& "
+            << image.identifier << "::Data() {\n";
+        out << "    static const inking::"
+            << (image.isSprite ? "SpriteData" : "ImageData") << " data = "
+            << "BuildImage" << i << "();\n";
         out << "    return data;\n";
         out << "}\n";
     }
@@ -1550,6 +1769,46 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
         }
         out << "    inking::SetActiveTheme(" << Quote(themes.front().name)
             << ");\n";
+        out << "}\n";
+    }
+
+    // 图集描述：一个访问函数一份静态量（0.6.5 T-17）。
+    //
+    // 为什么是"函数内静态量"而不是命名空间级的 `const AtlasData kXxx`：
+    // ① 它带 vector/string，构造是**动态初始化**，命名空间级会撞静态初始化顺序；
+    // ② 写在头文件里要么每个 TU 一份（ODR），要么得 `inline`，两种都不如
+    //    "谁先要谁把它拉起来"干净——这也是本库到处用的那套（`AGENTS.md` §2 第 1 条）。
+    for (const AtlasConfig& atlas : atlases) {
+        out << "\nconst inking::AtlasData& " << atlas.identifier << "() {\n";
+        out << "    static const inking::AtlasData data = [] {\n";
+        out << "        inking::AtlasData built;\n";
+        out << "        built.name = " << Quote(atlas.name) << ";\n";
+        for (const inking::AtlasAnimation& animation : atlas.data.animations) {
+            out << "        {\n";
+            out << "            inking::AtlasAnimation animation;\n";
+            out << "            animation.name = " << Quote(animation.name) << ";\n";
+            out << "            animation.source = " << Quote(animation.source) << ";\n";
+            out << "            animation.fps = " << Double(animation.fps) << ";\n";
+            if (!animation.loop) {
+                out << "            animation.loop = false;\n";
+            }
+            for (const inking::ShapeBounds& frame : animation.frames) {
+                out << "            animation.frames.push_back(inking::ShapeBounds{"
+                    << Float(frame.x) << ", " << Float(frame.y) << ", "
+                    << Float(frame.width) << ", " << Float(frame.height)
+                    << "});\n";
+            }
+            for (const inking::SpriteData::SpriteEvent& event : animation.events) {
+                out << "            animation.events.push_back("
+                       "inking::SpriteData::SpriteEvent{"
+                    << event.frame << ", " << Quote(event.name) << "});\n";
+            }
+            out << "            built.animations.push_back(std::move(animation));\n";
+            out << "        }\n";
+        }
+        out << "        return built;\n";
+        out << "    }();\n";
+        out << "    return data;\n";
         out << "}\n";
     }
 

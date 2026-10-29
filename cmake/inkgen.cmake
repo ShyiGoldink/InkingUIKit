@@ -1,10 +1,15 @@
 # inkgen：CXXCSS 配置 → C++ 代码（构建期工具 + 生成规则的自检）。
 # 只依赖标准库，不碰 SDL。
 
+# `src/util/InkingJson.cpp` 是**同一份源码**再编一次（0.6.5 T-15）：工具不链接
+# `libinking.dll`，而解析器两边都得有；多一份的目标码约 10KB，换来"生成期与运行期
+# 用同一份实现"。**别改成让工具链 DLL**——那会把运行期库拖进构建期工具。
 add_library(inkgen_lib STATIC
     tools/inkgen/Json.cpp
     tools/inkgen/Cxxcss.cpp
-    tools/inkgen/Emit.cpp)
+    tools/inkgen/Emit.cpp
+    src/util/InkingJson.cpp
+    src/image/InkingAtlas.cpp)
 
 # 公开 include 目录给自检用：自检要直接调这张库，而不是 fork 一个进程。
 target_include_directories(inkgen_lib PUBLIC

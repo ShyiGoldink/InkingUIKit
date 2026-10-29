@@ -121,6 +121,24 @@ void AppendTexturedGeometry(SDL_Texture* texture, const SDL_Vertex* vertices,
 void ApplyAncestorAffineToVertices(SDL_Vertex* vertices, std::size_t vertexCount,
                                    float pixelX, float pixelY) noexcept;
 
+/**
+ * @brief 矩形 + `Fill` 的图片**是否并进几何批**（0.6.2 T-08，默认开）。
+ *
+ * 0.2.0 时代那条 `SDL_RenderTexture` 快路是为了绕开"几何批不吃纹理 alpha"的坑；
+ * 0.6.2 的探针（`build/probe_batch.cpp`）在 SDL 3.4.16 的 **software 与
+ * direct3d11** 两个后端上实测：几何批的透明区 / 50% 半透明 / 放大采样与单笔
+ * **逐位相同**。所以默认合并——同纹理连续 N 笔 = **一次** `SDL_RenderGeometry`。
+ *
+ * 关掉它是**回退预案**，同时也是那条快路的"像素基准"：关掉时行为与 0.6.1
+ * 完全一致（含它的既有缺陷：快路不看 `transform`，见 T-07 记录）。
+ *
+ * 只有 `rect + Fill` 这一种形态受影响；圆角 / `contain` / `cover` 本来就批次里。
+ */
+void SetImageBatchingEnabled(bool enabled) noexcept;
+
+/// 现在是不是把矩形图片并进批次（见上）。
+bool ImageBatchingEnabled() noexcept;
+
 /// 记一次**绕开批次的直接绘制**（纹理、占位方块、将来自定义的绘制……）：
 /// 它会先把几何批刷出去，顺序因此永远正确。
 ///

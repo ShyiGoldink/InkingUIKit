@@ -13,6 +13,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #if defined(INK_HAS_SDL3_TTF)
@@ -47,12 +48,28 @@ struct TextureEntry {
     /// 建出来的纹理拿不到格式属性（返回 UNKNOWN，于是"有 alpha"被误判成"没有"，
     /// 矩形图片又走回几何批那条路，透明区重新变黑）。
     bool hasAlpha = false;
+    /**
+     * 这张纹理是**图片**还是**字形**（0.6.4 T-12）。
+     *
+     * 文字与图片共用一张纹理表，而采样模式开关只该作用于图片：不区分的话，
+     * 像素项目一开 `Nearest`，所有文字都跟着变成带锯齿的（画面上只表现为
+     * "字好像糙了一点"，没人会想到是图片开关干的）。
+     */
+    bool isImage = false;
 };
 
 /// 这一层的全部状态：函数内静态量，避开静态初始化顺序问题；UI 线程使用，不加锁。
 struct TextLayer {
     SDL_Renderer* renderer = nullptr;  ///< 纹理表里的纹理属于它
     std::unordered_map<std::string, TextureEntry> textures;
+
+    /**
+     * 图片的**固有尺寸**缓存（`ProbeImageSize`，0.6.1 T-05）。
+     *
+     * 与 `textures` 有意分开：这里的值是纯 CPU 数据、不属于任何渲染器，
+     * 所以 `ReleaseTextCache()` **不清它**（换了渲染器，图还是那么大）。
+     */
+    std::unordered_map<std::string, std::pair<int, int>> imageSizes;
     std::unordered_map<std::string, void*> fonts;  ///< 键 = 路径 + 字号
     /**
      * 字体链签名 → 实际命中的那条路径（`""` = 整条链全失败）。
@@ -109,6 +126,24 @@ struct TextLayer {
 TextLayer& layer() {
     static TextLayer instance;
     return instance;
+}
+
+/**
+ * 图片采样模式的**进程唯一槽位**（0.6.4 T-12）。
+ *
+ * 必须是 `.cpp` 里的函数内静态量（`AGENTS.md` §2 第 1 条）：写成头内 inline
+ * 静态量时 DLL 与 exe 各持一份 ⇒ "库侧切换、宿主侧读"会静默不一致，
+ * 而画面上只表现为"开关时灵时不灵"。
+ */
+detail::ImageSampling& SamplingSlot() {
+    static detail::ImageSampling mode = detail::ImageSampling::Linear;
+    return mode;
+}
+
+/// 采样模式 → SDL 的枚举（只有两档，别在别处再写一份三元表达式）。
+SDL_ScaleMode ScaleModeOf(detail::ImageSampling mode) {
+    return mode == detail::ImageSampling::Nearest ? SDL_SCALEMODE_NEAREST
+                                                  : SDL_SCALEMODE_LINEAR;
 }
 
 /// UTF-8 码点数（数"非续字节"就够——只用来估算退化画法的宽度）。
@@ -528,11 +563,16 @@ void DrawTextureTransformed(SDL_Renderer* renderer, SDL_Texture* texture,
 }
 
 /// 把一张 surface 变成纹理并记进表里（文字与图片共用）。失败返回 nullptr。
+///
+/// @param isImage 这张纹理是图片吗（0.6.4 T-12）。决定两件事：建纹理时按当前
+///        采样模式设（图片）/ 恒 `LINEAR`（字形），以及
+///        `SetImageSampling` 切换时要不要重设它。
 TextureEntry* InsertTexture(SDL_Renderer* renderer, const std::string& key,
-                            SDL_Surface* surface) {
+                            SDL_Surface* surface, bool isImage) {
     TextureEntry entry;
     entry.width = static_cast<float>(surface->w);
     entry.height = static_cast<float>(surface->h);
+    entry.isImage = isImage;
     const SDL_PixelFormatDetails* surfaceDetails =
         SDL_GetPixelFormatDetails(surface->format);
     entry.hasAlpha =
@@ -542,7 +582,10 @@ TextureEntry* InsertTexture(SDL_Renderer* renderer, const std::string& key,
         return nullptr;
     }
     SDL_SetTextureBlendMode(entry.texture, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(entry.texture, SDL_SCALEMODE_LINEAR);
+    // **在入表之前设完**：读者不必担心"表里有一张还没设过采样模式的纹理"。
+    SDL_SetTextureScaleMode(
+        entry.texture,
+        isImage ? ScaleModeOf(SamplingSlot()) : SDL_SCALEMODE_LINEAR);
 
     TextLayer& state = layer();
     ++state.texturesCreated;
@@ -576,7 +619,7 @@ TextureEntry* AcquireTexture(SDL_Renderer* renderer, const TextRequest& request,
     if (surface == nullptr) {
         return nullptr;
     }
-    TextureEntry* entry = InsertTexture(renderer, key, surface);
+    TextureEntry* entry = InsertTexture(renderer, key, surface, false);
     SDL_DestroySurface(surface);
     return entry;
 }
@@ -769,7 +812,8 @@ TextureEntry* AcquireImageTexture(SDL_Renderer* renderer,
 
         // 矢量稿不做 `BleedTransparentEdges`：抗锯齿边缘通常不是 RGB=0，
         // 而两轮全表面 3×3 遍历对 3200×1800 比光栅化本身还贵（先量再改）。
-        TextureEntry* entry = InsertTexture(renderer, key, raster.surface);
+        TextureEntry* entry =
+            InsertTexture(renderer, key, raster.surface, true);
         SDL_DestroySurface(raster.surface);
         if (entry == nullptr) {
             return nullptr;
@@ -795,7 +839,7 @@ TextureEntry* AcquireImageTexture(SDL_Renderer* renderer,
     // 把"贴着不透明区域的那圈透明像素"的颜色渗出去，免得硬件采样时描出黑边。
     SDL_Surface* bled = BleedTransparentEdges(surface);
     TextureEntry* entry = InsertTexture(
-        renderer, key, bled != nullptr ? bled : surface);
+        renderer, key, bled != nullptr ? bled : surface, true);
     if (bled != nullptr) {
         SDL_DestroySurface(bled);
     }
@@ -850,6 +894,21 @@ TextMetrics MeasureText(const TextRequest& request) {
 }
 
 namespace detail {
+
+void SetImageSampling(ImageSampling mode) noexcept {
+    SamplingSlot() = mode;
+    const SDL_ScaleMode scale = ScaleModeOf(mode);
+    for (auto& pair : layer().textures) {
+        TextureEntry& entry = pair.second;
+        // 只碰图片：字形纹理跟着改会变成带锯齿的字，而画面上只表现为"字糙了"。
+        if (!entry.isImage || entry.texture == nullptr) {
+            continue;
+        }
+        SDL_SetTextureScaleMode(entry.texture, scale);
+    }
+}
+
+ImageSampling GetImageSampling() noexcept { return SamplingSlot(); }
 
 TextCacheStats TextCacheStatsSnapshot() noexcept {
     const TextLayer& state = layer();
@@ -1211,7 +1270,7 @@ bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
                 const ShapeSpec& shape, int width, int height,
                 float magnification, float pixelX, float pixelY,
                 const TransformSpec& transform, ImageFit fit,
-                std::uint32_t tintColor) {
+                std::uint32_t tintColor, const ShapeBounds& srcRect) {
     if (renderer == nullptr || image.Empty() || width <= 0 || height <= 0) {
         return false;
     }
@@ -1255,6 +1314,9 @@ bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
     spec.frameHeight = static_cast<float>(height) * mag;
     spec.imageWidth = textureWidth;
     spec.imageHeight = textureHeight;
+    // 图集那一刀（0.6.1 T-04）：**缩放比例仍按整张纹理算**，`srcRect` 只说取哪块。
+    // SVG 那条路不切格（纹理是按组件框光栅化的，切开没有意义），所以全零照旧。
+    spec.srcRect = srcRect;
 
     // 真绘制交给形状层：**同一份形状网格**（轮廓 + 羽化）带上 UV 与纹理，
     // 于是"按形状裁剪"这件事不需要纹理层再实现一遍。
@@ -1264,8 +1326,54 @@ bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
     return true;
 }
 
-void ReleaseTextCache() noexcept {
-    TextLayer& state = layer();
+bool ProbeImageSize(const ImageBytes& image, int* width, int* height) {
+    if (width != nullptr) {
+        *width = 0;
+    }
+    if (height != nullptr) {
+        *height = 0;
+    }
+    if (image.Empty()) {
+        return false;
+    }
+
+    // 缓存键与纹理表同一套口径（名字 + 字节数）：同一张图集被 N 个 sprite 引用时
+    // 只解一次。"构造期量尺寸"这笔账只有在**每张图一次**的时候才划算。
+    const std::string key =
+        "size|" + image.name + "|" + std::to_string(image.size);
+    const auto found = layer().imageSizes.find(key);
+    if (found != layer().imageSizes.end()) {
+        if (width != nullptr) {
+            *width = found->second.first;
+        }
+        if (height != nullptr) {
+            *height = found->second.second;
+        }
+        return true;
+    }
+
+    SDL_Surface* surface = DecodeImageRaw(image);
+    if (surface == nullptr) {
+        return false;  // 没接 SDL3_image / 字节坏了 / 是 SVG：调用方跳过校验
+    }
+    const int surfaceWidth = surface->w;
+    const int surfaceHeight = surface->h;
+    SDL_DestroySurface(surface);
+    if (surfaceWidth <= 0 || surfaceHeight <= 0) {
+        return false;
+    }
+
+    layer().imageSizes.emplace(key, std::make_pair(surfaceWidth, surfaceHeight));
+    if (width != nullptr) {
+        *width = surfaceWidth;
+    }
+    if (height != nullptr) {
+        *height = surfaceHeight;
+    }
+    return true;
+}
+
+void ReleaseTextCache() noexcept {    TextLayer& state = layer();
     // 图集与字形表也是"属于渲染器"的东西：**先**放掉（§6 第 46 条）。
     ReleaseGlyphAtlas();
     for (auto& item : state.textures) {

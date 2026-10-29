@@ -150,7 +150,22 @@ protected:
     /// 按形状画这一笔（颜色 / 图片 + 描边阴影）。**不画文字**——那是 Label 的事。
     void onRender(float pixelX, float pixelY) const override;
 
-    /// 抬手时收尾这次拖动交互（拖动捕获由框架保证：按下即捕获、抬起 / 失焦释放）。
+    /**
+     * @brief 换"这一笔画纹理的哪一块"（图集切格，0.6.1 T-04）。
+     *
+     * 全零 = 整张图（默认，等于 0.6.1 之前的行为）。派生类（`InkingSprite` 的
+     * 图集模式）**只需要这一个入口**：`_renderAppearance` 是 private 段的东西，
+     * 派生类直接改它就是绕过不变量（`InkingSprite.h` 开头那条 0.6.1 之前的
+     * 判断错误，正是"以为派生类能换外观"）。
+     *
+     * 它会标**重绘脏**、**不**标命中脏：切格只换取哪块，几何一个字节都不动。
+     * 这条性质是图集换帧能待在静态档的前提。
+     */
+    void SetRenderSourceRect(const ShapeBounds& srcRect);
+
+    /// 当前生效的源矩形（全零 = 整张图）。
+    const ShapeBounds& GetRenderSourceRect() const noexcept;
+
     /// 按下 / 抬起。**只认主键**：图片的拖动 / 缩放是主键手势，
     /// 右键不该把正在进行的拖动收尾（0.5.0）。
     void onPointerPress(PointerButton button, bool press) override;
@@ -189,6 +204,11 @@ private:
     /// 绘制用外观：`normal` 的副本，必要时把 `imageBytes/imageSize` 指到
     /// `_assetBytes` 上（**不能**指向 `_data.normal`，那是另一份存储）。
     ButtonAppearance _renderAppearance{};
+
+    /// 生效的源矩形（0.6.1 T-04）。**单独存一份**而不是只写进 `_renderAppearance`：
+    /// `refreshRenderAppearance()` 每次都会整份重拷 `normal`，只写在副本上的话，
+    /// 换一次图（`SetImageBytes`）就会把切格信息静默冲掉。
+    ShapeBounds _renderSourceRect{};
 
     std::string _imageName;
     int _assetLoadCount = 0;

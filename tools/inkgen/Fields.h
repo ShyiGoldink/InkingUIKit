@@ -54,11 +54,65 @@ inline constexpr const char* const kKnownLabelFields[] = {
 };
 
 /// Image 顶层字段（`CXXCSS.md` §3.10）。
+///
+/// 末尾七个是**帧动画**（sprite，0.6.1 T-06）：配了 `frames` 或 `sheet` 就是帧动画，
+/// 生成出来的是 `inking::SpriteData` + `InkingSprite` 类；否则仍是静态图片。
+/// 它们与其他字段**同在一个白名单**里，是因为 sprite 就是"会换帧的图片"——
+/// 形状 / 锚点 / 命中 / `runtime` / `hitPassThrough` 全部照旧，另开一套只会分裂。
 inline constexpr const char* const kKnownImageFields[] = {
     "$comment",   "name",         "width",        "height",  "normal",
     "runtime",    "shape",        "stroke",       "shadow",  "selfAnchorX",
     "selfAnchorY", "traceAnchorX", "traceAnchorY", "offsetX", "offsetY",
     "layoutItem", "zIndex",       "visible",      "hitPassThrough",
+    "frames",     "sheet",        "fps",          "loop",    "autoplay",
+    "startFrame", "startOffset",  "events",
+};
+
+/// 帧动画的 `sheet` 段：一张大图怎么切成 N 格（0.6.1 T-06）。
+///
+/// 播放参数（`fps` / `loop` / `autoplay` / `startFrame` / `startOffset`）不在这里：
+/// 它们**直接写在组件顶层**，因为"这个动画怎么播"与"帧从哪来"是两件事，
+/// 两者可以独立更换（换图集不必重写帧率）。
+///
+/// `firstFrame` 是**绝对格号**（0.6.4 T-11），不是帧数——"每行一个方向"的图集
+/// 靠它播第 1~3 行。注意它与顶层 `startFrame`（帧号）**不是一回事**：
+/// 前者选图集里的哪几格，后者是播放从第几帧起步。
+inline constexpr const char* const kKnownSpriteSheetFields[] = {
+    "$comment", "source",   "frameWidth", "frameHeight", "columns",
+    "rows",     "count",    "firstFrame", "margin",      "spacing",
+};
+
+/// 帧动画的一条帧事件（`events` 数组里的元素，0.6.3 T-09）。
+///
+/// 只有两个字段是为了把"事件"钉在**帧号**上：名字给业务，帧号给播放器。
+/// 想挂别的数据（伤害值、音效名）请进 `name`（框架不解释它），别在这里长字段——
+/// 一长就要面对"同一帧两个事件各带什么数据"的类型问题，那是另一层设计。
+inline constexpr const char* const kKnownSpriteEventFields[] = {
+    "$comment", "frame", "name",
+};
+
+/// 图集描述（`CXXCSS/Atlas/*.json`，0.6.5 T-17）：一张图里有哪些动画。
+///
+/// 与 `Image/*.json` 的 `sheet` 段分工：那边是"一张图一个动画、等宽等高"，
+/// 这里是"一张图多个动画、帧宽高可以不等"。两者产出同一种 `SpriteData`。
+inline constexpr const char* const kKnownAtlasFields[] = {
+    "$comment", "name", "animations",
+};
+
+/// 图集里的**一个动画**（`animations[]` 的元素）。
+///
+/// `frames`（逐帧矩形）与 `columns / rows / frameWidth / frameHeight / count /
+/// firstFrame`（网格）**二选一**：判据在 `SpriteData::Validate()` 里只有一份，
+/// 生成期只是把它转成运行期结构。
+inline constexpr const char* const kKnownAtlasAnimationFields[] = {
+    "$comment", "name",   "source",     "fps",       "loop",
+    "events",   "frames", "columns",    "rows",      "frameWidth",
+    "frameHeight", "count", "firstFrame",
+};
+
+/// 图集的一帧矩形（`frames[]` 的元素）：**绝对像素**，左上角为原点。
+inline constexpr const char* const kKnownAtlasFrameFields[] = {
+    "x", "y", "width", "height",
 };
 
 /// 语言表字段（不是组件，是全局表）。
@@ -180,6 +234,20 @@ inline constexpr FieldGroup kFieldGroups[] = {
     {"Image", "normal", kKnownImageAppearanceFields,
      std::size(kKnownImageAppearanceFields),
      "图片外观认 color / img / svg；svg 是纹理路（整份稿光栅化），与按钮的 svg 不同"},
+    {"Image", "sheet", kKnownSpriteSheetFields,
+     std::size(kKnownSpriteSheetFields),
+     "帧动画的图集切法：frameWidth/Height 是**一格**的像素尺寸；count 缺省 = columns×rows"},
+    {"Image", "events[]", kKnownSpriteEventFields,
+     std::size(kKnownSpriteEventFields),
+     "帧事件：播到第 frame 帧时发一个名字（慢帧跨帧也不漏）"},
+    {"Atlas", "（顶层）", kKnownAtlasFields, std::size(kKnownAtlasFields),
+     "图集描述（不是组件）：一张图里的多个具名动画；生成期转成 AtlasData 常量"},
+    {"Atlas", "animations[]", kKnownAtlasAnimationFields,
+     std::size(kKnownAtlasAnimationFields),
+     "一个动画：名字 + 图集路径 + 帧矩形或网格切法 + 播放参数"},
+    {"Atlas", "animations[].frames[]", kKnownAtlasFrameFields,
+     std::size(kKnownAtlasFrameFields),
+     "一帧在图集里的绝对像素矩形（与网格切法二选一）"},
     {"Text", "（顶层）", kKnownTextTableFields, std::size(kKnownTextTableFields),
      "语言表（不是组件）：占位符 → 各语言的串，只允许一份"},
     {"Theme", "（顶层）", kKnownThemeFields, std::size(kKnownThemeFields),

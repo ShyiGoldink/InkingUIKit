@@ -34,7 +34,12 @@
 #include <input/Shortcut.h>
 #include <input/ShortcutRegistry.h>
 #include <image/ImageData.h>
+#include <image/InkingAtlas.h>
+#include <image/InkingSpriteGroup.h>
+#include <image/InkingSprite.h>
+#include <util/InkingJson.h>
 #include <image/InkingStaticImage.h>
+#include <image/SpriteData.h>
 #include <panel/InkingStaticPanel.h>
 #include <panel/PanelData.h>
 #include <panel/InkingFixedPopup.h>
@@ -3687,6 +3692,2730 @@ void CheckSvgHiDpi() {
     SDL_DestroyWindow(window);
 }
 
+// ---------------------------------------------------------------------------
+// 场景动画时钟与频率订阅（0.6.0 T-01）
+// ---------------------------------------------------------------------------
+//
+// 这一层容易写错的**不是**"能不能按时回调"，而是时间基准。四条断言各自对应
+// 一个具体的错法：
+//
+//   1. 12fps × 1 秒用 60 帧 × 1/60 喂（**故意不整除**）：严格的浮点比较会
+//      少一步（11 次），这是 0.6.0 里唯一必须靠 epsilon 才对得上的数字；
+//   2. 一次喂 0.25s 要补发 3 次：既不能吞掉时间（"这一帧只算一次"），
+//      也不能进"追不上"计数（0.25s 是 `Timeline` 正常会给出的上限）；
+//   3. 没有订阅者时钟照样走：否则组件读到的 `AnimationSeconds()` 会停在
+//      "最后一次有人订阅时"；
+//   4. 非活跃场景不推进：切走的场景动画冻结，不需要额外的暂停开关。
+//
+// 外加一条护栏：回调里改树 ⇒ 本轮剩下的订阅立刻停派（`InkingScene.h` 里
+// "回调里不许增删节点"那条的落点）。
+void CheckSceneAnimationClock() {
+    std::printf("\n-- 场景动画时钟与频率订阅（0.6.0 T-01） --\n");
+
+    inking::InkingScene scene("anim_clock");
+    Check(scene.IsRegistered(), "T-01：动画时钟场景登记成功");
+    Check(scene.AnimationSeconds() == 0.0, "T-01：初始时钟为 0");
+
+    // ④ 非活跃场景：`TickFrame` 直接返回（切走冻结）
+    scene.TickFrame(0.5);
+    Check(scene.AnimationSeconds() == 0.0,
+          "T-01：非活跃场景的时钟不推进（切走即冻结）");
+
+    inking::SceneLibrary::SetActiveScene(&scene);
+
+    // ③ 无订阅者：时钟照走，每帧都走
+    scene.TickFrame(0.5);
+    Check(std::fabs(scene.AnimationSeconds() - 0.5) < 1e-9,
+          "T-01：无订阅者时时钟仍每帧前进（0.5s → 0.5）");
+
+    // ① 12fps：60 帧 × 1/60 恰好派发 12 次
+    int ticks = 0;
+    const inking::InkingScene::AnimationHandle handle =
+        scene.SubscribeAnimation(1.0 / 12.0, [&ticks](double) { ++ticks; });
+    Check(handle != 0 && scene.AnimationSubscriberCount() == 1,
+          "T-01：订阅成功且计数为 1");
+    Check(scene.SubscribeAnimation(0.0, [](double) {}) == 0,
+          "T-01：间隔为 0 的订阅被拒绝（返回无效句柄 0）");
+
+    for (int i = 0; i < 60; ++i) {
+        scene.TickFrame(1.0 / 60.0);
+    }
+    std::printf("         12fps × 1s（60×1/60）→ 派发 %d 次\n", ticks);
+    Check(ticks == 12, "T-01：12fps 订阅跑满 1 秒恰好派发 12 次（不因浮点少一步）");
+
+    // ② 慢帧一次 0.25s：补发 3 次，且不进"追不上"计数
+    const std::uint64_t drops0 = scene.GetAnimationCatchUpDropCount();
+    ticks = 0;
+    scene.TickFrame(0.25);
+    Check(ticks == 3, "T-01：一次喂 0.25s（3 个间隔）补发 3 次，不吞时间");
+    Check(scene.GetAnimationCatchUpDropCount() == drops0,
+          "T-01：0.25s 属于正常补发，不计入 catch-up drop");
+
+    // ⑤ 单帧补发上限：120fps 喂 5s（应 600 步）→ 只补 64 步 + 记一次丢失
+    int fastTicks = 0;
+    scene.SubscribeAnimation(1.0 / 120.0, [&fastTicks](double) { ++fastTicks; });
+    const std::uint64_t dropsBeforeCap = scene.GetAnimationCatchUpDropCount();
+    scene.TickFrame(5.0);
+    std::printf("         120fps 喂 5s → 补发 %d 步，丢账 %llu 次\n", fastTicks,
+                static_cast<unsigned long long>(scene.GetAnimationCatchUpDropCount()
+                                                - dropsBeforeCap));
+    Check(fastTicks == 64, "T-01：单帧最多补发 64 步（不在一帧里补 600 次）");
+    Check(scene.GetAnimationCatchUpDropCount() == dropsBeforeCap + 1,
+          "T-01：被截断的欠账记一次 catch-up drop");
+
+    // ⑥ 退订：一次成功、二次失败
+    Check(scene.UnsubscribeAnimation(handle), "T-01：退订成功");
+    Check(!scene.UnsubscribeAnimation(handle), "T-01：重复退订返回 false");
+
+    inking::SceneLibrary::SetActiveScene(nullptr);
+
+    // ⑦ 护栏：回调里增删节点（**违规操作**）不能让同帧的后继订阅踩空
+    {
+        inking::InkingScene guard("anim_guard");
+        inking::SceneLibrary::SetActiveScene(&guard);
+
+        int firstHits = 0;
+        int secondHits = 0;
+        guard.SubscribeAnimation(1.0 / 60.0, [&guard, &firstHits](double) {
+            ++firstHits;
+            inking::PanelData data;
+            data.name = "anim_guard_panel";
+            data.width = 10;
+            data.height = 10;
+            guard.AddChild(std::make_unique<inking::InkingStaticPanel>(&guard, data));
+        });
+        guard.SubscribeAnimation(1.0 / 60.0,
+                                 [&secondHits](double) { ++secondHits; });
+
+        const std::size_t before = guard.GetDrawItemCount();
+        guard.TickFrame(1.0 / 60.0);
+        Check(firstHits == 1 && secondHits == 0,
+              "T-01：回调里改树 ⇒ 同帧剩下的订阅不再派发（护栏，不是许可）");
+        Check(guard.GetDrawItemCount() == before + 1,
+              "T-01：违规新建的节点没丢（下一帧照常重建绘制列表）");
+
+        inking::SceneLibrary::SetActiveScene(nullptr);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SpriteData：序列帧 / 图集二选一 + 校验（0.6.0 T-02）
+// ---------------------------------------------------------------------------
+//
+// 这一层**没有可画的像素**，所以断言只能落在"数据说了什么"上：帧数怎么算、
+// 哪些组合必须被拒绝、越界是被夹取（并报 WARN）而不是被静默吞掉。
+//
+// 四条错误分支对应四种真实会写的配置错误（都填 / 都不填 / fps 写 0 / 图集
+// count 比格子多），夹取分支对应"美术少交了几帧"——那一类**必须还能看见画面**，
+// 所以修 + 记 WARN，而不是留一块空白。
+void CheckSpriteDataValidate() {
+    std::printf("\n-- SpriteData：序列帧 / 图集二选一与校验（0.6.0 T-02） --\n");
+
+    const auto makeFrame = [](const char* source) {
+        inking::ButtonAppearance frame(inking::AppearanceType::Image, 0xFF000000u);
+        frame.source = source;
+        return frame;
+    };
+
+    // ① 序列帧：4 帧合法，fps 缺省 12
+    {
+        inking::SpriteData sprite;
+        sprite.name = "sprite_seq";
+        sprite.normal.type = inking::AppearanceType::Image;
+        sprite.normal.source = "frame0.png";
+        for (int i = 0; i < 4; ++i) {
+            sprite.frames.push_back(makeFrame("frame.png"));
+        }
+        std::printf("         序列帧：帧数=%zu fps=%.1f\n", sprite.FrameCount(),
+                    sprite.fps);
+        Check(sprite.Validate().empty(), "T-02：4 帧序列帧通过校验");
+        Check(sprite.FrameCount() == 4 && !sprite.UsesSheet(),
+              "T-02：序列帧 FrameCount = frames.size()（4），且不是图集模式");
+        Check(sprite.fps == 12.0, "T-02：fps 缺省 12（配错数量级也还看得见在动）");
+
+        // ② fps 两个方向的非法值
+        sprite.fps = 0.0;
+        Check(!sprite.Validate().empty(),
+              "T-02：fps = 0 → 报错（不是「就不动」，是配错了）");
+        sprite.fps = -12.0;
+        Check(!sprite.Validate().empty(), "T-02：fps 为负 → 报错");
+        sprite.fps = 12.0;
+
+        // ③ 帧里混进纯色
+        sprite.frames[2].type = inking::AppearanceType::Color;
+        Check(!sprite.Validate().empty(), "T-02：某一帧是纯色 → 报错（帧必须是图）");
+        sprite.frames[2] = makeFrame("frame.png");
+
+        // ④ 帧没有图像内容
+        sprite.frames[1] = inking::ButtonAppearance{};
+        Check(!sprite.Validate().empty(), "T-02：某一帧 source 空 → 报错");
+        sprite.frames[1] = makeFrame("frame.png");
+
+        // ⑤ 都填：不猜哪个优先
+        sprite.sheet.frameWidth = 64;
+        sprite.sheet.frameHeight = 64;
+        sprite.sheet.columns = 4;
+        sprite.sheet.rows = 1;
+        const std::string both = sprite.Validate();
+        std::printf("         都填时的报错：%s\n", both.c_str());
+        Check(!both.empty() && both.find("二选一") != std::string::npos,
+              "T-02：frames 与 sheet 都填 → 报\"二选一\"（不替调用方挑）");
+    }
+
+    // ⑥ 都不填
+    {
+        inking::SpriteData sprite;
+        sprite.name = "sprite_empty";
+        const std::string none = sprite.Validate();
+        std::printf("         都不填时的报错：%s\n", none.c_str());
+        Check(!none.empty() && sprite.FrameCount() == 0,
+              "T-02：frames 与 sheet 都不填 → 报错且帧数为 0");
+    }
+
+    // ⑦ startFrame 越界：夹到最后一帧 + 1 条 WARN，且幂等
+    {
+        inking::SpriteData sprite;
+        sprite.name = "sprite_clamp";
+        sprite.frames.push_back(makeFrame("a.png"));
+        sprite.frames.push_back(makeFrame("b.png"));
+        sprite.startFrame = 9;
+        inking::InkLog::ResetStats();
+        sprite.Normalize();
+        Check(sprite.startFrame == 1,
+              "T-02：startFrame 越界 → 夹到最后一帧（9 → 1，不是静默归零）");
+        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+              "T-02：夹取同时产生 1 条 WARN");
+        inking::InkLog::ResetStats();
+        sprite.Normalize();
+        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 0,
+              "T-02：Normalize 幂等（第二次不再重复报）");
+    }
+
+    // ⑧ 图集：count 缺省取 rows × columns，显式更小值保留，超了报错
+    {
+        inking::SpriteData sprite;
+        sprite.name = "sprite_sheet";
+        sprite.normal.type = inking::AppearanceType::Image;
+        sprite.normal.source = "walk.png";
+        sprite.sheet.frameWidth = 64;
+        sprite.sheet.frameHeight = 64;
+        sprite.sheet.columns = 4;
+        sprite.sheet.rows = 1;
+        sprite.Normalize();
+        std::printf("         图集：count=%d 帧数=%zu\n", sprite.sheet.count,
+                    sprite.FrameCount());
+        Check(sprite.sheet.count == 4 && sprite.FrameCount() == 4
+                  && sprite.UsesSheet(),
+              "T-02：图集省略 count → rows × columns（4）");
+        Check(sprite.Validate().empty(),
+              "T-02：图集（sheet.source 空、沿用 normal.source）通过校验");
+
+        sprite.sheet.count = 3;
+        Check(sprite.FrameCount() == 3,
+              "T-02：图集显式给更小的 count 被保留（末尾空格是合法用法）");
+
+        sprite.sheet.count = 99;
+        Check(!sprite.Validate().empty(), "T-02：图集 count > 格子数 → 报错");
+
+        sprite.sheet.count = 0;
+        sprite.sheet.columns = 0;
+        Check(!sprite.Validate().empty(), "T-02：图集 columns 为 0 → 报错");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// InkingSprite：序列帧播放 / 暂停 / 定位 / 纹理复用（0.6.0 T-03）
+// ---------------------------------------------------------------------------
+//
+// 断言全部落在**帧号与计数**上，不是"看起来在动"：帧号是时间的纯函数，
+// 所以"12fps 跑 1 秒 = 12 次换帧"这种话才有意义。
+//
+// 三条最容易写错的：
+//   1. 慢帧要**跨帧**（0.25s 一次跨 3 帧），不是"一次回调 +1 帧"；
+//   2. 暂停是**时间冻结**（恢复后原地继续），不是"停止换帧"（恢复后跳 36 帧）；
+//   3. 换帧不该再建纹理——第一轮播放把 4 帧都画过之后，第二轮 `texturesCreated`
+//      增量必须是 0（构造期只预热**字节**，纹理属于渲染器，建窗之后才存在）。
+
+/// 四张 40×40 的 SVG 帧。**静态生命周期**：帧只借视图不拷贝字节。
+const char* kSpriteFrameSvg[4] = {
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"40\">"
+    "<rect width=\"40\" height=\"40\" fill=\"#CC3333\"/></svg>",
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"40\">"
+    "<rect width=\"40\" height=\"40\" fill=\"#33CC33\"/></svg>",
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"40\">"
+    "<rect width=\"40\" height=\"40\" fill=\"#3333CC\"/></svg>",
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"40\">"
+    "<rect width=\"40\" height=\"40\" fill=\"#CCCC33\"/></svg>",
+};
+
+/// 造一份序列帧配置（第 i 帧的名字唯一 ⇒ 每帧一个纹理槽位）。
+inking::SpriteData MakeSpriteData(const char* name, int frameCount, double fps,
+                                  bool loop) {
+    inking::SpriteData data;
+    data.name = name;
+    data.width = 40;
+    data.height = 40;
+    data.fps = fps;
+    data.loop = loop;
+    data.autoplay = true;
+    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.offsetX = 20.0f;
+    data.offsetY = 20.0f;
+    for (int i = 0; i < frameCount; ++i) {
+        inking::ButtonAppearance frame(inking::AppearanceType::Image,
+                                       0xFF000000u);
+        frame.source = std::string(name) + "#" + std::to_string(i);
+        const char* svg = kSpriteFrameSvg[i % 4];
+        frame.imageBytes = SvgBytes(svg);
+        frame.imageSize = std::strlen(svg);
+        data.frames.push_back(frame);
+    }
+    return data;
+}
+
+inking::InkingSprite* AddSprite(inking::InkingScene& scene, const char* name,
+                                int frameCount, double fps, bool loop) {
+    return static_cast<inking::InkingSprite*>(scene.AddChild(
+        std::make_unique<inking::InkingSprite>(
+            &scene, MakeSpriteData(name, frameCount, fps, loop))));
+}
+
+void CheckSpriteSequence(SDL_Renderer* renderer) {
+    std::printf("\n-- InkingSprite：序列帧 / 暂停 / 定位 / 纹理复用（0.6.0 T-03） --\n");
+
+    // ① 12fps × 1 秒 = 12 次换帧；4 帧循环回绕；两个同 fps 的 sprite 帧号恒等
+    {
+        inking::InkingScene scene("sprite_seq");
+        inking::SceneLibrary::SetActiveScene(&scene);
+
+        inking::InkingSprite* sprite = AddSprite(scene, "spr_a", 4, 12.0, true);
+        inking::InkingSprite* twin = AddSprite(scene, "spr_b", 4, 12.0, true);
+        Check(sprite->IsValid() && sprite->GetFrameCount() == 4
+                  && sprite->GetLoadedFrameCount() == 4,
+              "T-03：4 帧的字节在构造期全部备齐");
+        Check(sprite->GetFrameIndex() == 0 && sprite->IsPlaying(),
+              "T-03：autoplay 默认开且落在第 0 帧");
+
+        int events = 0;
+        std::size_t lastNew = 0;
+        std::size_t lastOld = 0;
+        sprite->frameChanged.Subscribe(
+            [&events, &lastNew, &lastOld](std::size_t now, std::size_t before) {
+                ++events;
+                lastNew = now;
+                lastOld = before;
+            });
+
+        for (int i = 0; i < 12; ++i) {
+            scene.TickFrame(1.0 / 12.0);
+        }
+        std::printf("         12×1/12 → 帧号=%zu 换帧=%llu 跳过=%llu 事件=%d\n",
+                    sprite->GetFrameIndex(),
+                    static_cast<unsigned long long>(sprite->GetFrameAdvanceCount()),
+                    static_cast<unsigned long long>(sprite->GetSkippedFrameCount()),
+                    events);
+        Check(sprite->GetFrameAdvanceCount() == 12,
+              "T-03：12fps 跑满 1 秒恰好换 12 帧（不多不少）");
+        Check(sprite->GetFrameIndex() == 0,
+              "T-03：4 帧循环满一圈回到第 0 帧");
+        Check(sprite->GetSkippedFrameCount() == 0,
+              "T-03：正常播放不跳帧（skipped 恒为 0）");
+        Check(events == 12 && lastNew == 0 && lastOld == 3,
+              "T-03：frameChanged 每换一帧发一次（(0,3) 是回绕那一次）");
+        Check(twin->GetFrameIndex() == sprite->GetFrameIndex(),
+              "T-03：同场景两个同 fps 的 sprite 帧号恒等（时间只有一个源）");
+    }
+
+    // ② 慢帧：一次 0.25s 跨 3 帧（画面不慢放）+ skipped +2
+    {
+        inking::InkingScene scene("sprite_slow");
+        inking::SceneLibrary::SetActiveScene(&scene);
+        inking::InkingSprite* sprite = AddSprite(scene, "spr_slow", 4, 12.0, true);
+
+        scene.TickFrame(0.25);
+        std::printf("         喂 0.25s → 帧号=%zu 跳过=%llu\n",
+                    sprite->GetFrameIndex(),
+                    static_cast<unsigned long long>(
+                        sprite->GetSkippedFrameCount()));
+        Check(sprite->GetFrameIndex() == 3,
+              "T-03：一次 0.25s 跨 3 帧（0 → 3，不是只 +1）");
+        Check(sprite->GetSkippedFrameCount() == 2,
+              "T-03：跨过的 2 帧记进 skipped（掉帧可量化）");
+        Check(sprite->GetFrameAdvanceCount() == 1,
+              "T-03：跨多帧只算一次换帧（不是算了 3 次）");
+    }
+
+    // ③ 非循环：停在末帧并 finished，之后不再推进
+    {
+        inking::InkingScene scene("sprite_once");
+        inking::SceneLibrary::SetActiveScene(&scene);
+        inking::InkingSprite* sprite = AddSprite(scene, "spr_once", 4, 12.0, false);
+
+        for (int i = 0; i < 4; ++i) {
+            scene.TickFrame(1.0 / 12.0);
+        }
+        Check(sprite->GetFrameIndex() == 3 && sprite->IsFinished(),
+              "T-03：非循环播到末帧停住且 IsFinished() 为真");
+
+        const std::uint64_t advances = sprite->GetFrameAdvanceCount();
+        for (int i = 0; i < 10; ++i) {
+            scene.TickFrame(1.0 / 12.0);
+        }
+        Check(sprite->GetFrameAdvanceCount() == advances && sprite->IsFinished(),
+              "T-03：播完之后再 tick 不再换帧");
+
+        sprite->Play();  // 播完再播 = 从头再来
+        Check(!sprite->IsFinished() && sprite->GetFrameIndex() == 0,
+              "T-03：播完后 Play() 从头开始（不是停在末帧）");
+    }
+
+    // ④ 暂停是"时间冻结"：暂停 3 秒后恢复，原地继续
+    {
+        inking::InkingScene scene("sprite_pause");
+        inking::SceneLibrary::SetActiveScene(&scene);
+        inking::InkingSprite* sprite = AddSprite(scene, "spr_pause", 4, 12.0, true);
+
+        scene.TickFrame(1.0 / 12.0);
+        scene.TickFrame(1.0 / 12.0);
+        Check(sprite->GetFrameIndex() == 2, "T-03：两帧之后停在第 2 帧");
+
+        sprite->Pause();
+        const double pausedTime = sprite->GetAnimationTime();
+        for (int i = 0; i < 36; ++i) {  // 3 秒
+            scene.TickFrame(1.0 / 12.0);
+        }
+        Check(!sprite->IsPlaying() && sprite->GetFrameIndex() == 2,
+              "T-03：暂停期间帧号不动（时钟照走，画面冻结）");
+        Check(std::fabs(sprite->GetAnimationTime() - pausedTime) < 1e-9,
+              "T-03：暂停期间动画时间也冻结");
+
+        sprite->Play();
+        scene.TickFrame(1.0 / 12.0);
+        std::printf("         暂停 3s 后恢复 → 帧号=%zu（应 3，不是跳 36 帧）\n",
+                    sprite->GetFrameIndex());
+        Check(sprite->GetFrameIndex() == 3,
+              "T-03：暂停 3 秒后恢复从原帧继续（不是跳过 36 帧）");
+
+        sprite->Stop();
+        Check(!sprite->IsPlaying() && sprite->GetFrameIndex() == 0,
+              "T-03：Stop() 回到起始帧且不播");
+
+        Check(sprite->SeekToFrame(2) && sprite->GetFrameIndex() == 2,
+              "T-03：SeekToFrame(2) 当场换到第 2 帧");
+        Check(sprite->SeekToFrame(99) && sprite->GetFrameIndex() == 3,
+              "T-03：SeekToFrame 越界夹到末帧（定位是交互，不报错）");
+    }
+
+    // ⑤ 换帧不重建纹理：第一轮把 4 帧都画过，第二轮 texturesCreated 增量 0
+    {
+        inking::InkingScene scene("sprite_tex");
+        inking::SceneLibrary::SetActiveScene(&scene);
+        inking::InkingSprite* sprite = AddSprite(scene, "spr_tex", 4, 12.0, true);
+
+        const auto statsBeforeFirst = inking::detail::TextCacheStatsSnapshot();
+        for (int i = 0; i < 5; ++i) {  // 走完一整圈多一点
+            scene.TickFrame(1.0 / 12.0);
+            RenderSvgFrame(renderer, scene);
+        }
+        const auto statsAfterFirst = inking::detail::TextCacheStatsSnapshot();
+        const std::uint64_t firstPass =
+            statsAfterFirst.texturesCreated - statsBeforeFirst.texturesCreated;
+
+        for (int i = 0; i < 5; ++i) {
+            scene.TickFrame(1.0 / 12.0);
+            RenderSvgFrame(renderer, scene);
+        }
+        const auto statsAfterSecond = inking::detail::TextCacheStatsSnapshot();
+        const std::uint64_t secondPass =
+            statsAfterSecond.texturesCreated - statsAfterFirst.texturesCreated;
+
+        std::printf("         纹理创建：首轮 %llu 次 / 第二轮 %llu 次（预热点在字节，"
+                    "纹理首轮建一次）\n",
+                    static_cast<unsigned long long>(firstPass),
+                    static_cast<unsigned long long>(secondPass));
+        Check(firstPass >= 4, "T-03：首轮播放把 4 帧的纹理都建了出来");
+        Check(secondPass == 0,
+              "T-03：第二轮换帧不再创建纹理（缓存命中，换帧零解码）");
+        Check(sprite->GetFrameAdvanceCount() == 10,
+              "T-03：10 次 1/12 推进 = 10 次换帧（循环跨圈计数连续）");
+
+        EndSvgFrame(renderer);
+        (void)statsAfterSecond;
+    }
+
+    // ⑥ 配置非法：图集连图都没有 → 明确报错，不假装播起来
+    {
+        inking::InkingScene scene("sprite_bad");
+        inking::SceneLibrary::SetActiveScene(&scene);
+
+        inking::SpriteData data = MakeSpriteData("spr_sheet", 4, 12.0, true);
+        data.frames.clear();
+        // 只配切法、不给任何图（`sheet.source` 与 `normal.source` 都空）：
+        // `Validate()` 必须拦在"没有可播的帧"之前就说清是"图集没有图"。
+        data.normal.type = inking::AppearanceType::Image;
+        data.normal.source.clear();
+        data.sheet.source.clear();
+        data.sheet.frameWidth = 40;
+        data.sheet.frameHeight = 40;
+        data.sheet.columns = 4;
+        data.sheet.rows = 1;
+
+        inking::InkLog::ResetStats();
+        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
+            std::make_unique<inking::InkingSprite>(&scene, data)));
+        std::printf("         图集无图：IsValid=%d 错误=%s\n",
+                    sprite->IsValid() ? 1 : 0,
+                    sprite->GetConfigError().c_str());
+        Check(!sprite->IsValid() && !sprite->GetConfigError().empty(),
+              "T-03：配置非法时 `IsValid()` 为假且给出了原因");
+        Check(inking::InkLog::CountOf(inking::LogLevel::Error) >= 1,
+              "T-03：拒绝的同时有 ERROR（不是静默空白）");
+        Check(sprite->GetFrameCount() == 0 && !sprite->SeekToFrame(0),
+              "T-03：没有可播的帧时 SeekToFrame 返回 false");
+
+        inking::SceneLibrary::SetActiveScene(nullptr);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T-15（0.6.5）：库内的 JSON 小工具
+// ---------------------------------------------------------------------------
+//
+// 这套断言的重点是**报错可用**：行号、重复键、路径前缀。解析成功本身不稀奇，
+// 而"配置写错了却只说'解析失败'"在几百行的文件里等于没有信息。
+void CheckJsonTool() {
+    std::printf("\n-- inking::json：解析 / 取值 / 转义（0.6.5 T-15） --\n");
+
+    // ① 好 json：Find 与 At 混着走三层
+    {
+        const char* text = R"({
+            "name": "atlas",
+            "meta": { "scale": "1", "animations": [
+                { "name": "walk", "fps": 8, "frames": [1, 2, 3] },
+                { "name": "idle", "fps": 4, "loop": false }
+            ] }
+        })";
+        const inking::json::Result result = inking::json::Parse(text);
+        Check(result.ok, "T-15：合法 json 解析成功");
+        if (result.ok) {
+            const inking::json::Value& root = result.value;
+            const inking::json::Value* meta = root.Find("meta");
+            const inking::json::Value* animations =
+                meta != nullptr ? meta->Find("animations") : nullptr;
+            const inking::json::Value* second =
+                animations != nullptr ? animations->At(1) : nullptr;
+            // 存成 `std::string` 而不是 `.c_str()`：临时串的指针立刻悬垂，
+            // 打印出来的会是别的值（第一次跑正是这么红的）。
+            const std::string secondName =
+                second != nullptr ? inking::json::ReadString(*second, "name", "")
+                                  : std::string();
+            std::printf("         三层取值：name=%s 动画数=%zu 第 2 个=%s\n",
+                        inking::json::ReadString(root, "name", "").c_str(),
+                        animations != nullptr ? animations->items.size() : 0u,
+                        secondName.c_str());
+            Check(inking::json::ReadString(root, "name", "") == "atlas"
+                      && animations != nullptr
+                      && animations->items.size() == 2
+                      && secondName == "idle",
+                  "T-15：Find + At 混用能取到三层嵌套的值");
+
+            const inking::json::Value* walk =
+                animations != nullptr && animations->At(0) != nullptr
+                    ? animations->At(0)
+                    : nullptr;
+            Check(walk != nullptr
+                      && inking::json::ReadNumber(*walk, "fps", 0.0) == 8.0
+                      && inking::json::ReadBool(*walk, "loop", true),
+                  "T-15：ReadNumber / ReadBool 取到值、缺字段给 fallback");
+            Check(second != nullptr
+                      && !inking::json::ReadBool(*second, "loop", true)
+                      && inking::json::ReadNumber(*second, "missing", 7.0) == 7.0,
+                  "T-15：false 与 fallback 分得开（不会把 false 当成缺字段）");
+        }
+    }
+
+    // ② 坏 json：三类各拿到带**行号**的错误
+    {
+        struct BadCase {
+            const char* label;
+            const char* text;
+            int expectedLine;
+        };
+        const BadCase cases[3] = {
+            {"尾随逗号", "{\n  \"a\": 1,\n}", 3},
+            {"重复键", "{\n  \"a\": 1,\n  \"a\": 2\n}", 3},
+            {"少右括号", "{\n  \"a\": 1\n", 3},
+        };
+        for (const BadCase& item : cases) {
+            const inking::json::Result result = inking::json::Parse(item.text);
+            std::printf("         %s：ok=%d 错误=%s\n", item.label,
+                        result.ok ? 1 : 0, result.error.c_str());
+            Check(!result.ok && result.error.find("行") != std::string::npos,
+                  "T-15：坏 json 被拒且错误里带行号");
+        }
+    }
+
+    // ③ ParseAsset：不存在的路径 → ok=false 且错误带路径
+    {
+        const inking::json::Result result =
+            inking::json::ParseAsset("__不存在__/atlas.json");
+        std::printf("         ParseAsset 错误=%s\n", result.error.c_str());
+        Check(!result.ok
+                  && result.error.find("__不存在__/atlas.json") != std::string::npos,
+              "T-15：ParseAsset 读不到时错误里带路径");
+    }
+
+    // ④ Escape 往返：引号 / 反斜杠 / 换行 / 制表 / 中文
+    {
+        const std::string original = "他说\"走\"\\path\\\n下一行\t制表，中文：帧动画";
+        const std::string escaped = inking::json::Escape(original);
+        const inking::json::Result result = inking::json::Parse(
+            "{\"s\":\"" + escaped + "\"}");
+        const std::string roundTrip =
+            result.ok ? inking::json::ReadString(result.value, "s", "?") : "?";
+        std::printf("         转义后=%s\n         往返相等=%d\n", escaped.c_str(),
+                    roundTrip == original ? 1 : 0);
+        Check(result.ok && roundTrip == original,
+              "T-15：Escape 之后能解析回来，且逐字节相等（含中文）");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T-04：源矩形（图集切格）
+// ---------------------------------------------------------------------------
+//
+// 验收就一句话：**图集里切出来的第 k 格，必须和"单独存的第 k 张小图"逐像素一致。**
+// 中间隔着三层（`ButtonAppearance::srcRect` → `PaintImage` → `ImageFitSpec` →
+// `fillShapeTextured`），任何一层把值丢掉，画面都还"有东西"、只是切错块或整张拉伸
+// ——所以必须对像素，不能只断言"渲染成功"。
+
+/// 自检专用：把 protected 的切格入口露出来。
+///
+/// `InkingSprite` 的图集模式（T-05）走的是同一个入口；T-04 先在自检里直接验绘制链，
+/// 否则要等 T-05 才第一次跑到这段代码。
+struct SheetProbeImage : inking::InkingStaticImage {
+    using inking::InkingStaticImage::InkingStaticImage;
+    using inking::InkingStaticImage::SetRenderSourceRect;
+};
+
+/**
+ * 造一张 24 位 BMP（BGR / 行序自下而上 / 行尾补 4 字节）。
+ *
+ * 为什么自检里造 BMP 而不是 PNG：这里要的是"逐像素确定"的图案，BMP 头 54 字节
+ * 手写就够了，不必为了一个测试引一个编码器；解码仍走 `IMG_Load_IO`（内存流），
+ * 与 PNG 完全同一条路，所以这条自检验的还是生产代码。
+ *
+ * 图案随 **格号 + 格内坐标** 变化：切错一格、偏一列、少一像素，逐像素对拍当场红。
+ */
+std::vector<std::uint8_t> MakeSheetBmp(int width, int height, int cellSize,
+                                       int firstCell) {
+    const int stride = (width * 3 + 3) / 4 * 4;
+    const int imageSize = stride * height;
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(54 + imageSize), 0);
+    const auto put32 = [&bytes](int offset, std::uint32_t value) {
+        bytes[offset] = static_cast<std::uint8_t>(value & 0xFFu);
+        bytes[offset + 1] = static_cast<std::uint8_t>((value >> 8) & 0xFFu);
+        bytes[offset + 2] = static_cast<std::uint8_t>((value >> 16) & 0xFFu);
+        bytes[offset + 3] = static_cast<std::uint8_t>((value >> 24) & 0xFFu);
+    };
+    bytes[0] = 'B';
+    bytes[1] = 'M';
+    put32(2, static_cast<std::uint32_t>(54 + imageSize));
+    put32(10, 54);  // 像素数据偏移
+    put32(14, 40);  // BITMAPINFOHEADER 大小
+    put32(18, static_cast<std::uint32_t>(width));
+    put32(22, static_cast<std::uint32_t>(height));
+    bytes[26] = 1;   // planes
+    bytes[28] = 24;  // bpp
+    put32(34, static_cast<std::uint32_t>(imageSize));
+    for (int y = 0; y < height; ++y) {
+        const int sourceY = height - 1 - y;  // BMP 自下而上
+        for (int x = 0; x < width; ++x) {
+            const int cell = firstCell + x / cellSize;
+            const int localX = x % cellSize;
+            const auto r = static_cast<std::uint32_t>((localX * 6 + cell * 13) & 0xFF);
+            const auto g =
+                static_cast<std::uint32_t>((sourceY * 5 + cell * 31) & 0xFF);
+            const auto b =
+                static_cast<std::uint32_t>((cell * 60 + localX * 2) & 0xFF);
+            std::uint8_t* pixel =
+                &bytes[static_cast<std::size_t>(54 + y * stride + x * 3)];
+            pixel[0] = static_cast<std::uint8_t>(b);
+            pixel[1] = static_cast<std::uint8_t>(g);
+            pixel[2] = static_cast<std::uint8_t>(r);
+        }
+    }
+    return bytes;
+}
+
+/// 造一张 **2 色**棋盘 BMP（0.6.4 T-12 用）。
+///
+/// 与 `MakeSheetBmp` 分开写而不是加参数：那张图的图案是"每格渐变 + 换格变色"，
+/// 用来验采样模式会得到"本来就有很多颜色"的结论——判据必须建立在**只有 2 种颜色**
+/// 的源图上，放大后多出来的颜色才只可能来自插值。
+std::vector<std::uint8_t> MakeCheckerBmp(int width, int height, int blockSize) {
+    const int stride = (width * 3 + 3) / 4 * 4;
+    const int imageSize = stride * height;
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(54 + imageSize), 0);
+    const auto put32 = [&bytes](int offset, std::uint32_t value) {
+        bytes[offset] = static_cast<std::uint8_t>(value & 0xFFu);
+        bytes[offset + 1] = static_cast<std::uint8_t>((value >> 8) & 0xFFu);
+        bytes[offset + 2] = static_cast<std::uint8_t>((value >> 16) & 0xFFu);
+        bytes[offset + 3] = static_cast<std::uint8_t>((value >> 24) & 0xFFu);
+    };
+    bytes[0] = 'B';
+    bytes[1] = 'M';
+    put32(2, static_cast<std::uint32_t>(54 + imageSize));
+    put32(10, 54);
+    put32(14, 40);
+    put32(18, static_cast<std::uint32_t>(width));
+    put32(22, static_cast<std::uint32_t>(height));
+    bytes[26] = 1;
+    bytes[28] = 24;
+    put32(34, static_cast<std::uint32_t>(imageSize));
+    for (int y = 0; y < height; ++y) {
+        const int sourceY = height - 1 - y;  // BMP 自下而上
+        for (int x = 0; x < width; ++x) {
+            const bool white = ((x / blockSize) + (sourceY / blockSize)) % 2 == 0;
+            const auto value = static_cast<std::uint8_t>(white ? 0xFF : 0x00);
+            std::uint8_t* pixel =
+                &bytes[static_cast<std::size_t>(54 + y * stride + x * 3)];
+            pixel[0] = value;
+            pixel[1] = value;
+            pixel[2] = value;
+        }
+    }
+    return bytes;
+}
+
+/**
+ * 造一张"**内容随绝对坐标变化**"的 24 位 BMP（0.6.5 T-14 用）。
+ *
+ * 与 `MakeSheetBmp` 的区别：那张图的颜色取决于"第几格 + 格内坐标"，而帧表的矩形
+ * **宽高不等**、没有"格"这回事。这里用绝对坐标 → 从同一张图里裁出任意矩形，
+ * 与"直接造那块矩形"逐像素相同，于是"帧表切得对不对"可以拿小图对拍。
+ */
+std::vector<std::uint8_t> MakeAtlasRegionBmp(int atlasWidth, int atlasHeight, int x0,
+                                             int y0, int width, int height) {
+    const int stride = (width * 3 + 3) / 4 * 4;
+    const int imageSize = stride * height;
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(54 + imageSize), 0);
+    const auto put32 = [&bytes](int offset, std::uint32_t value) {
+        bytes[offset] = static_cast<std::uint8_t>(value & 0xFFu);
+        bytes[offset + 1] = static_cast<std::uint8_t>((value >> 8) & 0xFFu);
+        bytes[offset + 2] = static_cast<std::uint8_t>((value >> 16) & 0xFFu);
+        bytes[offset + 3] = static_cast<std::uint8_t>((value >> 24) & 0xFFu);
+    };
+    bytes[0] = 'B';
+    bytes[1] = 'M';
+    put32(2, static_cast<std::uint32_t>(54 + imageSize));
+    put32(10, 54);
+    put32(14, 40);
+    put32(18, static_cast<std::uint32_t>(width));
+    put32(22, static_cast<std::uint32_t>(height));
+    bytes[26] = 1;
+    bytes[28] = 24;
+    put32(34, static_cast<std::uint32_t>(imageSize));
+    for (int row = 0; row < height; ++row) {
+        const int topDown = height - 1 - row;  // BMP 自下而上
+        const int absoluteY = y0 + topDown;
+        for (int x = 0; x < width; ++x) {
+            const int absoluteX = x0 + x;
+            std::uint8_t* pixel =
+                &bytes[static_cast<std::size_t>(54 + row * stride + x * 3)];
+            pixel[0] = static_cast<std::uint8_t>((absoluteX * 13 + absoluteY * 2) & 0xFF);
+            pixel[1] = static_cast<std::uint8_t>((absoluteX * 5 + absoluteY * 11) & 0xFF);
+            pixel[2] = static_cast<std::uint8_t>((absoluteX * 7 + absoluteY * 3) & 0xFF);
+        }
+    }
+    return bytes;
+}
+
+/// 读回一块像素（ARGB8888，逐行拷贝——surface 的 pitch 可能带对齐）。
+std::vector<std::uint32_t> ReadPixelRegion(SDL_Renderer* renderer,
+                                           const SDL_Rect& rect) {
+    std::vector<std::uint32_t> out;
+    SDL_Surface* shot = SDL_RenderReadPixels(renderer, &rect);
+    if (shot == nullptr) {
+        return out;
+    }
+    SDL_Surface* argb = SDL_ConvertSurface(shot, SDL_PIXELFORMAT_ARGB8888);
+    SDL_DestroySurface(shot);
+    if (argb == nullptr || !SDL_LockSurface(argb)) {
+        SDL_DestroySurface(argb);
+        return out;
+    }
+    out.resize(static_cast<std::size_t>(rect.w) * static_cast<std::size_t>(rect.h));
+    for (int row = 0; row < rect.h; ++row) {
+        std::memcpy(&out[static_cast<std::size_t>(row) * rect.w],
+                    static_cast<const std::uint8_t*>(argb->pixels)
+                        + static_cast<std::size_t>(row) * argb->pitch,
+                    sizeof(std::uint32_t) * static_cast<std::size_t>(rect.w));
+    }
+    SDL_UnlockSurface(argb);
+    SDL_DestroySurface(argb);
+    return out;
+}
+
+void CheckImageFitSrcRect(SDL_Renderer* renderer) {
+    std::printf("\n-- 图集源矩形：切格与单独小图逐像素一致（0.6.1 T-04） --\n");
+
+    // ① 纯算术：UV 与等比都按"这一帧"算，不按整张纹理
+    {
+        inking::ImageFitSpec spec;
+        spec.fit = inking::ImageFit::Fill;
+        spec.frameWidth = 40.0f;
+        spec.frameHeight = 40.0f;
+        spec.imageWidth = 160.0f;  // 整张 4×1 图集
+        spec.imageHeight = 40.0f;
+        spec.srcRect = inking::ShapeBounds{80.0f, 0.0f, 40.0f, 40.0f};  // 第 2 格
+
+        float u = 0.0f;
+        float v = 0.0f;
+        spec.UvAt(0.0f, 0.0f, u, v);
+        Check(std::fabs(u - 0.5f) < 1e-6f && std::fabs(v) < 1e-6f,
+              "T-04：源矩形左上 = 纹理坐标 (0.5, 0)");
+
+        spec.UvAt(40.0f, 40.0f, u, v);
+        Check(std::fabs(u - 0.75f) < 1e-6f && std::fabs(v - 1.0f) < 1e-6f,
+              "T-04：源矩形右下 = 纹理坐标 (0.75, 1)");
+
+        // Contain 的等比必须用帧宽高（40×40）；用整张（160×40）会算成 20×20 的细条。
+        spec.fit = inking::ImageFit::Contain;
+        spec.frameWidth = 80.0f;
+        const inking::ShapeBounds drawn = spec.DrawnRect();
+        std::printf("         Contain 框 80×40 + 帧 40×40 → 画 %.1f×%.1f @ x=%.1f\n",
+                    drawn.width, drawn.height, drawn.x);
+        Check(std::fabs(drawn.width - 40.0f) < 1e-4f
+                  && std::fabs(drawn.height - 40.0f) < 1e-4f
+                  && std::fabs(drawn.x - 20.0f) < 1e-4f,
+              "T-04：Contain 的等比按帧尺寸算（不是整张纹理，否则留白算错）");
+
+        spec.srcRect = inking::ShapeBounds{};
+        Check(!spec.HasSourceRect()
+                  && std::fabs(spec.SourceRect().width - 160.0f) < 1e-4f,
+              "T-04：源矩形全零 = 整张纹理（既有图片走这条）");
+    }
+
+    if (renderer == nullptr) {
+        return;
+    }
+
+    // ② 像素对拍：整张 160×40 图集切第 2 格 vs 单独一张 40×40 小图
+    int outputWidth = 0;
+    int outputHeight = 0;
+    SDL_GetRenderOutputSize(renderer, &outputWidth, &outputHeight);
+    const float pixelRatio =
+        outputWidth > 0
+            ? static_cast<float>(outputWidth)
+                / static_cast<float>(inking::DesignWidth())
+            : 1.0f;
+    // 组件摆设计坐标 (20,20)、40×40（与 `AddSvgImage` 同一套锚点约定）。
+    const SDL_Rect region{static_cast<int>(std::lround(20.0f * pixelRatio)),
+                          static_cast<int>(std::lround(20.0f * pixelRatio)),
+                          static_cast<int>(std::lround(40.0f * pixelRatio)),
+                          static_cast<int>(std::lround(40.0f * pixelRatio))};
+    std::printf("         读回区域 %d×%d @ (%d,%d)（设计→设备 %.2f）\n", region.w,
+                region.h, region.x, region.y, static_cast<double>(pixelRatio));
+
+    const std::vector<std::uint8_t> atlas = MakeSheetBmp(160, 40, 40, 0);
+    const std::vector<std::uint8_t> single = MakeSheetBmp(40, 40, 40, 2);
+
+    const auto shoot = [&](const char* sceneName, const char* imageName,
+                           const std::vector<std::uint8_t>& bytes,
+                           const inking::ShapeBounds& sourceRect) {
+        inking::InkingScene scene(sceneName);
+        inking::SceneLibrary::SetActiveScene(&scene);
+
+        inking::ImageData data;
+        data.name = imageName;
+        data.width = 40;
+        data.height = 40;
+        data.normal.type = inking::AppearanceType::Image;
+        data.normal.source = imageName;
+        data.normal.imageBytes = bytes.data();
+        data.normal.imageSize = bytes.size();
+        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.offsetX = 20.0f;
+        data.offsetY = 20.0f;
+
+        auto* image = static_cast<SheetProbeImage*>(scene.AddChild(
+            std::make_unique<SheetProbeImage>(&scene, data)));
+        image->SetRenderSourceRect(sourceRect);  // 全零 = 整张
+        scene.TickFrame(1.0f / 60.0f);
+        RenderSvgFrame(renderer, scene);
+        std::vector<std::uint32_t> pixels = ReadPixelRegion(renderer, region);
+        EndSvgFrame(renderer);
+        return pixels;
+    };
+
+    const std::vector<std::uint32_t> fromSheet =
+        shoot("img_src_sheet", "sheet_atlas", atlas,
+              inking::ShapeBounds{80.0f, 0.0f, 40.0f, 40.0f});
+    const std::vector<std::uint32_t> fromSingle =
+        shoot("img_src_single", "cell2_alone", single, inking::ShapeBounds{});
+    const std::vector<std::uint32_t> fromFullRect =
+        shoot("img_src_full", "cell2_alone", single,
+              inking::ShapeBounds{0.0f, 0.0f, 40.0f, 40.0f});
+
+    const auto diffCount = [](const std::vector<std::uint32_t>& a,
+                              const std::vector<std::uint32_t>& b) {
+        if (a.empty() || a.size() != b.size()) {
+            return -1;
+        }
+        int diff = 0;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (a[i] != b[i]) {
+                ++diff;
+            }
+        }
+        return diff;
+    };
+
+    Check(!fromSheet.empty(), "T-04：读回图集那一格的非空像素");
+    const int sheetDiff = diffCount(fromSheet, fromSingle);
+    const int fullDiff = diffCount(fromFullRect, fromSingle);
+    std::printf("         图集第2格 vs 单独小图：差异像素 %d / %zu\n", sheetDiff,
+                fromSheet.size());
+    std::printf("         显式整图矩形 vs 不给：差异像素 %d / %zu\n", fullDiff,
+                fromSingle.size());
+    Check(sheetDiff == 0,
+          "T-04：图集第 2 格与单独一张小图逐像素一致（切格对齐、UV 正确）");
+    Check(fullDiff == 0,
+          "T-04：显式给整图矩形与不给，逐像素一致（既有图片零影响）");
+
+    // ③ 换格不换纹理：同一张图集画两格，纹理只解码一次
+    {
+        std::uint64_t texturesBefore = 0;
+        std::uint64_t texturesAfter = 0;
+        {
+            inking::InkingScene scene("img_src_tex");
+            inking::SceneLibrary::SetActiveScene(&scene);
+
+            inking::ImageData data;
+            data.name = "sheet_atlas_tex";
+            data.width = 40;
+            data.height = 40;
+            data.normal.type = inking::AppearanceType::Image;
+            data.normal.source = "sheet_atlas_tex";
+            data.normal.imageBytes = atlas.data();
+            data.normal.imageSize = atlas.size();
+            data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.offsetX = 20.0f;
+            data.offsetY = 20.0f;
+
+            auto* image = static_cast<SheetProbeImage*>(scene.AddChild(
+                std::make_unique<SheetProbeImage>(&scene, data)));
+            scene.TickFrame(1.0f / 60.0f);
+
+            texturesBefore =
+                inking::detail::TextCacheStatsSnapshot().texturesCreated;
+            for (int cell = 0; cell < 4; ++cell) {
+                image->SetRenderSourceRect(inking::ShapeBounds{
+                    static_cast<float>(cell * 40), 0.0f, 40.0f, 40.0f});
+                RenderSvgFrame(renderer, scene);
+            }
+            texturesAfter =
+                inking::detail::TextCacheStatsSnapshot().texturesCreated;
+            EndSvgFrame(renderer);
+        }
+        std::printf("         画 4 格：新建纹理 %llu 张\n",
+                    static_cast<unsigned long long>(texturesAfter
+                                                    - texturesBefore));
+        Check(texturesAfter - texturesBefore == 1,
+              "T-04：4 格共用一张纹理（切格只换源矩形，不重复解码）");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T-05：InkingSprite 的图集模式
+// ---------------------------------------------------------------------------
+//
+// 图集模式与序列帧共用同一套帧号（`frame = floor(t × fps)`），只在"怎么把这一帧
+// 搬到画面上"分叉：序列帧换字节视图，图集换源矩形。所以验收也分两半——
+// **切格对不对**（像素）与**帧号照常走**（计数）。
+void CheckSpriteSheet(SDL_Renderer* renderer) {
+    std::printf("\n-- InkingSprite 图集：切格 / 零纹理 / 几何校验（0.6.1 T-05） --\n");
+
+    // ① 纯算术：行优先 + margin/spacing（不必真画一张图就能验）
+    {
+        inking::SpriteData::SpriteSheet sheet;
+        sheet.frameWidth = 40;
+        sheet.frameHeight = 30;
+        sheet.columns = 4;
+        sheet.rows = 3;
+        sheet.margin = 2;
+        sheet.spacing = 4;
+
+        std::printf("         4×3 格（40×30 / margin 2 / spacing 4）→ 整张 %d×%d\n",
+                    sheet.SheetWidth(), sheet.SheetHeight());
+        Check(sheet.SheetWidth() == 40 * 4 + 4 * 3 + 2 * 2
+                  && sheet.SheetHeight() == 30 * 3 + 4 * 2 + 2 * 2,
+              "T-05：整张尺寸 = 格数×格宽 + spacing×(n−1) + 2×margin");
+        Check(sheet.ResolveCount() == 12, "T-05：count 缺省 = columns × rows");
+
+        const inking::ShapeBounds first = sheet.CellRect(0);
+        const inking::ShapeBounds second = sheet.CellRect(1);
+        const inking::ShapeBounds nextRow = sheet.CellRect(4);
+        std::printf("         格 0=(%.0f,%.0f) 格 1=(%.0f,%.0f) 格 4=(%.0f,%.0f)\n",
+                    first.x, first.y, second.x, second.y, nextRow.x, nextRow.y);
+        Check(first.x == 2.0f && first.y == 2.0f && first.width == 40.0f
+                  && first.height == 30.0f,
+              "T-05：第 0 格从 margin 起，尺寸就是 frameWidth/Height");
+        Check(second.x == 46.0f && second.y == 2.0f,
+              "T-05：同行下一格 = margin + n×(frameWidth + spacing)");
+        Check(nextRow.x == 2.0f && nextRow.y == 36.0f,
+              "T-05：行优先（第 columns 格换行，纵向加 frameHeight + spacing）");
+        Check(sheet.CellRect(12).width == 0.0f,
+              "T-05：越界格给全零矩形（画不出来就不画，不画错块）");
+    }
+
+    const std::vector<std::uint8_t> atlas = MakeSheetBmp(160, 40, 40, 0);
+    const std::vector<std::uint8_t> single = MakeSheetBmp(40, 40, 40, 1);
+
+    const auto sheetData = [&atlas](bool autoplay) {
+        inking::SpriteData data;
+        data.name = "spr_sheet_px";
+        data.width = 40;
+        data.height = 40;
+        data.fps = 12.0;
+        data.loop = true;
+        data.autoplay = autoplay;
+        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.offsetX = 20.0f;
+        data.offsetY = 20.0f;
+        data.normal.type = inking::AppearanceType::Image;
+        data.normal.source = "sheet_atlas_spr";  // 纹理缓存键
+        data.normal.imageBytes = atlas.data();
+        data.normal.imageSize = atlas.size();
+        data.sheet.frameWidth = 40;
+        data.sheet.frameHeight = 40;
+        data.sheet.columns = 4;
+        data.sheet.rows = 1;
+        return data;
+    };
+
+    // ② 构造期几何校验：columns=5 要 200 宽，图只有 160 → IsValid 假 + 1 条 ERROR
+    {
+        inking::InkingScene scene("sprite_sheet_bad");
+        inking::SceneLibrary::SetActiveScene(&scene);
+
+        inking::SpriteData data = sheetData(false);
+        data.sheet.columns = 5;  // 期望 5×40 = 200，真实 160
+
+        inking::InkLog::ResetStats();
+        auto* sprite = static_cast<inking::InkingSprite*>(
+            scene.AddChild(std::make_unique<inking::InkingSprite>(&scene, data)));
+        std::printf("         columns=5 / 图宽 160 → IsValid=%d\n%s\n",
+                    sprite->IsValid() ? 1 : 0,
+                    sprite->GetConfigError().c_str());
+        Check(sprite->IsSheetMode(), "T-05：走的是图集模式");
+        Check(!sprite->IsValid()
+                  && sprite->GetConfigError().find("图集尺寸对不上")
+                         != std::string::npos,
+              "T-05：切格与图宽不符在构造期就被拦下（不是播起来才发现）");
+        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+              "T-05：恰好一条 ERROR（不重复刷）");
+
+        inking::SceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ②b 图集没字节（生成器忘了烘）→ 不能静默退回纯色填
+    {
+        inking::InkingScene scene("sprite_sheet_nobytes");
+        inking::SceneLibrary::SetActiveScene(&scene);
+
+        inking::SpriteData data = sheetData(false);
+        data.normal.imageBytes = nullptr;
+        data.normal.imageSize = 0;
+
+        auto* sprite = static_cast<inking::InkingSprite*>(
+            scene.AddChild(std::make_unique<inking::InkingSprite>(&scene, data)));
+        std::printf("         图集无字节：IsValid=%d\n", sprite->IsValid() ? 1 : 0);
+        Check(!sprite->IsValid()
+                  && sprite->GetConfigError().find("没有字节") != std::string::npos,
+              "T-05：图集没烘字节时构造期报错（不是静默一块底色）");
+
+        inking::SceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ③ 像素：图集第 1 格 = 单独存的第 1 张小图
+    {
+        inking::InkingScene scene("sprite_sheet_px");
+        inking::SceneLibrary::SetActiveScene(&scene);
+
+        inking::SpriteData data = sheetData(false);
+        inking::InkLog::ResetStats();
+        auto* sprite = static_cast<inking::InkingSprite*>(
+            scene.AddChild(std::make_unique<inking::InkingSprite>(&scene, data)));
+        Check(sprite->IsValid() && sprite->GetFrameCount() == 4
+                  && sprite->GetLoadedFrameCount() == 4,
+              "T-05：4×1 图集切出 4 帧，几何校验通过");
+
+        if (renderer != nullptr) {
+            int outputWidth = 0;
+            int outputHeight = 0;
+            SDL_GetRenderOutputSize(renderer, &outputWidth, &outputHeight);
+            const float pixelRatio =
+                outputWidth > 0
+                    ? static_cast<float>(outputWidth)
+                        / static_cast<float>(inking::DesignWidth())
+                    : 1.0f;
+            const SDL_Rect region{
+                static_cast<int>(std::lround(20.0f * pixelRatio)),
+                static_cast<int>(std::lround(20.0f * pixelRatio)),
+                static_cast<int>(std::lround(40.0f * pixelRatio)),
+                static_cast<int>(std::lround(40.0f * pixelRatio))};
+
+            // 图集：落在第 1 格，然后连画 4 格看纹理建了几张
+            const std::uint64_t texturesBefore =
+                inking::detail::TextCacheStatsSnapshot().texturesCreated;
+            sprite->SeekToFrame(1);
+            RenderSvgFrame(renderer, scene);
+            const std::vector<std::uint32_t> fromSheet =
+                ReadPixelRegion(renderer, region);
+            for (std::size_t cell = 0; cell < 4; ++cell) {
+                sprite->SeekToFrame(cell);
+                RenderSvgFrame(renderer, scene);
+            }
+            const std::uint64_t texturesAfter =
+                inking::detail::TextCacheStatsSnapshot().texturesCreated;
+            EndSvgFrame(renderer);
+
+            // 单独的第 1 张小图（同一个位置、同一个尺寸）
+            inking::InkingScene singleScene("sprite_sheet_single");
+            inking::SceneLibrary::SetActiveScene(&singleScene);
+            inking::ImageData imageData;
+            imageData.name = "cell1_alone";
+            imageData.width = 40;
+            imageData.height = 40;
+            imageData.normal.type = inking::AppearanceType::Image;
+            imageData.normal.source = "cell1_alone";
+            imageData.normal.imageBytes = single.data();
+            imageData.normal.imageSize = single.size();
+            imageData.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+            imageData.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            imageData.offsetX = 20.0f;
+            imageData.offsetY = 20.0f;
+            singleScene.AddChild(std::make_unique<inking::InkingStaticImage>(
+                &singleScene, imageData));
+            singleScene.TickFrame(1.0f / 60.0f);
+            RenderSvgFrame(renderer, singleScene);
+            const std::vector<std::uint32_t> fromSingle =
+                ReadPixelRegion(renderer, region);
+            EndSvgFrame(renderer);
+
+            int diff = (fromSheet.size() == fromSingle.size()
+                        && !fromSheet.empty())
+                           ? 0
+                           : -1;
+            if (diff == 0) {
+                for (std::size_t i = 0; i < fromSheet.size(); ++i) {
+                    if (fromSheet[i] != fromSingle[i]) {
+                        ++diff;
+                    }
+                }
+            }
+            std::printf("         图集第1格 vs 单独小图：差异像素 %d / %zu；"
+                        "画 4 格新建纹理 %llu 张\n",
+                        diff, fromSheet.size(),
+                        static_cast<unsigned long long>(texturesAfter
+                                                        - texturesBefore));
+            Check(diff == 0,
+                  "T-05：图集第 1 格与单独一张小图逐像素一致");
+            Check(texturesAfter - texturesBefore == 1,
+                  "T-05：换格不换纹理（4 格只建 1 张，零重复解码）");
+        }
+    }
+
+    // ④ 图集模式的帧号照常走（与序列帧同一套时间 → 帧号映射）
+    {
+        inking::InkingScene scene("sprite_sheet_clock");
+        inking::SceneLibrary::SetActiveScene(&scene);
+
+        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
+            std::make_unique<inking::InkingSprite>(&scene, sheetData(true))));
+        for (int i = 0; i < 12; ++i) {
+            scene.TickFrame(1.0 / 12.0);
+        }
+        std::printf("         12fps 跑 1 秒 → 帧号=%zu 换帧=%llu\n",
+                    sprite->GetFrameIndex(),
+                    static_cast<unsigned long long>(
+                        sprite->GetFrameAdvanceCount()));
+        Check(sprite->GetFrameAdvanceCount() == 12 && sprite->GetFrameIndex() == 0,
+              "T-05：图集模式 12fps 跑满 1 秒换 12 帧并回到第 0 帧");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T-11（0.6.4）：图集的起始格 firstFrame
+// ---------------------------------------------------------------------------
+//
+// "每行一个方向"是最常见的排布（史莱姆包就是 6 列 × 4 行），而没有起点字段时
+// **只能播第 0 行**。验收拆两半：
+//   ① **格号换算**——`firstFrame=12, count=6` 的第 0 帧必须落在格 12 上；
+//   ② **画出来是那一格**——参照物取"同一张图集、不设起点、直接 `SeekToFrame(12)`"，
+//      两者必须逐像素相同。它比另存一张小图更严格：连纹理都必须是同一张
+//      （另存小图会把"切错块但恰好颜色接近"放过）。
+void CheckSpriteSheetFirstFrame(SDL_Renderer* renderer) {
+    std::printf("\n-- 图集起始格 firstFrame：格号 / 越界 / 像素（0.6.4 T-11） --\n");
+
+    // ① 纯算术：起点只影响"帧号 → 格号"的换算，不改切格本身
+    {
+        inking::SpriteData::SpriteSheet sheet;
+        sheet.frameWidth = 40;
+        sheet.frameHeight = 40;
+        sheet.columns = 6;
+        sheet.rows = 4;
+        sheet.firstFrame = 12;  // 第 2 行第 0 格
+        sheet.count = 6;
+
+        const inking::ShapeBounds cell = sheet.CellRect(12);
+        std::printf("         6×4 图集，起点 12 → 格 12 = (%.0f,%.0f,%.0f×%.0f)；"
+                    "整张 %d×%d\n",
+                    cell.x, cell.y, cell.width, cell.height, sheet.SheetWidth(),
+                    sheet.SheetHeight());
+        Check(cell.x == 0.0f && cell.y == 80.0f && cell.width == 40.0f
+                  && cell.height == 40.0f,
+              "T-11：第 12 格 = 第 2 行第 0 列（行优先，x=0 y=80）");
+        Check(sheet.SheetWidth() == 240 && sheet.SheetHeight() == 160,
+              "T-11：整张尺寸与起点无关（它描述整张图，不是从哪格起）");
+
+        // 只写起点不算"配了图集"——否则一处笔误就让整张图片变成图集模式。
+        inking::SpriteData::SpriteSheet lone;
+        lone.firstFrame = 12;
+        Check(!lone.IsConfigured(),
+              "T-11：只写 firstFrame 不算配了图集（IsConfigured 仍为假）");
+    }
+
+    const std::vector<std::uint8_t> atlas = MakeSheetBmp(240, 160, 40, 0);
+
+    const auto sheetData = [&atlas](int firstFrame, int count) {
+        inking::SpriteData data;
+        data.name = "spr_first_frame";
+        data.width = 40;
+        data.height = 40;
+        data.fps = 12.0;
+        data.autoplay = false;
+        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.offsetX = 20.0f;
+        data.offsetY = 20.0f;
+        data.normal.type = inking::AppearanceType::Image;
+        data.normal.source = "sheet_first_frame";
+        data.normal.imageBytes = atlas.data();
+        data.normal.imageSize = atlas.size();
+        data.sheet.frameWidth = 40;
+        data.sheet.frameHeight = 40;
+        data.sheet.columns = 6;
+        data.sheet.rows = 4;
+        data.sheet.firstFrame = firstFrame;
+        data.sheet.count = count;
+        return data;
+    };
+
+    // ② 换算落在组件上：起始帧与末帧的源矩形
+    {
+        inking::InkingScene scene("sprite_first_frame");
+        inking::SceneLibrary::SetActiveScene(&scene);
+
+        inking::InkLog::ResetStats();
+        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
+            std::make_unique<inking::InkingSprite>(&scene, sheetData(12, 6))));
+        const inking::ShapeBounds first = sprite->GetAppearance().srcRect;
+        std::printf("         起点 12 / 6 帧：IsValid=%d 帧数=%zu 第 0 帧矩形"
+                    " (%.0f,%.0f,%.0f×%.0f)\n",
+                    sprite->IsValid() ? 1 : 0, sprite->GetFrameCount(), first.x,
+                    first.y, first.width, first.height);
+        Check(sprite->IsValid() && sprite->IsSheetMode()
+                  && sprite->GetFrameCount() == 6,
+              "T-11：firstFrame=12 / count=6 是合法配置，切出 6 帧");
+        Check(first.x == 0.0f && first.y == 80.0f && first.width == 40.0f
+                  && first.height == 40.0f,
+              "T-11：第 0 帧的源矩形 = CellRect(12)（起点进了换算，不是被忽略）");
+
+        sprite->SeekToFrame(5);
+        const inking::ShapeBounds last = sprite->GetAppearance().srcRect;
+        std::printf("         第 5 帧矩形 (%.0f,%.0f,%.0f×%.0f)\n", last.x, last.y,
+                    last.width, last.height);
+        Check(last.x == 200.0f && last.y == 80.0f,
+              "T-11：末帧落回格 17（起点 + 帧号，不是只偏移第一帧）");
+
+        inking::SceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ③ 越界：要 6 格但从第 20 格起（只剩 4 格）→ 构造期一条 ERROR
+    {
+        inking::InkingScene scene("sprite_first_frame_bad");
+        inking::SceneLibrary::SetActiveScene(&scene);
+
+        inking::InkLog::ResetStats();
+        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
+            std::make_unique<inking::InkingSprite>(&scene, sheetData(20, 6))));
+        std::printf("         起点 20 / 6 帧 / 共 24 格 → IsValid=%d：%s\n",
+                    sprite->IsValid() ? 1 : 0,
+                    sprite->GetConfigError().c_str());
+        Check(!sprite->IsValid()
+                  && sprite->GetConfigError().find("超出格子总数")
+                         != std::string::npos,
+              "T-11：起点 + 帧数超过格子总数在构造期被拦下");
+        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+              "T-11：恰好一条 ERROR（不重复刷）");
+
+        inking::SceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ④ 像素：起点 12 的第 0 帧 vs 不设起点、Seek 到第 12 帧
+    if (renderer != nullptr) {
+        int outputWidth = 0;
+        int outputHeight = 0;
+        SDL_GetRenderOutputSize(renderer, &outputWidth, &outputHeight);
+        const float pixelRatio =
+            outputWidth > 0
+                ? static_cast<float>(outputWidth)
+                    / static_cast<float>(inking::DesignWidth())
+                : 1.0f;
+        const SDL_Rect region{static_cast<int>(std::lround(20.0f * pixelRatio)),
+                              static_cast<int>(std::lround(20.0f * pixelRatio)),
+                              static_cast<int>(std::lround(40.0f * pixelRatio)),
+                              static_cast<int>(std::lround(40.0f * pixelRatio))};
+
+        const auto shoot = [&](const char* sceneName, int firstFrame, int count,
+                               std::size_t seekTo) {
+            inking::InkingScene scene(sceneName);
+            inking::SceneLibrary::SetActiveScene(&scene);
+            auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
+                std::make_unique<inking::InkingSprite>(&scene,
+                                                       sheetData(firstFrame, count))));
+            sprite->SeekToFrame(seekTo);
+            scene.TickFrame(1.0f / 60.0f);
+            RenderSvgFrame(renderer, scene);
+            std::vector<std::uint32_t> pixels = ReadPixelRegion(renderer, region);
+            EndSvgFrame(renderer);
+            inking::SceneLibrary::SetActiveScene(nullptr);
+            return pixels;
+        };
+
+        const std::vector<std::uint32_t> withFirst =
+            shoot("spr_ff_a", 12, 6, 0);
+        const std::vector<std::uint32_t> bySeek =
+            shoot("spr_ff_b", 0, 24, 12);
+
+        int diff = (withFirst.size() == bySeek.size() && !withFirst.empty()) ? 0
+                                                                            : -1;
+        if (diff == 0) {
+            for (std::size_t i = 0; i < withFirst.size(); ++i) {
+                if (withFirst[i] != bySeek[i]) {
+                    ++diff;
+                }
+            }
+        }
+        std::printf("         起点12第0帧 vs 起点0的第12帧：差异像素 %d / %zu\n",
+                    diff, withFirst.size());
+        Check(diff == 0,
+              "T-11：firstFrame=12 的第 0 帧与直接定位到第 12 帧逐像素一致");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T-12（0.6.4）：图片采样模式
+// ---------------------------------------------------------------------------
+//
+// 这件事**只能靠像素**验：`Nearest` 与 `Linear` 的差别就是"格子边界是硬的还是糊的"。
+// 判据用**颜色种数**——把一张 2 色棋盘放大，最近邻仍只有 2 种颜色，双线性会插出
+// 一堆中间灰。所以源图必须只有 2 色（`MakeCheckerBmp`），多出来的颜色才只可能
+// 来自插值。
+//
+// **必须知道的后端差异**（`build/probe_sampling.cpp` 实测，2026-10-28）：
+//
+//   后端          | 并批 Linear | 并批 Nearest | 单笔 Linear | 单笔 Nearest
+//   software      |     2 色    |     2 色     |    33 色    |     2 色
+//   direct3d11    |    12 色    |     2 色     |    12 色    |     2 色
+//
+// ⇒ **SDL 的 software 后端在 `SDL_RenderGeometry` 这条路上不认采样模式**（恒最近邻），
+// 而 d3d11 认。像素素材不受影响（它本来就要最近邻）；受影响的只有"软件后端 +
+// 高清图要平滑缩放"这一种组合。所以断言分两组：
+//   ① 单笔路径（临时关掉并批）三档来回——这组**两个后端都成立**，它证明的是
+//      "切换会重设**已经建好**的纹理"，而那正是开关最容易做漏的地方；
+//   ② 默认路径（并批）在 `Nearest` 下恰好 2 色——像素素材的主场，两个后端都成立。
+// 并批下的 `Linear` 只打印不断言（软件后端恒为 2 色，那是 SDL 的事，不是我们的）。
+void CheckImageSampling(SDL_Renderer* renderer) {
+    std::printf("\n-- 图片采样模式：像素素材的硬边（0.6.4 T-12） --\n");
+
+    // ① 开关本身：默认线性，能读回、能改
+    {
+        const inking::detail::ImageSampling saved =
+            inking::detail::GetImageSampling();
+        inking::detail::SetImageSampling(inking::detail::ImageSampling::Nearest);
+        const bool nearest =
+            inking::detail::GetImageSampling()
+            == inking::detail::ImageSampling::Nearest;
+        inking::detail::SetImageSampling(inking::detail::ImageSampling::Linear);
+        const bool linear =
+            inking::detail::GetImageSampling()
+            == inking::detail::ImageSampling::Linear;
+        Check(nearest && linear, "T-12：采样开关写得进也读得回");
+        inking::detail::SetImageSampling(saved);
+    }
+
+    if (renderer == nullptr) {
+        return;
+    }
+
+    // 2 色棋盘（每格 1 像素）画进 40×40 的组件：放大 5~10 倍，插值一定看得出来。
+    const std::vector<std::uint8_t> checker = MakeCheckerBmp(4, 4, 1);
+
+    inking::InkingScene scene("image_sampling");
+    inking::SceneLibrary::SetActiveScene(&scene);
+
+    inking::ImageData data;
+    data.name = "sampling_checker";
+    data.width = 40;
+    data.height = 40;
+    data.normal.type = inking::AppearanceType::Image;
+    data.normal.source = "sampling_checker";
+    data.normal.imageBytes = checker.data();
+    data.normal.imageSize = checker.size();
+    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.offsetX = 20.0f;
+    data.offsetY = 20.0f;
+    scene.AddChild(std::make_unique<inking::InkingStaticImage>(&scene, data));
+    scene.TickFrame(1.0f / 60.0f);
+
+    int outputWidth = 0;
+    int outputHeight = 0;
+    SDL_GetRenderOutputSize(renderer, &outputWidth, &outputHeight);
+    const float pixelRatio =
+        outputWidth > 0
+            ? static_cast<float>(outputWidth) / static_cast<float>(inking::DesignWidth())
+            : 1.0f;
+    // 读**内圈**：边缘那一条有形状网格的 1px 羽化（0.6.2 T-08），它本来就不是
+    // "图片的像素"，混进来会让"恰好 2 色"假红。
+    const SDL_Rect region{
+        static_cast<int>(std::lround(25.0f * pixelRatio)),
+        static_cast<int>(std::lround(25.0f * pixelRatio)),
+        static_cast<int>(std::lround(30.0f * pixelRatio)),
+        static_cast<int>(std::lround(30.0f * pixelRatio))};
+    std::printf("         后端 %s，读回 %d×%d\n", SDL_GetRendererName(renderer),
+                region.w, region.h);
+
+    const auto colorCount = [&]() {
+        RenderSvgFrame(renderer, scene);
+        const std::vector<std::uint32_t> pixels = ReadPixelRegion(renderer, region);
+        EndSvgFrame(renderer);
+        std::vector<std::uint32_t> seen;
+        for (const std::uint32_t pixel : pixels) {
+            if (std::find(seen.begin(), seen.end(), pixel) == seen.end()) {
+                seen.push_back(pixel);
+            }
+        }
+        return static_cast<int>(seen.size());
+    };
+
+    // ② 单笔路径：Linear 多色 → Nearest 恰好 2 色 → 切回 Linear 又多色。
+    // 第三档是关键——它证明**已经建好的纹理**也被重设了（不是只影响新建的纹理）。
+    {
+        inking::detail::SetImageBatchingEnabled(false);
+        inking::detail::SetImageSampling(inking::detail::ImageSampling::Linear);
+        const int linear = colorCount();
+        inking::detail::SetImageSampling(inking::detail::ImageSampling::Nearest);
+        const int nearest = colorCount();
+        inking::detail::SetImageSampling(inking::detail::ImageSampling::Linear);
+        const int back = colorCount();
+        inking::detail::SetImageBatchingEnabled(true);
+
+        std::printf("         单笔路径：Linear %d 色 / Nearest %d 色 / 切回 %d 色\n",
+                    linear, nearest, back);
+        Check(linear > 2, "T-12：Linear 会把 2 色棋盘插值出中间色");
+        Check(nearest == 2, "T-12：Nearest 下放大后仍是 2 色（像素画的硬边）");
+        Check(back > 2,
+              "T-12：切回 Linear 立刻生效（已建好的纹理被重设，不是只影响新纹理）");
+    }
+
+    // ③ 默认路径（并批 + 矩形 + Fill，也就是 `InkingSprite` 最常走的那条）
+    {
+        inking::detail::SetImageSampling(inking::detail::ImageSampling::Linear);
+        const int batchedLinear = colorCount();
+        inking::detail::SetImageSampling(inking::detail::ImageSampling::Nearest);
+        const int batchedNearest = colorCount();
+        std::printf("         并批路径：Linear %d 色 / Nearest %d 色\n",
+                    batchedLinear, batchedNearest);
+        Check(batchedNearest == 2,
+              "T-12：并批路径下 Nearest 恰好 2 色（像素素材的主场）");
+    }
+
+    inking::detail::SetImageSampling(inking::detail::ImageSampling::Linear);
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// T-13（0.6.5）：运行期换配置
+// ---------------------------------------------------------------------------
+//
+// 验收的落点不是"换成功了"（那个看帧数就知道），而是三件**静默**的事：
+//   ① **订阅还在**（换配置后 `frameChanged` 照样发）——替换组件那条路会让它悄悄失效；
+//   ② **换配置本身不发 `frameChanged`**（没有"旧帧"这回事，发了就是假事件）；
+//   ③ **换过去画的是新图**——图集模式只改源矩形不动字节，忘了同步字节就会
+//      "帧数对、`IsSheetMode()` 对、画面还是上一张"（最像成功的那种错）。
+void CheckSpriteRuntimeSwap(SDL_Renderer* renderer) {
+    std::printf("\n-- 运行期换配置 SetSpriteData（0.6.5 T-13） --\n");
+
+    const std::vector<std::uint8_t> atlas = MakeSheetBmp(240, 160, 40, 0);
+
+    const auto sheetConfig = [&atlas]() {
+        inking::SpriteData data;
+        data.name = "swap_sheet";
+        data.width = 64;   // 故意与序列帧不同：组件尺寸**不该**跟着变
+        data.height = 64;
+        data.fps = 12.0;
+        data.autoplay = true;
+        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.offsetX = 20.0f;
+        data.offsetY = 20.0f;
+        data.normal.type = inking::AppearanceType::Image;
+        data.normal.source = "swap_atlas";
+        data.normal.imageBytes = atlas.data();
+        data.normal.imageSize = atlas.size();
+        data.sheet.frameWidth = 40;
+        data.sheet.frameHeight = 40;
+        data.sheet.columns = 6;
+        data.sheet.rows = 4;
+        return data;
+    };
+
+    inking::InkingScene scene("sprite_swap");
+    inking::SceneLibrary::SetActiveScene(&scene);
+
+    inking::SpriteData sequence = MakeSpriteData("swap_seq", 4, 12.0, true);
+    sequence.autoplay = false;  // 停在指定帧，别让 tick 把帧号推走
+    auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
+        std::make_unique<inking::InkingSprite>(&scene, sequence)));
+
+    int events = 0;
+    sprite->frameChanged.Subscribe(
+        [&events](std::size_t, std::size_t) { ++events; });
+
+    const int widthBefore = sprite->GetWidth();
+    sprite->SeekToFrame(2);       // 定位本身**会**发一次（画面确实变了）
+    const int eventsAfterSeek = events;
+    Check(eventsAfterSeek == 1, "T-13：Seek 发一次 frameChanged（作为后续计数的基线）");
+
+    // ---- ① 序列帧 → 图集（keepPhase），订阅必须还在 ----
+    sprite->SetSpriteData(sheetConfig(), /*keepPhase=*/true);
+    std::printf("         换成图集：IsSheet=%d 帧数=%zu 帧号=%zu 播放=%d 尺寸=%d\n",
+                sprite->IsSheetMode() ? 1 : 0, sprite->GetFrameCount(),
+                sprite->GetFrameIndex(), sprite->IsPlaying() ? 1 : 0,
+                sprite->GetWidth());
+    Check(sprite->IsValid() && sprite->IsSheetMode()
+              && sprite->GetFrameCount() == 24,
+          "T-13：换成图集后 IsSheetMode 为真、切出 24 帧");
+    Check(sprite->GetFrameIndex() == 2,
+          "T-13：keepPhase=true 保留原帧号（同动作换方向不跳回第一帧）");
+    Check(!sprite->IsPlaying(),
+          "T-13：IsPlaying 保持换之前的值（配置里的 autoplay 不覆盖运行期状态）");
+    Check(sprite->GetWidth() == widthBefore,
+          "T-13：组件尺寸不跟着配置走（改尺寸属于布局层）");
+    Check(events == eventsAfterSeek && sprite->GetFrameAdvanceCount() == 0,
+          "T-13：换配置本身不发 frameChanged、不计换帧");
+    Check(sprite->GetAppearance().srcRect.x == 80.0f
+              && sprite->GetAppearance().srcRect.y == 0.0f,
+          "T-13：换过去后的源矩形 = CellRect(2)（图集切格真的生效了）");
+
+    std::uint64_t texturesBefore = 0;
+    std::uint64_t texturesAfter = 0;
+    if (renderer != nullptr) {
+        scene.TickFrame(1.0f / 60.0f);
+        texturesBefore = inking::detail::TextCacheStatsSnapshot().texturesCreated;
+        RenderSvgFrame(renderer, scene);
+        texturesAfter = inking::detail::TextCacheStatsSnapshot().texturesCreated;
+        EndSvgFrame(renderer);
+        std::printf("         换图集后新建纹理 %llu 张\n",
+                    static_cast<unsigned long long>(texturesAfter
+                                                    - texturesBefore));
+        Check(texturesAfter - texturesBefore == 1,
+              "T-13：图集只建 1 张纹理（换的是源矩形，不是每帧一张）");
+    }
+
+    // ---- ② 图集 → 序列帧（keepPhase）：订阅还在，帧号仍 2 ----
+    sprite->SetSpriteData(sequence, /*keepPhase=*/true);
+    std::printf("         换回序列帧：IsSheet=%d 帧数=%zu 帧号=%zu\n",
+                sprite->IsSheetMode() ? 1 : 0, sprite->GetFrameCount(),
+                sprite->GetFrameIndex());
+    Check(sprite->IsValid() && !sprite->IsSheetMode()
+              && sprite->GetFrameCount() == 4,
+          "T-13：换回序列帧后 4 帧、不再走图集");
+    Check(sprite->GetFrameIndex() == 2, "T-13：keepPhase=true 再换回来帧号仍是 2");
+    Check(events == eventsAfterSeek,
+          "T-13：换回来同样不发 frameChanged");
+
+    // 订阅还活着：之后的 Seek 照样能收到（这就是"不掉订阅"的判据）。
+    sprite->SeekToFrame(1);
+    Check(events == eventsAfterSeek + 1,
+          "T-13：换过两次配置后订阅仍生效（Seek 又发了一次）");
+
+    // ---- ③ keepPhase=false（默认）：落到第 0 帧 ----
+    sprite->SetSpriteData(sheetConfig());
+    Check(sprite->GetFrameIndex() == 0,
+          "T-13：keepPhase 缺省时落到第 0 帧（换的是另一段动画）");
+
+    // ---- ④ 来回三次：字节指针不悬垂（清理顺序的回归测试） ----
+    bool roundTripOk = true;
+    for (int round = 0; round < 3; ++round) {
+        sprite->SetSpriteData(sequence, true);
+        roundTripOk = roundTripOk && sprite->IsValid()
+                      && sprite->GetFrameCount() == 4
+                      && sprite->GetLoadedFrameCount() == 4;
+        if (renderer != nullptr) {
+            RenderSvgFrame(renderer, scene);
+            EndSvgFrame(renderer);
+        }
+        sprite->SetSpriteData(sheetConfig(), true);
+        roundTripOk = roundTripOk && sprite->IsValid()
+                      && sprite->GetFrameCount() == 24
+                      && sprite->GetLoadedFrameCount() == 24;
+        if (renderer != nullptr) {
+            RenderSvgFrame(renderer, scene);
+            EndSvgFrame(renderer);
+        }
+    }
+    Check(roundTripOk,
+          "T-13：序列帧 ↔ 图集来回三次，帧数与已加载数每次都完整（无悬垂）");
+
+    // ---- ⑤ 坏配置：照常换，但 IsValid 为假（不让界面停摆） ----
+    inking::SpriteData broken = sheetConfig();
+    broken.sheet.columns = 5;  // 期望 200 宽，真实 240
+    inking::InkLog::ResetStats();
+    sprite->SetSpriteData(broken);
+    std::printf("         换到坏配置：IsValid=%d 错误=%s\n",
+                sprite->IsValid() ? 1 : 0, sprite->GetConfigError().c_str());
+    Check(!sprite->IsValid()
+              && sprite->GetConfigError().find("图集尺寸对不上") != std::string::npos,
+          "T-13：换到坏配置时 IsValid 为假并给出原因（与构造同一条判据）");
+
+    // 真正"没有可播的帧"的那一种（`Validate()` 就过不去：图集连格宽都没有）：
+    // 换过去后帧数为 0，播放状态必须被拉回 false——否则组件会"在播什么也没有"。
+    sprite->Play();
+    inking::SpriteData noFrames = sheetConfig();
+    noFrames.sheet.frameWidth = 0;
+    sprite->SetSpriteData(noFrames);
+    std::printf("         换到无帧配置：帧数=%zu 播放=%d 错误=%s\n",
+                sprite->GetFrameCount(), sprite->IsPlaying() ? 1 : 0,
+                sprite->GetConfigError().c_str());
+    Check(!sprite->IsValid() && sprite->GetFrameCount() == 0
+              && !sprite->IsPlaying(),
+          "T-13：没有可播的帧时播放状态被拉回 false（不空转）");
+
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// T-14（0.6.5）：不规则帧矩形
+// ---------------------------------------------------------------------------
+//
+// "一张大页里混装多个动作"必然出现帧宽高不等（跑步比待机宽）。验收与 T-11 同一套
+// 思路：**算术**（`CellRect` 原样返回表里的矩形）+ **像素**（帧表切出来的那一块，
+// 与"直接造那块矩形"逐像素一致——这样才排除"矩形对但 UV/采样偏了"）。
+// 每个用例的组件尺寸按该帧的宽高给，两边同比例，才比得起来。
+void CheckSpriteUnevenFrames(SDL_Renderer* renderer) {
+    std::printf("\n-- 不规则帧矩形 frameRects（0.6.5 T-14） --\n");
+
+    struct FrameCase {
+        const char* label;
+        int x, y, width, height;
+    };
+    const FrameCase kFrames[3] = {{"40×40", 0, 0, 40, 40},
+                                  {"56×40", 40, 0, 56, 40},
+                                  {"40×56", 0, 40, 40, 56}};
+    constexpr int kAtlasWidth = 128;
+    constexpr int kAtlasHeight = 96;
+
+    // ① 纯算术（在下面那份 `data` 上做）：CellRect 原样返回、帧数由表定、越界给全零
+    inking::SpriteData data;
+    data.name = "uneven_frames";
+    data.width = 56;
+    data.height = 56;
+    data.fps = 12.0;
+    data.autoplay = false;
+    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.offsetX = 20.0f;
+    data.offsetY = 20.0f;
+    data.normal.type = inking::AppearanceType::Image;
+    data.normal.source = "uneven_atlas";
+    for (const FrameCase& frame : kFrames) {
+        data.sheet.frameRects.push_back(inking::ShapeBounds{
+            static_cast<float>(frame.x), static_cast<float>(frame.y),
+            static_cast<float>(frame.width), static_cast<float>(frame.height)});
+    }
+
+    {
+        inking::SpriteData normalized = data;
+        normalized.sheet.count = 99;  // 帧表在时 count 会被覆盖（不是"两套各说一套"）
+        normalized.Normalize();
+        Check(normalized.sheet.count == 3 && normalized.FrameCount() == 3,
+              "T-14：帧表非空时帧数由表定（count 被覆盖，不出现两套真相）");
+        Check(normalized.Validate().empty(), "T-14：帧表配置本身合法");
+
+        const inking::ShapeBounds second = normalized.sheet.CellRect(1);
+        std::printf("         表里第 1 帧 = (%.0f,%.0f,%.0f×%.0f)；表外第 3 帧宽=%.0f\n",
+                    second.x, second.y, second.width, second.height,
+                    normalized.sheet.CellRect(3).width);
+        Check(second.x == 40.0f && second.y == 0.0f && second.width == 56.0f
+                  && second.height == 40.0f,
+              "T-14：CellRect 原样返回表里的矩形（不再叠加 firstFrame）");
+        Check(normalized.sheet.CellRect(3).width == 0.0f,
+              "T-14：表外的帧号给全零矩形（不画错块）");
+    }
+
+    // ② 互斥：帧表 + 网格字段同时给 → 构造期一条 ERROR
+    {
+        inking::InkingScene scene("uneven_exclusive");
+        inking::SceneLibrary::SetActiveScene(&scene);
+
+        inking::SpriteData both = data;
+        both.sheet.columns = 4;
+        both.sheet.frameWidth = 40;
+        both.sheet.frameHeight = 40;
+
+        inking::InkLog::ResetStats();
+        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
+            std::make_unique<inking::InkingSprite>(&scene, both)));
+        std::printf("         帧表 + 网格同给：IsValid=%d 错误=%s\n",
+                    sprite->IsValid() ? 1 : 0, sprite->GetConfigError().c_str());
+        Check(!sprite->IsValid()
+                  && sprite->GetConfigError().find("互斥") != std::string::npos,
+              "T-14：帧表与网格互斥（不静默选一套）");
+        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+              "T-14：恰好一条 ERROR");
+
+        inking::SceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ③ 越界：第 2 帧的 40×56 超出 96 高 → 构造期一条 ERROR，文案带帧号
+    {
+        inking::InkingScene scene("uneven_out_of_bounds");
+        inking::SceneLibrary::SetActiveScene(&scene);
+
+        inking::SpriteData out = data;
+        // 必须带上字节：没有字节时构造期会先报"图集没有字节"，越界那条就永远轮不到
+        // （自检第一次跑正是这么红的——两条错有先后，验错的那条被前一条挡住了）。
+        const std::vector<std::uint8_t> atlasBytes =
+            MakeAtlasRegionBmp(kAtlasWidth, kAtlasHeight, 0, 0, kAtlasWidth,
+                               kAtlasHeight);
+        out.normal.imageBytes = atlasBytes.data();
+        out.normal.imageSize = atlasBytes.size();
+        out.sheet.frameRects[2] = inking::ShapeBounds{0.0f, 80.0f, 40.0f, 56.0f};
+
+        inking::InkLog::ResetStats();
+        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
+            std::make_unique<inking::InkingSprite>(&scene, out)));
+        std::printf("         越界帧：IsValid=%d 错误=%s\n",
+                    sprite->IsValid() ? 1 : 0, sprite->GetConfigError().c_str());
+        Check(!sprite->IsValid()
+                  && sprite->GetConfigError().find("第 2 帧") != std::string::npos,
+              "T-14：帧表越界在构造期被拦下（文案带帧号与矩形）");
+
+        inking::SceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ④ 像素：帧表切出来的每一帧，与"直接造那块矩形"逐像素一致
+    if (renderer == nullptr) {
+        return;
+    }
+    int outputWidth = 0;
+    int outputHeight = 0;
+    SDL_GetRenderOutputSize(renderer, &outputWidth, &outputHeight);
+    const float pixelRatio =
+        outputWidth > 0
+            ? static_cast<float>(outputWidth) / static_cast<float>(inking::DesignWidth())
+            : 1.0f;
+
+    // 大图与"裁出来的小图"来自同一个生成器（绝对坐标），所以内容必然可对。
+    const std::vector<std::uint8_t> atlas =
+        MakeAtlasRegionBmp(kAtlasWidth, kAtlasHeight, 0, 0, kAtlasWidth, kAtlasHeight);
+
+    for (std::size_t index = 0; index < 3; ++index) {
+        const FrameCase& frame = kFrames[index];
+        const std::vector<std::uint8_t> cell =
+            MakeAtlasRegionBmp(kAtlasWidth, kAtlasHeight, frame.x, frame.y,
+                               frame.width, frame.height);
+        const SDL_Rect region{
+            static_cast<int>(std::lround(20.0f * pixelRatio)),
+            static_cast<int>(std::lround(20.0f * pixelRatio)),
+            static_cast<int>(std::lround(static_cast<float>(frame.width) * pixelRatio)),
+            static_cast<int>(std::lround(static_cast<float>(frame.height) * pixelRatio))};
+
+        // 帧表那一侧：组件尺寸 = 该帧宽高（两边同比例才比得起来）
+        inking::SpriteData sheetData = data;
+        sheetData.width = frame.width;
+        sheetData.height = frame.height;
+        sheetData.normal.imageBytes = atlas.data();
+        sheetData.normal.imageSize = atlas.size();
+
+        inking::InkingScene sheetScene(std::string("uneven_sheet_") + frame.label);
+        inking::SceneLibrary::SetActiveScene(&sheetScene);
+        auto* sprite = static_cast<inking::InkingSprite*>(sheetScene.AddChild(
+            std::make_unique<inking::InkingSprite>(&sheetScene, sheetData)));
+        sprite->SeekToFrame(index);
+        sheetScene.TickFrame(1.0f / 60.0f);
+        RenderSvgFrame(renderer, sheetScene);
+        const std::vector<std::uint32_t> fromSheet = ReadPixelRegion(renderer, region);
+        EndSvgFrame(renderer);
+
+        // 参照侧：同一块矩形的独立小图
+        inking::InkingScene singleScene(std::string("uneven_single_") + frame.label);
+        inking::SceneLibrary::SetActiveScene(&singleScene);
+        inking::ImageData imageData;
+        imageData.name = std::string("uneven_cell_") + frame.label;
+        imageData.width = frame.width;
+        imageData.height = frame.height;
+        imageData.normal.type = inking::AppearanceType::Image;
+        imageData.normal.source = imageData.name;
+        imageData.normal.imageBytes = cell.data();
+        imageData.normal.imageSize = cell.size();
+        imageData.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+        imageData.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        imageData.offsetX = 20.0f;
+        imageData.offsetY = 20.0f;
+        singleScene.AddChild(
+            std::make_unique<inking::InkingStaticImage>(&singleScene, imageData));
+        singleScene.TickFrame(1.0f / 60.0f);
+        RenderSvgFrame(renderer, singleScene);
+        const std::vector<std::uint32_t> fromSingle = ReadPixelRegion(renderer, region);
+        EndSvgFrame(renderer);
+
+        // 只比**内部**：最外一圈的采样点会落到矩形外一个纹素（图集里那儿是别的
+        // 动作，独立小图里则是纹理边界）——那是"图集需要有留白"的固有现象，
+        // 不是切格错。差一整格 / 差一行会落在内部，所以这组断言照样抓得住。
+        int diffInside = (fromSheet.size() == fromSingle.size() && !fromSheet.empty())
+                             ? 0
+                             : -1;
+        int diffAll = diffInside;
+        if (diffInside == 0) {
+            const std::size_t w = static_cast<std::size_t>(region.w);
+            const std::size_t h = static_cast<std::size_t>(region.h);
+            for (std::size_t i = 0; i < fromSheet.size(); ++i) {
+                if (fromSheet[i] == fromSingle[i]) {
+                    continue;
+                }
+                ++diffAll;
+                const std::size_t col = i % w;
+                const std::size_t row = i / w;
+                const bool border =
+                    col == 0 || col + 1 == w || row == 0 || row + 1 == h;
+                if (!border) {
+                    ++diffInside;
+                }
+            }
+        }
+        std::printf("         第 %zu 帧（%s）：内部差异 %d / %zu（含边框 %d）\n", index,
+                    frame.label, diffInside, fromSheet.size(), diffAll);
+        Check(diffInside == 0, "T-14：帧表切出的那一帧与独立小图逐像素一致（内部）");
+    }
+
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// T-16（0.6.5）：图集描述 → SpriteData
+// ---------------------------------------------------------------------------
+//
+// 这一层是**纯函数**（描述 + 字节视图 → 配置），所以验收的重点是"转过去的字段
+// 逐项对得上"，再加上一条像素（转出来的东西真的能画对那块）。
+void CheckAtlasData(SDL_Renderer* renderer) {
+    std::printf("\n-- 图集描述 AtlasData → SpriteData（0.6.5 T-16） --\n");
+
+    inking::AtlasData atlas;
+    atlas.name = "slime";
+
+    inking::AtlasAnimation walk;
+    walk.name = "walk";
+    walk.source = "slime.png";
+    walk.fps = 8.0;
+    walk.loop = false;
+    walk.frames = {inking::ShapeBounds{0.0f, 0.0f, 40.0f, 40.0f},
+                   inking::ShapeBounds{40.0f, 0.0f, 56.0f, 40.0f},
+                   inking::ShapeBounds{0.0f, 40.0f, 40.0f, 56.0f}};
+    walk.events = {inking::SpriteData::SpriteEvent{1, "step"}};
+    atlas.animations.push_back(walk);
+
+    inking::AtlasAnimation idle;
+    idle.name = "idle";
+    idle.source = "slime.png";
+    idle.fps = 4.0;
+    idle.frames = {inking::ShapeBounds{96.0f, 0.0f, 32.0f, 32.0f}};
+    atlas.animations.push_back(idle);
+
+    // ① 查找与校验
+    {
+        Check(atlas.Validate().empty(), "T-16：合法的图集描述通过 Validate");
+        Check(atlas.FindIndex("walk") == 0 && atlas.FindIndex("idle") == 1,
+              "T-16：FindIndex 按名字找到下标");
+        Check(atlas.FindIndex("run") == inking::AtlasData::kNotFound,
+              "T-16：找不到时给 kNotFound（不是 0，0 是“walk”）");
+
+        inking::AtlasData duplicated = atlas;
+        duplicated.animations[1].name = "walk";
+        std::printf("         重名：%s\n", duplicated.Validate().c_str());
+        Check(!duplicated.Validate().empty(),
+              "T-16：重名动画在 Validate 里报错（不静默只播第一条）");
+    }
+
+    // ② 转换：字段逐项对得上
+    {
+        const inking::SpriteData data =
+            inking::MakeSpriteData(atlas, atlas.FindIndex("walk"), nullptr, 0);
+        std::printf("         转出来：name=%s 帧数=%zu fps=%.1f loop=%d 事件=%zu "
+                    "尺寸=%d×%d\n",
+                    data.name.c_str(), data.FrameCount(), data.fps,
+                    data.loop ? 1 : 0, data.events.size(), data.width, data.height);
+        Check(data.FrameCount() == 3 && data.sheet.frameRects.size() == 3,
+              "T-16：帧表原样灌进 sheet.frameRects，帧数 == 3");
+        Check(data.sheet.frameRects[1].width == 56.0f
+                  && data.sheet.frameRects[1].height == 40.0f,
+              "T-16：帧矩形逐项相等（含不等宽的 56×40）");
+        Check(data.fps == 8.0 && !data.loop && data.events.size() == 1
+                  && data.events[0].name == "step",
+              "T-16：fps / loop / events 原样拷贝");
+        Check(data.normal.source == "slime.png" && data.sheet.source.empty(),
+              "T-16：路径只写一处（normal.source，sheet.source 留空沿用）");
+        Check(data.runtimeAsset && data.width == 40 && data.height == 40,
+              "T-16：没给字节时走运行期读图；尺寸默认跟第一帧（40×40）");
+        Check(data.Validate().empty(), "T-16：转出来的配置通过 SpriteData::Validate");
+    }
+
+    // ③ 越界下标：给一份非法配置 + 一条 ERROR（不崩、不静默空白）
+    {
+        inking::InkLog::ResetStats();
+        const inking::SpriteData bad =
+            inking::MakeSpriteData(atlas, inking::AtlasData::kNotFound, nullptr, 0);
+        Check(!bad.Validate().empty(),
+              "T-16：下标越界转出的是非法配置（Validate 能说清楚）");
+        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+              "T-16：越界同时有一条 ERROR（不是静默空白）");
+    }
+
+    // ④ 像素：`MakeSpriteData` 产出的配置画出来的第 1 帧 == 同一块矩形的独立小图。
+    // 与 T-14 同一套对拍法（大图与裁片来自同一个按绝对坐标生成器），区别只在于
+    // 这里的帧表是**从 `AtlasData` 转过来的**，走完了"描述 → 配置 → 组件"全程。
+    if (renderer == nullptr) {
+        return;
+    }
+    {
+        constexpr int kAtlasWidth = 128;
+        constexpr int kAtlasHeight = 96;
+        const std::vector<std::uint8_t> bytes =
+            MakeAtlasRegionBmp(kAtlasWidth, kAtlasHeight, 0, 0, kAtlasWidth,
+                               kAtlasHeight);
+
+        inking::AtlasData pixelAtlas;
+        pixelAtlas.name = "atlas_pixels";
+        inking::AtlasAnimation anim;
+        anim.name = "walk";
+        anim.source = "atlas_pixels_src";
+        anim.frames = {inking::ShapeBounds{0.0f, 0.0f, 40.0f, 40.0f},
+                       inking::ShapeBounds{40.0f, 0.0f, 56.0f, 40.0f},
+                       inking::ShapeBounds{0.0f, 40.0f, 40.0f, 56.0f}};
+        pixelAtlas.animations.push_back(anim);
+        Check(pixelAtlas.Validate().empty(), "T-16：像素用例的描述合法");
+
+        const inking::ShapeBounds rect = anim.frames[1];  // 56×40，故意不等宽
+        const std::vector<std::uint8_t> cell =
+            MakeAtlasRegionBmp(kAtlasWidth, kAtlasHeight, 40, 0, 56, 40);
+
+        int outputWidth = 0;
+        int outputHeight = 0;
+        SDL_GetRenderOutputSize(renderer, &outputWidth, &outputHeight);
+        const float pixelRatio =
+            outputWidth > 0
+                ? static_cast<float>(outputWidth)
+                    / static_cast<float>(inking::DesignWidth())
+                : 1.0f;
+        const SDL_Rect region{
+            static_cast<int>(std::lround(20.0f * pixelRatio)),
+            static_cast<int>(std::lround(20.0f * pixelRatio)),
+            static_cast<int>(std::lround(56.0f * pixelRatio)),
+            static_cast<int>(std::lround(40.0f * pixelRatio))};
+
+        inking::SpriteData sheetData = inking::MakeSpriteData(
+            pixelAtlas, 0, bytes.data(), bytes.size());
+        sheetData.autoplay = false;
+        sheetData.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+        sheetData.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        sheetData.offsetX = 20.0f;
+        sheetData.offsetY = 20.0f;
+        Check(sheetData.width == 40 && sheetData.height == 40,
+              "T-16：尺寸取第一帧（40×40），不是 56×40 那一帧");
+
+        // 要跟 56×40 那一帧对拍，组件尺寸就得按这一帧给：图集比第一帧宽时**调用方
+        // 自己调 `width/height`**（`MakeSpriteData` 不替你改尺寸——那会触发重布局）。
+        // 不改的话这一帧会被压进 40×40，与独立小图当然对不上。
+        sheetData.width = 56;
+        sheetData.height = 40;
+
+        inking::InkingScene sheetScene("atlas_sheet_px");
+        inking::SceneLibrary::SetActiveScene(&sheetScene);
+        auto* sprite = static_cast<inking::InkingSprite*>(sheetScene.AddChild(
+            std::make_unique<inking::InkingSprite>(&sheetScene, sheetData)));
+        sprite->SeekToFrame(1);
+        sheetScene.TickFrame(1.0f / 60.0f);
+        RenderSvgFrame(renderer, sheetScene);
+        const std::vector<std::uint32_t> fromAtlas =
+            ReadPixelRegion(renderer, region);
+        EndSvgFrame(renderer);
+
+        inking::InkingScene singleScene("atlas_single_px");
+        inking::SceneLibrary::SetActiveScene(&singleScene);
+        inking::ImageData imageData;
+        imageData.name = "atlas_cell11";
+        imageData.width = 56;
+        imageData.height = 40;
+        imageData.normal.type = inking::AppearanceType::Image;
+        imageData.normal.source = imageData.name;
+        imageData.normal.imageBytes = cell.data();
+        imageData.normal.imageSize = cell.size();
+        imageData.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+        imageData.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        imageData.offsetX = 20.0f;
+        imageData.offsetY = 20.0f;
+        singleScene.AddChild(
+            std::make_unique<inking::InkingStaticImage>(&singleScene, imageData));
+        singleScene.TickFrame(1.0f / 60.0f);
+        RenderSvgFrame(renderer, singleScene);
+        const std::vector<std::uint32_t> fromSingle =
+            ReadPixelRegion(renderer, region);
+        EndSvgFrame(renderer);
+
+        int diffInside = (fromAtlas.size() == fromSingle.size() && !fromAtlas.empty())
+                             ? 0
+                             : -1;
+        int diffAll = diffInside;
+        if (diffInside == 0) {
+            const std::size_t w = static_cast<std::size_t>(region.w);
+            const std::size_t h = static_cast<std::size_t>(region.h);
+            for (std::size_t i = 0; i < fromAtlas.size(); ++i) {
+                if (fromAtlas[i] == fromSingle[i]) {
+                    continue;
+                }
+                ++diffAll;
+                const std::size_t col = i % w;
+                const std::size_t row = i / w;
+                if (col != 0 && col + 1 != w && row != 0 && row + 1 != h) {
+                    ++diffInside;
+                }
+            }
+        }
+        std::printf("         AtlasData 第 1 帧 vs 独立小图：内部差异 %d（含边框 %d）\n",
+                    diffInside, diffAll);
+        Check(diffInside == 0,
+              "T-16：AtlasData 转出来的第 1 帧与独立小图逐像素一致（内部）");
+    }
+
+}
+
+// ---------------------------------------------------------------------------
+// T-18（0.6.6）：动画组
+// ---------------------------------------------------------------------------
+//
+// 验收的重点是"**只有一个节点**"这件事——它看不见（画出来一模一样），只能靠
+// `GetOwnedChildCount()==0` 与 `animationChanged` 的计数钉住。
+void CheckSpriteGroup() {
+    std::printf("\n-- 动画组 InkingSpriteGroup（0.6.6 T-18） --\n");
+
+    const auto makeGroup = []() {
+        inking::SpriteGroupData group;
+        struct Spec {
+            const char* name;
+            int frames;
+            double fps;
+            bool loop;
+            int width;
+            int height;
+        };
+        const Spec specs[3] = {{"idle", 4, 12.0, true, 40, 40},
+                               {"run", 6, 16.0, true, 48, 56},
+                               {"attack", 8, 10.0, false, 56, 48}};
+        for (const Spec& spec : specs) {
+            inking::SpriteData data =
+                MakeSpriteData(spec.name, spec.frames, spec.fps, spec.loop);
+            data.width = spec.width;
+            data.height = spec.height;
+            group.animations.emplace_back(spec.name, data);
+        }
+        return group;
+    };
+
+    // ① 数据层：查找 / 重名 / 空表
+    {
+        const inking::SpriteGroupData group = makeGroup();
+        Check(group.Validate().empty(), "T-18：合法的动作表通过 Validate");
+        Check(group.FindIndex("run") == 1
+                  && group.FindIndex("nope") == inking::SpriteGroupData::kNotFound,
+              "T-18：FindIndex 按名字找、找不到给 kNotFound");
+
+        inking::SpriteGroupData duplicated = group;
+        duplicated.animations[2].first = "idle";
+        std::printf("         重名：%s\n", duplicated.Validate().c_str());
+        Check(!duplicated.Validate().empty(),
+              "T-18：重名动作在 Validate 里报错");
+
+        inking::SpriteGroupData empty;
+        Check(!empty.Validate().empty(), "T-18：空动作表报错");
+    }
+
+    inking::InkingScene scene("sprite_group");
+    inking::SceneLibrary::SetActiveScene(&scene);
+
+    // ② 构造 + 切换
+    {
+        inking::InkLog::ResetStats();
+        auto* group = static_cast<inking::InkingSpriteGroup*>(scene.AddChild(
+            std::make_unique<inking::InkingSpriteGroup>(&scene, makeGroup(), "run")));
+
+        int changes = 0;
+        std::string lastNew;
+        std::string lastOld;
+        group->animationChanged.Subscribe(
+            [&changes, &lastNew, &lastOld](const std::string& now,
+                                           const std::string& before) {
+                ++changes;
+                lastNew = now;
+                lastOld = before;
+            });
+
+        std::printf("         初始：动作=%s 帧数=%zu 尺寸=%d×%d\n",
+                    group->GetCurrentAnimation().c_str(), group->GetFrameCount(),
+                    group->GetWidth(), group->GetHeight());
+        Check(group->IsValid() && group->GetGroupError().empty(),
+              "T-18：合法动作表构造后 IsValid 为真");
+        Check(group->GetCurrentAnimation() == "run"
+                  && group->GetFrameCount() == 6 && group->GetWidth() == 48
+                  && group->GetHeight() == 56,
+              "T-18：初始动作按名字选中（帧数 / 尺寸都是那条动作的）");
+        Check(group->GetOwnedChildCount() == 0,
+              "T-18：组**只有一个节点**（没有隐藏的子 sprite）");
+        Check(changes == 0, "T-18：构造不发 animationChanged");
+
+        // 切到 idle：帧数 / 尺寸跟着变
+        Check(group->SwitchTo("idle"), "T-18：SwitchTo 存在的动作返回 true");
+        std::printf("         切到 idle：帧数=%zu 尺寸=%d×%d 事件=%d (%s←%s)\n",
+                    group->GetFrameCount(), group->GetWidth(), group->GetHeight(),
+                    changes, lastNew.c_str(), lastOld.c_str());
+        Check(group->GetFrameCount() == 4 && group->GetWidth() == 40
+                  && group->GetHeight() == 40,
+              "T-18：切换后帧数与组件尺寸都跟新动作走");
+        Check(changes == 1 && lastNew == "idle" && lastOld == "run",
+              "T-18：animationChanged 发一次，(新, 旧) 名字正确");
+
+        // 切到 attack（不循环那份），再切回同一个名字：不重建、不发事件
+        Check(group->SwitchTo("attack"), "T-18：再切到 attack");
+        Check(group->GetFrameCount() == 8 && group->GetWidth() == 56
+                  && group->GetHeight() == 48,
+              "T-18：第三个动作的帧数与宽高也对");
+        Check(changes == 2, "T-18：每次真实切换发一次事件");
+        Check(group->SwitchTo("attack") && changes == 2,
+              "T-18：切到当前动作是空操作（不重建、不发事件）");
+
+        // 不存在的名字：false + 恰好一条 ERROR + 停在原动作
+        inking::InkLog::ResetStats();
+        Check(!group->SwitchTo("nope"),
+              "T-18：SwitchTo 不存在的动作返回 false");
+        std::printf("         切到 nope：错误=%s（当前仍是 %s）\n",
+                    group->IsValid() ? "无" : "见日志",
+                    group->GetCurrentAnimation().c_str());
+        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+              "T-18：恰好一条 ERROR（不静默停在旧动作）");
+        Check(group->GetCurrentAnimation() == "attack" && changes == 2,
+              "T-18：切换失败后动作与事件计数都不变");
+
+        // keepPhase：保留帧号
+        group->SwitchTo("idle");
+        group->SeekToFrame(3);
+        Check(group->SwitchTo("run", /*keepPhase=*/true)
+                  && group->GetFrameIndex() == 3,
+              "T-18：keepPhase 保留帧号（同动作换方向不跳回第一帧）");
+        Check(group->SwitchTo("idle", /*keepPhase=*/false)
+                  && group->GetFrameIndex() == 0,
+              "T-18：keepPhase 缺省时落到第 0 帧");
+
+        // resize=false：尺寸不动
+        const int widthBefore = group->GetWidth();
+        Check(group->SwitchTo("attack", false, /*resize=*/false)
+                  && group->GetWidth() == widthBefore,
+              "T-18：resize=false 时组件尺寸不变（交给调用方）");
+
+        // 动作名列表（UI 做下拉用）
+        const std::vector<std::string> names = group->GetAnimationNames();
+        Check(names.size() == 3 && names[0] == "idle" && names[1] == "run"
+                  && names[2] == "attack",
+              "T-18：GetAnimationNames 按声明顺序给出全部动作");
+    }
+
+    // ③ 初始名字写错：退回第 0 个 + 一条 ERROR（不是空白）
+    {
+        inking::InkLog::ResetStats();
+        auto* group = static_cast<inking::InkingSpriteGroup*>(scene.AddChild(
+            std::make_unique<inking::InkingSpriteGroup>(&scene, makeGroup(),
+                                                        "typo")));
+        std::printf("         初始名写错：动作=%s 帧数=%zu\n",
+                    group->GetCurrentAnimation().c_str(), group->GetFrameCount());
+        Check(group->GetCurrentAnimation() == "idle" && group->GetFrameCount() == 4,
+              "T-18：初始名字不存在时退回第 0 个动作");
+        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+              "T-18：退回的同时有一条 ERROR（不是静默播错动作）");
+    }
+
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// T-08：矩形图片并进几何批
+// ---------------------------------------------------------------------------
+//
+// 这件事**功能上完全看不出来**（画出来一模一样，只是少几次 draw call），
+// 所以断言只能落在两处：`BatchStats` 的提交计数，与"开关关掉时像素一模一样"。
+//
+// 三条要注意：
+//   1. 计数是**累计量**，只能取前后差值；
+//   2. 50 个 sprite 共用同一张图集 ⇒ 纹理只建 1 张、几何只提 1 次；
+//   3. 并批之后形状走**羽化网格**（矩形四边多一条 1px 的抗锯齿过渡），所以
+//      "逐像素一致"只在**内部**、且只在**纯色图**上成立——边缘那一条本来就该
+//      不一样，这是矩形图片第一次和矩形按钮用同一套边缘（0.6.1 之前是硬边）。
+void CheckSpriteBatching(SDL_Renderer* renderer) {
+    std::printf("\n-- 矩形图片并批：提交次数 / 像素 / 变换（0.6.2 T-08） --\n");
+    if (renderer == nullptr) {
+        return;
+    }
+
+    struct Counts {
+        std::uint64_t geometry = 0;
+        std::uint64_t texture = 0;
+        std::uint64_t draws = 0;
+    };
+    const auto snapshot = []() {
+        const inking::detail::BatchStats stats =
+            inking::detail::BatchStatsSnapshot();
+        return Counts{stats.geometrySubmissions, stats.textureSubmissions,
+                      stats.textureDraws};
+    };
+
+    const std::vector<std::uint8_t> atlas = MakeSheetBmp(160, 40, 40, 0);
+    constexpr int kSpriteCount = 50;
+
+    const auto buildScene = [&](const char* sceneName) {
+        auto scene = std::make_unique<inking::InkingScene>(sceneName);
+        for (int i = 0; i < kSpriteCount; ++i) {
+            inking::SpriteData data;
+            data.name = std::string(sceneName) + "_" + std::to_string(i);
+            data.width = 40;
+            data.height = 40;
+            data.fps = 12.0;
+            data.autoplay = false;  // 停在第 0 格：像素才可比
+            data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            // 10×5 的网格，格距 44 设计像素。
+            data.offsetX = 20.0f + static_cast<float>(i % 10) * 44.0f;
+            data.offsetY = 20.0f + static_cast<float>(i / 10) * 44.0f;
+            data.normal.type = inking::AppearanceType::Image;
+            data.normal.source = "batch_atlas";  // 同一个键 ⇒ 同一张纹理
+            data.normal.imageBytes = atlas.data();
+            data.normal.imageSize = atlas.size();
+            data.sheet.frameWidth = 40;
+            data.sheet.frameHeight = 40;
+            data.sheet.columns = 4;
+            data.sheet.rows = 1;
+            scene->AddChild(
+                std::make_unique<inking::InkingSprite>(scene.get(), data));
+        }
+        return scene;
+    };
+
+    // 覆盖左上 2×2 个 sprite 的区域（设计 20..104 ⇒ 设备 10..52）。
+    int outputWidth = 0;
+    int outputHeight = 0;
+    SDL_GetRenderOutputSize(renderer, &outputWidth, &outputHeight);
+    const float pixelRatio =
+        outputWidth > 0
+            ? static_cast<float>(outputWidth)
+                / static_cast<float>(inking::DesignWidth())
+            : 1.0f;
+    const SDL_Rect region{
+        static_cast<int>(std::lround(20.0f * pixelRatio)),
+        static_cast<int>(std::lround(20.0f * pixelRatio)),
+        static_cast<int>(std::lround(84.0f * pixelRatio)),
+        static_cast<int>(std::lround(84.0f * pixelRatio))};
+    // 第一个 sprite 的**内部**（挖掉四边各 2 设备像素的羽化带）。
+    const SDL_Rect interior{region.x + 2, region.y + 2, region.w / 2 - 4,
+                            region.h / 2 - 4};
+
+    std::vector<std::uint32_t> batched;
+    std::vector<std::uint32_t> batchedInterior;
+    std::vector<std::uint32_t> immediate;
+    std::vector<std::uint32_t> immediateInterior;
+    Counts onDelta{};
+    Counts offDelta{};
+    {
+        std::unique_ptr<inking::InkingScene> scene = buildScene("sprite_batch_on");
+        inking::SceneLibrary::SetActiveScene(scene.get());
+        scene->TickFrame(1.0f / 60.0f);
+
+        const Counts before = snapshot();
+        RenderSvgFrame(renderer, *scene);
+        const Counts after = snapshot();
+        batched = ReadPixelRegion(renderer, region);
+        batchedInterior = ReadPixelRegion(renderer, interior);
+        EndSvgFrame(renderer);
+        onDelta = Counts{after.geometry - before.geometry,
+                         after.texture - before.texture,
+                         after.draws - before.draws};
+    }
+    {
+        std::unique_ptr<inking::InkingScene> scene = buildScene("sprite_batch_off");
+        inking::SceneLibrary::SetActiveScene(scene.get());
+        scene->TickFrame(1.0f / 60.0f);
+
+        inking::detail::SetImageBatchingEnabled(false);
+        const Counts before = snapshot();
+        RenderSvgFrame(renderer, *scene);
+        const Counts after = snapshot();
+        immediate = ReadPixelRegion(renderer, region);
+        immediateInterior = ReadPixelRegion(renderer, interior);
+        EndSvgFrame(renderer);
+        inking::detail::SetImageBatchingEnabled(true);  // 立刻恢复默认
+        offDelta = Counts{after.geometry - before.geometry,
+                          after.texture - before.texture,
+                          after.draws - before.draws};
+    }
+
+    std::printf("         50 个 sprite：并批 几何 %llu / 单笔 %llu / 纹理批 %llu"
+                "　　关开关 几何 %llu / 单笔 %llu\n",
+                static_cast<unsigned long long>(onDelta.geometry),
+                static_cast<unsigned long long>(onDelta.texture),
+                static_cast<unsigned long long>(onDelta.draws),
+                static_cast<unsigned long long>(offDelta.geometry),
+                static_cast<unsigned long long>(offDelta.texture));
+    Check(onDelta.geometry == 1 && onDelta.texture == 0,
+          "T-08：50 个矩形 sprite 合并成**一次** SDL_RenderGeometry（0 次单笔绘制）");
+    Check(offDelta.texture == kSpriteCount && offDelta.geometry == 0,
+          "T-08：关掉开关后回到每张图一次 SDL_RenderTexture（50 次单笔）");
+
+    const auto maxChannelDelta = [](const std::vector<std::uint32_t>& a,
+                                    const std::vector<std::uint32_t>& b) {
+        int worst = -1;
+        if (a.empty() || a.size() != b.size()) {
+            return worst;
+        }
+        worst = 0;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            for (int shift = 0; shift <= 16; shift += 8) {
+                const int left = static_cast<int>((a[i] >> shift) & 0xFFu);
+                const int right = static_cast<int>((b[i] >> shift) & 0xFFu);
+                const int delta = left > right ? left - right : right - left;
+                if (delta > worst) {
+                    worst = delta;
+                }
+            }
+        }
+        return worst;
+    };
+
+    const auto diffCount = [](const std::vector<std::uint32_t>& a,
+                              const std::vector<std::uint32_t>& b) {
+        if (a.empty() || a.size() != b.size()) {
+            return -1;
+        }
+        int diff = 0;
+        for (std::size_t i = 0; i < a.size(); ++i) {
+            if (a[i] != b[i]) {
+                ++diff;
+            }
+        }
+        return diff;
+    };
+
+    const int interiorDiff = diffCount(batchedInterior, immediateInterior);
+    const int interiorDelta = maxChannelDelta(batchedInterior, immediateInterior);
+    const int fullDiff = diffCount(batched, immediate);
+    std::printf("         渐变图集 并批 vs 单笔：内部差异 %d / %zu，最大通道差 %d；"
+                "整块差异 %d / %zu\n",
+                interiorDiff, batchedInterior.size(), interiorDelta, fullDiff,
+                batched.size());
+    // 为什么不是"逐位相同"：并批之后走的是**形状网格**，矩形四边多一条 1px 羽化带，
+    // 四边形因此向外扩了半个像素，UV 跟着扩——渐变图上就表现为"采样点偏了半个纹素"
+    // （R 每纹素差 6，实测最大 3）。这是羽化的固有代价，不是 alpha 或定位的问题；
+    // 纯色图那一组会给出**严格相等**，专门盯住"看起来对了但颜色偏了"。
+    Check(interiorDelta >= 0 && interiorDelta <= 8,
+          "T-08：并批后内部像素与单笔的差 ≤ 8（只有羽化外扩造成的半纹素偏移）");
+
+    // ---- 纯色图：内部必须**严格相等**（没有渐变可放大误差） ----
+    {
+        // 40×40 全同色（24 位 BMP 没有 alpha，所以这条只盯颜色，不盯透明）。
+        constexpr int kSide = 40;
+        std::vector<std::uint8_t> solid;
+        {
+            const int stride = (kSide * 3 + 3) / 4 * 4;
+            const int imageSize = stride * kSide;
+            solid.assign(static_cast<std::size_t>(54 + imageSize), 0);
+            solid[0] = 'B';
+            solid[1] = 'M';
+            const auto put32 = [&solid](int at, std::uint32_t value) {
+                solid[at] = static_cast<std::uint8_t>(value & 0xFFu);
+                solid[at + 1] = static_cast<std::uint8_t>((value >> 8) & 0xFFu);
+                solid[at + 2] = static_cast<std::uint8_t>((value >> 16) & 0xFFu);
+                solid[at + 3] = static_cast<std::uint8_t>((value >> 24) & 0xFFu);
+            };
+            put32(2, static_cast<std::uint32_t>(54 + imageSize));
+            put32(10, 54);
+            put32(14, 40);
+            put32(18, kSide);
+            put32(22, kSide);
+            solid[26] = 1;
+            solid[28] = 24;
+            put32(34, static_cast<std::uint32_t>(imageSize));
+            for (int y = 0; y < kSide; ++y) {
+                for (int x = 0; x < kSide; ++x) {
+                    std::uint8_t* pixel =
+                        &solid[static_cast<std::size_t>(54 + y * stride + x * 3)];
+                    pixel[0] = 0x28;  // B
+                    pixel[1] = 0x50;  // G
+                    pixel[2] = 0xC8;  // R
+                }
+            }
+        }
+        const auto buildSolid = [&](const char* sceneName) {
+            auto scene = std::make_unique<inking::InkingScene>(sceneName);
+            inking::ImageData data;
+            data.name = std::string(sceneName);
+            data.width = kSide;
+            data.height = kSide;
+            data.normal.type = inking::AppearanceType::Image;
+            data.normal.source = std::string(sceneName) + "_bytes";
+            data.normal.imageBytes = solid.data();
+            data.normal.imageSize = solid.size();
+            data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.offsetX = 20.0f;
+            data.offsetY = 20.0f;
+            scene->AddChild(
+                std::make_unique<inking::InkingStaticImage>(scene.get(), data));
+            return scene;
+        };
+        const SDL_Rect inner{region.x + 2, region.y + 2, 16, 16};
+        std::vector<std::uint32_t> batchedSolid;
+        std::vector<std::uint32_t> immediateSolid;
+        {
+            std::unique_ptr<inking::InkingScene> scene = buildSolid("img_batch_solid_on");
+            inking::SceneLibrary::SetActiveScene(scene.get());
+            scene->TickFrame(1.0f / 60.0f);
+            RenderSvgFrame(renderer, *scene);
+            batchedSolid = ReadPixelRegion(renderer, inner);
+            EndSvgFrame(renderer);
+        }
+        {
+            std::unique_ptr<inking::InkingScene> scene = buildSolid("img_batch_solid_off");
+            inking::SceneLibrary::SetActiveScene(scene.get());
+            scene->TickFrame(1.0f / 60.0f);
+            inking::detail::SetImageBatchingEnabled(false);
+            RenderSvgFrame(renderer, *scene);
+            immediateSolid = ReadPixelRegion(renderer, inner);
+            EndSvgFrame(renderer);
+            inking::detail::SetImageBatchingEnabled(true);
+        }
+        const int solidDiff = diffCount(batchedSolid, immediateSolid);
+        std::printf("         纯色图 并批 vs 单笔：内部差异 %d / %zu\n", solidDiff,
+                    batchedSolid.size());
+        Check(solidDiff == 0,
+              "T-08：纯色图并批后内部**逐像素相等**（颜色没有被羽化带偏）");
+    }
+
+    // ---- 透明区必须透出背景（不是变黑）：半透明 SVG 盖在亮背景上 ----
+    {
+        const char* kHalfTransparent =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"40\">"
+            "<rect x=\"0\" y=\"0\" width=\"20\" height=\"40\" fill=\"#CC3333\"/>"
+            "</svg>";
+        const auto buildSvg = [&](const char* sceneName) {
+            auto scene = std::make_unique<inking::InkingScene>(sceneName);
+            inking::ImageData data;
+            data.name = std::string(sceneName);
+            data.width = 40;
+            data.height = 40;
+            data.normal.type = inking::AppearanceType::Image;
+            data.normal.source = std::string(sceneName) + "_svg";
+            data.normal.imageBytes = SvgBytes(kHalfTransparent);
+            data.normal.imageSize = std::strlen(kHalfTransparent);
+            data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.offsetX = 20.0f;
+            data.offsetY = 20.0f;
+            scene->AddChild(
+                std::make_unique<inking::InkingStaticImage>(scene.get(), data));
+            return scene;
+        };
+        // 背景用 0x4E4C71（T-07 探针里的同一个值），透明区读回它才算对。
+        const auto renderOnLightBackground = [&](inking::InkingScene& scene) {
+            inking::SceneLibrary::SetActiveScene(&scene);
+            SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
+                                             inking::DesignHeight(),
+                                             SDL_LOGICAL_PRESENTATION_LETTERBOX);
+            SDL_SetRenderDrawColor(renderer, 0x4E, 0x4C, 0x71, 255);
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_RenderClear(renderer);
+            return inking::SceneLibrary::RenderScene(renderer);
+        };
+        std::vector<std::uint32_t> shot;
+        {
+            std::unique_ptr<inking::InkingScene> scene =
+                buildSvg("img_batch_alpha");
+            inking::SceneLibrary::SetActiveScene(scene.get());
+            scene->TickFrame(1.0f / 60.0f);
+            renderOnLightBackground(*scene);
+            // 右半（设计 30..50 ⇒ 设备 15..25）在图里是**透明的**。
+            shot = ReadPixelRegion(renderer, SDL_Rect{region.x + 14, region.y + 4,
+                                                      4, 4});
+            EndSvgFrame(renderer);
+        }
+        const std::uint32_t transparent = shot.empty() ? 0u : shot[0];
+        std::printf("         半透明 SVG 的透明区读回 %08X（背景 4E4C71）\n",
+                    transparent);
+        Check(!shot.empty() && (transparent & 0x00FFFFFFu) == 0x004E4C71u,
+              "T-08：并批后透明区**透出背景**（0x4E4C71），没有变成半透明黑");
+    }
+
+    // ---- 变换：并批顺带修好"矩形图片的 transform 被丢掉" ----
+    {
+        const std::vector<std::uint8_t> wide = MakeSheetBmp(80, 20, 80, 0);
+        const auto buildRotated = [&](const char* sceneName) {
+            auto scene = std::make_unique<inking::InkingScene>(sceneName);
+            inking::ImageData data;
+            data.name = std::string(sceneName) + "_img";
+            data.width = 80;
+            data.height = 20;
+            data.normal.type = inking::AppearanceType::Image;
+            data.normal.source = std::string(sceneName) + "_wide";
+            data.normal.imageBytes = wide.data();
+            data.normal.imageSize = wide.size();
+            data.normal.transform.rotate = 90.0f;  // 度，顺时针
+            data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.offsetX = 100.0f;
+            data.offsetY = 100.0f;
+            scene->AddChild(std::make_unique<inking::InkingStaticImage>(
+                scene.get(), data));
+            return scene;
+        };
+        // 设计 (140, 78) 在"旋转后"的带子里（竖条 x 130..150 × y 70..150），
+        // 但在"没旋转"的带子外（横条 y 100..120）——正好分辨转没转。
+        const SDL_Rect probe{static_cast<int>(std::lround(140.0f * pixelRatio)),
+                             static_cast<int>(std::lround(78.0f * pixelRatio)),
+                             1, 1};
+        std::vector<std::uint32_t> rotated;
+        std::vector<std::uint32_t> unbatched;
+        {
+            std::unique_ptr<inking::InkingScene> scene =
+                buildRotated("sprite_batch_rot_on");
+            inking::SceneLibrary::SetActiveScene(scene.get());
+            scene->TickFrame(1.0f / 60.0f);
+            RenderSvgFrame(renderer, *scene);
+            rotated = ReadPixelRegion(renderer, probe);
+            EndSvgFrame(renderer);
+        }
+        {
+            std::unique_ptr<inking::InkingScene> scene =
+                buildRotated("sprite_batch_rot_off");
+            inking::SceneLibrary::SetActiveScene(scene.get());
+            scene->TickFrame(1.0f / 60.0f);
+            inking::detail::SetImageBatchingEnabled(false);
+            RenderSvgFrame(renderer, *scene);
+            unbatched = ReadPixelRegion(renderer, probe);
+            EndSvgFrame(renderer);
+            inking::detail::SetImageBatchingEnabled(true);
+        }
+        const std::uint32_t onPixel = rotated.empty() ? 0u : rotated[0];
+        const std::uint32_t offPixel = unbatched.empty() ? 0u : unbatched[0];
+        std::printf("         旋转 90° 的 80×20 图：并批读 %08X / 关开关读 %08X"
+                    "（清屏是 FF000000）\n",
+                    onPixel, offPixel);
+        Check(onPixel != 0xFF000000u,
+              "T-08：并批后矩形图片的 transform 生效（旋转 90° 真的转过去了）");
+        Check(offPixel == 0xFF000000u,
+              "T-08：确认那条快路**确实不看 transform**（关开关时同一点是空的）——"
+              "这是 0.6.1 的既有缺陷，本任务顺带修掉");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T-09：帧事件与 finished
+// ---------------------------------------------------------------------------
+//
+// 三个容易做错、也最容易静默的点：
+//   1. **慢帧跨帧**：一次跨 3 帧时中间那些帧的事件必须照发（区间扫描），
+//      只判"落点"的实现会安静地吞掉它们；
+//   2. **回绕**：3 → 0 的区间不连续，得拆成 `(3, 末帧]` + `[0, 0]` 两段；
+//   3. **Seek 不发事件**：跳到第 5 帧不是"播过了第 1~5 帧"。
+void CheckSpriteEvents(SDL_Renderer* renderer) {
+    std::printf("\n-- 帧事件：区间扫描 / 回绕 / Seek 不发 / finished（0.6.3 T-09） --\n");
+    (void)renderer;
+
+    // 造一份带事件的 4 帧配置（第 0 / 1 / 3 帧各挂一个）。
+    const auto makeData = [](const char* name, bool loop) {
+        inking::SpriteData data = MakeSpriteData(name, 4, 12.0, loop);
+        data.events.push_back(inking::SpriteData::SpriteEvent{0, "zero"});
+        data.events.push_back(inking::SpriteData::SpriteEvent{1, "one"});
+        data.events.push_back(inking::SpriteData::SpriteEvent{3, "three"});
+        return data;
+    };
+    const auto names = [](const std::vector<std::string>& log) {
+        std::string out;
+        for (const std::string& item : log) {
+            if (!out.empty()) {
+                out += ",";
+            }
+            out += item;
+        }
+        return out;
+    };
+    const auto subscribe = [](inking::InkingSprite* sprite,
+                              std::vector<std::string>* log) {
+        sprite->frameEvent.Subscribe(
+            [log](const std::string& name, std::size_t frame) {
+                log->push_back(name + "@" + std::to_string(frame));
+            });
+    };
+
+    // ① 正常播放：逐帧按顺序各发一次，播满一圈回绕时第 0 帧的事件也发
+    {
+        inking::InkingScene scene("sprite_events_play");
+        inking::SceneLibrary::SetActiveScene(&scene);
+        auto* sprite = static_cast<inking::InkingSprite*>(
+            scene.AddChild(std::make_unique<inking::InkingSprite>(
+                &scene, makeData("spr_evt_play", true))));
+        std::vector<std::string> log;
+        subscribe(sprite, &log);
+
+        // 3 次 1/12 走到第 3 帧（第 4 次就到一圈的终点了，会回绕 —— 见下）。
+        for (int i = 0; i < 3; ++i) {  // 0→1→2→3
+            scene.TickFrame(1.0 / 12.0);
+        }
+        const std::string first = names(log);
+        std::printf("         3 次 1/12 → 事件 %s\n", first.c_str());
+        Check(first == "one@1,three@3",
+              "T-09：正常播放时第 1 / 3 帧各发一次，第 2 帧没有事件");
+
+        scene.TickFrame(1.0 / 12.0);  // 3 → 0 回绕
+        const std::string afterWrap = names(log);
+        std::printf("         回绕一次 → 事件 %s\n", afterWrap.c_str());
+        Check(afterWrap == "one@1,three@3,zero@0",
+              "T-09：回绕（3→0）时第 0 帧的事件照发（区间拆两段）");
+    }
+
+    // ② 慢帧跨 3 帧：中间的 1、3 两个事件都不许吞
+    {
+        inking::InkingScene scene("sprite_events_slow");
+        inking::SceneLibrary::SetActiveScene(&scene);
+        auto* sprite = static_cast<inking::InkingSprite*>(
+            scene.AddChild(std::make_unique<inking::InkingSprite>(
+                &scene, makeData("spr_evt_slow", true))));
+        std::vector<std::string> log;
+        subscribe(sprite, &log);
+
+        scene.TickFrame(0.25);  // 0.25s × 12fps = 3 帧：0 → 3
+        const std::string log2 = names(log);
+        std::printf("         一次 0.25s（跨 3 帧）→ 事件 %s 帧号=%zu\n",
+                    log2.c_str(), sprite->GetFrameIndex());
+        Check(sprite->GetFrameIndex() == 3 && log2 == "one@1,three@3",
+              "T-09：慢帧跨过的那几帧，事件按帧号升序**全部**发出");
+    }
+
+    // ③ Seek / Stop 不发事件（"跳过去"不是"播过去"）
+    {
+        inking::InkingScene scene("sprite_events_seek");
+        inking::SceneLibrary::SetActiveScene(&scene);
+        auto* sprite = static_cast<inking::InkingSprite*>(
+            scene.AddChild(std::make_unique<inking::InkingSprite>(
+                &scene, makeData("spr_evt_seek", true))));
+        std::vector<std::string> log;
+        subscribe(sprite, &log);
+
+        sprite->SeekToFrame(3);
+        sprite->SeekToFrame(0);
+        std::printf("         Seek 两次 → 事件数 %zu\n", log.size());
+        Check(log.empty(),
+              "T-09：SeekToFrame 不发帧事件（只有播放推进才发）");
+    }
+
+    // ④ 非循环：finished 恰好一次；Play() 再来一遍才发第二次
+    {
+        inking::InkingScene scene("sprite_events_finished");
+        inking::SceneLibrary::SetActiveScene(&scene);
+        auto* sprite = static_cast<inking::InkingSprite*>(
+            scene.AddChild(std::make_unique<inking::InkingSprite>(
+                &scene, makeData("spr_evt_once", false))));
+        int finishedCount = 0;
+        bool finishedSawPlaying = true;
+        sprite->finished.Subscribe([&finishedCount, &finishedSawPlaying, sprite] {
+            ++finishedCount;
+            // 回调里读状态：应该说"已经不在播了"，而不是"正在播最后一下"。
+            finishedSawPlaying = sprite->IsPlaying();
+        });
+
+        for (int i = 0; i < 6; ++i) {  // 4 帧走完 + 两次多余的 tick
+            scene.TickFrame(1.0 / 12.0);
+        }
+        std::printf("         非循环跑完 → finished=%d（多 tick 两次后）\n",
+                    finishedCount);
+        Check(finishedCount == 1 && !finishedSawPlaying,
+              "T-09：非循环播完 finished 只发一次，且回调里 IsPlaying() 已为假");
+
+        sprite->Play();
+        for (int i = 0; i < 5; ++i) {
+            scene.TickFrame(1.0 / 12.0);
+        }
+        std::printf("         Play() 再跑完 → finished=%d\n", finishedCount);
+        Check(finishedCount == 2, "T-09：Play() 之后能再播一遍并再发一次 finished");
+
+        // 循环动画永远不发 finished
+        inking::InkingScene loopScene("sprite_events_loop");
+        inking::SceneLibrary::SetActiveScene(&loopScene);
+        auto* loopSprite = static_cast<inking::InkingSprite*>(
+            loopScene.AddChild(std::make_unique<inking::InkingSprite>(
+                &loopScene, makeData("spr_evt_loop", true))));
+        int loopFinished = 0;
+        loopSprite->finished.Subscribe([&loopFinished] { ++loopFinished; });
+        for (int i = 0; i < 12; ++i) {
+            loopScene.TickFrame(1.0 / 12.0);
+        }
+        Check(loopFinished == 0, "T-09：循环动画从不发 finished（它没有「结束」这回事）");
+    }
+
+    // ⑤ 事件帧越界：配置不合法，构造期就报（与运行期同一份 Validate()）
+    {
+        inking::InkingScene scene("sprite_events_bad");
+        inking::SceneLibrary::SetActiveScene(&scene);
+        inking::SpriteData data = makeData("spr_evt_bad", true);
+        data.events.push_back(inking::SpriteData::SpriteEvent{9, "nowhere"});
+
+        inking::InkLog::ResetStats();
+        auto* sprite = static_cast<inking::InkingSprite*>(
+            scene.AddChild(std::make_unique<inking::InkingSprite>(&scene, data)));
+        std::printf("         事件指向第 9 帧（只有 4 帧）→ IsValid=%d\n%s\n",
+                    sprite->IsValid() ? 1 : 0,
+                    sprite->GetConfigError().c_str());
+        Check(!sprite->IsValid()
+                  && sprite->GetConfigError().find("只有 4 帧")
+                         != std::string::npos,
+              "T-09：事件帧越界在构造期被拦下（不是播到那儿才发现）");
+        Check(inking::InkLog::CountOf(inking::LogLevel::Error) >= 1,
+              "T-09：越界事件同时有一条 ERROR");
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -3849,6 +6578,48 @@ int main() {
 
     // ---- 树的动态性（0.4.0 A 组）：A1 / A2 / A3 / A4 / A5 / B1 / B2 / D6 / D7 ----
     CheckDynamicTree();
+
+    // ---- 场景动画时钟与频率订阅（0.6.0 T-01）----
+    CheckSceneAnimationClock();
+
+    // ---- SpriteData：序列帧 / 图集二选一与校验（0.6.0 T-02）----
+    CheckSpriteDataValidate();
+
+    // ---- 库内 JSON 小工具：解析 / 取值 / 转义（0.6.5 T-15）----
+    CheckJsonTool();
+
+    // ---- InkingSprite：序列帧播放 / 暂停 / 定位 / 纹理复用（0.6.0 T-03）----
+    CheckSpriteSequence(rnd);
+
+    // ---- 图集源矩形：切格与单独小图逐像素一致（0.6.1 T-04）----
+    CheckImageFitSrcRect(rnd);
+
+    // ---- InkingSprite 图集模式：切格 / 零纹理 / 几何校验（0.6.1 T-05）----
+    CheckSpriteSheet(rnd);
+
+    // ---- 矩形图片并批：提交次数 / 像素 / 变换（0.6.2 T-08）----
+    CheckSpriteBatching(rnd);
+
+    // ---- 帧事件：区间扫描 / 回绕 / Seek 不发 / finished（0.6.3 T-09）----
+    CheckSpriteEvents(rnd);
+
+    // ---- 图集起始格：每行一个方向的图集也能播（0.6.4 T-11）----
+    CheckSpriteSheetFirstFrame(rnd);
+
+    // ---- 图片采样模式：像素素材放大后仍是硬边（0.6.4 T-12）----
+    CheckImageSampling(rnd);
+
+    // ---- 运行期换配置：订阅不断 + 换过去画的是新图（0.6.5 T-13）----
+    CheckSpriteRuntimeSwap(rnd);
+
+    // ---- 不规则帧矩形：一页多动作、帧宽高不等（0.6.5 T-14）----
+    CheckSpriteUnevenFrames(rnd);
+
+    // ---- 图集描述 → SpriteData：具名动画表（0.6.5 T-16）----
+    CheckAtlasData(rnd);
+
+    // ---- 动画组：一个节点承载多个动作（0.6.6 T-18）----
+    CheckSpriteGroup();
 
     inking::SceneLibrary::SetActiveScene(nullptr);
     if (rnd != nullptr) {

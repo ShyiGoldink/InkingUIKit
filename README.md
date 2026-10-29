@@ -2,23 +2,43 @@
 
 **一个用 SDF 形状 + 锚点定位写 UI 的 C++20 前端框架（动态链接库）。**
 
-> ## ✅ 当前版本：**0.5.3 发布版**（`0.5.3-release`）
+> ## ✅ 当前版本：**0.6.6 发布版**（`0.6.6-release`）
 >
 > - 0.x 期间接口 / ABI / 行为仍可能在次版本变化，升级请对照
 >   [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)；`1.0.0` 起才冻结。
-> - **0.5.3 修复**：`FilePicker` 的按钮栏不再复用 `MenuBar`——全屏下"确定 / 取消"
->   曾整条消失（`hideInFullscreen` 默认 true）、滚轮落在按钮行会缩放窗口
->   （`zoomWheel` 默认 true）；字段随之更名为 `style.buttonBar`（`PanelData`）。
->   同时修准滚动容器的内容尺寸：不再受可见性影响（隐藏的弹窗里填好的列表现在
->   当场就有滑块），也不再少算容器自身的偏移（末尾那截滚不到）。见 CHANGELOG「0.5.3」。
-> - **0.5.1 新增**：图片层支持 `type:"svg"`（整张界面设计稿在运行期按目标像素光栅化）
->   与 `hitPassThrough`（背景不吃点击）；见 CHANGELOG「0.5.1」与
->   [`CXXCSS.md` §3.10](CXXCSS/CXXCSS.md)。
+> - **0.6.6 新增：动画组 `InkingSpriteGroup`**——一个角色多个动作，
+>   `SwitchTo("run")` 换的是**配置**不是节点（节点数恒 1，没有隐藏节点参与绘制
+>   遍历与命中）；`animationChanged`、`resize` 可关。
+> - **0.6.5 新增**：运行期换配置 `InkingSprite::SetSpriteData(data, keepPhase)`
+>   （订阅全保留、`keepPhase` 保留帧号）；**帧表** `SpriteSheet::frameRects`
+>   （一页混装多个动作、帧宽高不等）；库内的 **`inking::json`** 小工具
+>   （零异常 + 带行号 + 重复键报错）；**图集描述** `AtlasData` + `MakeSpriteData()`
+>   （一个图集被多个 sprite 共用）；inkgen 认 `CXXCSS/Atlas/*.json`。
+> - **0.6.4 新增**：图集起始格 `sheet.firstFrame`（"每行一个方向"的图集靠它播
+>   第 1~3 行）；**图片采样模式**切换（`detail::SetImageSampling`，像素素材要硬边）。
+> - **0.6.3 新增：帧动画 `InkingSprite`**（整个 0.6.x 只做这一件事）。
+>   两种素材二选一——**序列帧**（每帧一份字节，换帧换视图）或**图集**
+>   （一张大图切 N 格，换帧只改源矩形，零解码、零新建纹理）；
+>   `Play` / `Pause`（时间冻结）/ `Stop` / `SeekToFrame`，
+>   `frameChanged` / `frameEvent`（帧事件）/ `finished` 三个事件。
+>   时间只来自场景动画时钟（`InkingScene::AnimationSeconds()`），帧号是时间的
+>   纯函数 ⇒ 慢帧不慢放、同屏同步、长跑不丢精度。
+> - **0.6.2 变更**：矩形 + `Fill` 的图片默认并进几何批（50 个同图集 sprite 一帧
+>   从 50 次 `SDL_RenderTexture` 变成 1 次 `SDL_RenderGeometry`）。代价是矩形图片
+>   也开始吃形状网格的 **1px 羽化**（边缘从硬边变抗锯齿，与矩形按钮统一）；
+>   要回旧行为用 `detail::SetImageBatchingEnabled(false)`。
+> - **0.6.1 新增**：图集切格 + 构造期几何校验（格数与图宽不符当场 `IsValid()==false`）；
+>   inkgen 认 `frames` / `sheet` / `events`，配了就生成 `InkingSprite` 类。
+> - **0.6.0 的一次修复值得单说**：`SetImageBytes(name)` 的键从没落到纹理缓存上，
+>   同尺寸换图会一直命中第一张（帧动画表现为"每帧都画第一帧"，且**不报错**）。
+> - **0.5.3**：`FilePicker` 的按钮栏不再复用 `MenuBar`（全屏下"确定 / 取消"曾整条
+>   消失）、滚动容器的内容尺寸修准；字段更名为 `style.buttonBar`（`PanelData`）。
 > - **0.5.0 有破坏性接口改动**：指针钩子改为
 >   `onPointerPress(PointerButton, bool)` / `onPointerClick(PointerButton, float, float)`，
 >   迁移样板见 CHANGELOG「0.5.0 / 变更」。
-> - 预编译包 [`dist/inking-0.5.3-win64.zip`](dist/) **自带运行期 DLL**，
->   解压即可运行示例；编译自己的工程仍需 MSYS2 UCRT64（MinGW ABI）。
+> - **预编译包仍是 0.5.3**（[`dist/inking-0.5.3-win64.zip`](dist/)）：0.6.6 目前要从
+>   源码构建（`cmake -B build -G Ninja` + `cmake --build build`），DLL 即
+>   `build/bin/libinking.dll`。编译需要 MSYS2 UCRT64（MinGW ABI）。
 > - 只在 **Windows + MSYS2 UCRT64 + Ninja** 上构建过；Linux / macOS 未验证。
 > - 可用于内部评估与产品集成验证；正式 `1.0.0` 预计 2026 年 11 月底前推出。
 

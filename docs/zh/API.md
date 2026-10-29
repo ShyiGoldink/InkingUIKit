@@ -173,6 +173,12 @@ int main() {
 | [api/InkingPrefab.md](api/InkingPrefab.md) | `prefab/*` |
 | [api/InkingCxxcss.md](api/InkingCxxcss.md) | **没有头文件**：`CXXCSS/*.json` 编译期生成的那些组件类（`inking::cxxcss::OptionItem` 之类）、`RegisterAllButtons()`、语言表安装、`inkgen` 命令行 |
 
+### 3.6 工具件（`util/`）
+
+| 页面 | 覆盖的头文件 |
+| --- | --- |
+| [api/InkingJson.md](api/InkingJson.md) | `util/InkingJson.h`（解析 / 取值 / 转义；只依赖标准库，0.6.5） |
+
 > **观测口（"它到底跑了几次 / 缓存生效了没"）**：`GetDrawItemCount()` /
 > `GetHitTableEntryCount()` / `GetRepaintingNodeCount()` / `GetPaintCount()` /
 > `GetReplayCount()` / `BatchStats*` 这一族的**口径与读法**在
@@ -287,7 +293,7 @@ cd build && PATH=.:$PATH ./bin/inking_demo_selftest.exe
 | dataStruct | `InkingAffine.h` `InkingTransform.h` `InkingAnchorData.h` `InkingColor.h` `InkingDecoration.h` `InkingEasing.h` `InkingImageFit.h` `InkingLayout.h` `InkingScroll.h` `InkingShapeSpec.h` `InkingTextLayout.h` `InkingTextRequest.h` `MessageStruct.h` `TaskStruct.h` | Anchor / ShapeSpec / Transform / Layout / Render / Runtime |
 | detail | `InkLog.h` `InkingGeometry.h` `InkingHit.h` `MessageQueue.h` | Runtime / Widget |
 | event | `InkingEvent.h` | Runtime |
-| image | `ImageData.h` `InkingStaticImage.h` | Components |
+| image | `ImageData.h` `SpriteData.h` `InkingStaticImage.h` `InkingSprite.h` | Components |
 | input | `InkingKeyboardTarget.h` `InkingPointerHandler.h` `PointerButton.h` `KeyboardInput.h` `MouseInput.h` `Shortcut.h` `ShortcutRegistry.h` `TextEditState.h` | KeyboardTarget / PointerHandler / Input |
 | layout | `InkingLayoutSolver.h` | LayoutSolver |
 | panel | `InkingStaticPanel.h` `PanelData.h` `PanelLook.h` | Components |
@@ -303,5 +309,5 @@ cd build && PATH=.:$PATH ./bin/inking_demo_selftest.exe
 
 ---
 
-> 本文档对应版本：**0.5.3（0.x 发布版）**。发现文档与代码不一致时，
+> 本文档对应版本：**0.6.6（0.x 发布版）**。发现文档与代码不一致时，
 > **以头文件注释为准**，并请把差异记到 `docs/zh/CHANGELOG.md`。

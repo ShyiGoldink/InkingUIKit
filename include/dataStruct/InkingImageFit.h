@@ -40,12 +40,37 @@ struct ImageFitSpec {
     ImageFit fit = ImageFit::Fill;
     float frameWidth = 0.0f;   ///< 组件框宽（设备像素）
     float frameHeight = 0.0f;  ///< 组件框高
-    float imageWidth = 0.0f;   ///< 纹理像素宽
-    float imageHeight = 0.0f;  ///< 纹理像素高
+    float imageWidth = 0.0f;   ///< 纹理像素宽（**整张**纹理，UV 的分母）
+    float imageHeight = 0.0f;  ///< 纹理像素高（整张）
+
+    /**
+     * @brief **这一帧**在纹理里的像素矩形（图集切格，0.6.1 T-04）。
+     *
+     * 两条语义必须分清，混了就会"图集播放时比例对、位置错"：
+     *   - `imageWidth/imageHeight` = **整张纹理**尺寸，只当 UV 的分母；
+     *   - `srcRect` = 这次要画的那块（宽高可以远小于整张）。
+     *
+     * **全零 = 整张纹理**。这是既有图片（非图集）的路径，一个字节的行为都不变。
+     */
+    ShapeBounds srcRect{};
+
+    /// 给过源矩形吗（`srcRect` 宽高都 > 0）。
+    bool HasSourceRect() const noexcept {
+        return srcRect.width > 0.0f && srcRect.height > 0.0f;
+    }
+
+    /// 归一化后的源矩形（像素）：没给就是整张纹理。
+    ShapeBounds SourceRect() const noexcept {
+        if (!HasSourceRect()) {
+            return ShapeBounds{0.0f, 0.0f, imageWidth, imageHeight};
+        }
+        return srcRect;
+    }
 
     bool Valid() const noexcept {
         return frameWidth > 0.0f && frameHeight > 0.0f && imageWidth > 0.0f
-            && imageHeight > 0.0f;
+            && imageHeight > 0.0f && SourceRect().width > 0.0f
+            && SourceRect().height > 0.0f;
     }
 
     /**
@@ -55,21 +80,26 @@ struct ImageFitSpec {
      * - `Contain`：等比缩小到装得下，居中（宽或高有一边会留白）；
      * - `Cover`：等比放大到盖满，居中（**起点会是负数**，多出来的部分在框外，
      *   由形状裁剪负责切掉——这正是"cover 的裁边"和"形状裁剪"合流的地方）。
+     *
+     * **等比算的是"这一帧"的宽高（`SourceRect()`），不是整张纹理**：图集里的
+     * 一格是 40×40、整张是 160×40，拿整张去算比例会让 `Contain` / `Cover`
+     * 的留白和裁边全错（帧被当成宽高比 4:1 的超宽图）。
      */
     ShapeBounds DrawnRect() const noexcept {
         if (!Valid()) {
             return ShapeBounds{0.0f, 0.0f, 0.0f, 0.0f};
         }
+        const ShapeBounds source = SourceRect();
         float drawnWidth = frameWidth;
         float drawnHeight = frameHeight;
         if (fit != ImageFit::Fill) {
-            const float byWidth = frameWidth / imageWidth;
-            const float byHeight = frameHeight / imageHeight;
+            const float byWidth = frameWidth / source.width;
+            const float byHeight = frameHeight / source.height;
             const float scale = (fit == ImageFit::Contain)
                                     ? std::min(byWidth, byHeight)
                                     : std::max(byWidth, byHeight);
-            drawnWidth = imageWidth * scale;
-            drawnHeight = imageHeight * scale;
+            drawnWidth = source.width * scale;
+            drawnHeight = source.height * scale;
         }
         return ShapeBounds{(frameWidth - drawnWidth) * 0.5f,
                            (frameHeight - drawnHeight) * 0.5f, drawnWidth,
@@ -83,6 +113,9 @@ struct ImageFitSpec {
      *   - `Fill` / `Contain`：u、v 在 [0,1] 内（图区域外会超出，那部分由
      *     "形状 ∩ 图区域"裁掉，见下）；
      *   - `Cover`：u、v 天然落在 [0,1] 内（图比框大，框只取中间一段）。
+     *
+     * 有 `srcRect` 时先算"帧内归一坐标"，再映射到整张纹理上：
+     * `u = (src.x + u01 × src.width) / imageWidth`。
      */
     void UvAt(float x, float y, float& u, float& v) const noexcept {
         const ShapeBounds rect = DrawnRect();
@@ -91,8 +124,19 @@ struct ImageFitSpec {
             v = 0.0f;
             return;
         }
-        u = (x - rect.x) / rect.width;
-        v = (y - rect.y) / rect.height;
+        const float u01 = (x - rect.x) / rect.width;
+        const float v01 = (y - rect.y) / rect.height;
+        if (!HasSourceRect()) {
+            // 整张纹理：**直接给**，不绕 `(u01 × W) / W` 那一圈——
+            // 二进制里那不是恒等，会让"没有 srcRect 的图片"多出一个 ulp 的抖动，
+            // 逐像素对拍从此不可靠。
+            u = u01;
+            v = v01;
+            return;
+        }
+        const ShapeBounds source = srcRect;
+        u = (source.x + u01 * source.width) / imageWidth;
+        v = (source.y + v01 * source.height) / imageHeight;
     }
 
     /**

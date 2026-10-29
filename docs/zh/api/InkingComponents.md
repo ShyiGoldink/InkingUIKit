@@ -15,6 +15,7 @@
 | 标签 | `LabelData` | 静态 | `text/InkingStaticLabel.h` |
 | 输入框 | `TextInputData : LabelData` | 静态 | `text/InkingTextInput.h` |
 | 图片 | `ImageData : ButtonData` | 静态 | `image/InkingStaticImage.h` |
+| 帧动画 | `SpriteData : ImageData` | 静态 | `image/InkingSprite.h` |
 | 画布 | `CanvasData` | 静态 | `canvas/InkingStaticCanvas.h` |
 | 视频 | `VideoData : ButtonData` | 静态 | `video/InkingVideo.h` |
 | 音频（不是组件，是全局函数族） | — | — | `audio/InkingAudio.h` |
@@ -88,6 +89,7 @@ struct ButtonAppearance {
     const std::uint8_t* imageBytes = nullptr;  // 借用：生成代码里的静态数组
     std::size_t imageSize = 0;
     ImageFit imageFit = ImageFit::Fill;
+    ShapeBounds srcRect{};              // 只画纹理的哪一块（全零 = 整张，图集切格用）
     float transitionSeconds = 0.0f;     // 进入这个状态的过渡时长
     Easing easing = Easing::Linear;
     TransformSpec transform{};          // 这个状态的目标变换（不改几何、不改命中表）
@@ -108,6 +110,10 @@ struct ButtonAppearance {
    命中表登记的是**三态包络的并集**，任何中间尺寸都落在里面。
 4. `AppearanceType::Image` / `Svg` 的**数据面已留、纹理路已接**（`imageBytes` +
    `imageFit`），但生成器那边还在落地中。
+5. **`srcRect` 只决定"取哪块"，不决定"画多大"**（0.6.1）：单位是**纹理像素**，
+   全零 = 整张（既有图片的行为一个字节都不变）；画多大仍是 `width`/`height` +
+   `imageFit` 的事，而且等比的基准是**这块的宽高**，不是整张纹理。
+   图集就是"同一张纹理 + 换这块矩形"——换帧零解码、零新建纹理。
 
 >**ButtonTextData**
 
@@ -488,6 +494,12 @@ public:
     bool IsDraggable() / IsResizable() / IsDragging() / IsScalingDrag() const noexcept;
 
     bool AcceptsExternalTransform() const noexcept override { return true; }
+
+protected:
+    // 只画纹理的哪一块（图集切格，0.6.1 T-04）。全零 = 整张；
+    // 只标重绘脏、不标命中脏（画的东西变了、几何没变）
+    void SetRenderSourceRect(const ShapeBounds& srcRect);
+    const ShapeBounds& GetRenderSourceRect() const noexcept;
 };
 ```
 
@@ -497,6 +509,249 @@ public:
 
 拖拽走的是**运行期显示变换**（`SetDisplayTransform`）＋ `Resize` 的仿射表示，
 不会撑开兄弟（不改变占位）。
+
+### 帧动画的数据面（0.6.0 T-02）
+
+```C++
+struct SpriteData : public ImageData {
+    struct SpriteSheet {
+        std::string source;                  // 空 = 沿用 normal.source
+        int frameWidth, frameHeight, columns, rows;
+        int count = 0;                       // 0 = columns × rows
+        int firstFrame = 0;                  // 起始**格号**（0.6.4）：每行一个方向时用
+        int margin = 0, spacing = 0;
+        std::vector<ShapeBounds> frameRects; // 帧表（0.6.5）：非空时优先，与网格互斥
+        bool IsConfigured() const noexcept;
+        int  ResolveCount() const noexcept;   // count 缺省 = columns × rows
+        int  SheetWidth() / SheetHeight() const noexcept;   // 整张图应该是多大
+        ShapeBounds CellRect(std::size_t i) const noexcept; // 第 i 格的像素矩形
+    };
+
+    struct SpriteEvent { std::size_t frame; std::string name; };  // 帧事件（0.6.3）
+
+    std::vector<ButtonAppearance> frames;    // 序列帧（每项是一张图）
+    SpriteSheet sheet;                       // 图集（frames 为空时才看它）
+    std::vector<SpriteEvent> events;         // 播到第 N 帧发一个名字
+    double fps = 12.0;
+    bool loop = true;
+    bool autoplay = true;
+    std::size_t startFrame = 0;
+    double startOffsetSeconds = 0.0;
+
+    bool UsesSheet() const noexcept;
+    std::size_t FrameCount() const noexcept;
+    void Normalize();                        // 补默认 + 夹取，幂等
+    std::string Validate() const;            // 空串 = 通过，否则是错误说明
+};
+```
+
+**两种素材二选一**（不是"一份配置同时用两种"：`frames` 与 `sheet` 都填直接报错，
+不替你猜哪个优先；都不填也报错）。
+
+| 判断 | 落在哪 | 行为 |
+| --- | --- | --- |
+| 能修正的（`startFrame` 越界、`count` 缺省） | `Normalize()` | 就地修 + 一条 WARN（画面还能看见，不是空白） |
+| 不能猜的（都填 / 都不填、`fps <= 0`、图集几何自相矛盾） | `Validate() const` | 只报告，不改数据 |
+
+分工的判据是"这个字段能不能被安全地改成某个值"——能就是 `Normalize`，不能就是
+`Validate`，两者不重叠。`FrameCount()` 是**唯一**算帧数的地方（组件只认这一个数）。
+
+图集**构造期**还要验一遍"切出来的尺寸与图宽是否相符"——判断是
+`SheetWidth()/SheetHeight()`（`frameWidth × columns + spacing × (columns − 1) + 2 × margin`）
+与图片真实尺寸比对。**切格算术只在 `CellRect()` 里做一次**：组件每帧拿它设源矩形，
+自检直接断言它（验 margin / spacing 不必真画一张图）。
+
+`firstFrame`（0.6.4）是**起始格号**（行优先、绝对），不是帧数：`"每行一个方向"`的图集用
+第 r 行 = `firstFrame: r × columns` + `count: columns`。`CellRect()` 的语义**没变**（仍是
+绝对格号）——"帧号 → 格号"的 `+ firstFrame` 只在 `InkingSprite::loadFrameBytes()` 里做一次；
+写反了就会**静默播到别的行**，所以 `Validate()` 报错时把格号与帧数两个数都打出来。
+`firstFrame` 也**不进** `IsConfigured()`（只写它不算"配了图集"）。
+
+`frameRects`（0.6.5 T-14）是**帧表**：每帧一个绝对像素矩形，宽高可以不等（一页里混装
+多个动作时必然如此）。三条约定：与网格字段（`columns` / `rows` / `frameWidth` /
+`frameHeight` / `margin` / `spacing` / `firstFrame`）**互斥**（同给直接报错，不静默选一套）；
+`CellRect(i)` 直接返回表里那项、**不叠加** `firstFrame`；帧数由表长决定（`count` 被
+`Normalize()` 覆盖）。图集模式下构造期还会逐帧验"矩形落在图内"，越界文案带帧号与矩形。
+
+> 数据层看不到图片多大，所以这一步要**量一次图**（`detail::ProbeImageSize`，解一次
+> 但不建纹理，按 `(名字, 字节数)` 缓存）。量不到（没接 SDL3_image / 字节坏了 / 是 SVG）
+> 时给一条 WARN 并跳过校验，不假装通过、也不拦着播。
+
+### 帧动画组件 `InkingSprite`（0.6.0 T-03）
+
+```C++
+class InkingSprite : public InkingStaticImage {
+public:
+    InkingSprite(InkingWidget* parent, const SpriteData& data);
+
+    InkingEvent<std::size_t, std::size_t> frameChanged;   // (新帧号, 旧帧号)
+    InkingEvent<const std::string&, std::size_t> frameEvent;  // (事件名, 帧号)
+    InkingEvent<> finished;                               // 非循环播完一次
+
+    void Play();                                  // 播完后再 Play = 从头再来
+    void Pause();                                 // 时间冻结（不是"停止换帧"）
+    void Stop();                                  // 回起始帧且不播
+    bool SeekToFrame(std::size_t frame);          // 越界夹到末帧
+    void SetSpriteData(const SpriteData& data, bool keepPhase = false);  // 换配置（0.6.5）
+
+
+    bool IsPlaying() / IsFinished() const noexcept;
+    std::size_t GetFrameIndex() / GetFrameCount() / GetLoadedFrameCount() const noexcept;
+    std::uint64_t GetFrameAdvanceCount() / GetSkippedFrameCount() const noexcept;
+    double GetAnimationTime() const noexcept;     // 已播时长（暂停期间冻结）
+    const SpriteData& GetSpriteData() const noexcept;
+    const std::string& GetConfigError() const noexcept;
+    bool IsValid() const noexcept;
+    bool IsSheetMode() const noexcept;            // 实际走的是图集模式吗
+};
+```
+
+**两种素材共用一套帧号**：`frame = floor(t × fps) % count` 与素材形态无关，只在
+"怎么把这一帧搬到画面上"分叉（0.6.1 T-05）：
+
+| 素材 | 换帧做什么 | 代价 |
+| --- | --- | --- |
+| 序列帧 | 换**字节视图**（`SetImageBytes`，KB 级拷贝） | 每帧一次拷贝 |
+| 图集 | 换**源矩形**（`SetRenderSourceRect`） | 零拷贝、零 `SDL_CreateTexture`，纹理只建 1 张 |
+
+分叉点只在 `applyFrame()` 一处（每帧带不带 `sourceRect`），**不写两套状态机**——
+否则"序列帧的暂停"和"图集的暂停"迟早不一致，而这种不一致只表现为"某个模式有点怪"。
+
+**时间从场景时钟来**（`InkingScene::AnimationSeconds`，0.6.0 T-01），帧号是时间的纯函数：
+`frame = floor(t × fps) % count`。所以：
+
+| 场景 | 结果 |
+| --- | --- |
+| 12fps × 1 秒 | 恰好换 12 帧（`GetFrameAdvanceCount() == 12`） |
+| 一次画了 0.25s（慢帧） | 帧号直接跨 3 帧，`GetSkippedFrameCount() += 2`——**画面不慢放** |
+| 同场景两个同 fps 的 sprite | 帧号恒等（只有一个时间源，不各累加 delta） |
+| 场景切走 | 冻结（`TickFrame` 只对活跃场景派发），切回来接着走 |
+
+**暂停是"时间冻结"**：`Pause()` 记下暂停起点，`Play()` 把这段时间补进时间轴——
+"暂停 3 秒再恢复"从原帧继续，不是跳过 36 帧。
+
+**字节与纹理是两件事**：
+
+- **字节**在构造期一次备齐（运行期换帧零 I/O）。运行期换帧若走 `LoadAsset` 会每帧读盘，
+  那不是能接受的代价；
+- **纹理**在第一次画到那一帧时由渲染层解码并进缓存（键 = 帧名）。构造期**烘不出**纹理：
+  组件构造时窗口 / 渲染器还不存在，而纹理属于渲染器。所以"预热"的准确含义是
+  **字节预热 + 首轮播放建纹理**：第二轮起换帧 `texturesCreated` 增量为 0。
+
+**帧事件**（0.6.3）：`events` 由**帧号变化**驱动，不是"时间到点"。
+
+| 情况 | 结果 |
+| --- | --- |
+| 正常播放到第 3 帧（挂了事件） | `frameEvent("hit", 3)` 恰好一次 |
+| 慢帧一次跨 3 帧，中间有事件 | **仍然触发**（扫 `(旧, 新]` 区间，掉帧不吞事件） |
+| 回绕 `3 → 0` | 拆成 `(3, 末帧]` + `[0, 0]` 两段扫，第 0 帧的事件照发 |
+| `SeekToFrame` 跳过事件帧 | 不发（"跳过去"不是"播过去"） |
+| 非循环播完 | `finished` 一次；`Play()` 后再播完再发一次；循环动画永不发 |
+
+`frameEvent` 在 `frameChanged` **之前**发——订阅者收到"换帧"时，这一帧的关键点已经处理完。
+事件名是 `const std::string&`，指向组件自己那份配置（生命周期同组件）。
+
+**配置不合法不静默**：`IsValid()` 为假 + 一条 ERROR（例如图集切格与图宽不符、
+`frames` 与 `sheet` 都填、事件帧越界）。
+组件照常构造——"少一个动画"不该让整个界面起不来。
+
+**运行期换配置**（`SetSpriteData`，0.6.5 T-13）：节点指针、父子关系、**所有订阅全部保留**
+——"待机→跑步"是同一个实体的同一个节点。四条语义：
+
+| 情况 | 结果 |
+| --- | --- |
+| `keepPhase == false`（默认） | 落到第 0 帧 |
+| `keepPhase == true` | 保留换之前的帧号（越界夹到末帧）——同动作换方向时不跳回第一帧 |
+| `IsPlaying()` | 保持原值；播完（`finished`）的那份状态被清掉 |
+| `frameChanged` | 换配置后的第一次落位**不发**（没有"旧帧"这回事） |
+| 组件尺寸 | **不动**（改尺寸属于布局层，要自己 `ApplySelfSize`） |
+| 旧纹理 | 不删（键不同就各留一张，键相同就复用——多动画共用图集靠这条） |
+
+换到图集配置时会**同步把图集字节交给绘制层**：只改源矩形不动字节的话，帧数、
+`IsSheetMode()` 全对而画面还是上一张动画——最像成功的那种错（自检钉住了它）。
+
+### 图集描述 `AtlasData`（0.6.5 T-16）
+
+"一张图里混装多个动画"的**数据面**：一张图集里有哪些具名动画、每个动画的帧矩形与
+播放参数。它**不是加载器**——字节由资源层给（`AssetLoad` 或烘好的数组），这一层只回答
+"图里的哪块是哪一帧"。
+
+```C++
+struct AtlasAnimation {
+    std::string name;
+    std::string source;              // 相对资源根；同时是纹理缓存键
+    std::vector<ShapeBounds> frames; // 绝对像素矩形，宽高可以不等
+    double fps = 12.0;
+    bool loop = true;
+    std::vector<SpriteData::SpriteEvent> events;
+};
+
+struct AtlasData {
+    std::string name;
+    std::vector<AtlasAnimation> animations;
+    static constexpr std::size_t kNotFound = static_cast<std::size_t>(-1);
+
+    std::size_t FindIndex(const std::string& animationName) const noexcept;  // 找不到 = kNotFound
+    std::string Validate() const;    // 空串 = 通过（重名 / 空帧 / 缺路径 / 矩形非法）
+};
+
+// 纯函数：描述 + 字节视图 → 组件吃的配置。不读文件。
+SpriteData MakeSpriteData(const AtlasData& atlas, std::size_t animationIndex,
+                          const std::uint8_t* imageBytes, std::size_t imageSize);
+```
+
+三条约定：**尺寸默认取第一帧的自然宽高**（动画比第一帧宽时调用方自己改 `width/height`）；
+**`source` 只写一处**（`normal.source`，`sheet.source` 留空即沿用）；**帧表直接灌进
+`sheet.frameRects`**，所以不会同时给出网格字段。下标越界时返回一份非法配置 + 一条 ERROR
+（`kNotFound` 是个巨大的 `size_t`，不打日志就只是一片空白）。
+
+重名动画在 `Validate()` 里报错：`FindIndex()` 只命中第一个，第二条会被**静默忽略**——
+"某个动作永远播不出来"比报错难查得多。
+
+### 动画组 `InkingSpriteGroup`（0.6.6 T-18）
+
+一个角色有几个动作、切换其中一个。**一个节点**承载全部动作，`SwitchTo()` 换的是
+**配置**不是节点（节点数恒 1）。
+
+```C++
+struct SpriteGroupData {
+    std::vector<std::pair<std::string, SpriteData>> animations;  // 顺序 = 声明顺序
+    static constexpr std::size_t kNotFound = static_cast<std::size_t>(-1);
+    std::size_t FindIndex(const std::string& name) const noexcept;
+    std::string Validate() const;   // 空表 / 动作名为空 / 重名
+};
+
+class InkingSpriteGroup : public InkingSprite {
+public:
+    InkingSpriteGroup(InkingWidget* parent, const SpriteGroupData& data,
+                      const std::string& initialAnimation = {});
+
+    InkingEvent<const std::string&, const std::string&> animationChanged;  // (新, 旧)
+
+    bool SwitchTo(const std::string& name, bool keepPhase = false, bool resize = true);
+    const std::string& GetCurrentAnimation() const noexcept;
+    std::vector<std::string> GetAnimationNames() const;   // 给 UI 做下拉
+    const SpriteGroupData& GetGroupData() const noexcept;
+    const std::string& GetGroupError() const noexcept;
+};
+```
+
+**为什么不是"一个容器装 N 个 sprite"**：后者每个动作有独立相位（最自然），但
+绘制列表与命中表里会**始终躺着 N−1 个不可见节点**、每个动作各一份时间基准
+（切回来时相位停在"上次离开的地方"）、还与 0.6.2 的合并收益相抵。
+
+| 场景 | 组的行为 |
+| - | - |
+| `SwitchTo("run")` | 换配置；`animationChanged(新, 旧)` 在换完之后发（回调里读到的是新动作） |
+| 切到**当前**动作 | 空操作（返回 true、不重建、不发事件）——UI 反复点同一个按钮不该重置相位 |
+| 名字不存在 | 返回 false + 一条 ERROR（不静默停在旧动作，否则"切了没反应"像动画坏了） |
+| `keepPhase` | 保留当前帧号（同动作换方向）；默认第 0 帧 |
+| `resize`（默认 true） | **组件宽高跟着新动作走**；`false` 交给调用方 |
+| 初始名字不存在 | 退回第 0 个 + 一条 ERROR |
+
+> **`resize` 与单组件相反是有意的**：组就是"一个角色"，轮廓随动作变（待机 40 宽、
+> 攻击 56 宽）是它的职责；而 `InkingSprite::SetSpriteData()` 换配置时"要不要动布局"
+> 只有调用方知道，所以它**不动**尺寸。两处都在文档里写明了，别当成矛盾。
 
 ## 六、画布
 
@@ -707,4 +962,4 @@ void AudioTick(float deltaSeconds);   // 主循环每帧调（窗口层已经接
 
 ---
 
-> 本文档对应版本：**0.5.3（0.x 发布版）**。
+> 本文档对应版本：**0.6.6（0.x 发布版）**。

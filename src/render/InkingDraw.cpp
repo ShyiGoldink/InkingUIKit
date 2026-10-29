@@ -627,32 +627,38 @@ void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width
         return;
     }
 
-    // ---- 矩形 + Fill：直接贴图，不走几何网格 ----
+    // ---- 矩形 + Fill：**默认也并进几何批**（0.6.2 T-08）----
     //
-    // 为什么：走 `SDL_RenderGeometry` 那条路时，**纹理的 alpha 没有参与混合**——
-    // 透明底的 PNG（立绘 / 带透明区的 CG）透明处 RGB=0、A=0，于是被当成
-    // "黑色 + 顶点羽化 alpha"画了出来，症状就是**每个立绘的透明部分变成
-    // 半透明黑**（实测：立绘矩形四角本该透出背景 `[78 76 113]`，实际读出
-    // `[0 0 0]`；而 `SDL_QueryTexture` 确认纹理格式是 `ARGB8888`、alpha 是
-    // 在的，混合模式也是 BLEND）。
+    // 这块的历史值得留着：0.2.0 在这里开了一条 `SDL_RenderTexture` 快路，理由是
+    // "走 `SDL_RenderGeometry` 时纹理的 alpha 不参与混合，透明底 PNG 的透明区
+    // 变成半透明黑"（当时实测读回 `[0 0 0]`，而背景该是 `[78 76 113]`）。
     //
-    // 矩形本来就**不需要**几何网格——那张网格是为了"按非矩形形状裁剪纹理"
-    // （圆角按钮的图不能方）与 `contain/cover` 的留白。Fill 的矩形用
-    // `SDL_RenderTexture` 一次画完：alpha 由纹理自己带，最直接也最快。
+    // 0.6.2 T-07 用探针重新量了 **SDL 3.4.16** 的两个后端（software / direct3d11）：
+    // 透明区、50% 半透明内容、放大 2 倍的双线性采样——几何批与 `SDL_RenderTexture`
+    // **逐位相同**。那条老结论在现在的 SDL 上不复现（旧记录保留在任务书 §2.3 里）。
+    // 所以默认合并：同纹理连续 N 笔 = **一次** `SDL_RenderGeometry`。
     //
-    // 非矩形 / contain / cover 仍旧走下面的网格那条路。
-    //
-    // 代价（有意接受）：这些矩形图片**不再合批**，每张图一次 `SDL_RenderTexture`。
-    // 换成"只有带 alpha 的图才走快路"试过，但拿不到可靠的"这张纹理有没有
-    // alpha"（`SDL_CreateTextureFromSurface` 建出来的纹理查不到格式属性），
-    // 判错的后果是透明区重新变黑——**正确性优先**，何况场景里图片是十几个量级。
-    if (scaled.kind == ShapeKind::Rect && fit.fit == ImageFit::Fill) {
+    // 开关关掉时仍走快路（`detail::SetImageBatchingEnabled(false)`）：它是回退预案，
+    // 也是"快路那份像素"的基准。**注意快路不看 `transform`**（也不看祖先仿射），
+    // 所以关掉时旋转 / 缩放的矩形图片会画成没变换——这是既有缺陷，不是开关引入的。
+    const bool rectFastPath = scaled.kind == ShapeKind::Rect
+        && fit.fit == ImageFit::Fill && !ImageBatchingEnabled();
+    if (rectFastPath) {
         SDL_FRect destination{pixelX, pixelY, w, h};
+        // 源矩形（图集切格）：全零 = 整张纹理，`srcRect` 传 nullptr——**与 0.6.1
+        // 之前那条调用逐字节一致**（SDL 对 nullptr 走"整张"的默认路径）。
+        SDL_FRect source{};
+        const SDL_FRect* sourceRect = nullptr;
+        if (fit.HasSourceRect()) {
+            const ShapeBounds& raw = fit.srcRect;
+            source = SDL_FRect{raw.x, raw.y, raw.width, raw.height};
+            sourceRect = &source;
+        }
         SDL_SetTextureColorMod(texture, 255, 255, 255);
         SDL_SetTextureAlphaMod(texture, 255);
         // 顺序：这一笔绕开批次（纹理绘制本来就是批次边界）。
         NoteImmediateDraw();
-        SDL_RenderTexture(renderer, texture, nullptr, &destination);
+        SDL_RenderTexture(renderer, texture, sourceRect, &destination);
         return;
     }
 

@@ -3512,6 +3512,43 @@ public:
                 ReadStroke(value, _config.button.data.stroke);
             } else if (key == "shadow") {
                 ReadShadow(value, _config.button.data.shadow);
+            } else if (key == "frames") {
+                ReadSpriteFrames(value);
+            } else if (key == "sheet") {
+                ReadSpriteSheet(value);
+            } else if (key == "fps") {
+                _sawSpriteField = true;
+                _config.sprite.fps = ReadNumber(value, "fps");
+            } else if (key == "loop") {
+                _sawSpriteField = true;
+                if (value.IsBool()) {
+                    _config.sprite.loop = value.boolean;
+                } else {
+                    Error(value, "loop 必须是 true / false（false = 播到末帧停住）");
+                }
+            } else if (key == "autoplay") {
+                _sawSpriteField = true;
+                if (value.IsBool()) {
+                    _config.sprite.autoplay = value.boolean;
+                } else {
+                    Error(value,
+                          "autoplay 必须是 true / false（false = 停在 startFrame，"
+                          "等 Play()）");
+                }
+            } else if (key == "startFrame") {
+                _sawSpriteField = true;
+                const double raw = ReadNumber(value, "startFrame");
+                if (raw < 0.0) {
+                    Error(value, "startFrame 不能为负（帧号从 0 起）");
+                }
+                _config.sprite.startFrame =
+                    static_cast<std::size_t>(raw < 0.0 ? 0.0 : raw);
+            } else if (key == "startOffset") {
+                _sawSpriteField = true;
+                _config.sprite.startOffsetSeconds =
+                    ReadNumber(value, "startOffset");
+            } else if (key == "events") {
+                ReadSpriteEvents(value);
             }
         }
 
@@ -3525,6 +3562,8 @@ private:
     bool _sawHeight = false;
     bool _sawShape = false;
     bool _sawRuntime = false;
+    /// 见到任何 sprite 字段（`frames` / `sheet` / 播放参数）就置真 ⇒ 生成帧动画。
+    bool _sawSpriteField = false;
 
     /**
      * 读 `normal` 段：图片**只认 `type` / `source` / `fit`** 三样。
@@ -3547,13 +3586,31 @@ private:
             return;
         }
         _config.sawNormal = true;
+        ReadAppearanceObject(value, "normal", _config.button.data.normal,
+                             &_config.button.imageBytes[0]);
+    }
+
+    /**
+     * 读**一个图片外观对象**（`normal` 段与 `frames` 的每一项共用这一份）。
+     *
+     * 抽出来的理由与"图片复用按钮烘法"同一条：`normal` 与帧是**同一种东西**
+     * （一个 `ButtonAppearance` + 它的字节），各写一遍解析必然分叉——比如
+     * "normal 的 fit 认 contain、帧的 fit 忘了认"，那种错只在某个形态下露头。
+     *
+     * @param label  报错文案里的字段名（"normal" / "frames[2]"）
+     * @param out    落成的那个外观
+     * @param bytes  生成期烘的字节落哪儿（运行期那条路不读文件，留着空）
+     */
+    void ReadAppearanceObject(const JsonValue& value, const char* label,
+                              inking::ButtonAppearance& out,
+                              std::vector<std::uint8_t>* bytes) {
 
         for (const auto& entry : value.fields) {
             if (!IsKnownField(kKnownImageAppearanceFields,
                               std::size(kKnownImageAppearanceFields),
                               entry.first)) {
                 Error(entry.second,
-                      "normal 里的字段 \"" + entry.first
+                      std::string(label) + " 里的字段 \"" + entry.first
                           + "\" 不认识（图片这一层只认 "
                           + JoinKnownFields(kKnownImageAppearanceFields,
                                             std::size(kKnownImageAppearanceFields))
@@ -3564,7 +3621,8 @@ private:
         const JsonValue* type = value.Find("type");
         const JsonValue* source = value.Find("source");
         if (type == nullptr || !type->IsString()) {
-            Error(value, "normal 缺少 type（图片认 color 与 img 两种）");
+            Error(value, std::string(label)
+                             + " 缺少 type（认 color / img / svg 三种）");
             return;
         }
 
@@ -3574,19 +3632,20 @@ private:
                            return static_cast<char>(std::tolower(ch));
                        });
 
-        inking::ButtonAppearance& out = _config.button.data.normal;
         if (typeName == "color") {
             out.type = inking::AppearanceType::Color;
             if (source == nullptr) {
-                Error(value, "normal 缺少 source（color 要写 \"r|g|b|a\"）");
+                Error(value, std::string(label)
+                                 + " 缺少 source（color 要写 \"r|g|b|a\"）");
                 return;
             }
-            out.color = ReadColorSource(*source, "normal");
+            out.color = ReadColorSource(*source, label);
             out.source = source->IsString() ? source->text : std::string();
         } else if (typeName == "img") {
             out.type = inking::AppearanceType::Image;
             if (source == nullptr || !source->IsString()) {
-                Error(value, "normal 的 img 需要 source（图片路径）");
+                Error(value, std::string(label)
+                                 + " 的 img 需要 source（图片路径）");
                 return;
             }
             out.source = source->text;
@@ -3594,14 +3653,14 @@ private:
                 // 生成期烘那条路：**现在**就把文件读进来——"文件没了"在构建期
                 // 就报出来，而不是等运行期画出一片空白。
                 const std::string problem = ReadImageBytes(
-                    source->text, _config.button.imageBytes[0]);
+                    source->text, *bytes);
                 if (!problem.empty()) {
                     Error(*source, problem);
                     _failed = true;
                     return;
                 }
-                out.imageBytes = _config.button.imageBytes[0].data();
-                out.imageSize = _config.button.imageBytes[0].size();
+                out.imageBytes = bytes->data();
+                out.imageSize = bytes->size();
             }
             // runtime = true：**一个字都不读**，source 只是个路径字符串
             // （运行期由 inking::AssetLoad 去拿，见 asset/InkingAsset.h）。
@@ -3612,42 +3671,43 @@ private:
             // 全部走同一条已有的图片通道。
             out.type = inking::AppearanceType::Image;
             if (source == nullptr || !source->IsString()) {
-                Error(value, "normal 的 svg 需要 source（SVG 文件路径）");
+                Error(value, std::string(label)
+                                 + " 的 svg 需要 source（SVG 文件路径）");
                 return;
             }
             out.source = source->text;
             if (!_config.runtimeAsset) {
-                std::vector<std::uint8_t>& bytes =
-                    _config.button.imageBytes[0];
+                std::vector<std::uint8_t>& slot = *bytes;
                 const std::string problem =
-                    ReadImageBytes(source->text, bytes);
+                    ReadImageBytes(source->text, slot);
                 if (!problem.empty()) {
                     Error(*source, problem);
                     _failed = true;
                     return;
                 }
-                if (!LooksLikeSvgBytes(bytes)) {
+                if (!LooksLikeSvgBytes(slot)) {
                     Error(*source,
-                          "normal 的 svg 指向的文件不是 SVG（第一个内容标签不是 "
-                          "<svg>）：要么路径写错了，要么该用 type = \"img\"");
+                          std::string(label)
+                              + " 的 svg 指向的文件不是 SVG（第一个内容标签不是 "
+                                "<svg>）：要么路径写错了，要么该用 type = \"img\"");
                     _failed = true;
-                    bytes.clear();
+                    slot.clear();
                     return;
                 }
-                out.imageBytes = bytes.data();
-                out.imageSize = bytes.size();
+                out.imageBytes = slot.data();
+                out.imageSize = slot.size();
             }
             // runtime = true：只留路径，运行期由 AssetLoad 读字节、PaintImage 嗅探。
         } else {
-            Error(*type, "normal.type \"" + type->text
-                             + "\" 不认识（只支持 color、img）");
+            Error(*type, std::string(label) + ".type \"" + type->text
+                             + "\" 不认识（只支持 color、img、svg）");
             return;
         }
 
         if (const JsonValue* fitField = value.Find("fit")) {
             if (!fitField->IsString()) {
-                Error(*fitField,
-                      "normal.fit 必须是字符串（fill / contain / cover）");
+                Error(*fitField, std::string(label)
+                                     + ".fit 必须是字符串（fill / contain / cover）");
             } else {
                 std::string fitName = fitField->text;
                 std::transform(fitName.begin(), fitName.end(), fitName.begin(),
@@ -3661,10 +3721,223 @@ private:
                 } else if (fitName == "cover") {
                     out.imageFit = inking::ImageFit::Cover;
                 } else {
-                    Error(*fitField, "normal.fit \"" + fitField->text
+                    Error(*fitField, std::string(label) + ".fit \""
+                                         + fitField->text
                                          + "\" 不认识（fill / contain / cover）");
                 }
             }
+        }
+    }
+
+    // ---- 帧动画（0.6.1 T-06）--------------------------------------------
+    //
+    // 两条来源：`frames`（序列帧，每帧一张图）与 `sheet`（图集，一张大图切 N 格）。
+    // **二选一**，由 `SpriteData::Validate()` 判——这里不重复实现那条判据
+    // （"都填 / 都不填"的文案只该有一份，否则两处迟早说得不一样）。
+
+    void ReadSpriteFrames(const JsonValue& value) {
+        _sawSpriteField = true;
+        if (!value.IsArray()) {
+            Error(value,
+                  "frames 必须是数组，每一项是一帧（形如 "
+                  "{\"type\":\"img\",\"source\":\"images/walk_0.png\"}）");
+            return;
+        }
+        if (value.items.empty()) {
+            Error(value, "frames 是空数组：没有可播的帧（要不就别写 frames）");
+            return;
+        }
+        // **先按数量一次性开好两个容器**：`ReadAppearanceObject` 会把视图指到
+        // `spriteFrameBytes[i]` 的缓冲上，之后任何一次扩容都会让那个指针悬垂。
+        _config.sprite.frames.resize(value.items.size());
+        _config.spriteFrameBytes.resize(value.items.size());
+        for (std::size_t i = 0; i < value.items.size(); ++i) {
+            const std::string label = "frames[" + std::to_string(i) + "]";
+            const JsonValue& item = value.items[i];
+            if (!item.IsObject()) {
+                Error(item, label + " 必须是对象，这里是" + item.KindName());
+                continue;
+            }
+            ReadAppearanceObject(item, label.c_str(), _config.sprite.frames[i],
+                                 &_config.spriteFrameBytes[i]);
+        }
+    }
+
+    void ReadSpriteSheet(const JsonValue& value) {
+        _sawSpriteField = true;
+        if (!value.IsObject()) {
+            Error(value,
+                  "sheet 必须是对象，形如 {\"frameWidth\":40,\"frameHeight\":40,"
+                  "\"columns\":4,\"rows\":1}");
+            return;
+        }
+        inking::SpriteData::SpriteSheet& sheet = _config.sprite.sheet;
+        for (const auto& entry : value.fields) {
+            const std::string& key = entry.first;
+            const JsonValue& field = entry.second;
+            if (!IsKnownField(fields::kKnownSpriteSheetFields,
+                              std::size(fields::kKnownSpriteSheetFields),
+                              key)) {
+                Error(field, "sheet 里的字段 \"" + key + "\" 不认识（图集只认 "
+                                 + JoinKnownFields(fields::kKnownSpriteSheetFields,
+                                                   std::size(
+                                                       fields::kKnownSpriteSheetFields))
+                                 + "）");
+                continue;
+            }
+            if (key == "source") {
+                if (field.IsString()) {
+                    sheet.source = field.text;
+                } else {
+                    Error(field, "sheet.source 必须是字符串（图集路径）");
+                }
+            } else if (key == "count") {
+                sheet.count = static_cast<int>(ReadNumber(field, "sheet.count"));
+            } else if (key == "firstFrame") {
+                // 绝对格号（0.6.4 T-11）。与顶层 `startFrame`（帧号）不是一回事，
+                // 越界判据交给 `SpriteData::Validate()`——与运行期同一份。
+                sheet.firstFrame =
+                    static_cast<int>(ReadNumber(field, "sheet.firstFrame"));
+            } else if (key == "margin") {
+                sheet.margin = static_cast<int>(ReadNumber(field, "sheet.margin"));
+            } else if (key == "spacing") {
+                sheet.spacing =
+                    static_cast<int>(ReadNumber(field, "sheet.spacing"));
+            } else if (key == "frameWidth") {
+                sheet.frameWidth =
+                    static_cast<int>(ReadNumber(field, "sheet.frameWidth"));
+            } else if (key == "frameHeight") {
+                sheet.frameHeight =
+                    static_cast<int>(ReadNumber(field, "sheet.frameHeight"));
+            } else if (key == "columns") {
+                sheet.columns =
+                    static_cast<int>(ReadNumber(field, "sheet.columns"));
+            } else if (key == "rows") {
+                sheet.rows = static_cast<int>(ReadNumber(field, "sheet.rows"));
+            }
+        }
+    }
+
+    /**
+     * `events`: `[{ "frame": 3, "name": "hit" }, …]`（0.6.3 T-09）。
+     *
+     * 越界 / 空名字不在这里判——`FinalizeSprite()` 会调 `SpriteData::Validate()`，
+     * 那份判据与运行期是**同一份**（"指向第 9 帧但只有 4 帧"这种话只该有一处写法）。
+     */
+    void ReadSpriteEvents(const JsonValue& value) {
+        _sawSpriteField = true;
+        if (!value.IsArray()) {
+            Error(value,
+                  "events 必须是数组，形如 "
+                  "[{\"frame\":3,\"name\":\"hit\"}]");
+            return;
+        }
+        for (std::size_t i = 0; i < value.items.size(); ++i) {
+            const JsonValue& item = value.items[i];
+            const std::string label = "events[" + std::to_string(i) + "]";
+            if (!item.IsObject()) {
+                Error(item, label + " 必须是对象，这里是" + item.KindName());
+                continue;
+            }
+            inking::SpriteData::SpriteEvent event;
+            for (const auto& entry : item.fields) {
+                const std::string& key = entry.first;
+                const JsonValue& field = entry.second;
+                if (!IsKnownField(fields::kKnownSpriteEventFields,
+                                  std::size(fields::kKnownSpriteEventFields),
+                                  key)) {
+                    Error(field, label + " 里的字段 \"" + key
+                                     + "\" 不认识（帧事件只认 "
+                                     + JoinKnownFields(
+                                           fields::kKnownSpriteEventFields,
+                                           std::size(
+                                               fields::kKnownSpriteEventFields))
+                                     + "）");
+                    continue;
+                }
+                if (key == "frame") {
+                    const double raw = ReadNumber(field, label + ".frame");
+                    if (raw < 0.0) {
+                        Error(field, label + ".frame 不能为负（帧号从 0 起）");
+                    }
+                    event.frame =
+                        static_cast<std::size_t>(raw < 0.0 ? 0.0 : raw);
+                } else if (key == "name") {
+                    if (field.IsString()) {
+                        event.name = field.text;
+                    } else {
+                        Error(field, label + ".name 必须是字符串（事件名）");
+                    }
+                }
+            }
+            _config.sprite.events.push_back(std::move(event));
+        }
+    }
+
+    /**
+     * 把 image 那半（`normal` / 形状 / 锚点 / 运行时开关）搬进 `SpriteData`，
+     * 补齐图集的字节，再用**运行期那份** `Validate()` 判一次合法性。
+     *
+     * 为什么在 `Finish()` 里做、而不是边读边算：json 的字段顺序是用户随手写的，
+     * "`sheet` 写在 `normal` 前面"完全正当。收尾统一判，语义就与顺序无关。
+     */
+    void FinalizeSprite() {
+        inking::SpriteData::SpriteSheet& sheet = _config.sprite.sheet;
+        inking::ButtonAppearance& normal = _config.button.data.normal;
+
+        // ① 图集的字节**只有一份**：两条路径写成不同的文件就没有"那张大图"。
+        if (sheet.IsConfigured() && !sheet.source.empty() && !normal.source.empty()
+            && sheet.source != normal.source) {
+            _result.errors.push_back(CxxcssError{
+                _path, 0,
+                "图集只有一份字节：sheet.source（" + sheet.source
+                    + "）与 normal.source（" + normal.source
+                    + "）写了两个不同的文件。要么只写一个，要么两处写同一个"});
+            _failed = true;
+            return;
+        }
+        // 只写了 `sheet.source`：它就是那张大图。写回 `normal.source`，
+        // 因为**纹理缓存键**取的是它（换一张图集必须换一个键）。
+        if (sheet.IsConfigured() && !sheet.source.empty() && normal.source.empty()) {
+            normal.source = sheet.source;
+        }
+
+        // ② 生成期烘：图集的字节也要进产物（运行期那条路一个字节都不烘）。
+        //    `normal` 自己就是 img 时字节已经读过了，这里只补"只有 sheet.source"那种。
+        if (sheet.IsConfigured() && !_config.runtimeAsset
+            && _config.button.imageBytes[0].empty()) {
+            std::vector<std::uint8_t>& bytes = _config.button.imageBytes[0];
+            const std::string problem = ReadImageBytes(normal.source, bytes);
+            if (!problem.empty()) {
+                _result.errors.push_back(CxxcssError{_path, 0, problem});
+                _failed = true;
+                return;
+            }
+            normal.type = inking::AppearanceType::Image;
+            normal.imageBytes = bytes.data();
+            normal.imageSize = bytes.size();
+        }
+
+        // ③ 基础字段：解析过程只写 `button.data` 一处（上面两步也是写在那里），
+        //    到这里一次性搬进 `SpriteData`——产物只读 `sprite`，两份 normal
+        //    各写一半就等着不一致。
+        //
+        //    `button.data` 是 `ButtonData`，`runtimeAsset` / `hitPassThrough` 在
+        //    `ImageData` 这一层（按钮没有它们），所以这两项在这里按 ImageLoader
+        //    收到的开关补上——与 `Emit` 的 `tail` 两行是同一件事，取值同源。
+        inking::ImageData base;
+        static_cast<inking::ButtonData&>(base) = _config.button.data;
+        base.runtimeAsset = _config.runtimeAsset;
+        base.hitPassThrough = _config.hitPassThrough;
+        static_cast<inking::ImageData&>(_config.sprite) = base;
+
+        // ④ 合法性：**直接用运行期的判据**（都填 / 都不填、fps <= 0、
+        //    图集几何自相矛盾、帧是纯色……）。生成器再写一遍就是第二份真相。
+        const std::string problem = _config.sprite.Validate();
+        if (!problem.empty()) {
+            _result.errors.push_back(CxxcssError{
+                _path, 0, "帧动画配置不合法：" + problem});
+            _failed = true;
         }
     }
 
@@ -3712,6 +3985,13 @@ private:
                 = _config.button.imageBytes[0].data();
             _config.button.data.normal.imageSize
                 = _config.button.imageBytes[0].size();
+        }
+
+        // 帧动画：配了帧就是 sprite（产 `SpriteData` + `InkingSprite` 类）。
+        // 放在字节视图接好**之后**——`FinalizeSprite` 要搬 `normal` 的那份视图。
+        _config.isSprite = _sawSpriteField;
+        if (!_failed && _config.isSprite) {
+            FinalizeSprite();
         }
 
         _config.warnings = std::move(_warnings);
@@ -3996,6 +4276,320 @@ private:
  *   3. 没被任何组件用到的 token 不算错；组件用了**主题里没有**的 token 才算错，
  *      而那个报错发生在组件那一侧（顺带把主题里有的列出来）。
  */
+/**
+ * @brief `CXXCSS/Atlas/<名字>.json` 的加载器（0.6.5 T-17）。
+ *
+ * 产物只有一份 `inking::AtlasData`（一个图集里 N 个具名动画），没有类——
+ * 它不是组件，是"图里的哪块是哪一帧"这张表。运行期由
+ * `inking::MakeSpriteData()` 转成某个 `InkingSprite` 的配置。
+ *
+ * **判据不在这里重写**：把读到的内容拼成一份临时的 `SpriteData`，交给
+ * `SpriteData::Validate()` 判一次（网格越界 / `frames` 与网格同给 / `fps<=0` /
+ * 事件帧越界 全在那一处），然后在生成期把网格**展开成逐帧矩形**——于是运行期
+ * 只有"帧表"这一条路，网格算术不会在两端各有一份。
+ */
+class AtlasLoader : public ConfigReader {
+public:
+    AtlasLoader(std::string path, LoadResult& result)
+        : ConfigReader(std::move(path), result) {
+        _config.filePath = _path;
+        _config.name = FileStem(_path);
+        _config.data.name = _config.name;
+    }
+
+    void Run(const JsonValue& root) {
+        if (!root.IsObject()) {
+            Error(root, std::string("顶层必须是对象，这里是") + root.KindName());
+            _failed = true;
+            Finish();
+            return;
+        }
+
+        for (const auto& field : root.fields) {
+            const std::string& key = field.first;
+            const JsonValue& value = field.second;
+            if (IsDirectiveField(key)) {
+                continue;
+            }
+            if (!IsKnownField(fields::kKnownAtlasFields,
+                              std::size(fields::kKnownAtlasFields), key)) {
+                Error(value, "字段 \"" + key + "\" 不认识（图集描述认的字段："
+                                 + JoinKnownFields(fields::kKnownAtlasFields,
+                                                   std::size(
+                                                       fields::kKnownAtlasFields))
+                                 + "；它不是组件，没有 width / height / 锚点）");
+                continue;
+            }
+            if (key == "name") {
+                if (value.IsString()) {
+                    _config.name = value.text;
+                    _config.data.name = value.text;
+                    _sawNameField = true;
+                } else {
+                    Error(value, "name 必须是字符串");
+                }
+            } else if (key == "animations") {
+                ReadAnimations(value);
+            }
+        }
+
+        Finish();
+    }
+
+private:
+    /// 整数（`count` / `firstFrame` 允许 0；`columns` 等要求 >= 1）。
+    int ReadInt(const JsonValue& value, const std::string& field, int minimum) {
+        const double number = ReadNumber(value, field);
+        if (number < static_cast<double>(minimum)) {
+            Error(value, field + " 不能小于 " + std::to_string(minimum) + "（现在是 "
+                             + std::to_string(number) + "）");
+            return minimum;
+        }
+        return static_cast<int>(number + (number >= 0.0 ? 0.5 : -0.5));
+    }
+
+    /// `"events": [{ "frame": 3, "name": "hit" }]`（与 `Image` 的 sprite 段同形）。
+    void ReadEvents(const JsonValue& value,
+                    std::vector<inking::SpriteData::SpriteEvent>& out,
+                    const std::string& label) {
+        if (!value.IsArray()) {
+            Error(value, label + " 必须是数组，形如 [{\"frame\":3,\"name\":\"hit\"}]");
+            return;
+        }
+        for (std::size_t i = 0; i < value.items.size(); ++i) {
+            const JsonValue& item = value.items[i];
+            const std::string tag = label + "[" + std::to_string(i) + "]";
+            if (!item.IsObject()) {
+                Error(item, tag + " 必须是对象");
+                continue;
+            }
+            inking::SpriteData::SpriteEvent event;
+            for (const auto& field : item.fields) {
+                const std::string& key = field.first;
+                const JsonValue& child = field.second;
+                if (IsDirectiveField(key)) {
+                    continue;
+                }
+                if (!IsKnownField(fields::kKnownSpriteEventFields,
+                                  std::size(fields::kKnownSpriteEventFields), key)) {
+                    Error(child, tag + " 里的字段 \"" + key + "\" 不认识（帧事件只认 "
+                                      + JoinKnownFields(
+                                          fields::kKnownSpriteEventFields,
+                                          std::size(fields::kKnownSpriteEventFields))
+                                      + "）");
+                    continue;
+                }
+                if (key == "frame") {
+                    event.frame = static_cast<std::size_t>(
+                        ReadInt(child, tag + ".frame", 0));
+                } else if (key == "name") {
+                    if (child.IsString()) {
+                        event.name = child.text;
+                    } else {
+                        Error(child, tag + ".name 必须是字符串");
+                    }
+                }
+            }
+            out.push_back(std::move(event));
+        }
+    }
+
+    /// `"frames": [{ "x":0, "y":0, "width":40, "height":40 }]`
+    void ReadFrames(const JsonValue& value,
+                    std::vector<inking::ShapeBounds>& out,
+                    const std::string& label) {
+        if (!value.IsArray()) {
+            Error(value, label + " 必须是数组，每项一个矩形");
+            return;
+        }
+        for (std::size_t i = 0; i < value.items.size(); ++i) {
+            const JsonValue& item = value.items[i];
+            const std::string tag = label + "[" + std::to_string(i) + "]";
+            if (!item.IsObject()) {
+                Error(item, tag + " 必须是对象");
+                continue;
+            }
+            inking::ShapeBounds rect;
+            for (const auto& field : item.fields) {
+                const std::string& key = field.first;
+                const JsonValue& child = field.second;
+                if (!IsKnownField(fields::kKnownAtlasFrameFields,
+                                  std::size(fields::kKnownAtlasFrameFields), key)) {
+                    Error(child, tag + " 里的字段 \"" + key + "\" 不认识（帧矩形只认 "
+                                      + JoinKnownFields(
+                                          fields::kKnownAtlasFrameFields,
+                                          std::size(fields::kKnownAtlasFrameFields))
+                                      + "）");
+                    continue;
+                }
+                if (key == "x") {
+                    rect.x = static_cast<float>(ReadNumber(child, tag + ".x"));
+                } else if (key == "y") {
+                    rect.y = static_cast<float>(ReadNumber(child, tag + ".y"));
+                } else if (key == "width") {
+                    rect.width = static_cast<float>(ReadSize(child, tag + ".width"));
+                } else if (key == "height") {
+                    rect.height = static_cast<float>(ReadSize(child, tag + ".height"));
+                }
+            }
+            out.push_back(rect);
+        }
+    }
+
+    void ReadAnimations(const JsonValue& value) {
+        if (!value.IsArray() || value.items.empty()) {
+            Error(value, "animations 必须是**非空**数组，每一项一个动画");
+            return;
+        }
+        for (std::size_t i = 0; i < value.items.size(); ++i) {
+            const JsonValue& item = value.items[i];
+            const std::string label = "animations[" + std::to_string(i) + "]";
+            if (!item.IsObject()) {
+                Error(item, label + " 必须是对象，这里是" + item.KindName());
+                continue;
+            }
+
+            inking::AtlasAnimation animation;
+            inking::SpriteData::SpriteSheet grid;  // 网格切法（与 frames 二选一）
+            std::vector<inking::ShapeBounds> rects;
+            for (const auto& field : item.fields) {
+                const std::string& key = field.first;
+                const JsonValue& child = field.second;
+                if (IsDirectiveField(key)) {
+                    continue;
+                }
+                if (!IsKnownField(fields::kKnownAtlasAnimationFields,
+                                  std::size(fields::kKnownAtlasAnimationFields),
+                                  key)) {
+                    Error(child, label + " 里的字段 \"" + key + "\" 不认识（动画认的字段："
+                                      + JoinKnownFields(
+                                          fields::kKnownAtlasAnimationFields,
+                                          std::size(
+                                              fields::kKnownAtlasAnimationFields))
+                                      + "）");
+                    continue;
+                }
+                if (key == "name") {
+                    if (child.IsString()) {
+                        animation.name = child.text;
+                    } else {
+                        Error(child, label + ".name 必须是字符串");
+                    }
+                } else if (key == "source") {
+                    if (child.IsString()) {
+                        animation.source = child.text;
+                    } else {
+                        Error(child, label + ".source 必须是字符串（相对资源根的路径）");
+                    }
+                } else if (key == "fps") {
+                    animation.fps = ReadNumber(child, label + ".fps");
+                } else if (key == "loop") {
+                    if (child.IsBool()) {
+                        animation.loop = child.boolean;
+                    } else {
+                        Error(child, label + ".loop 必须是 true / false");
+                    }
+                } else if (key == "events") {
+                    ReadEvents(child, animation.events, label + ".events");
+                } else if (key == "frames") {
+                    ReadFrames(child, rects, label + ".frames");
+                } else if (key == "columns") {
+                    grid.columns = ReadInt(child, label + ".columns", 1);
+                } else if (key == "rows") {
+                    grid.rows = ReadInt(child, label + ".rows", 1);
+                } else if (key == "frameWidth") {
+                    grid.frameWidth = ReadInt(child, label + ".frameWidth", 1);
+                } else if (key == "frameHeight") {
+                    grid.frameHeight = ReadInt(child, label + ".frameHeight", 1);
+                } else if (key == "count") {
+                    grid.count = ReadInt(child, label + ".count", 0);
+                } else if (key == "firstFrame") {
+                    grid.firstFrame = ReadInt(child, label + ".firstFrame", 0);
+                }
+            }
+
+            // 拼成临时 `SpriteData` 再判一次：判据只该有一份（0.6.1 的规矩）。
+            inking::SpriteData probe;
+            probe.name = animation.name;
+            probe.normal.type = inking::AppearanceType::Image;
+            // `Validate()` 要求"图集有图"；名字留空，报错文案才不会牵扯路径。
+            probe.normal.source =
+                animation.source.empty() ? std::string("<未写 source>") : animation.source;
+            probe.fps = animation.fps;
+            probe.loop = animation.loop;
+            probe.events = animation.events;
+            probe.sheet = grid;
+            probe.sheet.frameRects = rects;
+            probe.Normalize();
+
+            const std::string error = probe.Validate();
+            if (!error.empty()) {
+                Error(item, label + "：" + error);
+                continue;
+            }
+
+            if (rects.empty()) {
+                // 网格：**在生成期展开成逐帧矩形**。运行期只认帧表——两端各算一遍
+                // 网格算术，迟早有一端把 firstFrame / margin 忘了。
+                const std::size_t count = probe.FrameCount();
+                const std::size_t first = probe.sheet.firstFrame > 0
+                                              ? static_cast<std::size_t>(
+                                                    probe.sheet.firstFrame)
+                                              : 0u;
+                for (std::size_t f = 0; f < count; ++f) {
+                    animation.frames.push_back(probe.sheet.CellRect(first + f));
+                }
+            } else {
+                animation.frames = rects;
+            }
+
+            _config.data.animations.push_back(std::move(animation));
+        }
+    }
+
+    void Finish() {
+        CheckName(_config.name, _sawNameField);
+
+        // 重名动画 / 空动画 / 帧矩形非法：判据在运行期那一份（`AtlasData::Validate`），
+        // 生成期只负责把它的结论变成一条带文件名的错误。
+        //
+        // **只在前面没报过错时判**：单个动画被跳过（帧宽为 0 之类）之后，
+        // `Validate()` 会说"图集里没有任何动画"——那是被前一条错误派生的噪音，
+        // 两条一起打出来只会让人以为配置里真有两个毛病。
+        const std::string error = _failed ? std::string() : _config.data.Validate();
+        if (!error.empty()) {
+            _result.errors.push_back(
+                CxxcssError{_path, 0, "图集描述不合法：" + error});
+            _failed = true;
+        }
+
+        // 访问函数叫 `Atlas<Name>`，所以名字必须是合法标识符（与面板同一条理由：
+        // 生成不出名字就没有任何用法）。
+        const std::string suffix = MakeNameConstant(_config.name);
+        if (suffix.empty()) {
+            _result.errors.push_back(CxxcssError{
+                _path, 0,
+                "图集的 name \"" + _config.name
+                    + "\" 不是合法的 C++ 标识符（访问函数叫 Atlas<Name>，"
+                      "只能字母数字下划线、不以数字开头）"});
+            _failed = true;
+        } else {
+            _config.identifier = "Atlas" + suffix;
+        }
+
+        if (_sawNameField) {
+            _result.claimedNames.push_back({_config.name, _path});
+        }
+        _config.warnings = std::move(_warnings);
+        if (!_failed) {
+            _result.atlases.push_back(std::move(_config));
+        }
+    }
+
+    AtlasConfig _config;
+    bool _sawNameField = false;
+};
+
 class ThemeLoader : public ConfigReader {
 public:
     ThemeLoader(std::string path, LoadResult& result)
@@ -4467,6 +5061,8 @@ const char* ComponentKindName(ComponentKind kind) {
             return "标签";
         case ComponentKind::Image:
             return "图片";
+        case ComponentKind::Atlas:
+            return "图集";
         case ComponentKind::Text:
             return "语言表";
         case ComponentKind::Theme:
@@ -4564,6 +5160,15 @@ bool TryComponentKindFromPath(const std::string& path, ComponentKind& out) {
     // `Image` / `images` → **静态图片**（A11）：不带点击回调的按钮。
     if (key == "image") {
         out = ComponentKind::Image;
+        return true;
+    }
+    // `Atlas` / `atlases` → **图集描述**（0.6.5 T-17）：一张图多个具名动画。
+    //
+    // 坑：上面那个"削掉全部尾随 s"的循环对 `atlas` **也会动手**（→ `atla`），
+    // 所以这里要比的是削完之后的两种形态 `atla` / `atlase`。写成 `atlas` 会
+    // 认不出来——报错还照样说"认得的写法是 Atlas"，一次就把人绕住（踩过）。
+    if (key == "atla" || key == "atlase") {
+        out = ComponentKind::Atlas;
         return true;
     }
     // `Theme` / `themes` → **主题表**（B8）：语义色 / 语义字号 → 具体值。
@@ -4752,6 +5357,7 @@ void LoadConfigInto(const std::string& path, LoadResult& result) {
             "认不出这个配置属于哪种组件：**目录名决定组件类型**"
             "（CXXCSS.md §1 第 1 条），认得的写法是 Button / buttons、"
             "Panel / panels、Label / labels、Image / images（静态图片）、"
+            "Atlas / atlases（图集描述）、"
             "Text / texts（语言表）、Theme / themes（主题表）、"
             "Config / configs（全局配置，也可以直接放在 CXXCSS/ 根下）；"
             "这个文件的目录名是 \""
@@ -4787,6 +5393,11 @@ void LoadConfigInto(const std::string& path, LoadResult& result) {
         }
         case ComponentKind::Image: {
             ImageLoader loader(path, result);
+            loader.Run(root);
+            break;
+        }
+        case ComponentKind::Atlas: {
+            AtlasLoader loader(path, result);
             loader.Run(root);
             break;
         }

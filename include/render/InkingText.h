@@ -147,13 +147,60 @@ void PaintText(SDL_Renderer* renderer, const TextRequest& request, int width,
  * @param tintColor 只取它的 **alpha**：颜色过渡时用它做淡入淡出（图片本身不换色）。
  *                  解码不出来（没接 SDL3_image / 字节坏了）时返回 false，
  *                  调用方可以退回"按颜色填形状"。
+ * @param srcRect   **这一帧**在纹理里的像素矩形（图集，0.6.1 T-04）。
+ *                  全零 = 整张纹理——这是既有图片的默认，行为与之前逐像素一致。
+ *                  注意它只改"取哪块"，不改绘制矩形（那是 `fit` 的事）。
  * @return 真的画出了图片返回 true。
  */
 bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
                 const ShapeSpec& shape, int width, int height,
                 float magnification, float pixelX, float pixelY,
                 const TransformSpec& transform, ImageFit fit,
-                std::uint32_t tintColor);
+                std::uint32_t tintColor, const ShapeBounds& srcRect = {});
+
+/**
+ * @brief 图片纹理的采样模式（0.6.4 T-12）。
+ *
+ * 为什么需要：像素画（CraftPix 那类 64×64 素材）放大后必须是**硬边**。
+ * `LINEAR` 下把一张像素素材放大 4× 会得到 746 种颜色——格子边界被插值糊成渐变
+ * （`docs/zh/plans/2026-10-25-0.6.x-frame-animation.md` §2.5 的实测数字）。
+ */
+enum class ImageSampling {
+    Linear,   ///< 双线性（默认，与 0.6.3 及以前逐字相同）
+    Nearest,  ///< 最近邻（像素素材；放大后 4×4 块同色 = 100%）
+};
+
+/**
+ * @brief 设置**进程级**图片采样模式，并立刻重设已建好的图片纹理。
+ *
+ * 三条边界（写在这里，免得被当成缺陷报）：
+ *   - **进程级，不支持混用**：同一进程里"像素素材 + 高清图"只能二选一。
+ *     逐图模式要并进纹理缓存键（否则同名换模式会命中旧纹理），留到真有人要时再做
+ *     （任务书 §11）。
+ *   - **只碰图片，不碰字形**：纹理表里文字与图片共用一张表，靠 `TextureEntry::isImage`
+ *     区分——不区分的话切一次模式，所有文字都会变成带锯齿的。
+ *   - **切换立即生效**：遍历表里已有的图片纹理重设，不必重建纹理。
+ */
+void SetImageSampling(ImageSampling mode) noexcept;
+
+/// 当前的图片采样模式（默认 `Linear`）。
+ImageSampling GetImageSampling() noexcept;
+
+/**
+ * @brief 量一张图片的**固有像素尺寸**（不需要渲染器、不建纹理）。
+ *
+ * 用途只有一个：构造期校验图集的切格几何（`InkingSprite`，0.6.1 T-05）。
+ * "格数与图宽不符"是图集最常见的配错，而它能通过 `SpriteData::Validate()`
+ * ——数据层看不到图片有多大。所以这里必须真的解一次图。
+ *
+ * 为什么值得多解一次：图集模式下这张图本来就要解码建纹理，这一遍是**额外的**
+ * 一次（纹理属于渲染器，构造期还没有渲染器 ⇒ 那次解码用不上）。代价按
+ * `(name, size)` 缓存，同屏 N 个 sprite 共用一张图集时只解一次。
+ *
+ * @return 解出来了才 true（没接 SDL3_image / 字节坏了 / SVG 都返回 false——
+ *         SVG 会按组件框光栅化，"切格"对它没有意义）。
+ */
+bool ProbeImageSize(const ImageBytes& image, int* width, int* height);
 
 /**
  * @brief 放掉这一层持有的全部纹理与字体。**渲染器销毁之前必须调**。

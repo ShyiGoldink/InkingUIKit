@@ -138,12 +138,25 @@ void AppendTexturedGeometry(SDL_Texture* texture, const SDL_Vertex* v, std::size
 void ApplyAncestorAffineToVertices(SDL_Vertex* v, std::size_t n,
                                    float pixelX, float pixelY) noexcept;
 void NoteImmediateDraw() noexcept;
+void SetImageBatchingEnabled(bool enabled) noexcept;   // 矩形 + Fill 的图片并进批次（默认开）
+bool ImageBatchingEnabled() noexcept;
 void SetClipRect(SDL_Renderer* renderer, const ShapeBounds& deviceRect) noexcept;
 void ClearClipRect(SDL_Renderer* renderer) noexcept;
 ```
 
 `NoteImmediateDraw()` 是那条唯一的规矩：**任何直接调 SDL 绘制的地方，前面必须调它**。
 漏了不会报错——只是那一笔被后面刷出去的批次盖住（踩过一次）。
+
+**矩形 + `Fill` 的图片默认也走批次**（0.6.2）：50 个同图集 sprite 的一帧是
+**1 次** `SDL_RenderGeometry`、0 次单笔绘制（关掉开关是 50 次）。
+这块原来是条 `SDL_RenderTexture` 快路，理由是"几何批不吃纹理 alpha"——0.6.2 的探针
+在 SDL 3.4.16 的 software / direct3d11 两个后端上证明**那条不成立了**（透明区、50%
+半透明、放大采样都与单笔逐位相同）。代价是矩形图片现在也吃**形状网格的 1px 羽化**：
+边缘那一圈从硬边变成抗锯齿，和矩形按钮一致；渐变图上表现为"采样点偏了半个纹素"
+（实测最大通道差 3，纯色图逐像素相等）。
+
+开关只影响 `rect + Fill` 这一种形态，关掉即回到 0.6.1 的行为（含那处既有缺陷：
+快路不看 `transform`，旋转 / 缩放的矩形图片会画成没变换）。
 
 裁剪两条纪律：**坐标系与顶点相同**（传设备像素）、**设置前必须先刷缓冲**
 （否则先前攒下的顶点会在"别人的裁剪"下被刷出去，表现是"有的组件被剪、有的没被剪"，
@@ -205,7 +218,7 @@ bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
                 const ShapeSpec& shape, int width, int height,
                 float magnification, float pixelX, float pixelY,
                 const TransformSpec& transform, ImageFit fit,
-                std::uint32_t tintColor);
+                std::uint32_t tintColor, const ShapeBounds& srcRect = {});
 ```
 
 四个已定的决定：**首次绘制时解码**（进程启动什么都不做）、**按组件形状裁剪**（走形状层
@@ -213,6 +226,45 @@ bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
 `cover`，几何在 `ImageFitSpec` 的纯函数里）、**变换同源**。
 `tintColor` 只取 **alpha**（过渡时淡入淡出，图片本身不换色）。解码不出来返回 false，
 调用方可以退回"按颜色填形状"。
+
+`srcRect`（0.6.1 T-04）是**这一帧在纹理里的像素矩形**，全零 = 整张纹理（既有图片的默认，
+行为逐像素不变）。它只决定"取哪块"，绘制矩形仍由 `fit` 决定；而且 `Contain` / `Cover`
+的等比基准是**这块的宽高**，不是整张纹理——图集里的 40×40 一格不该被当成 4:1 的宽图。
+
+>**SetImageSampling / GetImageSampling**（0.6.4 T-12）
+
+```C++
+enum class ImageSampling { Linear, Nearest };   // 默认 Linear
+void SetImageSampling(ImageSampling mode) noexcept;
+ImageSampling GetImageSampling() noexcept;
+```
+
+**进程级**开关：像素画（64×64 那类素材）放大后必须是硬边，`Linear` 会把它糊成渐变。
+切换**立即生效**——遍历纹理表把已建好的**图片**纹理重设一遍（字形纹理不动，
+不然一开最近邻所有字都变毛边）。
+
+三条边界：
+
+- **不支持混用**：同进程里"像素素材 + 高清图"只能二选一。逐图模式要并进纹理缓存键
+  （否则同名换模式会命中旧纹理），留到真有人要时再做。
+- **software 后端的几何批不认采样模式**：实测（`build/probe_sampling.cpp`，2 色棋盘
+  放大）四个组合的颜色种数——software 下"并批 `Linear`"与"并批 `Nearest`"都是 **2 色**
+  （`SDL_RenderGeometry` 在软件后端恒最近邻），而 direct3d11 下是 **12 色 / 2 色**。
+  像素素材不受影响（它本来就要最近邻），受影响的只有"软件后端 + 高清图平滑缩放"。
+- **切换只改纹理状态，不重建纹理**：`texturesCreated` 不会因为这个开关变化。
+
+>**ProbeImageSize**
+
+```C++
+bool ProbeImageSize(const ImageBytes& image, int* width, int* height);
+```
+
+量一张图片的**固有像素尺寸**：不建纹理、不需要渲染器。只有一个用途——图集构造期
+校验切格几何（`InkingSprite`，0.6.1 T-05）。数据层看不到图片多大，而"格数与图宽不符"
+能通过 `SpriteData::Validate()`，所以必须真的解一次。
+
+代价按 `(名字, 字节数)` 缓存（与纹理表同一套键口径）：同屏 N 个 sprite 共用一张图集时
+只解一次。解不出来（没接 SDL3_image / 字节坏了 / SVG）返回 false，调用方跳过校验。
 
 >**ReleaseTextCache**
 
@@ -318,4 +370,4 @@ float LineOffsetX(float lineWidth, float availableWidth, TextAlignH align);
 
 ---
 
-> 本文档对应版本：**0.5.3（0.x 发布版）**。
+> 本文档对应版本：**0.6.6（0.x 发布版）**。

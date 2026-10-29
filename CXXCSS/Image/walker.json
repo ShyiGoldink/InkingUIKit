@@ -1,0 +1,35 @@
+{
+    "$comment": [
+        "帧动画（0.6.1 T-06）：配了 sheet 或 frames 就是 InkingSprite，否则仍是静态图片。",
+        "两种素材二选一（都填 / 都不填都会在生成期报错，判据与运行期 Validate() 同一份）：",
+        "  · sheet ：一张大图切 columns × rows 格，按行优先取帧——换帧只改源矩形，纹理只建一次；",
+        "  · frames：每帧一张独立图（散图），换帧换字节视图。",
+        "runtime: true ⇒ source 是**相对资源根**的路径，生成期一个字节都不读。",
+        "图集是 examples/demo/assets/walk.png（4×1、每格 48×48），示例构建时会拷到 exe 旁边。",
+        "图集尺寸对不上（例如实际 4×1 却被配成 columns:5）会在运行期构造时报 ERROR，不会静默播错格。"
+    ],
+    "name": "walker",
+    "width": 48,
+    "height": 48,
+    "runtime": true,
+    "normal": { "type": "img", "source": "walk.png", "fit": "fill" },
+    "sheet": {
+        "frameWidth": 48,
+        "frameHeight": 48,
+        "columns": 4,
+        "rows": 1
+    },
+    "fps": 8,
+    "loop": true,
+    "autoplay": true,
+    "events": [
+        { "frame": 1, "name": "step" },
+        { "frame": 3, "name": "step" }
+    ],
+    "selfAnchorX": 0,
+    "selfAnchorY": 0,
+    "traceAnchorX": 0,
+    "traceAnchorY": 0,
+    "offsetX": 100,
+    "offsetY": 600
+}

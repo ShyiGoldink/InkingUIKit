@@ -5,7 +5,186 @@
 
 ---
 
-## 0.5.3 —— 2026-10-26（**当前：发布版**：FilePicker 按钮栏脱离 MenuBar + 内容高量准）
+## 0.6.6 —— 2026-10-28（**当前：发布版**：换配置 / 不规则图集 / 动画组）
+
+> 来源：用户用自己的素材（CraftPix 史莱姆包）实测后追加三批需求——「修缺口 /
+> 不规则图集 + assets / 动画组」。核实、九成以上的取舍见
+> `docs/zh/plans/2026-10-25-0.6.x-frame-animation.md` §7~§9。
+> **0.6.4 / 0.6.5 两个中间批次没有单独发版**，本版一次收口；下面按批次列，
+> 是为了让"哪一条属于哪个目标"仍然查得到。
+
+### 新增
+
+**0.6.4（素材正确性）**
+
+- **图集起始格 `sheet.firstFrame`**：起始**格号**（不是帧数）。"每行一个方向"的
+  图集（`Slime1_Idle.png` 那种 6 列 × 4 行）靠它播第 1~3 行——第 r 行 =
+  `firstFrame: r × columns` + `count: columns`。与顶层 `startFrame`（帧号）是两件事。
+- **图片采样模式**：`detail::ImageSampling{Linear, Nearest}` +
+  `SetImageSampling()` / `GetImageSampling()`。像素素材放大后必须是硬边，
+  `Linear` 会把它糊成渐变。切换**立即生效**（遍历纹理表重设已建好的**图片**纹理，
+  字形纹理不动）。
+
+**0.6.5（换配置与不规则图集）**
+
+- **运行期换配置 `InkingSprite::SetSpriteData(data, keepPhase)`**：节点指针、父子
+  关系、**所有订阅全部保留**（替换组件那条路会让它们全部失效）。`keepPhase`
+  保留当前帧号（同动作换方向不跳回第一帧）；换配置本身**不发** `frameChanged`。
+- **帧表 `SpriteSheet::frameRects`**：每帧一个绝对像素矩形、宽高可以不等——一页
+  混装多个动作时用。与网格字段互斥（同给报错），构造期逐帧验"落在图内"。
+- **库内的 JSON 小工具 `inking::json`**（`util/InkingJson.h`）：解析 / 取值 /
+  转义，**零异常 + 每个值带行号 + 重复键报错**。与生成器共用同一份实现。
+- **图集描述 `AtlasData` + `MakeSpriteData()`**（`image/InkingAtlas.h`）：一张图
+  里有哪些具名动画、每个动画的帧矩形与播放参数；纯函数转成 `SpriteData`，
+  **一个图集可以被多个 sprite 共用**（字节一份、纹理一张）。
+- **inkgen 认 `CXXCSS/Atlas/*.json`**：产物是 `const inking::AtlasData&
+  AtlasXxx()`。网格切法在**生成期**展开成逐帧矩形（运行期只有帧表一条路）。
+
+**0.6.6（动画组）**
+
+- **`InkingSpriteGroup`**（派生 `InkingSprite`）：一个角色多个动作，
+  `SwitchTo("run")` 换的是**配置**不是节点 ⇒ 节点数恒 1（没有隐藏节点参与绘制
+  遍历与命中）。`animationChanged(新, 旧)` 在换完之后发。
+- **`resize` 参数**：组默认跟随新动作的 `width/height`（角色轮廓随动作变是组的
+  职责），`resize=false` 关掉。注意这与单个 `InkingSprite::SetSpriteData()`
+  **不自动改尺寸**相反——两处语义都在文档里写明了。
+- demo 追加一个动画组示例（走 / 跑两个动作，按钮切换）。
+
+### 变更
+
+- **`inkgen` 多一个配置类目 `Atlas`**（目录名决定类型，`Atlas` / `atlases` 都认）。
+  产物里没有类：只有一份 `AtlasData` 和一个访问函数。
+- **`libinking.dll` 体积 +约 35KB**：JSON 解析器进了库（`util/`）。不 include
+  `<util/InkingJson.h>` 的项目零影响（不进任何 TU）。
+- **矩形图片并批的羽化代价仍在**（0.6.2 起）：这一版没动它。
+
+### 修复
+
+- **生成期报错级联**：图集描述里某条动画自己错了之后，`AtlasData::Validate()`
+  会再报一句"图集里没有任何动画"——那是派生噪音，现在只有前面没报过错时才判。
+
+### 文档
+
+- `CXXCSS.md`：`sheet.firstFrame`、"图集描述（0.6.5）"整节、
+  三条新错例；§9 字段表按 `inkgen --dump-fields` 重生成（新增三张 `Atlas` 表）。
+- `docs/zh/api/InkingJson.md`（新页面）、`API.md` 加「3.6 工具件」、`InkingComponents.md`
+  补 `SetSpriteData` / `frameRects` / `AtlasData` / `InkingSpriteGroup`、
+  `InkingRender.md` 补采样开关与**后端差异表**、`AGENTS.md` 第 10 条加 `util/` 分层。
+- `README` 版本横幅与本文件同步到 0.6.6。
+
+### 已知限制
+
+- **TexturePacker 导出件不直接吃**：`frames` 是 hash（不是 array）、`rotated`、
+  `trimmed` 三种形态明确不接——要用得先写转换脚本。
+- **图集描述不能热更**：结构（帧矩形）进 exe，只有图片字节在 `assets/` 里。
+  改排版要重编（与"换美术不用重编"的边界一致）。
+- **采样模式是进程级的**：同一进程里"像素素材 + 高清图平滑缩放"只能二选一。
+- **software 后端的几何批不认采样模式**（`SDL_RenderGeometry` 恒最近邻）：
+  像素素材不受影响（它本来就要最近邻）；受影响的只有"软件后端 + 高清图缩放"。
+- **组切换会改尺寸**：同一格子里换动作可能让兄弟节点位移——`resize=false` 可关。
+- **帧表不支持帧内偏移**（`spriteSourceSize`）：帧被裁过四周透明边时会抖，不做。
+
+---
+
+## 0.6.3 —— 2026-10-28（发布版：帧动画 `InkingSprite`）
+
+> 来源：用户口头需求「基于 timeline 做一个帧动画组件」+ 追加裁定「整个 0.6.x 只做
+> 帧动画、内容我全都要、组件名 `InkingSprite`」。核实、十个任务与取舍见
+> `docs/zh/plans/2026-10-25-0.6.x-frame-animation.md`。
+> 0.6.0 / 0.6.1 / 0.6.2 三个中间批次**没有单独发版**，本版一次收口——下面按批次列，
+> 是为了让"哪一条属于哪个目标"仍然查得到。
+
+### 新增
+
+**0.6.0（骨架）**
+
+- **场景动画时钟与频率订阅**：`InkingScene::AnimationSeconds()` /
+  `SubscribeAnimation(interval, cb)` / `UnsubscribeAnimation(handle)` /
+  `AnimationSubscriberCount()` / `GetAnimationCatchUpDropCount()`，句柄类型
+  `AnimationHandle = uint64_t`。语义与 `Timeline::Subscribe` 同构（累加器追赶、
+  慢帧补发），但**由场景持有生命周期**——组件拿不到 `Timeline` 实例，也就不会
+  在重开窗口后握着失效句柄。单帧补发上限 64 步，撞上就截断并记一次丢账。
+- **帧动画组件 `InkingSprite`**（派生 `InkingStaticImage`）：`SpriteData` 描述
+  "有多少帧、怎么放"，组件只管"现在第几帧"。时间只来自场景时钟，帧号是时间的
+  纯函数（`frame = floor(t × fps) % count`）⇒ 慢帧不慢放、同屏同 fps 的 sprite
+  帧号恒等、长跑不丢精度。
+- 播放控制：`Play()` / `Pause()`（时间冻结，不是"停止换帧"）/ `Stop()` /
+  `SeekToFrame()`；观测口 `IsPlaying()` / `IsFinished()` / `GetFrameIndex()` /
+  `GetFrameCount()` / `GetLoadedFrameCount()` / `GetFrameAdvanceCount()` /
+  `GetSkippedFrameCount()` / `GetAnimationTime()`。
+- `SpriteData`（纯数据头）：序列帧 `frames` 与图集 `sheet` **二选一**，`Normalize()`
+  补默认 + 夹取、`Validate()` 只报告不改数据（"能修 / 只能拒"按这一条分）。
+
+**0.6.1（图集与配置）**
+
+- **图集切格**：`ButtonAppearance::srcRect` / `ImageFitSpec::srcRect`——一块纹理
+  只画其中一格的像素矩形，全零 = 整张（既有图片零影响）。图集换帧只改源矩形，
+  **零解码、零新建纹理**。
+- 切格算术收在 `SpriteSheet::CellRect(i)` / `SheetWidth()` / `SheetHeight()`
+  （行优先，含 `margin` / `spacing`）。
+- **构造期几何校验**：`detail::ProbeImageSize()` 量一次图，与 `SheetWidth/Height`
+  比对，不符就 `IsValid() == false` + 一条 ERROR（写明"真实 160×40 vs 应为 200×40"）。
+- **inkgen 认帧动画**：`Image` 配置里配了 `frames` 或 `sheet` 就生成
+  `InkingSprite` 类 + `SpriteData`；否则产物与以前逐字一致。播放参数
+  （`fps` / `loop` / `autoplay` / `startFrame` / `startOffset`）写在组件顶层。
+
+**0.6.2（合批）**
+
+- **矩形 + `Fill` 的图片默认并进几何批**：50 个同图集 sprite 的一帧从 50 次
+  `SDL_RenderTexture` 变成 **1 次** `SDL_RenderGeometry`。开关
+  `detail::SetImageBatchingEnabled(bool)`（默认开，关掉即回到 0.6.1 行为）。
+
+**0.6.3（帧事件）**
+
+- **帧事件**：`SpriteData::SpriteEvent{frame, name}` + `InkingSprite::frameEvent`
+  （配置里 `events`）。由**帧号变化**驱动，慢帧跨帧也不吞事件、回绕照发、
+  `SeekToFrame` 不发。
+- **`finished`**：非循环播完发一次，`Play()` 之后可再发；循环动画永不发。
+- 示例新增两个动画：12fps 序列帧指示器（8 张内联 SVG）+ 图集行走角色
+  （`examples/demo/assets/walk.png`，4×1 图集，带 `step` 帧事件）。
+
+### 变更
+
+- **矩形图片现在吃形状网格的 1px 羽化**（并批的代价）：边缘从硬边变成抗锯齿，
+  与矩形按钮统一；渐变图上表现为"采样点偏了半个纹素"（实测最大通道差 3，
+  纯色图逐像素相等）。要回到旧的硬边行为，把 `SetImageBatchingEnabled(false)`。
+- `InkingSprite` 的图集模式**不再被拒绝**（0.6.0 时它明确报错"0.6.1 才支持"）。
+
+### 修复
+
+- **`InkingStaticImage::refreshRenderAppearance()` 的纹理键**：`SetImageBytes(data,
+  size, name)` 的 `name` 从没落到 `_renderAppearance.source` 上，而纹理键取的是
+  后者 ⇒ **同尺寸换图会一直命中第一张纹理**（帧动画表现成"每帧都画第一帧"，
+  不报错）。现在 `source` 跟着当前字节走。
+- **矩形图片的 `transform` 被丢弃**：0.2.0 起那条 `SDL_RenderTexture` 快路只用
+  `pixelX/pixelY/w/h`，旋转 / 缩放过的矩形图片画出来是**没变换的**。并批后走
+  形状网格，变换（以及祖先子树变换）恢复生效。
+
+### 文档
+
+- `CXXCSS.md` §3.10 新增「帧动画（0.6.1）」小节：两种素材的 JSON 例子、字段与默认值、
+  生成期会拦的错；§9 字段表按 `inkgen --dump-fields` 重生成（新增 `Image / sheet`、
+  `Image / events[]` 两张）。
+- `docs/zh/api/InkingComponents.md`：`SpriteData` / `InkingSprite` 全量 API 与
+  "帧事件五种情况"对照表；`InkingRender.md`：`PaintImage(srcRect)`、`ProbeImageSize`、
+  并批开关与羽化代价；`InkingScene.md`：场景动画时钟。
+- `README` 版本横幅与本文件同步到 0.6.3。
+
+### 已知限制
+
+- **图集尺寸只能运行期验**：生成期看不到图片有多大，"格数与图宽不符"要等组件构造
+  才报 ERROR（`IsValid()` 为假）。构造期会多解一次图（按 `(名字, 字节数)` 缓存）。
+- **并批的羽化代价**见「变更」——这是统一边缘换来的，不是缺陷，但确实与 0.6.1
+  的像素不完全一致（带 `transform` 的图差异更大：那是修 bug）。
+- **帧动画只有离散换帧**：不做关键帧插值 / 属性动画、不做变速 / 倒放——`fps` 是
+  配置（运行期没有 setter），要变速就换一份 `SpriteData` 重建组件，或在业务层用
+  `SeekToFrame` 自己算帧号。也没有图集打包工具。
+- **音频同步自己挂**：框架只提供 `frameEvent` / `finished`，不解析音频时间轴。
+- 播放状态属于组件实例，**不提供跨场景的全局播放器**。
+
+---
+
+## 0.5.3 —— 2026-10-26（发布版：FilePicker 按钮栏脱离 MenuBar + 内容高量准）
 
 > 来源：GoldingCore 侧 appmanager 插件的两条实测反馈（全屏后「添加 / 取消」消失；
 > 文件选择器首次没有滑块，进子目录再退回才有）。核实与取舍见

@@ -39,9 +39,21 @@ BatchStats& counters() {
     return instance;
 }
 
+/// 矩形图片并进几何批吗（进程内唯一；见头文件里那段）。
+bool& imageBatching() {
+    static bool enabled = true;  // 默认开：T-07 已证 alpha 没问题
+    return enabled;
+}
+
 }  // namespace
 
 BatchStats BatchStatsSnapshot() noexcept { return counters(); }
+
+void SetImageBatchingEnabled(bool enabled) noexcept {
+    imageBatching() = enabled;
+}
+
+bool ImageBatchingEnabled() noexcept { return imageBatching(); }
 
 void SetCurrentNode(VertexCacheSlot* slot) noexcept { state().node = slot; }
 

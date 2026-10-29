@@ -894,6 +894,18 @@ protected:
 
     friend void detail::layout::ArrangeSubtree(InkingWidget& container);
 
+    /**
+     * **唯一的第二个例外**：动画组要按"换到哪个动作"改自己的尺寸（0.6.6 T-18）。
+     *
+     * 为什么它非得进得来：一个角色有 4 个动作、格宽 40/48/56 不等，组是"一个角色"
+     * ——尺寸跟着动作走是**组的职责**。而单个 `InkingSprite` 换配置时尺寸归调用方
+     * （那两处语义相反，文档都写了）。
+     *
+     * 开得同样窄：一个具体类、不是"所有派生类"，而且它只能通过 `ApplySelfSize`
+     * （不动锚点 / 不动 offset 那一版）改尺寸。
+     */
+    friend class InkingSpriteGroup;
+
 private:
     /**
      * 渲染槽位的搭 / 拆（T-07 从 SubmitToRenderer 抽出）：当前渲染器、祖先

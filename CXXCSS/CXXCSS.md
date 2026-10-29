@@ -645,6 +645,130 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
 + `examples/panel_demo` / `examples/demo`（构建脚本把 `assets/` 拷到 exe 旁边）——
 **换图不用重编**就是这条路的效果。
 
+#### 帧动画（0.6.1）：同一份配置长出 `InkingSprite`
+
+**判据只有一条：配了 `frames` 或 `sheet` 就是帧动画**，其余字段（形状 / 锚点 /
+`runtime` / `hitPassThrough` / 偏移）逐字照旧。没有 `"sprite": true` 那种开关——
+多一个开关就多一个"配了帧却忘了开"的坑。
+
+```jsonc
+// 图集：一张大图切 N 格（换帧只改源矩形，纹理只建一次）
+{
+    "name": "walker", "width": 48, "height": 48,
+    "runtime": true,
+    "normal": { "type": "img", "source": "walk.png" },
+    "sheet": { "frameWidth": 48, "frameHeight": 48, "columns": 4, "rows": 1 },
+    "fps": 8,
+    "events": [ { "frame": 1, "name": "step" }, { "frame": 3, "name": "step" } ]
+}
+
+// 序列帧：每帧一张独立图（换帧换字节视图）
+{
+    "name": "spin", "width": 40, "height": 40,
+    "normal": { "type": "img", "source": "spin_0.png" },   // 构造期的第一帧
+    "frames": [
+        { "type": "img", "source": "spin_0.png" },
+        { "type": "img", "source": "spin_1.png" }
+    ],
+    "fps": 12, "loop": false
+}
+```
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `frames` | — | 数组，每项就是一个图片外观（只认 `type` / `source` / `fit`，与 `normal` 同一份白名单） |
+| `sheet` | — | 图集切法：`frameWidth` / `frameHeight` 是**一格**的像素；按行优先取帧 |
+| `sheet.count` | `columns × rows` | 末尾几格是空的时候可以写小 |
+| `sheet.firstFrame` | `0` | 起始**格号**（不是帧号，0.6.4）：`"每行一个方向"`的图集靠它播第 1~3 行——第 r 行 = `firstFrame: r × columns` + `count: columns`。与顶层 `startFrame`（从第几帧开始播）**不是一回事** |
+| `sheet.source` | 沿用 `normal.source` | 图集的字节只有一份：两处都写**必须指向同一个文件**，否则报错 |
+| `fps` | `12` | 帧率；`<= 0` 报错 |
+| `loop` | `true` | `false` = 播到末帧停住 |
+| `autoplay` | `true` | `false` = 停在 `startFrame`，等 `Play()` |
+| `startFrame` | `0` | 越界会被夹到末帧并记一条 WARN |
+| `startOffset` | `0` | 起始相位（秒），让同屏两个 sprite 错开 |
+| `events` | — | 帧事件：`[{ "frame": 3, "name": "hit" }]`，播到第 `frame` 帧时发这个名字 |
+
+**生成期会拦的错**（都是"能通过 `SpriteData::Validate()` 才算数"，与运行期同一份判据）：
+
+| 写法 | 结果 |
+| --- | --- |
+| `frames` 与 `sheet` 都填 / 都不填（只写了播放参数也算） | 报错：二选一，不替你猜 |
+| `sheet.frameWidth` / `columns` 等 <= 0、`count > columns × rows` | 报错 |
+| `sheet.firstFrame` 为负，或 `firstFrame + count` 超过 `columns × rows`（要 6 格但从第 20 格起） | 报错，两个数都打出来（"格号 / 帧数"写反时最容易踩） |
+| `sheet.source` 与 `normal.source` 指向两个不同文件 | 报错 |
+| `frames` 里有一帧是 `color`（纯色没有"图"） | 报错 |
+| 某一帧的文件读不到（生成期烘那条路） | 报错 |
+| `events` 里的 `frame` 超过总帧数 / `name` 是空的 | 报错（判据与运行期 `Validate()` 同一份） |
+
+**图集尺寸对不对，生成期看不出来**（要看图片多大），所以那条判断在**运行期构造期**：
+`frameWidth × columns + spacing × (columns−1) + 2 × margin` 必须等于真实图宽，否则
+`IsValid() == false` + 一条 ERROR（写明"真实 160×40 vs 应为 200×40"）。它挡的正是
+"图集配错格数"——那种错在画面上只表现为"最后一格是上一格"。
+
+**帧事件**（0.6.3）：`events` 是"由**帧号变化**驱动"的，不是"时间到点"——慢帧一次跨 3 帧时，
+中间那几帧的事件**照样发**（区间扫描），回绕 `3 → 0` 也发。`SeekToFrame` 不发（"跳过去"
+不是"播过去"）。非循环播完还会发一次 `finished`，`Play()` 之后能再发一次；循环动画永远不发。
+
+产物差别只有一个类：`InkingSprite`（而不是 `InkingStaticImage`）+ `Data()` 返回
+`SpriteData`。参考配置：`Image/walker.json`（图集 + 两条 `step` 事件）。
+
+#### 图集描述（0.6.5 T-17）：一张图里的多个动画
+
+`Image/*.json` 的 `sheet` 段只能表达**一张图一个动画、等宽等高**。一页里混装多个动作
+（待机 4 帧 + 跳跃 3 帧 + 走路 6 帧，跳跃比待机高）就要用 `CXXCSS/Atlas/<名字>.json`：
+
+```jsonc
+// CXXCSS/Atlas/slime.json
+{
+    "name": "slime",
+    "animations": [
+        {
+            "name": "idle", "source": "slime.png", "fps": 6,
+            "frames": [                                   // 逐帧绝对矩形（不规则排版）
+                { "x": 0, "y": 0, "width": 64, "height": 64 },
+                { "x": 64, "y": 0, "width": 64, "height": 64 }
+            ]
+        },
+        {
+            "name": "walk", "source": "slime.png", "fps": 8,
+            "columns": 6, "rows": 4, "frameWidth": 64, "frameHeight": 64,
+            "firstFrame": 12, "count": 6                   // 网格（与 frames 二选一）
+        }
+    ]
+}
+```
+
+**它不是组件**：产物只有一份 `inking::AtlasData` + 一个访问函数（`AtlasSlime()`）。
+用法是把其中一条动画转成某个 sprite 的配置：
+
+```C++
+const inking::AtlasData& atlas = inking::cxxcss::AtlasSlime();
+const inking::SpriteData walk = inking::MakeSpriteData(
+    atlas, atlas.FindIndex("walk"), bytes, size);   // bytes 从 assets 读（或烘好的数组）
+auto* sprite = scene.AddChild(std::make_unique<inking::InkingSprite>(&scene, walk));
+```
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `name` | 必填 | 图集名（= 文件名）；访问函数叫 `Atlas<Name>`，所以必须是合法标识符 |
+| `animations[].name` | 必填 | 动画名（`FindIndex("walk")` 用它找）；**重名报错** |
+| `animations[].source` | 必填 | 图集路径，**相对资源根**（同时是纹理缓存键：同一张图集的动画共用一张纹理） |
+| `animations[].frames[]` | — | 逐帧绝对矩形 `{x,y,width,height}`（与网格**二选一**） |
+| `animations[].columns` / `rows` / `frameWidth` / `frameHeight` / `count` / `firstFrame` | — | 网格切法，语义与 `Image` 的 `sheet` 段**完全一致** |
+| `animations[].fps` | `12` | 帧率（`<= 0` 报错） |
+| `animations[].loop` | `true` | `false` = 播到末帧停住 |
+| `animations[].events` | — | 帧事件，与 `Image` 的 `events` 同形 |
+
+**网格在生成期就展开成逐帧矩形**：运行期只认帧表这一条路，所以两端的算术不会分叉。
+判据（两套切法互斥、帧矩形 > 0、`fps`、事件越界）全部复用 `SpriteData::Validate()` /
+`AtlasData::Validate()` —— 生成期不另写一套文案。
+
+**尺寸不在描述里**：`MakeSpriteData()` 默认取第一帧的自然宽高，动画比第一帧宽/高时由
+调用方自己调 `width/height`（改尺寸会触发重布局，不该由"换动作"顺手做）。
+
+**TexturePacker 导出件不直接吃**：它有三种形态我们明确不接（`frames` 是 hash 而不是
+array、`rotated`、`trimmed`），见任务书 §11——真要用得先写一个转换脚本。
+
 ---
 
 ### 3.11 全局配置（`Config`）：设计画布 + 窗口启动设置
@@ -1342,9 +1466,50 @@ ink::InkingWindow::Instance().Show();
 | Image | （顶层） | `zIndex` |  |
 | Image | （顶层） | `visible` |  |
 | Image | （顶层） | `hitPassThrough` |  |
+| Image | （顶层） | `frames` |  |
+| Image | （顶层） | `sheet` |  |
+| Image | （顶层） | `fps` |  |
+| Image | （顶层） | `loop` |  |
+| Image | （顶层） | `autoplay` |  |
+| Image | （顶层） | `startFrame` |  |
+| Image | （顶层） | `startOffset` |  |
+| Image | （顶层） | `events` |  |
 | Image | normal | `type` | 图片外观认 color / img / svg；svg 是纹理路（整份稿光栅化），与按钮的 svg 不同 |
 | Image | normal | `source` |  |
 | Image | normal | `fit` |  |
+| Image | sheet | `$comment` | 帧动画的图集切法：frameWidth/Height 是**一格**的像素尺寸；count 缺省 = columns×rows |
+| Image | sheet | `source` |  |
+| Image | sheet | `frameWidth` |  |
+| Image | sheet | `frameHeight` |  |
+| Image | sheet | `columns` |  |
+| Image | sheet | `rows` |  |
+| Image | sheet | `count` |  |
+| Image | sheet | `firstFrame` |  |
+| Image | sheet | `margin` |  |
+| Image | sheet | `spacing` |  |
+| Image | events[] | `$comment` | 帧事件：播到第 frame 帧时发一个名字（慢帧跨帧也不漏） |
+| Image | events[] | `frame` |  |
+| Image | events[] | `name` |  |
+| Atlas | （顶层） | `$comment` | 图集描述（不是组件）：一张图里的多个具名动画；生成期转成 AtlasData 常量 |
+| Atlas | （顶层） | `name` |  |
+| Atlas | （顶层） | `animations` |  |
+| Atlas | animations[] | `$comment` | 一个动画：名字 + 图集路径 + 帧矩形或网格切法 + 播放参数 |
+| Atlas | animations[] | `name` |  |
+| Atlas | animations[] | `source` |  |
+| Atlas | animations[] | `fps` |  |
+| Atlas | animations[] | `loop` |  |
+| Atlas | animations[] | `events` |  |
+| Atlas | animations[] | `frames` |  |
+| Atlas | animations[] | `columns` |  |
+| Atlas | animations[] | `rows` |  |
+| Atlas | animations[] | `frameWidth` |  |
+| Atlas | animations[] | `frameHeight` |  |
+| Atlas | animations[] | `count` |  |
+| Atlas | animations[] | `firstFrame` |  |
+| Atlas | animations[].frames[] | `x` | 一帧在图集里的绝对像素矩形（与网格切法二选一） |
+| Atlas | animations[].frames[] | `y` |  |
+| Atlas | animations[].frames[] | `width` |  |
+| Atlas | animations[].frames[] | `height` |  |
 | Text | （顶层） | `$comment` | 语言表（不是组件）：占位符 → 各语言的串，只允许一份 |
 | Text | （顶层） | `name` |  |
 | Text | （顶层） | `languages` |  |

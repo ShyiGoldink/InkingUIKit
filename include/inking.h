@@ -19,7 +19,7 @@
 namespace inking {
 
 inline constexpr const char* kProjectName = "InkingFrontendDeveloper";
-inline constexpr const char* kVersion     = "0.5.3";
+inline constexpr const char* kVersion     = "0.6.6";
 
 /**
  * 版本阶段（**当前为发布版**）。

@@ -1,0 +1,58 @@
+{
+    "$comment": [
+        "图集描述（0.6.5 T-17）：**一张图里有哪些动画**。它不是组件，产物里只有",
+        "一份 inking::AtlasData + 一个访问函数（AtlasSlime()），运行期由",
+        "inking::MakeSpriteData() 转成某个 InkingSprite 的配置。",
+        "",
+        "与 Image/*.json 的 sheet 段的分工：那边是'一张图一个动画、等宽等高'；",
+        "这里是'一张图多个动画、帧宽高可以不等'。两者产出的都是 SpriteData。",
+        "",
+        "每个动画的 frames 有两种给法，二选一：",
+        "  · frames: [{x,y,width,height}, …]  —— 逐帧绝对矩形（不规则排版）；",
+        "  · columns / rows / frameWidth / frameHeight / count / firstFrame —— 网格。",
+        "网格会在**生成期**展开成逐帧矩形，所以运行期只有一条路（帧表）。",
+        "",
+        "source 是**相对资源根**的路径（运行期由 AssetLoad 读），生成期不读那张图。",
+        "本配置对应的图（assets/slime.png）不在仓库里：它是格式样例，",
+        "编译自检只验'读得懂 + 生成物编得过'，不验像素。"
+    ],
+    "name": "slime",
+    "animations": [
+        {
+            "name": "idle",
+            "source": "slime.png",
+            "fps": 6,
+            "loop": true,
+            "frames": [
+                { "x": 0, "y": 0, "width": 64, "height": 64 },
+                { "x": 64, "y": 0, "width": 64, "height": 64 },
+                { "x": 128, "y": 0, "width": 64, "height": 64 },
+                { "x": 192, "y": 0, "width": 64, "height": 64 }
+            ]
+        },
+        {
+            "name": "jump",
+            "source": "slime.png",
+            "fps": 10,
+            "loop": false,
+            "frames": [
+                { "x": 0, "y": 64, "width": 72, "height": 64 },
+                { "x": 72, "y": 64, "width": 72, "height": 80 },
+                { "x": 144, "y": 64, "width": 72, "height": 64 }
+            ],
+            "events": [ { "frame": 1, "name": "apex" } ]
+        },
+        {
+            "name": "walk",
+            "source": "slime.png",
+            "fps": 8,
+            "loop": true,
+            "columns": 6,
+            "rows": 4,
+            "frameWidth": 64,
+            "frameHeight": 64,
+            "firstFrame": 12,
+            "count": 6
+        }
+    ]
+}

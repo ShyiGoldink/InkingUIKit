@@ -44,8 +44,8 @@
 
 - 想"**不渲染但逻辑动**"→ 写 `onTick`（它不依赖活跃态）。
 - 想"**不渲染就彻底别动**"→ 写 `onRenderBoundTick`。
-- 更细的频率（例如 24fps 的动画）**不走这两个钩子**，去订阅 `Timeline`
-  （见 [InkingRuntime.md](InkingRuntime.md)），那里按需采样。
+- 更细的频率（例如 24fps 的动画）**不走这两个钩子**，去订阅场景的动画时钟
+  （`SubscribeAnimation`，见 §七）；它底下仍由 `TickFrame` 驱动，所以同样只对活跃场景走。
 - **关闭 ≠ 销毁**：`DestroyScene` 只入队，帧末（`CommitPendingDestructions`）才真析构。
 
 ## 三、渲染树：骨架 + 扁平绘制列表
@@ -137,7 +137,40 @@ ResetFrameFlags → 事件泵（MouseInput / KeyboardInput）
 
 业务也可以直接调 `SetKeyboardFocus(node)`（"打开弹窗把焦点给输入框"），那是显式接管。
 
-## 七、预加载：把"构造"与"init"分开
+## 七、动画时钟与频率订阅（0.6.0 T-01）
+
+组件需要"按我自己的频率推进"（12fps 的帧动画、24fps 的采样）。`inking::Timeline`
+虽然有自定义频率订阅，但**实例在窗口里**（`WindowState` 成员），重开窗口就重建
+——把句柄发给组件等于把生命周期事故发给组件。所以时钟挪到场景这一级。
+
+| 口 | 语义 |
+| --- | --- |
+| `AnimationSeconds()` | 场景**本地时间**，每渲染帧累加（`double`），单调不减 |
+| `SubscribeAnimation(间隔, 回调)` | 返回句柄（0 = 无效）；累加器追赶，回调收到的是**声明的间隔** |
+| `UnsubscribeAnimation(句柄)` | 立墓碑，下一次派发开头统一清；句柄只增不复用 |
+| `AnimationSubscriberCount()` | 活着的订阅数（墓碑不算） |
+| `GetAnimationCatchUpDropCount()` | 追不上丢掉的欠账次数 |
+
+**两层分工，别混**：`AnimationSeconds()` 是时间本身，订阅只是"到点了，该检查了"的
+通知。**帧号必须是时间的纯函数**（`floor(t × fps) % count`）——若把订阅当成"收一次
+回调就 +1 帧"，一次补发两次回调就会跳帧，动画就和绘制帧率绑在一起了。
+
+**派发顺序是硬要求**：`TickFrame` 里 **时钟累加 → 订阅派发 → `onRenderBoundTick` →
+节点 `onAnimationTick`**。反过来组件读到的 `AnimationSeconds()` 会永远慢一帧
+（12fps 上等于半帧相位错，只表现为"动画有点飘"）。
+
+**静默 / 停放 / 关闭不推进**：`TickFrame` 只对活跃场景派发 ⇒ 切走的场景动画自动冻结，
+不需要额外的暂停开关。
+
+**回调里不许增删节点**：派发期间遍历的就是订阅表，树一变同帧后续处理就可能踩到刚析构
+的节点。场景会在每次回调后比对结构代次，变了就停掉本轮剩下的订阅并记一条 DEBUG
+——那是**护栏，不是许可**（能拦住崩溃，但当帧剩下的动画少走一步）。
+
+单帧补发上限 64 步；撞上就按自己的间隔截断累加器并计一次 drop（同 `Timeline` 的
+catch-up 处理）。累加器比较带 1e-9 容差：`1/60` 在二进制浮点里是无限循环小数，
+60 次相加不恰好等于 1，严格比较会让"12fps 跑满 1 秒"只派发 11 次。
+
+## 八、预加载：把"构造"与"init"分开
 
 场景构造即登记，构造体里做重活会拖住整个启动。预加载把重活挪到构造之后：
 
@@ -470,6 +503,27 @@ void DispatchKeyboard();
 把本帧的键盘事件推给**焦点节点**（每帧一次，排在 `DispatchPointer()` 之后），
 并在"在不在打字"变化时推一次 `onTypingChanged`。
 
+#### 动画时钟（0.6.0 T-01）
+
+>**AnimationSeconds() / SubscribeAnimation() / UnsubscribeAnimation() /
+>AnimationSubscriberCount() / GetAnimationCatchUpDropCount()**
+
+```C++
+using AnimationHandle = std::uint64_t;                       // 0 = 无效
+using AnimationCallback = std::function<void(double step)>;  // step = 声明的间隔
+
+double AnimationSeconds() const noexcept;
+
+AnimationHandle SubscribeAnimation(double intervalSeconds, AnimationCallback callback);
+bool UnsubscribeAnimation(AnimationHandle handle);
+std::size_t AnimationSubscriberCount() const noexcept;
+std::uint64_t GetAnimationCatchUpDropCount() const noexcept;
+```
+
+用法与语义见 §七。要点：**帧号从 `AnimationSeconds()` 算，别从回调次数算**；
+回调里**不许增删节点**；`TickFrame` 只对活跃场景派发（切走冻结）。
+`SubscribeAnimation(0, ...)` / 空回调返回 0，不抛不报。
+
 #### 只给库 / 窗口层调
 
 >**MarkClosed() / SetActiveFromLibrary(active)**
@@ -633,4 +687,4 @@ std::size_t GetMaxCellCandidates() const noexcept;
 
 ---
 
-> 本文档对应版本：**0.5.3（0.x 发布版）**。
+> 本文档对应版本：**0.6.6（0.x 发布版）**。

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(Inking
-    VERSION 0.5.3
+    VERSION 0.6.6
     DESCRIPTION "Inking 前端（分层重构版）—— 动态链接库"
     LANGUAGES CXX)
 
@@ -316,6 +316,7 @@ file(GLOB INK_ALL_CSS_CONFIGS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/Panel/*.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/Label/*.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/Image/*.json"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/Atlas/*.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/Text/*.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS/Theme/*.json")
 

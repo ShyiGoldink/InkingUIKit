@@ -21,6 +21,8 @@
 
 #include <button/ButtonData.h>
 #include <image/ImageData.h>
+#include <image/InkingAtlas.h>
+#include <image/SpriteData.h>
 #include <panel/PanelData.h>
 #include <text/InkingTextTable.h>
 #include <text/LabelData.h>
@@ -57,6 +59,7 @@ enum class ComponentKind {
     Panel,
     Label,  ///< 静态标签（A7）：一段只读文字，按内容撑高
     Image,  ///< **静态图片**（A11）：不带点击回调的按钮（数据同构）
+    Atlas,  ///< **图集描述**（0.6.5 T-17）：一张图多个具名动画。不是组件，是数据表
     Text,   ///< **语言表**（A7）：占位符 → 各语言的串。它不是组件，是全局表
     Theme,  ///< **主题表**（B8）：语义色 / 语义字号 → 具体值。它也不是组件
     Config, ///< **全局配置**：设计画布尺寸（letterbox 的逻辑坐标系）。也不是组件
@@ -218,6 +221,45 @@ struct ImageConfig {
     /// 配置里的 `normal` 段见过没有。
     bool sawNormal = false;
 
+    /**
+     * @brief 是**帧动画**吗（配了 `frames` 或 `sheet`，0.6.1 T-06）。
+     *
+     * 一条配置长出两种产物：静态图片（`ImageData` + `InkingStaticImage`）与
+     * 帧动画（`SpriteData` + `InkingSprite`）。判据只有"配没配帧"，**不需要**
+     * 额外的 `"sprite": true`——多一个开关就多一个"配了帧却忘了开开关"的坑。
+     */
+    bool isSprite = false;
+
+    /**
+     * 帧动画的那部分数据（`frames` / `sheet` / 播放参数）。
+     *
+     * **`normal` 等基础字段仍在 `button.data` 里**，`Finish()` 时一次性搬进来
+     * ——解析过程只有一处写，产物只有一份读，不会出现"两份 normal 谁也不服谁"。
+     */
+    inking::SpriteData sprite{};
+
+    /// 序列帧每帧的图像字节（生成期烘的）；下标与 `sprite.frames` 对齐。
+    std::vector<std::vector<std::uint8_t>> spriteFrameBytes;
+
+    std::vector<std::string> warnings;
+};
+
+/**
+ * @brief 一份加载成功的**图集描述**（`CXXCSS/Atlas/<名字>.json`，0.6.5 T-17）。
+ *
+ * 它不是组件：产物里没有类，只有一个 `inking::AtlasData` 访问函数。
+ * 运行期用 `inking::MakeSpriteData(AtlasSlime(), AtlasSlime().FindIndex("walk"),
+ * 字节, 大小)` 转成某个 `InkingSprite` 的配置——**一个图集可以被多个 sprite 共用**
+ * （字节只有一份、纹理只有一张），这正是"一页多动画"要的效果。
+ *
+ * 校验直接调 `inking::AtlasData::Validate()`：重名 / 帧矩形非法这些判据只该有一份
+ * （0.6.1 定下的规矩），生成期不另写一套文案。
+ */
+struct AtlasConfig {
+    std::string filePath;
+    std::string name;        ///< 配置里的 name（= 文件名）
+    std::string identifier;  ///< 生成的访问函数名（`slime` → `AtlasSlime`）
+    inking::AtlasData data{};
     std::vector<std::string> warnings;
 };
 
@@ -330,6 +372,7 @@ struct LoadResult {
     std::vector<PanelConfig> panels;
     std::vector<LabelConfig> labels;
     std::vector<ImageConfig> images;
+    std::vector<AtlasConfig> atlases;
     std::vector<TextConfig> textTables;
 
     /**
@@ -377,7 +420,7 @@ struct LoadResult {
      */
     std::vector<std::pair<std::string, std::string>> claimedNames;
 
-    /// 这次加载出多少个**组件**（按钮 + 面板 + 标签 + 图片）。语言表 / 主题表不算。
+    /// 这次加载出多少个**组件**（按钮 + 面板 + 标签 + 图片）。图集 / 语言表 / 主题表不算。
     std::size_t ComponentCount() const {
         return buttons.size() + panels.size() + labels.size() + images.size();
     }
