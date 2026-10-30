@@ -128,6 +128,12 @@ int main() {
 | 跨平台（Linux / macOS） | **未验证** | 只在 Windows + MSYS2 UCRT64 上构建过 |
 | ABI 稳定性 | **不承诺** | 0.x 发布版，见顶部横幅 |
 
+> **文字与框高**（0.8.3 起）：标签的 `height` 就是文字的上限——累计行高超过
+> `height − 上下 padding` 时，装不下的行整行不画（`TextOverflow::Clip` 的默认语义
+> 之前一直没实现，文字会画到框外），并置 `TextLayoutResult::truncated`。**至少留
+> 一行**、**不缩字号**。想让长文案溢出的，把 `height` 设 0 即恢复旧行为。
+> 细节见 [api/InkingRender.md](api/InkingRender.md#六文本排版纯函数)。
+
 ---
 
 ## 3. 文档地图
@@ -141,6 +147,7 @@ int main() {
 | [api/InkingTransform.md](api/InkingTransform.md#变换通道) | `dataStruct/InkingTransform.h`、`dataStruct/InkingAffine.h` |
 | [api/InkingLayout.md](api/InkingLayout.md#布局数据层) | `dataStruct/InkingLayout.h` |
 | [api/InkingLayoutSolver.md](api/InkingLayoutSolver.md) | `layout/InkingLayoutSolver.h` |
+| [§9 素材该多大](#9-素材该多大缩放规则) | `dataStruct/InkingImageScale.h`（0.7.0：素材尺寸 / σ / 干净档位） |
 
 ### 3.2 节点与树
 
@@ -262,22 +269,58 @@ prefab（用上面的东西组装，不写新底层）
 ```bash
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-cd build && PATH=.:$PATH ./bin/inking_demo_selftest.exe
+ctest --test-dir build                 # 7 条：配置 / 字段表 / 生成链路 / 严格告警门 / 静默清单 /
+                                       #       行为自检（software）/ 行为自检（真后端，仅 Windows）
+cd build && PATH=.:$PATH ./bin/inking_demo_selftest.exe   # 单跑行为自检
 ```
 
-读 **stdout 末行"失败项：N"**，不要看退出码——`inking_demo_selftest` 退出时会挂
-（`TaskQueue` 的函数内静态量在 DLL 卸载（`DllMain` 持加载器锁）时析构并 join
-管家线程，与业务无关，属线程收尾语义的已知缺口，见 `README.md` §已知限制）。
+**读末行"失败项：N"，也读退出码——它们是同一个数**（`main` 直接 `return g_fail`），
+所以 `exit=0` ⇔ 全绿，可以直接当判据，不需要解析 stdout。
 
-> 沙箱 / CI 注：某些环境里 `SDL_IOFromFile` 对所有路径都失败（同路径 `fopen` 正常），
-> 于是 `TTF_OpenFont` 打不开字体、文字无法真栅格化。自检支持环境变量
-> `INK_TEST_FONT` 指定可读字体；"没字体"不等于"代码有缺陷"。
+> 上一版这里写的是"不要看退出码"。那句话已经过期：它源自 `0.1.0-test`
+> 时代"打印完失败项就不返回"的死锁（`TaskQueue` 的函数内静态量在 DLL 卸载时
+> join 管家线程），那条在 `0.1.1` 就修掉了（见 `README.md` §已知限制 那条
+> "已修掉的历史限制"）。实测连跑多次都是 1 秒内 `exit=0`。
+
+行为自检**已挂进 `ctest`**（0.8.0 T-01）：不再有"`ctest` 全绿但一条产品行为都
+没验"的空档。`-DINK_BUILD_EXAMPLES=OFF` 的构建里没有自检 exe，`ctest` 会少这一条
+——**这是有意的**，不是漏配。
+
+### 后端：software 与真后端各跑一遍
+
+自检默认用 SDL 的 `dummy` 视频驱动（**软件渲染器**），因为那是"在任何机器上都能
+跑"的唯一保证。设环境变量可以换后端：
+
+```bash
+INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 本机走 direct3d11
+```
+
+`ctest` 里两条各跑一遍：`selftest`（默认 dummy）与 `selftest_windows`
+（`ENVIRONMENT "INKING_SELFTEST_DRIVER=windows"`，仅 Windows 注册）。
+真后端建不出窗口时自检打印 `[skip] 真后端不可用` 并 `return 77`，`ctest`
+把它显示成 **Skipped** 而不是 Failed——"这台机器没 GPU"与"代码坏了"不是同一件事。
+
+为什么值得多跑一遍：0.6.4 的"采样模式在软件后端几何批上不生效"正是
+**GPU 与 software 行为不同**的那类缺陷，只验一种后端永远抓不到。
+
+> 沙箱 / CI 注：某些环境里 `SDL_IOFromFile` 会失败，于是 `TTF_OpenFont` 打不开字体、
+> 文字无法真栅格化（绘制退回占位方块，自检打印"没有可读字体"并跳过那一段）。
+> 自检支持环境变量 `INK_TEST_FONT` 指定可读字体；"没字体"不等于"代码有缺陷"。
+>
+> **实测过的一个陷阱（2026-10-30）**：同一个 exe、同一份 `libinking.dll`，**进程环境**不同
+> 结果不同。不带 msys64 的 `ucrt64/bin` 就直接跑时，`SDL_IOFromFile` 对所有路径都报
+> "系统找不到指定的文件"，于是自检打印"没有可读字体"；把它放进 `PATH` 再跑就全好了
+> （`ctest` 与 `tools/` 的构建脚本都是这么跑的）。**症状**是"这台机器没有字体"，
+> **真实原因**在加载期。最可能的成因：本机 `PATH` 上还有第二份 `SDL3.dll`
+> （`C:/SDL3/lib/x64/`，与 msys64 那份版本差一年多），`SDL3_ttf` 与它配不上，
+> 文件 IO 就走不通了——**同一份代码换一份 `SDL3.dll` 就不一样**，所以查这条线
+> 先数 `PATH` 上有几份 `SDL3*.dll`，别去改代码。
 
 ---
 
 ## 8. 头文件 → 专页 全量索引
 
-82 个公开头，全部落在上表的某一页里。
+97 个公开头，全部落在上表的某一页里。
 **生成物不在 `include/` 里**（`CXXCSS/*.json` 烘出来的 `inking::cxxcss::*` 类落在
 `build/inkgen/` 下），见 [api/InkingCxxcss.md](api/InkingCxxcss.md)。
 
@@ -290,7 +333,7 @@ cd build && PATH=.:$PATH ./bin/inking_demo_selftest.exe
 | button | `ButtonData.h` `ButtonLibrary.h` `ButtonLook.h` `ButtonPaint.h` `InkingButtonLike.h` `InkingStaticButton.h` `InkingDynamicButton.h` | Components |
 | canvas | `CanvasContext.h` `CanvasData.h` `InkingCanvasPainter.h` `InkingStaticCanvas.h` | Components |
 | config | `window_config.h` | Window |
-| dataStruct | `InkingAffine.h` `InkingTransform.h` `InkingAnchorData.h` `InkingColor.h` `InkingDecoration.h` `InkingEasing.h` `InkingImageFit.h` `InkingLayout.h` `InkingScroll.h` `InkingShapeSpec.h` `InkingTextLayout.h` `InkingTextRequest.h` `MessageStruct.h` `TaskStruct.h` | Anchor / ShapeSpec / Transform / Layout / Render / Runtime |
+| dataStruct | `InkingAffine.h` `InkingTransform.h` `InkingAnchorData.h` `InkingColor.h` `InkingDecoration.h` `InkingEasing.h` `InkingImageFit.h` `InkingImageScale.h` `InkingLayout.h` `InkingScroll.h` `InkingShapeSpec.h` `InkingTextLayout.h` `InkingTextRequest.h` `MessageStruct.h` `TaskStruct.h` | Anchor / ShapeSpec / Transform / Layout / Render / Runtime / [§9](#9-素材该多大缩放规则) |
 | detail | `InkLog.h` `InkingGeometry.h` `InkingHit.h` `MessageQueue.h` | Runtime / Widget |
 | event | `InkingEvent.h` | Runtime |
 | image | `ImageData.h` `SpriteData.h` `InkingStaticImage.h` `InkingSprite.h` | Components |
@@ -309,5 +352,87 @@ cd build && PATH=.:$PATH ./bin/inking_demo_selftest.exe
 
 ---
 
-> 本文档对应版本：**0.6.6（0.x 发布版）**。发现文档与代码不一致时，
+## 9. 素材该多大（缩放规则）
+
+> 规则本身写在代码里：`dataStruct/InkingImageScale.h`（纯头、无 SDL，与
+> `ImageFitSpec` 同一形态）。这一节是**给使用者与美术读的**版本，公式一字不改，
+> 但以头文件为准。设计取舍的完整推演在
+> [`plans/2026-10-29-scaling-and-device-pixels.md`](plans/2026-10-29-scaling-and-device-pixels.md)。
+
+### 9.1 四个量
+
+```
+R     = min(窗口物理宽 ÷ 设计宽, 窗口物理高 ÷ 设计高)   ← letterbox 倍率
+S     = 组件设计尺寸 × 纵深 × R                          ← 它在屏幕上的物理像素
+σ     = 素材像素 ÷ S                                     ← 采样比
+R_max = min(最大目标屏宽 ÷ 设计宽, 最大目标屏高 ÷ 设计高)
+```
+
+### 9.2 规则一：素材按"屏幕像素"出，不按"设计像素的倍数"出
+
+```
+素材像素 = 组件设计尺寸 × 纵深 × R_max      // ImageScaleSpec::RequiredTextureWidth()
+```
+
+关键推论：**素材的绝对像素只取决于"这个组件最大占多少屏幕"，与设计尺寸无关。**
+
+| 设计尺寸 | 全屏 4K 的 R | 按"2× 设计"出图 | σ | 按屏幕像素出图 | σ |
+| --- | --- | --- | --- | --- | --- |
+| 1920×1080 | 2 | 3840 宽 | 1.0 ✓ | 3840 | 1.0 ✓ |
+| 1280×720 | 3 | 2560 宽 | 0.67（放大 1.5×，糊） | 3840 | 1.0 ✓ |
+| 640×360 | 6 | 1280 宽 | 0.33（放大 3×，糊） | 3840 | 1.0 ✓ |
+
+所以"设计尺寸小"本身不导致糊——糊的原因是素材按设计倍数出。设计尺寸只是坐标刻度。
+
+### 9.3 规则二：纵深必须落在 `素材倍率 ÷ 整数` 上
+
+不做 mip、不做运行期重采样，就意味着**每个显示尺寸都要靠"素材正好那么大"来保证
+σ 为整数**。非整数 σ 会有整列纹素被跳过（表现是细节在运动时游走 / 闪烁），比
+"缩得多"更难看。干净档位 = `ImageScaleSpec::CleanDepth(素材倍率 m, k) = m / k`：
+
+| 素材倍率 m | 干净纵深档位（k = 1,2,3,4,5） |
+| --- | --- |
+| 1× | 1.0 / 0.5 / 0.333 / 0.25 / 0.2 |
+| 2× | 1.0 / 0.667 / 0.5 / 0.4 / 0.333 |
+| 0.5× | 0.5 / 0.25 / 0.167 / — / — |
+
+σ 判定（`ImageScaleSpec::IsCleanRatio(sigma)`）：
+
+| σ | 含义 | 观感 |
+| --- | --- | --- |
+| = 1 | 1:1 | 最清 |
+| 整数且 > 1 | 缩小，双线性 ≈ k×k 盒式 | 干净（信息只剩 1/k²） |
+| 非整数 | 部分纹素被跳过 | 脏，运动时闪 |
+| < 1 | 放大 | 软（linear）或块（nearest） |
+
+### 9.4 规则三：边缘模糊有四个成因，本库只解决两个
+
+| 成因 | 归属 | 本库的做法 |
+| --- | --- | --- |
+| 抗锯齿带按设计像素（R≠1 即失真） | 库 | **推迟到 `1.x.x`**（羽化在顶点 alpha 上，与素材分辨率无关） |
+| 素材不足（σ<1） | 使用者 | `INK_ISDEBUG` 下构造期 WARN（`image_undersampled`） |
+| 非整数 σ 的采样不均 | 使用者 | `IsCleanRatio()` 可判 + 本节档位表 |
+| 非整数 R 的像素不均 | 选择 | 不适用（进程级 `Linear`） |
+
+### 9.5 怎么用
+
+```cpp
+#include <dataStruct/InkingImageScale.h>
+
+inking::ImageScaleSpec spec;
+spec.designWidth = 320;   // 组件在设计坐标里的宽度
+spec.depth       = 1.0f;  // 没有纵深系统就填 1
+spec.ratioMax    = 2.0f;  // 最大目标屏 ÷ 设计尺寸；不知道就填 2
+const int need   = spec.RequiredTextureWidth();          // 交给美术："出这么宽"
+
+const float sigma = spec.SamplingRatio(纹理宽, 当前 R);   // 装载期自检 / 打日志
+const bool clean  = inking::ImageScaleSpec::IsCleanRatio(sigma);
+```
+
+验收示例：`examples/sharp`（720p 设计尺寸 + 一张 1536×2752 的真实素材，全屏逐档
+打印 R 与 σ，人工对照预测表）。
+
+---
+
+> 本文档对应版本：**0.8.5（0.x 发布版）**。发现文档与代码不一致时，
 > **以头文件注释为准**，并请把差异记到 `docs/zh/CHANGELOG.md`。

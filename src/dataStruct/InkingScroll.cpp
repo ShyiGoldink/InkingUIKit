@@ -93,8 +93,8 @@ float ScrollFromTrackClick(bool vertical, float clickX, float clickY,
     return std::clamp(ratio, 0.0f, 1.0f) * range;
 }
 
-bool HitsThumb(bool vertical, float x, float y,
-               const ScrollBarMetrics& bar) noexcept {
+bool HitsThumb(float x, float y, const ScrollBarMetrics& bar) noexcept {
+    // 轴不用传：`bar` 里那四个值已经是它自己那条轴的（见头文件）。
     if (!bar.visible) {
         return false;
     }

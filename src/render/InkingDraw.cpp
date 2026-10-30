@@ -605,8 +605,13 @@ void strokeShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
 void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
                        int height, float magnification, float pixelX,
                        float pixelY, const TransformSpec& transform,
-                       SDL_Texture* texture, bool hasAlpha,
-                       const ImageFitSpec& fit, std::uint32_t tintColor) {
+                       SDL_Texture* texture, const ImageFitSpec& fit,
+                       std::uint32_t tintColor) {
+    // 0.8.5 删掉了 `bool hasAlpha` 这个参数：它原来只决定"要不要绕开几何批"
+    // （带 alpha 的图必须直接贴，否则透明区发黑），而 0.6.2 T-08 把矩形图片
+    // 并进几何批之后，两条路逐位相同，这个参数就再也没人读过了。留着它会让
+    // 调用方继续维护一份没人用的 alpha 记账（`TextureEntry::hasAlpha`）。
+    // 那段历史留在下面"矩形 + Fill"那一大段注释里，别重开一遍。
     if (renderer == nullptr || texture == nullptr || width <= 0 || height <= 0
         || !fit.Valid()) {
         return;

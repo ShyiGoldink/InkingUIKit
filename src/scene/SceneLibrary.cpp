@@ -1,6 +1,7 @@
 #include <scene/SceneLibrary.h>
 
 #include <detail/InkLog.h>
+#include <render/InkingText.h>  // detail::BeginTextFrame（0.8.4 T-04：帧首的纹理预算淘汰）
 
 #include <memory>
 #include <unordered_map>
@@ -186,6 +187,15 @@ bool SceneLibrary::RenderScene(SDL_Renderer* renderer) {
     if (scene == nullptr || renderer == nullptr) {
         return false;
     }
+
+    // 帧首：推进文字纹理层的帧号，必要时按预算做一次 LRU 淘汰（0.8.4 T-04）。
+    //
+    // 为什么放在**渲染之前**：淘汰依据是"上一帧之后还有谁没被用过"，而这个结论
+    // 只有在还没开始画这一帧时才成立。放在渲染之后就会丢掉"本帧刚用过"的纹理
+    // （它们的帧号正好等于本帧，会被下一帧当成老古董）。
+    // 为什么放在**这个地方**（SceneLibrary 而不是 Scene）：它是"一帧一次"的
+    // 天然收口——自检直接调 `RenderScene` 时也照样生效，不必让每个调用方记得调。
+    detail::BeginTextFrame(renderer);
 
     scene->Render(renderer);
     return true;

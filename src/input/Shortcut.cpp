@@ -95,10 +95,11 @@ std::int32_t KeyFromChar(char ch) {
         return 0;  // 非可打印 ASCII：不认（中文按键名没有意义）
     }
     if (std::isalpha(byte) != 0) {
-        return static_cast<std::int32_t>(std::tolower(byte));
+        // `std::tolower` 返回 `int`，`int32_t` 就是它——外面那层 cast 是死的。
+        return std::tolower(byte);
     }
     if (std::isdigit(byte) != 0) {
-        return static_cast<std::int32_t>(byte);
+        return byte;  // unsigned char → int32_t 是隐式提升，写 cast 只会骗人
     }
     switch (ch) {
         case '=': case '-': case ',': case '.': case '/': case '\\':

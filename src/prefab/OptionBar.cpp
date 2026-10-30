@@ -154,8 +154,8 @@ void OptionBar::SetItems(std::vector<OptionItem> items) {
 void OptionBar::rebuildItems() {
     ClearChildren();
 
-    const LayoutSpec& spec = GetLayoutSpec();
-    const bool horizontal = spec.axis == LayoutAxis::Horizontal;
+    // 0.8.5 删掉了 `const bool horizontal = spec.axis == ...`：宽度那段早改成
+    // "模板没给就铺满容器"（不再按轴分两支），它从那时起就没人读了。
     const float containerWidth = static_cast<float>(GetWidth());
 
     for (std::size_t i = 0; i < _items.size(); ++i) {

@@ -130,7 +130,8 @@ std::uint32_t InkingStaticLabel::EffectiveTextColor() const noexcept {
     return _themeColor;
 }
 
-bool InkingStaticLabel::CacheMatches(float available) const noexcept {
+bool InkingStaticLabel::CacheMatches(float available,
+                                     float availableHeight) const noexcept {
     const LayoutCache& cache = _cache;
     return cache.valid && cache.text == _data.text
         && cache.fontPath == _data.style.fontPath
@@ -144,14 +145,18 @@ bool InkingStaticLabel::CacheMatches(float available) const noexcept {
         && cache.padding.right == _data.style.padding.right
         && cache.padding.bottom == _data.style.padding.bottom
         && cache.availableWidth == available
+        // 高度进缓存键（T-01）：它现在能改变"排几行"，不进键就是 §6 第 72 条
+        // 那类"改了框高、画面没变"的静默失效。
+        && cache.availableHeight == availableHeight
         && cache.maxLines == _data.maxLines && cache.wrap == _data.wrap
         && cache.overflow == _data.overflow
         // 语言版本（A7）：切语言 ⇒ 这里不匹配 ⇒ 重查串 + 重排。
         && cache.languageVersion == TextLanguageVersion();
 }
 
-const TextLayoutResult& InkingStaticLabel::LayoutForWidth(float available) const {
-    if (CacheMatches(available)) {
+const TextLayoutResult& InkingStaticLabel::LayoutForWidth(float available,
+                                                         float availableHeight) const {
+    if (CacheMatches(available, availableHeight)) {
         return _cache.result;
     }
 
@@ -162,6 +167,10 @@ const TextLayoutResult& InkingStaticLabel::LayoutForWidth(float available) const
     request.text = resolved;
     request.style = _data.style;
     request.maxWidth = available > 0.0f ? available : 0.0f;
+    // 框高就是上限（T-01，0.8.3）：`Clip` 是默认值却一直没人实现，于是 300×40
+    // 的标签会把 7 行全画到框外。传 0 = 不限高（`MeasureLayout` 那条撑高的路
+    // 必须传 0，否则"框多大"永远等于"一行高"）。
+    request.maxHeight = availableHeight > 0.0f ? availableHeight : 0.0f;
     request.maxLines = _data.maxLines;
     request.wrap = _data.wrap;
     request.overflow = _data.overflow;
@@ -178,6 +187,7 @@ const TextLayoutResult& InkingStaticLabel::LayoutForWidth(float available) const
     _cache.alignV = _data.style.alignV;
     _cache.padding = _data.style.padding;
     _cache.availableWidth = available;
+    _cache.availableHeight = availableHeight;
     _cache.maxLines = _data.maxLines;
     _cache.wrap = _data.wrap;
     _cache.overflow = _data.overflow;
@@ -186,7 +196,7 @@ const TextLayoutResult& InkingStaticLabel::LayoutForWidth(float available) const
 }
 
 const TextLayoutResult& InkingStaticLabel::GetTextLayout() const {
-    return LayoutForWidth(static_cast<float>(_width));
+    return LayoutForWidth(static_cast<float>(_width), static_cast<float>(_height));
 }
 
 LayoutSize InkingStaticLabel::MeasureLayout(
@@ -197,7 +207,9 @@ LayoutSize InkingStaticLabel::MeasureLayout(
     if (available <= 0.0f) {
         available = static_cast<float>(_width);
     }
-    const TextLayoutResult& laid = LayoutForWidth(available);
+    // **高度传 0**（T-01）：测量这条路不能自截，否则"框多高"永远等于"一行高"，
+    // 内容驱动的高度就再也撑不开了。框高只约束**绘制**那一次排版。
+    const TextLayoutResult& laid = LayoutForWidth(available, 0.0f);
 
     LayoutSize size;
     size.width = laid.width;
@@ -213,8 +225,10 @@ void InkingStaticLabel::onRender(float pixelX, float pixelY) const {
         return;
     }
 
-    // 用**当前实际宽度**排版（A6 可能给了我一个与配置不同的宽度）。
-    const TextLayoutResult& laid = LayoutForWidth(static_cast<float>(_width));
+    // 用**当前实际宽度**排版（A6 可能给了我一个与配置不同的宽度）；高度也一起
+    // 传：装不下的行不画（T-01）——这是 `TextOverflow::Clip` 的默认语义。
+    const TextLayoutResult& laid =
+        LayoutForWidth(static_cast<float>(_width), static_cast<float>(_height));
     // 画的是**查表之后**的串：行里的字节区间指向它，不是 `_data.text` 那个占位符。
     const std::string& resolved = _cache.resolvedText;
     if (resolved.empty()) {

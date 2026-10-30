@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(Inking
-    VERSION 0.6.6
+    VERSION 0.7.1
     DESCRIPTION "Inking 前端（分层重构版）—— 动态链接库"
     LANGUAGES CXX)
 
@@ -356,10 +356,116 @@ if(INK_BUILD_TESTS)
 endif()
 
 # ---------------------------------------------------------------------------
+# 严格告警门（0.8.5 T-05）：**同一批源、另一套 flags**，有告警即编不过
+#
+# 为什么是独立目标而不是给主目标加 flags：
+#   1. 主目标的编译时间会陪每个开发者一起变慢，而这道门一次配置、ctest 里跑一次；
+#   2. 被当 third_party 引入时不该把 `-Werror` 强加给宿主工程（宿主有自己的
+#      flags 与告警基线，我们一升级工具链就能把别人的构建搞红）。
+#
+# 为什么**必须**共用 `inking` 那套宏：`INK_HAS_SDL3_TTF` / `_IMAGE` / `_MIXER`
+# 决定 `src/render`、`src/audio` 里编进去的是真实现还是空实现。缺了它们，这一
+# 目标验的是"没接 TTF 的那条路"——告警集合与真实构建根本不是同一套，等于白建
+# 一道门（`AGENTS.md` §2 第 2 条：缺宏是静默失效，不报错）。
+#
+# 为什么不进 `all`（`EXCLUDE_FROM_ALL`）：日常 `cmake --build build` 的产物与
+# 耗时不变；`ctest -R strict_warnings` 会用它自己的 `--build` 触发。
+#
+# `-Woverloaded-virtual` 的十几条**这一轮不修**：它们全指向
+# `InkingWidget::Activate()` 被 `InkingScene::Activate(const std::string&)` /
+# `OptionBar::Activate(size_t)` 隐藏——改名是公开面变更，留给 1.0 的公开面盘点
+# （`docs/zh/plans/2026-10-30-text-layer-caps.md` §7）。这里显式压掉并留原因，
+# 而不是让它以"看不见的十几条"的形式烂在门里。
+# ---------------------------------------------------------------------------
+if(INK_BUILD_TESTS)
+    # 生成器那几个 .cpp 也一起过门：它们是**构建期**代码（只依赖标准库），
+    # `-Wshadow` / `-Wunused-function` 在这一侧同样会漏（`Indent` 那个死函数
+    # 就是这么活了几个版本的）。代价是 6 个额外 TU，几秒钟。
+    file(GLOB INK_TOOL_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/inkgen/*.cpp")
+
+    add_library(inking_strict OBJECT ${INK_SOURCES} ${INK_TOOL_SOURCES})
+    # 借 `inking` 的 usage requirements 拿到 include 路径、PUBLIC 宏与 SDL/FFmpeg 头。
+    target_link_libraries(inking_strict PRIVATE inking::inking)
+    # 生成器自己那份头（`Cxxcss.h` / `Emit.h` / `Json.h`）就在同目录。
+    target_include_directories(inking_strict PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/inkgen")
+    # PRIVATE 的那三个能力宏不会传播，必须自己写一遍（见上面第 2 段）。
+    target_compile_definitions(inking_strict PRIVATE
+        INK_HAS_SDL3_TTF
+        INK_HAS_SDL3_IMAGE
+        INK_HAS_SDL3_MIXER)
+    target_compile_options(inking_strict PRIVATE
+        # **-O0**：这道门只关心**前端**告警（unused / shadow / cast-qual /
+        # useless-cast / 参数名），它们与优化等级无关；而 Release 的 -O3 让这道门
+        # 在一次干净构建里要跑十几分钟——`ctest` 里那会把整轮测试拖成超时。
+        # 代价写清楚：**只在 -O1 以上才出现的告警（例如 -Wmaybe-uninitialized）
+        # 不在门内**。要覆盖那一类，得单独再开一档，这一轮不做。
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-O0>
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall>
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wextra>
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wshadow>
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wcast-qual>
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wuseless-cast>
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Wno-overloaded-virtual>
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-Werror>)
+    set_target_properties(inking_strict PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
+    # 用 `--build` 而不是"跑个 exe"：要验的正是**编译**这一步。
+    add_test(NAME strict_warnings
+             COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}"
+                     --target inking_strict)
+    # 首次（干净构建树）约 3 分钟，之后每次都是"no work to do"（秒级）。
+    set_tests_properties(strict_warnings PROPERTIES TIMEOUT 900)
+endif()
+
+# ---------------------------------------------------------------------------
 # 示例工程
 # ---------------------------------------------------------------------------
 if(INK_BUILD_EXAMPLES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt")
     add_subdirectory(examples)
+endif()
+
+# ---------------------------------------------------------------------------
+# 行为自检挂进 ctest（0.8.0 T-01）
+#
+# 为什么必须排在这里（`add_subdirectory(examples)` **之后**）：
+# `if(TARGET ...)` 在此之前恒为假 ⇒ `add_test` 永不执行，而 `ctest` 照样全绿。
+# 那正是"测试通过"这句话失去含义的形态（与第 8 行 `enable_testing()` 必须
+# 提前调用是同型坑：晚一步就静默失效，不报错）。
+#
+# 为什么用 `if(TARGET ...)` 而不是无条件注册：`INK_BUILD_EXAMPLES=OFF` 的构建里
+# 没有这个 exe，**这条测试会静默少掉一条——这是有意接受的**（没有 exe 就没法跑），
+# 不是漏配。
+#
+# 为什么不加 `FAIL_REGULAR_EXPRESSION "失败项：[1-9]"`：退出码**就是**失败项数
+# （见 `examples/demo/selftest.cpp` 的 `return g_fail`），双判据会在改那行文案时
+# 误红（0.7.x 已经改过一次）。
+# ---------------------------------------------------------------------------
+if(INK_BUILD_TESTS AND TARGET inking_demo_selftest)
+    add_test(NAME selftest COMMAND $<TARGET_FILE:inking_demo_selftest>)
+    # 实测 3.6 s；给 30× 余量（慢机器 + 首次加载字体/图集）。
+    set_tests_properties(selftest PROPERTIES TIMEOUT 120)
+
+    # -----------------------------------------------------------------------
+    # 真后端一档（0.8.0 T-02）
+    #
+    # 为什么只在 WIN32 注册：`windows` 这个驱动名是 SDL 在 Windows 上的叫法，
+    # Linux / macOS 上同一个值会让 SDL_Init 失败——那不是"没 GPU"，是把
+    # 平台差异写死进了测试。别的平台自检里自己挑驱动名（`x11` / `cocoa`）。
+    #
+    # 为什么给它 `SKIP_RETURN_CODE 77`：没有可用 GPU 的机器（CI 容器、纯软件
+    # 远程桌面）跑这条时应该显示 **Skipped**，而不是 Failed——否则一条"环境
+    # 不具备"会永久污染测试结论。
+    # -----------------------------------------------------------------------
+    if(WIN32)
+        add_test(NAME selftest_windows
+                 COMMAND $<TARGET_FILE:inking_demo_selftest>)
+        set_tests_properties(selftest_windows PROPERTIES
+            TIMEOUT 180
+            ENVIRONMENT "INKING_SELFTEST_DRIVER=windows"
+            SKIP_RETURN_CODE 77)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------

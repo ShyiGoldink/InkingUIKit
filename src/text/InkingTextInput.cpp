@@ -96,8 +96,8 @@ bool InkingTextInput::HitTest(float worldX, float worldY) const {
     // 本体矩形就是热区（输入框没有形状层——它是文字 + 光标）。
     // 入参是世界坐标（设计空间），必须用**绝对**位置比——GetX()/GetY() 是相对
     // 父级的偏移，嵌套在页面容器里的输入框会永远命中不了（2026-10-18 修复）。
-    const float left = static_cast<float>(GetAbsX());
-    const float top = static_cast<float>(GetAbsY());
+    const float left = GetAbsX();  // GetAbsX/Y 本来就是 float（多余的那层 cast 在 0.8.5 清掉）
+    const float top = GetAbsY();
     return worldX >= left && worldX < left + static_cast<float>(GetWidth())
         && worldY >= top && worldY < top + static_cast<float>(GetHeight());
 }
@@ -255,11 +255,11 @@ void InkingTextInput::TickCaretBlink(float deltaSeconds) {
 // ---------------------------------------------------------------------------
 
 float InkingTextInput::localX(float designX) const {
-    return designX - static_cast<float>(GetAbsX());
+    return designX - GetAbsX();
 }
 
 float InkingTextInput::localY(float designY) const {
-    return designY - static_cast<float>(GetAbsY());
+    return designY - GetAbsY();
 }
 
 TextInputRect InkingTextInput::RawBoxForOffset(std::size_t offset) const {

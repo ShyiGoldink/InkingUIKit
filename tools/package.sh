@@ -53,6 +53,36 @@ if [ ! -f "${BUILD_DIR}/bin/libinking.dll" ]; then
     exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# 一致性护栏（0.8.1 T-04）：**版本号与二进制必须来自同一次构建**
+#
+# 版本号读自 `include/inking.h`（`version_of`），二进制取自 `${BUILD_DIR}`，
+# 两者原本互不比对 ⇒ "改了头文件的版本号、忘了重建"会**静默**打出一个
+# "标着 0.7.1、装着 0.5.3"的包：文件名对、BUILD.txt 对、校验和自洽，
+# 只有里面的代码是旧的。2026-10-29 核实 E5 时仓库就处在这个状态。
+#
+# 判据为什么用 mtime 而不是"DLL 里搜版本串"：实测 DLL 里搜不到 0.5.3 / 0.6.6 /
+# 0.7.1 任何一个（`kVersion` 是 inline constexpr，DLL 未必引用它），那条路不可靠。
+#
+# 抓不住的情况（写在这里，免得被当成"没做完"）：改了代码但忘了 bump 版本号。
+# 那属于**版本纪律**；mtime 只回答"这份二进制比这份头新吗"。
+# ---------------------------------------------------------------------------
+if [ ! -f "${BUILD_DIR}/bin/inking_demo_selftest.exe" ]; then
+    echo "缺 ${BUILD_DIR}/bin/inking_demo_selftest.exe。" >&2
+    echo "包里带的自检是「这一版验过」的证据，缺它就别打包。先构建：" >&2
+    echo "  cmake --build ${BUILD_DIR}" >&2
+    exit 1
+fi
+if [ include/inking.h -nt "${BUILD_DIR}/bin/libinking.dll" ]; then
+    echo "构建目录比头文件旧——版本号与二进制不是同一次构建的：" >&2
+    echo "  include/inking.h 比 ${BUILD_DIR}/bin/libinking.dll 新" >&2
+    echo "这样打出来的包会标着 ${VER}、装着旧代码，且不会有任何提示。" >&2
+    echo "先重建：cmake --build ${BUILD_DIR}" >&2
+    echo "（若刚 git checkout / 解压过，mtime 会被刷成当时的时间，重建一次即可。）" >&2
+    exit 1
+fi
+echo "   一致性   ${BUILD_DIR}/bin/libinking.dll 不旧于 include/inking.h（版本 ${VER}）"
+
 echo "== 打包 ${NAME} =="
 rm -rf "$OUT"
 
@@ -66,6 +96,16 @@ cmake --install "${BUILD_DIR}" --prefix "$(pwd)/${OUT}" >/dev/null
 mkdir -p "$OUT/bin"
 cp "${BUILD_DIR}/bin/inking_demo.exe" \
    "${BUILD_DIR}/bin/inking_demo_selftest.exe" "$OUT/bin/"
+
+# 示例素材：**只拷 demo 自己那两份**（design.svg 1.3 KB / walk.png 894 B）。
+#
+# 不带素材的代价实测过：包里的 demo 照样能起窗、退出码 0，但设计稿背景是黑的、
+# 图集那块是空的——"双击看效果"这条路径等于没走通，而且不报任何错。
+# 不拷 `examples/sharp/assets/nailong-art-01.png`（5.97 MB）：那是仓库内的
+# **验收用例素材**，不是运行期依赖，带它会让 zip 从 8.5 MB 涨到 14 MB。
+mkdir -p "$OUT/bin/assets"
+cp examples/demo/assets/design.svg examples/demo/assets/walk.png \
+   "$OUT/bin/assets/"
 
 # ---------------------------------------------------------------------------
 # 运行期 DLL 闭包

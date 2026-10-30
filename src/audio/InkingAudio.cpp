@@ -744,7 +744,10 @@ SoundId AudioLoadAsync(const std::string& path, AudioLoadMode mode) {
 }
 
 SoundId AudioLoadFromMemory(const void* data, std::size_t size,
-                            const std::string& name, AudioLoadMode mode) {
+                            const std::string& name) {
+    // 0.8.5 删掉了 `AudioLoadMode mode` 这个参数：从内存加载只有"整段解进内存"
+    // 这一种，`Streaming` 无从谈起（字节本来就在 RAM 里，再"流"只会多一层拷贝）。
+    // 传进来也没人读——而"传了 Streaming、实际是 InMemory"正是最难查的静默差异。
     AudioState& audio = state();
     MIX_Mixer* mixer = audio.mixer.load();
     if (data == nullptr || size == 0 || mixer == nullptr) {
@@ -1377,8 +1380,7 @@ SoundId AudioLoad(const std::string&, AudioLoadMode) { return kInvalidSound; }
 
 SoundId AudioLoadAsync(const std::string&, AudioLoadMode) { return kInvalidSound; }
 
-SoundId AudioLoadFromMemory(const void*, std::size_t, const std::string&,
-                            AudioLoadMode) {
+SoundId AudioLoadFromMemory(const void*, std::size_t, const std::string&) {
     return kInvalidSound;
 }
 

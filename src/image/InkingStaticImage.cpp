@@ -10,6 +10,12 @@
 // 就断了——所以这里必须显式包含。**拆单体头时第一个现形的就是这类依赖。**
 #include <detail/InkingGeometry.h>
 #include <detail/InkingHit.h>
+// `detail::WarnIfImageUndersampled`（0.7.1 T-04）：素材像素够不够这块屏幕。
+// 它是 `render/` 的内部头，而本条护栏**只在 DEBUG 下存在**——所以 include 也
+// 只在 DEBUG 下要（Release 里连这个符号都不该出现在本 TU 里）。
+#if defined(INK_ISDEBUG)
+#include <render/InkingText.h>
+#endif
 #include <scene/InkingScene.h>  // GetPointerX/Y：按下当场定格模式要用
 
 #include <utility>
@@ -18,6 +24,37 @@
 #include <cmath>
 
 namespace inking {
+
+#if defined(INK_ISDEBUG)
+namespace {
+
+/**
+ * DEBUG-only：素材够不够这块屏幕（0.7.1 T-04）。
+ *
+ * 为什么挂在**字节到手的三个入口**（构造 / `SetImageBytes` / `LoadAsset`）而不是
+ * 逐帧：逐帧查会把日志刷屏，而那时已经晚了——这三处正好是"接下来画的就是这份
+ * 新素材"的三个时刻。Release 下本函数整个消失（`#if` 在调用点与实现里各一次，
+ * 于是连参数求值都没有）。
+ */
+void NoticeUndersampled(const ButtonAppearance& appearance, int designWidth,
+                        int designHeight, const ShapeBounds& srcRect) {
+    ImageBytes bytes;
+    bytes.data = appearance.imageBytes;
+    bytes.size = appearance.imageSize;
+    bytes.name = appearance.source;
+    // 图集那一帧的像素宽（全零 = 整张图）：比的是**这一段**，不是整张图集。
+    const int frameWidth = srcRect.width > 0.0f
+        ? static_cast<int>(std::lround(srcRect.width))
+        : 0;
+    const int frameHeight = srcRect.height > 0.0f
+        ? static_cast<int>(std::lround(srcRect.height))
+        : 0;
+    detail::WarnIfImageUndersampled(bytes, designWidth, designHeight, frameWidth,
+                                    frameHeight);
+}
+
+}  // namespace
+#endif  // INK_ISDEBUG
 
 InkingStaticImage::InkingStaticImage(InkingWidget* parent, const ImageData& data)
     : InkingStaticWidget(parent, data.name) {
@@ -79,6 +116,13 @@ void InkingStaticImage::applyData(const ImageData& data) {
                               + "）；这张图暂时只有底色");
         }
     }
+#if defined(INK_ISDEBUG)
+    else {
+        // 生成期烘进来的字节（来自 `normal.imageBytes`）：这是"字节到手"的
+        // 另一个入口，与 `SetImageBytes` / `LoadAsset` 各管一档。
+        NoticeUndersampled(_renderAppearance, _width, _height, _renderSourceRect);
+    }
+#endif
 }
 
 void InkingStaticImage::refreshRenderAppearance() {
@@ -194,6 +238,9 @@ bool InkingStaticImage::LoadAsset(const std::string& relative) {
     _imageName = relative;
     refreshRenderAppearance();
     MarkRepaintDirty();  // 画面变了；几何没动，所以不标命中脏
+#if defined(INK_ISDEBUG)
+    NoticeUndersampled(_renderAppearance, _width, _height, _renderSourceRect);
+#endif
     return true;
 }
 
@@ -209,6 +256,9 @@ void InkingStaticImage::SetImageBytes(const std::uint8_t* data, std::size_t size
     }
     refreshRenderAppearance();
     MarkRepaintDirty();
+#if defined(INK_ISDEBUG)
+    NoticeUndersampled(_renderAppearance, _width, _height, _renderSourceRect);
+#endif
 }
 
 // ---------------------------------------------------------------------------

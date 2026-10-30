@@ -312,12 +312,47 @@ TextLayoutResult LayoutText(const TextLayoutRequest& request,
 
     // 行数上限 / 省略号。
     const int maxLines = request.maxLines > 0 ? request.maxLines : 0;
-    const bool overLines =
-        maxLines > 0 && static_cast<int>(raw.size()) > maxLines;
+    bool overLines = maxLines > 0 && static_cast<int>(raw.size()) > maxLines;
     if (overLines) {
         truncated = true;
         raw.resize(static_cast<std::size_t>(maxLines));
     }
+
+    // 框高上限（T-01，0.8.3）：**累计行高超过可用高就丢尾行**。
+    //
+    // 为什么在这里（而不是在绘制层裁剪）：`Clip` 是 `TextOverflow` 的默认值，
+    // 头文件里写着"多余的行不画"，但此前**没有任何人实现它**——`maxHeight` 只
+    // 参与了垂直对齐，于是"框多高"对文字毫无约束力（300×40 的标签把 7 行全画
+    // 出去，框外 10,030 个亮像素）。在排版层丢行是唯一一处就能收口的位置：
+    // 绘制层裁剪只治画面、不治纹理（每行一张纹理的开销照旧）。
+    //
+    // 三条硬约束：
+    //   1. **必须先于垂直对齐的 offset 计算**：先算 offset 再丢行，Middle/Bottom
+    //      会整体偏上"丢掉的行数 × 行高"；
+    //   2. **至少留一行**：哪怕一行都装不下（框比行高还矮）也画一行——画面上
+    //      多出几像素，好过整块标签静默消失（本项目最烦的就是这一类）；
+    //   3. 丢行同样置 `truncated`（并复用 `overLines` 让省略号那条路也生效）：
+    //      它是"有内容没排进来"的**唯一**观测口。
+    if (request.maxHeight > 0.0f && !raw.empty()) {
+        const float innerHeight = std::max(
+            0.0f, request.maxHeight - padding.top - padding.bottom);
+        float usedHeight = 0.0f;
+        std::size_t keep = 0;
+        for (const RawLine& line : raw) {
+            const float nextHeight = usedHeight + line.height;
+            if (nextHeight > innerHeight && keep > 0) {
+                break;  // 这一行装不下：它和它之后的都不排
+            }
+            usedHeight = nextHeight;
+            ++keep;
+        }
+        if (keep < raw.size()) {
+            raw.resize(keep);
+            overLines = true;
+            truncated = true;
+        }
+    }
+
     bool lastLineEllipsis = false;
     const bool lastLineTooWide =
         !raw.empty() && available > 0.0f && raw.back().width > available;

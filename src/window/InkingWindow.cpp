@@ -33,7 +33,11 @@
 // "请求发出去了 + 把属性读回来的答案是圆角"，真正圆不圆是**观感**（`r5`：交给
 // 用户看）。所以入口和观测口是分开的两个函数（请求 / 读回）。
 #define WIN32_LEAN_AND_MEAN
+// `NOMINMAX` 可能已经由命令行 / 预编译头定义过（我们自己的构建就是），
+// 重定义在严格告警门里是错误——而它两次定义的值一样，纯粹是噪音。
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 
 namespace {

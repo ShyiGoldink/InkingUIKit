@@ -390,10 +390,12 @@ void InkingStaticPanel::UpdateScrollRange() {
         if (child == nullptr) {
             continue;
         }
+        // `GetX/GetY` 本来就是 float（只有 `GetWidth/GetHeight` 是 int，那层
+        // cast 是必须的）——多出来的 float cast 是死代码，0.8.5 清掉。
         maxRight = std::max(maxRight,
-                            static_cast<float>(child->GetX()) + static_cast<float>(child->GetWidth()));
+                            child->GetX() + static_cast<float>(child->GetWidth()));
         maxBottom = std::max(maxBottom,
-                             static_cast<float>(child->GetY()) + static_cast<float>(child->GetHeight()));
+                             child->GetY() + static_cast<float>(child->GetHeight()));
     }
     _contentWidth = maxRight;
     _contentHeight = maxBottom;
@@ -487,8 +489,8 @@ void InkingStaticPanel::PressScrollAt(float designX, float designY) {
     if (!_data.scroll.enabled) {
         return;
     }
-    const float localX = designX - static_cast<float>(GetX());
-    const float localY = designY - static_cast<float>(GetY());
+    const float localX = designX - GetX();
+    const float localY = designY - GetY();
 
     // 竖直优先：两条都可见时它们在右下角重叠，竖直条画在外面（更常用）。
     const ScrollBarMetrics bars[2] = {GetBarMetrics(true), GetBarMetrics(false)};
@@ -498,7 +500,7 @@ void InkingStaticPanel::PressScrollAt(float designX, float designY) {
         if (!bar.visible) {
             continue;
         }
-        if (HitsThumb(vertical, localX, localY, bar)) {
+        if (HitsThumb(localX, localY, bar)) {
             _dragAxis = vertical ? 1 : 2;  // 拖：跟着指针走
             return;
         }
@@ -530,8 +532,8 @@ void InkingStaticPanel::DragScrollTo(float designX, float designY) {
     if (!bar.visible) {
         return;
     }
-    const float localX = designX - static_cast<float>(GetX());
-    const float localY = designY - static_cast<float>(GetY());
+    const float localX = designX - GetX();
+    const float localY = designY - GetY();
     const float range = vertical ? GetScrollRangeY() : GetScrollRangeX();
     // 拖动与"点轨道跳过去"是**同一套算术**（滑块中心对到指针上）——所以拖动
     // 天然跟手、也和点击一致，不会出现"点一下跳到的位置"和"拖到那儿"不一样。

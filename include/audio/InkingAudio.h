@@ -134,8 +134,7 @@ SoundId AudioLoadAsync(const std::string& path,
  * 声音销毁）——调用方传完就可以扔掉自己的缓冲。
  */
 SoundId AudioLoadFromMemory(const void* data, std::size_t size,
-                            const std::string& name,
-                            AudioLoadMode mode = AudioLoadMode::Auto);
+                            const std::string& name);
 
 /// 批量预加载（等价于对每个路径调一次 `AudioLoadAsync`）。
 void AudioPreload(const std::vector<std::string>& paths);

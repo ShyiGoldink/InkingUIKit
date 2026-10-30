@@ -161,6 +161,14 @@ struct GlyphAtlasStats {
     int uploaded = 0;    ///< 贴进图集几次
     int failed = 0;      ///< 取不到几次（调用方**退回整段渲染**）
     int slots = 0;       ///< 图集里已经有多少格
+    /**
+     * 图集**已经满了**（0.8.3 T-02）。
+     *
+     * 它是"逐字形那条路已被短路"的唯一观测口：满了之后 `rasterized` 不再增长、
+     * `failed` 也不再增长，看数字分不清"没在画"和"省下来了"。
+     * 复位只发生在 `ReleaseGlyphAtlas()`（换比例 / 换字号档 / 释放缓存）。
+     */
+    bool full = false;
 };
 
 /**

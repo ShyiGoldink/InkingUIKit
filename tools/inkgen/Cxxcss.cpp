@@ -1435,15 +1435,17 @@ protected:
         }
 
         if (durationField != nullptr) {
-            const double value
+            // 名字不能叫 `value`：外层已经有一个同名参数（`-Wshadow` 抓的），
+            // 而在这段里两个 `value` 混读是很容易写错的那种。
+            const double durationSeconds
                 = ReadNumber(*durationField, field + ".transition.duration");
-            if (value <= 0.0) {
+            if (durationSeconds <= 0.0) {
                 Error(*durationField,
                       field + ".transition.duration 必须大于 0（现在是 "
-                          + std::to_string(value)
+                          + std::to_string(durationSeconds)
                           + "）；不想要过渡就别写 transition");
             } else {
-                seconds = static_cast<float>(value);
+                seconds = static_cast<float>(durationSeconds);
             }
         }
 

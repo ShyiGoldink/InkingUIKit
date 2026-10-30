@@ -48,11 +48,12 @@ constexpr double kAnimationEpsilon = 1e-9;
  *
  * letterbox 是整幅等比缩放，倍率由窗口层每帧写进根锚点（不标脏）。
  * 这里只做绘制换算，不参与几何，命中表也不会因为缩放重烘。
+ *
+ * **0.8.5 起删掉了原来那个 `magnify(const InkingWidget&)`**：它的调用点在
+ * 0.7.x 的 `GetMagnification()` 恒等改造之后全没了，只剩一个没人调的函数
+ * （严格告警门 `-Wunused-function` 抓到的正是它）。删掉而不是加
+ * `[[maybe_unused]]`：留着会让人以为"这里还在换算"。
  */
-float magnify(const InkingWidget& node) {
-    const float value = node.GetMagnification();
-    return value > 0.0f ? value : 1.0f;
-}
 
 }  // namespace
 
@@ -513,14 +514,19 @@ bool InkingScene::RequestPreload() {
     // ⚠️ 任务里捕的是**裸 this**，所以场景在被销毁之前必须等这次预加载落地。
     // `SceneLibrary::DestroyScene` 带着这条守卫（拒绝销毁 `Queued` 的场景）。
     // 这不是疏忽，是这套设计的前提——`TaskQueue` 没有取消机制。
-    TaskQueue::instance().addTask(Task<std::any>{
+    // 用"先建再赋 action"而不是聚合初始化 `Task<std::any>{lambda}`：后者只填了
+    // 第一个字段，`-Wmissing-field-initializers`（`-Wextra` 带的）会当成漏填报。
+    // 两者语义完全一样（`deps` / `next` 本来就该是空的），差别只在可读性与门禁。
+    Task<std::any> preloadTask;
+    preloadTask.action =
         [this](const std::vector<std::any>&) -> std::any {
             const bool ok = onPreload();
             // release：把"上面写下的数据"与"状态变成结果"绑成一次发布。
             _preloadState.store(ok ? PreloadState::Done : PreloadState::Failed,
                                 std::memory_order_release);
             return std::any{};
-        }});
+        };
+    TaskQueue::instance().addTask(std::move(preloadTask));
     return true;
 }
 

@@ -60,10 +60,11 @@ std::string formatTime(const std::chrono::system_clock::time_point& point, const
 }
 
 long long millisecondsOf(const std::chrono::system_clock::time_point& point) {
-    return static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                      point.time_since_epoch())
-                                      .count()) %
-           1000;
+    // `count()` 本来就是 `long long`（毫秒的 rep），外面那层 cast 是死的。
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               point.time_since_epoch())
+               .count()
+           % 1000;
 }
 
 std::string timeOfDay(const std::chrono::system_clock::time_point& point) {

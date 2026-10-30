@@ -137,7 +137,11 @@
   `float LineOffsetX(float lineWidth, float availableWidth, TextAlignH align)`。
 - **验收**：① 显式 `\n` 永远断行、`Word` 不切开英文整词、超宽单词退化成 `Anywhere`、行首空白丢掉；
   ② `Ellipsis` 是"先回退字符再加 `…`"，加完仍超宽即不通过；③ 空串返回 `empty = true` 且尺寸只剩 padding。
-- **偏离**：不为了塞进 `maxHeight` 缩字号；不做基线对齐（行高只由 `lineSpacing` 与单行测量高度决定）。
+- **偏离**：**不为了塞进 `maxHeight` 缩字号**（但 0.8.3 起会按 `maxHeight` **丢行**，见下）；
+  不做基线对齐（行高只由 `lineSpacing` 与单行测量高度决定）。
+- **补记（0.8.3 T-01）**：`TextOverflow::Clip` 是默认值却一直没实现——`maxHeight` 原本只参与
+  垂直对齐，300×40 的标签会把 7 行全画到框外。现在排版层按"累计行高 ≤ 可用高"丢尾行并置
+  `truncated`，**至少留一行**。测量那条路（`MeasureLayout`）传 0，否则"框多高"永远等于"一行高"。
 
 ### A8a 子孙不进命中表
 
@@ -557,4 +561,4 @@ A 系列 `A1`–`A14` 全部有归属（`A5`/`A9`/`A10` 只在 §8.2 出现）�
 
 ---
 
-> 本文档对应版本：**0.6.6（0.x 发布版）**。
+> 本文档对应版本：**0.8.5（0.x 发布版）**。

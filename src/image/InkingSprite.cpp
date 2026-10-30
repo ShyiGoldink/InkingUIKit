@@ -609,8 +609,8 @@ void InkingSprite::applyFrame(std::size_t index, bool fromPlayback) {
         ++_frameAdvanceCount;
         if (index > previous) {
             // 只统计**向前跨过**的帧：回绕（3 → 0）与倒退（Seek）不是"掉帧"。
-            _skippedFrameCount +=
-                static_cast<std::uint64_t>(index - previous - 1);
+            // `index` / `previous` 都是 `size_t`，隐式转 `uint64_t` 即可。
+            _skippedFrameCount += index - previous - 1;
         }
         // 帧事件先发、`frameChanged` 后发：订阅者收到"换帧"时，这一帧的关键点
         // 已经处理完了（顺序反过来，回调里读到的状态就和事件对不上）。

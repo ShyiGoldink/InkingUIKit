@@ -231,28 +231,9 @@ std::string CloseNamespaces(const std::vector<std::string>& parts,
     return out;
 }
 
-/// 缩进多行文本；空行不缩进（免得行尾留空格）。
-std::string Indent(const std::string& text, int spaces) {
-    const std::string pad(static_cast<std::size_t>(spaces), ' ');
-    std::string out;
-    std::size_t start = 0;
-    while (start <= text.size()) {
-        const std::size_t end = text.find('\n', start);
-        const std::string line = (end == std::string::npos)
-                                     ? text.substr(start)
-                                     : text.substr(start, end - start);
-        if (!line.empty()) {
-            out += pad;
-        }
-        out += line;
-        if (end == std::string::npos) {
-            break;
-        }
-        out += '\n';
-        start = end + 1;
-    }
-    return out;
-}
+// 0.8.5 删掉了这里一个没人调的 `Indent(text, spaces)`：缩进现在由
+// `Emit.cpp` 里那些显式 `indent` 前缀串负责，它从改法变了之后就没被
+// 调用过（严格告警门 `-Wunused-function` 抓到的就是它）。
 
 /**
  * 形状字段的赋值语句。

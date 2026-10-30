@@ -1,10 +1,16 @@
 // ---------------------------------------------------------------------------
-// inking_demo_selftest —— **无头**端到端自检
+// inking_demo_selftest —— **端到端**自检（默认无头）
 //
 // 与 `inking_demo` 的分工：
 //   - `inking_demo`       开真窗口、跑主循环，给人看（需要显示器）；
-//   - 本程序              **不开窗口**（SDL dummy 视频驱动 + 软件渲染器），
+//   - 本程序              默认不开窗口（SDL dummy 视频驱动 + 软件渲染器），
 //                         把「库到底能不能用」变成一串可断言的结论，给机器看。
+//
+// 后端由环境变量 `INKING_SELFTEST_DRIVER` 决定（0.8.0 T-02）：
+//   不设 / 空串   → `dummy`（软件，任何机器都能跑；**默认值不能改**）
+//   `windows`     → 真后端（本机走 direct3d11）。建不出窗口/渲染器时打印
+//                   `[skip] 真后端不可用` 并 `return 77`，好让 `ctest` 把它
+//                   显示成 Skipped——"没显卡"与"代码坏了"不能是同一个红。
 //
 // 它**只链接 inking 动态库**（和示例主体同一份公开头），所以它验的就是
 // 消费者视角下的 DLL：导出符号够不够、跨模块的单例/槽位是不是同一份、
@@ -23,6 +29,7 @@
 #include <button/InkingDynamicButton.h>
 #include <button/InkingStaticButton.h>
 #include <config/window_config.h>
+#include <dataStruct/InkingImageScale.h>
 #include <dataStruct/InkingShapeSpec.h>
 #include <dataStruct/InkingTextRequest.h>
 #include <dataStruct/InkingTransform.h>
@@ -66,6 +73,7 @@
 #include <SDL3/SDL.h>
 
 #include <any>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -90,6 +98,13 @@ void Check(bool ok, const char* what) {
         ++g_fail;
     }
 }
+
+/// 读回一块像素（ARGB8888，逐行拷贝）。
+///
+/// **前向声明**：实现在下面的图片那一节（那里才是它主要的用处），而
+/// 文字裁行那条自检（0.8.3 T-01）排在它之前、也要读像素。
+std::vector<std::uint32_t> ReadPixelRegion(SDL_Renderer* renderer,
+                                           const SDL_Rect& rect);
 
 /// 动态按钮：每逻辑步把自己往右推 10 像素——用来验"Tick 真的派发到组件"。
 class Mover : public inking::InkingDynamicButton {
@@ -609,6 +624,14 @@ constexpr SilentFailureItem kSilentFailures[] = {
      "输入框光标越界：画到框外、还跟着滚动量漂"},
     {"background_alpha_without_transparent", "既有（0.4.0 补自检）",
      "背景色配了 alpha、窗口却不是透明窗口：桌面透不出来，日志一个字都没有"},
+    {"text_raster_capped", "T-03（0.7.1）",
+     "设计尺寸小、屏幕大（R 超过上限）：文字被静默夹到 3× 烘再放大，字糊而无声"},
+    {"image_undersampled", "T-04（0.7.1）",
+     "素材像素不够它占的屏幕像素（σ<1）：画面只是有点软，没人会去查素材"},
+    {"texture_bytes_leak", "T-05（0.8.2）",
+     "纹理账本只建不销账：内存只涨不回落，画面上完全看不出来"},
+    {"glyph_atlas_full", "T-02（0.8.3）",
+     "字形图集满了：文字永久改走整段纹理（内存与首帧耗时都涨），日志一个字都没有"},
 };
 
 /// 自检**真的跑到**的条目（运行时登记）。
@@ -998,6 +1021,407 @@ void CheckTextNegativeWidth() {
     inking::SceneLibrary::SetActiveScene(nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// T-01（0.8.3）：文字按框高裁行
+// ---------------------------------------------------------------------------
+//
+// `TextOverflow::Clip` 是默认值、头文件里写着"多余的行不画"，但 0.8.2 之前
+// **没有任何人实现它**：`maxHeight` 只参与垂直对齐，于是 300×40 的标签把 7 行
+// 全画到框外（实测框外 10,030 个亮像素）。
+//
+// 三条断言各钉一个会静默走错的实现：
+//   ① 行数真的按框高截（且 `truncated` 置起来——它是"有内容没排进来"的唯一观测口）；
+//   ② **至少留一行**：框比一行还矮时也不许整块变空白（那比溢出糟得多）；
+//   ③ 画面上**框外 0 个亮像素**，同时框内 > 0——后半句防的是"什么都不画"这种
+//      假通过（0 == 0 对任何错误的实现都成立）。
+void CheckTextClipByHeight() {
+    std::printf("\n-- 文字按框高裁行（0.8.3 T-01） --\n");
+
+    // ---- ① 排版层：假测量，数值完全可控（宽 10/码点、行高 = 字号 × 行距） ----
+    const auto measure = [](const std::string& text,
+                            const inking::TextStyle& style) {
+        std::size_t codepoints = 0;
+        for (const unsigned char byte : text) {
+            if ((byte & 0xC0u) != 0x80u) {
+                ++codepoints;
+            }
+        }
+        return inking::TextExtent{10.0f * static_cast<float>(codepoints),
+                                  style.fontSize};
+    };
+    inking::TextLayoutRequest request;
+    request.text = "a\nb\nc\nd";     // 4 行，每行 20 × 1.25 = 25
+    request.style.fontSize = 20.0f;
+    request.maxWidth = 0.0f;         // 宽度不限 ⇒ 不换行，纯靠 \n
+    request.maxHeight = 60.0f;       // 装得下 2 行（50），第 3 行超
+    const inking::TextLayoutResult clipped = inking::LayoutText(request, measure);
+    std::printf("         4 行 / 框高 60 ⇒ %zu 行 / 高 %.0f / truncated=%d\n",
+                clipped.lines.size(), static_cast<double>(clipped.height),
+                clipped.truncated ? 1 : 0);
+    Check(clipped.lines.size() == 2,
+          "text_clip_by_height：按框高丢尾行（4 行 → 装得下的 2 行）");
+    Check(clipped.truncated && clipped.contentHeight <= 60.0f,
+          "text_clip_by_height：置 truncated，且排出来的高度不超框");
+
+    // ---- ② 至少留一行：框比一行还矮 ----
+    request.maxHeight = 5.0f;  // 5 < 25（一行都装不下）
+    const inking::TextLayoutResult tooShort = inking::LayoutText(request, measure);
+    Check(tooShort.lines.size() == 1 && tooShort.truncated,
+          "text_clip_by_height：框比一行还矮时仍留一行（宁可溢出几像素，也不许整块消失）");
+
+    // ---- ③ 与 maxLines 取更严的那个 ----
+    request.maxHeight = 0.0f;  // 不限高
+    request.maxLines = 3;
+    const inking::TextLayoutResult byLines = inking::LayoutText(request, measure);
+    request.maxLines = 0;
+    request.maxHeight = 60.0f;
+    const inking::TextLayoutResult byHeight = inking::LayoutText(request, measure);
+    Check(byLines.lines.size() == 3 && byHeight.lines.size() == 2,
+          "text_clip_by_height：maxLines 与 maxHeight 各管一头（谁更严谁生效）");
+
+    // ---- ④ 组件 + 像素：E3 的原始证据（300×40 标签 + 100 个汉字） ----
+    //
+    // 先清一次文字缓存：`AcquireFont` 会把"打开失败"也记成一格（**空**那一格，
+    // 免得每帧重试），而本进程早于 `SDL_Init` 就量过文字——那一笔失败的缓存会
+    // 让这里永远拿到估算法。清掉之后重新试开，才是"这台机器到底有没有字体"。
+    inking::detail::ReleaseTextCache();
+    const std::string font = FindUsableFont();
+    if (font.empty()) {
+        std::printf("         [skip] 没找到可用字体：像素那一段验不了"
+                    "（排版那几条上面已经验过）\n");
+        return;
+    }
+    SDL_Window* win = SDL_CreateWindow("text-clip", inking::DesignWidth(),
+                                       inking::DesignHeight(), 0);
+    SDL_Renderer* rnd =
+        win != nullptr ? SDL_CreateRenderer(win, nullptr) : nullptr;
+    if (rnd == nullptr) {
+        std::printf("         [skip] 建不出渲染器：像素那一段验不了\n");
+        if (win != nullptr) {
+            SDL_DestroyWindow(win);
+        }
+        return;
+    }
+
+    std::string longText;
+    for (int i = 0; i < 100; ++i) {
+        longText += "中";
+    }
+    inking::InkingScene scene("text_clip");
+    inking::LabelData data;
+    data.name = "clip_label";
+    data.width = 300;
+    data.height = 40;  // 只装得下一行多一点
+    data.style.fontSize = 20.0f;
+    data.style.fontPath = font;
+    data.text = longText;
+    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.offsetX = 100.0f;
+    data.offsetY = 100.0f;
+    auto* label = static_cast<inking::InkingStaticLabel*>(
+        scene.AddChild(std::make_unique<inking::InkingStaticLabel>(&scene, data)));
+    scene.TickFrame(1.0f / 60.0f);
+
+    const inking::TextLayoutResult& laid = label->GetTextLayout();
+    std::printf("         100 汉字 / 300×40 ⇒ %zu 行 / 排出来高 %.0f\n",
+                laid.lines.size(), static_cast<double>(laid.height));
+    Check(laid.truncated && laid.height <= 40.0f && !laid.lines.empty(),
+          "text_clip_by_height：组件层的排版也按 40 的框高截（高度不超框、置 truncated）");
+
+    // 与探针同一套读回口径：窗口 = 设计尺寸 + 关掉逻辑呈现 ⇒ 1 设计单位 = 1 像素。
+    SDL_SetRenderLogicalPresentation(rnd, inking::DesignWidth(),
+                                     inking::DesignHeight(),
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    SDL_SetRenderDrawColor(rnd, 0, 0, 0, 255);
+    SDL_RenderClear(rnd);
+    inking::SceneLibrary::SetActiveScene(&scene);
+    inking::SceneLibrary::RenderScene(rnd);
+
+    // 只读框那一带：左侧 600 宽 × 下方 300 高（覆盖"下方"与"右侧"两个溢出方向）。
+    const std::vector<std::uint32_t> pixels =
+        ReadPixelRegion(rnd, SDL_Rect{100, 100, 600, 300});
+    int inside = 0;
+    int below = 0;
+    int right = 0;
+    if (pixels.size() == 600u * 300u) {
+        for (int y = 0; y < 300; ++y) {
+            for (int x = 0; x < 600; ++x) {
+                const std::uint32_t pixel =
+                    pixels[static_cast<std::size_t>(y) * 600u
+                           + static_cast<std::size_t>(x)];
+                const int lum = static_cast<int>((pixel >> 16) & 0xFFu)
+                    + static_cast<int>((pixel >> 8) & 0xFFu)
+                    + static_cast<int>(pixel & 0xFFu);
+                if (lum < 90) {
+                    continue;  // 黑底
+                }
+                if (y < 40 && x < 300) {
+                    ++inside;
+                } else if (y >= 40) {
+                    ++below;
+                } else {
+                    ++right;
+                }
+            }
+        }
+    }
+    std::printf("         框内亮像素 %d / 框下方 %d / 框右侧 %d\n", inside, below,
+                right);
+    Check(inside > 0,
+          "text_clip_by_height：框内真的有字（否则「框外 0 像素」是假通过）");
+    Check(below == 0 && right == 0,
+          "text_clip_by_height：框外亮像素 == 0（E3 的原始症状：改动前是 10,030）");
+
+    inking::SceneLibrary::SetActiveScene(nullptr);
+    SDL_DestroyRenderer(rnd);
+    SDL_DestroyWindow(win);
+}
+
+// ---------------------------------------------------------------------------
+// T-02 / T-03（0.8.3）：字形图集满了之后
+// ---------------------------------------------------------------------------
+//
+// 改动前的实测：1024² 图集灌满后，连画 60 帧（文字一个字都没变）**多烘 1140 次**
+// 字形、也多失败 1140 次（19 次/帧），日志 **0 条**。两件事都属于"白干活还不能
+// 被看见"：
+//   - 每次都把整段文字逐字形烘一遍再失败，最后照样退回整段渲染（T-02）；
+//   - "图集满了"这个事实没有任何声音，与项目自己的静默失效纪律相悖（T-03）。
+//
+// 三条断言：
+//   ① 满了之后连画 60 帧，`rasterized` 增量 **== 0**，且画面**仍有像素**
+//      （后半句防"把字画没了"换来的假绿）；
+//   ② 第一次满恰好 1 条 WARN，继续灌 2000 个新字仍然只有那 1 条；
+//   ③ `ReleaseGlyphAtlas()` 之后 `full` 复位——漏了复位就是"新图集一上来就
+//      宣布自己满了"，文字永久退化成整段渲染。
+void CheckGlyphAtlasFullNoRetry(SDL_Renderer* renderer) {
+    std::printf("\n-- 字形图集满：不再逐帧重烘 / 首次发声（0.8.3 T-02 / T-03） --\n");
+    if (renderer == nullptr) {
+        std::printf("         [skip] 没有渲染器，图集无从灌起\n");
+        return;
+    }
+    // 从干净状态开始：前面的用例留下的图集可能是"半满"的，那会让灌满需要多少格
+    // 变得不可预测（这里要的是确定性，不是速度）。
+    inking::detail::ReleaseTextCache();
+    const std::string font = FindUsableFont();
+    if (font.empty()) {
+        std::printf("         [skip] 没有可读字体，图集无从灌起"
+                    "（先看 PATH 上的 SDL3*.dll 有几份）\n");
+        return;
+    }
+
+    // 大字号灌得快：48 px 的字形一层只放得下 20 来个，几百格就把 1024² 塞满了。
+    constexpr float kDeviceSize = 48.0f;
+    const auto glyphAt = [](std::uint32_t code) {
+        // U+0800..U+FFFF 的三字节 UTF-8（这里灌的全是 CJK 基本区）。
+        std::string out;
+        out.push_back(static_cast<char>(0xE0u | (code >> 12)));
+        out.push_back(static_cast<char>(0x80u | ((code >> 6) & 0x3Fu)));
+        out.push_back(static_cast<char>(0x80u | (code & 0x3Fu)));
+        return out;
+    };
+
+    inking::InkLog::ResetStats();
+    std::uint32_t code = 0x4E00u;
+    int filled = 0;
+    bool full = false;
+    for (int i = 0; i < 4000 && !full; ++i, ++code) {
+        const std::string glyph = glyphAt(code);
+        (void)inking::detail::AcquireGlyph(renderer, font, kDeviceSize,
+                                           std::string_view(glyph));
+        ++filled;
+        full = inking::detail::GlyphAtlasSnapshot().full;
+    }
+    const inking::detail::GlyphAtlasStats atFull =
+        inking::detail::GlyphAtlasSnapshot();
+    std::printf("         灌 %d 个字形 ⇒ 图集 %d 格（上限 %d²）/ full=%d\n", filled,
+                atFull.slots, 1024, atFull.full ? 1 : 0);
+    Check(full && atFull.slots > 0,
+          "glyph_atlas_full：图集真的被灌满了（观测口 full 置起来、格数 > 0）");
+
+    // ---- ② 第一次满恰好 1 条 WARN ----
+    const int warnsAtFull = inking::InkLog::CountOf(inking::LogLevel::Warn);
+    Check(warnsAtFull == 1,
+          "glyph_atlas_full：第一次满恰好 1 条 WARN（带格数 / 上限 / 后果）");
+    for (int i = 0; i < 2000; ++i, ++code) {
+        const std::string glyph = glyphAt(code);
+        (void)inking::detail::AcquireGlyph(renderer, font, kDeviceSize,
+                                           std::string_view(glyph));
+    }
+    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == warnsAtFull,
+          "glyph_atlas_full：再灌 2000 个新字仍然只有那 1 条（不是每个字一条）");
+    NoteSilentFailure("glyph_atlas_full");
+
+    // ---- ① 连画 60 帧：重烘次数一个都不该涨 ----
+    inking::InkingScene scene("glyph_full");
+    inking::LabelData data;
+    data.name = "glyph_full_label";
+    data.width = 400;
+    data.height = 60;
+    data.style.fontSize = 20.0f;
+    data.style.fontPath = font;
+    data.text = "abc中文测试";
+    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.offsetX = 40.0f;
+    data.offsetY = 40.0f;
+    scene.AddChild(std::make_unique<inking::InkingStaticLabel>(&scene, data));
+    scene.TickFrame(1.0f / 60.0f);
+    inking::SceneLibrary::SetActiveScene(&scene);
+
+    const int rasterizedBefore =
+        inking::detail::GlyphAtlasSnapshot().rasterized;
+    for (int frame = 0; frame < 60; ++frame) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        inking::SceneLibrary::RenderScene(renderer);
+    }
+    const int rasterizedAfter = inking::detail::GlyphAtlasSnapshot().rasterized;
+    std::printf("         连画 60 帧：重烘 %d → %d\n", rasterizedBefore,
+                rasterizedAfter);
+    Check(rasterizedAfter == rasterizedBefore,
+          "glyph_atlas_full：图集满后连画 60 帧，重烘次数增量 == 0（改动前是 1140）");
+
+    // 画面仍有字：回退到整段渲染那条路必须真的画出东西。
+    // 整屏读回（窗口是 640×360，逻辑呈现 LETTERBOX 到 1280×720，读物理像素即可）：
+    // 这里只问"有没有亮像素"，不关心像素落在哪。
+    int bright = 0;
+    {
+        const std::vector<std::uint32_t> pixels =
+            ReadPixelRegion(renderer, SDL_Rect{0, 0, 640, 360});
+        for (const std::uint32_t pixel : pixels) {
+            const int lum = static_cast<int>((pixel >> 16) & 0xFFu)
+                + static_cast<int>((pixel >> 8) & 0xFFu)
+                + static_cast<int>(pixel & 0xFFu);
+            if (lum >= 90) {
+                ++bright;
+            }
+        }
+    }
+    std::printf("         回退到整段渲染后亮像素 %d\n", bright);
+    Check(bright > 0, "glyph_atlas_full：回退之后画面仍有字（回退没坏）");
+
+    // ---- ③ 复位：ReleaseGlyphAtlas 之后 full 必须落回 false ----
+    inking::SceneLibrary::SetActiveScene(nullptr);
+    inking::detail::ReleaseGlyphAtlas();
+    Check(!inking::detail::GlyphAtlasSnapshot().full,
+          "glyph_atlas_full：ReleaseGlyphAtlas 之后 full 复位（新图集不该一上来就满）");
+}
+
+// ---------------------------------------------------------------------------
+// T-04（0.8.4）：文字纹理的字节预算与 LRU 淘汰
+// ---------------------------------------------------------------------------
+//
+// 要验的是四件**只有计数看得见**的事：
+//   ① 超预算之后真的会淘汰，且当前占用回到"预算 + 单张最大"以内（瞬时上界）；
+//   ② 被丢掉的纹理**下一帧能重建**（不是丢完就缺字，也不是丢了个野句柄）；
+//   ③ 预算设成 0 = 与 0.8.3 完全一致：只涨不落（这条是"淘汰可关"的判据，
+//      任务书 §0 的取舍底线）；
+//   ④ 淘汰次数进了账本（`textureEvictions`），否则"生效了没有"在画面上看不出来。
+//
+// 这一段**必须关掉逐字形那条路**（`SetGlyphAtlasEnabled(false)`）：开着的时候
+// 文字从图集里取，根本不建"整段纹理"，预算也就无从谈起。
+void CheckTextureBudgetEviction(SDL_Renderer* renderer) {
+    std::printf("\n-- 文字纹理预算与 LRU 淘汰（0.8.4 T-04） --\n");
+    if (renderer == nullptr) {
+        std::printf("         [skip] 没有渲染器，纹理无从建起\n");
+        return;
+    }
+    const std::string font = FindUsableFont();
+    if (font.empty()) {
+        std::printf("         [skip] 没有可读字体，纹理无从建起\n");
+        return;
+    }
+
+    using inking::detail::TextCacheStats;
+    using inking::detail::TextCacheStatsSnapshot;
+    constexpr std::uint64_t kMegabyte = 1024ull * 1024ull;
+    constexpr std::uint64_t kBudget = 8ull * kMegabyte;
+
+    // 逐字形那条路关掉：这一条验的是"整段一张纹理"那张表。
+    inking::detail::SetGlyphAtlasEnabled(false);
+    inking::detail::ReleaseTextCache();
+    inking::detail::SetTextureBudget(0);  // 先确认默认档（不淘汰）
+
+    inking::InkingScene scene("texture_budget");
+    inking::LabelData data;
+    data.name = "budget_label";
+    data.width = 800;
+    data.height = 40;
+    data.style.fontSize = 20.0f;
+    data.style.fontPath = font;
+    data.wrap = inking::TextWrap::NoWrap;  // 单行：一张纹理就是这一串
+    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    auto* label = static_cast<inking::InkingStaticLabel*>(
+        scene.AddChild(std::make_unique<inking::InkingStaticLabel>(&scene, data)));
+    inking::SceneLibrary::SetActiveScene(&scene);
+
+    // 每串都不一样的**长**串：一张纹理约 60 KB，200 张就是 12 MB 上下。
+    const std::string base =
+        "文字纹理预算与淘汰的自检样例串，长度要够才能把预算撑满。";
+    const auto frame = [&](int index) {
+        label->SetText(base + std::to_string(index));
+        scene.TickFrame(1.0f / 60.0f);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        inking::SceneLibrary::RenderScene(renderer);
+        return TextCacheStatsSnapshot();
+    };
+
+    const TextCacheStats one = frame(0);
+    const std::uint64_t singleBytes = one.textureBytes;
+    std::printf("         单张纹理 %llu 字节\n",
+                static_cast<unsigned long long>(singleBytes));
+    Check(singleBytes > 0,
+          "T-04：关掉逐字形之后，一段文字确实建出了一张整段纹理");
+
+    // ---- ③ 预算 0：只涨不落（与 0.8.3 一致） ----
+    for (int i = 1; i <= 200; ++i) {
+        frame(i);
+    }
+    const TextCacheStats unbounded = TextCacheStatsSnapshot();
+    std::printf("         预算 0 × 201 张 ⇒ %llu 字节 / 淘汰 %llu 次\n",
+                static_cast<unsigned long long>(unbounded.textureBytes),
+                static_cast<unsigned long long>(unbounded.textureEvictions));
+    Check(unbounded.textureBytes > kBudget,
+          "T-04：预算 0 时占用越过 8 MB（不淘汰就是改动前的行为，这条是基线）");
+    Check(unbounded.textureEvictions == 0,
+          "T-04：预算 0 时一次淘汰都不发生（淘汰必须可关）");
+
+    // ---- ①② 预算 8 MB：淘汰生效、且被丢的能重建 ----
+    inking::detail::SetTextureBudget(kBudget);
+    for (int i = 201; i <= 400; ++i) {
+        frame(i);
+    }
+    // 再多一帧：淘汰发生在帧首，最后一张的"回落"要到下一帧开头才看得到。
+    const TextCacheStats bounded = frame(401);
+    std::printf("         预算 8 MB × 402 张 ⇒ %llu 字节 / 淘汰 %llu 次\n",
+                static_cast<unsigned long long>(bounded.textureBytes),
+                static_cast<unsigned long long>(bounded.textureEvictions));
+    Check(bounded.textureBytes <= kBudget + singleBytes,
+          "T-04：预算 8 MB 时占用回到 ≤ 8 MB + 单张最大（瞬时上界，见头文件）");
+    Check(bounded.textureEvictions > 0, "T-04：真的淘汰过（textureEvictions > 0）");
+
+    // 被丢的那一串还能重建：重画第 0 帧那一串，`texturesCreated` 必须再涨一次。
+    // 涨了说明"它已经被丢掉了、这次是重新烘的"，也就是淘汰真的发生了（而不是
+    // 账本算错了数）。
+    const std::uint64_t createdBefore = TextCacheStatsSnapshot().texturesCreated;
+    const TextCacheStats rebuilt = frame(0);
+    std::printf("         重画最早那一串 ⇒ 新建 %llu 次（之前 %llu）\n",
+                static_cast<unsigned long long>(rebuilt.texturesCreated),
+                static_cast<unsigned long long>(createdBefore));
+    Check(rebuilt.texturesCreated > createdBefore,
+          "T-04：被淘汰的那一串能重建（丢的是缓存，不是内容；也没有野句柄）");
+
+    // ---- 收尾：预算归 0、逐字形那条路开回去、缓存清空 ----
+    inking::detail::SetTextureBudget(0);
+    Check(inking::detail::GetTextureBudget() == 0, "T-04：预算可以关回去（0 = 不淘汰）");
+    inking::detail::SetGlyphAtlasEnabled(true);
+    inking::SceneLibrary::SetActiveScene(nullptr);
+    inking::detail::ReleaseTextCache();
+}
+
 /// 元自检：清单里的每一条**都真的跑过**。
 ///
 /// 这是"清单化"能不能成立的关键：声明一张表只要几分钟，而一条自检悄悄消失
@@ -1139,6 +1563,165 @@ void CheckTextHiDpi() {
     SDL_DestroyRenderer(rendererB);
     SDL_DestroyWindow(windowA);
     SDL_DestroyWindow(windowB);
+}
+
+// ---------------------------------------------------------------------------
+// T-03（0.7.1）：文字光栅上限可配 + 触顶告警
+//
+// 改动之前 `kMaxTextRasterRatio` 是个常量：设计 640 + 4K 屏（R = 6）时文字按
+// 3× 烘、屏幕上再放大 2×，糊得没有理由，而且**日志里一个字都没有**。
+//
+// 这一条要钉住三件事：
+//   1. 夹取时计数 +1（`TextCacheStats::rasterCapped`，可断言）；
+//   2. WARN **只报一次**（第二帧不再刷）；
+//   3. 把上限提上去以后不再夹取（计数不动），且上限夹在 [1, 8]。
+//
+// 用"逻辑 320×180 + 窗口 1280×720"造 R = 4：不必真的开一块 4K 缓冲。
+// ---------------------------------------------------------------------------
+void CheckTextRasterCap() {
+    std::printf("\n-- 文字光栅上限：可配 + 触顶告警（0.7.1 T-03）--\n");
+
+    SDL_Window* window = SDL_CreateWindow("text-raster-cap", 1280, 720, 0);
+    SDL_Renderer* renderer =
+        window != nullptr ? SDL_CreateRenderer(window, nullptr) : nullptr;
+    Check(renderer != nullptr, "创建探针渲染器（1280×720）");
+    if (renderer == nullptr) {
+        if (window != nullptr) {
+            SDL_DestroyWindow(window);
+        }
+        return;
+    }
+    // 逻辑 320×180 ⇒ R = 4（窗口 1280×720 的 min(4, 4)）
+    SDL_SetRenderLogicalPresentation(renderer, 320, 180,
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+
+    // 复位到默认并**重新武装**告警（同值调用也算一次决策，见头文件那段）。
+    inking::detail::SetTextRasterCap(3.0f);
+    Check(inking::detail::GetTextRasterCap() == 3.0f,
+          "text_raster_capped：默认上限是 3×（不调 setter 等于改动之前）");
+
+    const auto drawText = [renderer] {
+        inking::TextRequest request;
+        request.text = "cap";
+        request.fontSize = 20.0f;
+        request.color = 0xFFFFFFFFu;
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_RenderClear(renderer);
+        inking::detail::BeginFrame(renderer);
+        inking::detail::PaintText(renderer, request, 200, 60, 1.0f, 0.0f, 0.0f,
+                                  inking::TransformSpec{});
+        inking::detail::EndFrame();
+    };
+    const auto cappedNow = [] {
+        return inking::detail::TextCacheStatsSnapshot().rasterCapped;
+    };
+
+    const std::uint64_t cappedBefore = cappedNow();
+    inking::InkLog::ResetStats();
+    drawText();  // R=4 vs 上限 3：夹取
+    const std::uint64_t cappedAfterFirst = cappedNow();
+    Check(cappedAfterFirst == cappedBefore + 1,
+          "text_raster_capped：R=4 超过上限 3 ⇒ 夹取计数 +1");
+    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+          "text_raster_capped：触顶报 1 条 WARN（不是静默夹取）");
+    NoteSilentFailure("text_raster_capped");
+
+    drawText();  // 同一档上限的第二帧
+    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+          "触顶 WARN 只报一次：第二帧不再刷日志");
+
+    // 提到 6×：R=4 不再触顶 ⇒ 计数不动
+    Check(inking::detail::SetTextRasterCap(6.0f)
+              && inking::detail::GetTextRasterCap() == 6.0f,
+          "SetTextRasterCap(6) 生效");
+    const std::uint64_t cappedBeforeRaise = cappedNow();
+    drawText();
+    Check(cappedNow() == cappedBeforeRaise,
+          "上限提到 6 以后 R=4 不再夹取（计数不动，字按 4× 烘）");
+
+    // 边界：夹在 [1, 8]，非法入参被拒
+    Check(inking::detail::SetTextRasterCap(99.0f)
+              && inking::detail::GetTextRasterCap() == 8.0f,
+          "上限夹在 8（99 被夹成 8）");
+    Check(inking::detail::SetTextRasterCap(0.25f)
+              && inking::detail::GetTextRasterCap() == 1.0f,
+          "上限夹在 1（0.25 被夹成 1）");
+    const float kept = inking::detail::GetTextRasterCap();
+    Check(!inking::detail::SetTextRasterCap(-1.0f)
+              && inking::detail::GetTextRasterCap() == kept,
+          "负上限被拒绝，当前值不变");
+
+    // 收尾：还原默认，别让后面的用例继承一个奇怪的上限
+    inking::detail::SetTextRasterCap(3.0f);
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+}
+
+// ---------------------------------------------------------------------------
+// T-02：缩放规则（素材该多大 / σ 干不干净）
+//
+// 这一条验的是**规则本身**，不是绘制：`ImageScaleSpec` 是纯函数，所以断言可以
+// 逐字对着任务书 §3 的数字（设计 1920 × 纵深 1 × R_max 2 = 3840 等）。
+//
+// 为什么必须落成自检而不是只写进 API.md：文档写错了没人会发现。而这四个数字
+// 后面挂着两个真实结论——"设计 640 在 4K 上要 3840 宽的素材"与"σ 非整数就是脏"。
+// 前者错了会让美术白出一倍的图，后者错了会让纵深档位选得毫无依据。
+// ---------------------------------------------------------------------------
+void CheckImageScaleRules() {
+    std::printf("\n-- 缩放规则：素材该多大 / σ 干不干净（0.7.0 T-02）--\n");
+
+    const auto make = [](int designWidth, float depth, float ratioMax) {
+        inking::ImageScaleSpec spec;
+        spec.designWidth = designWidth;
+        spec.depth = depth;
+        spec.ratioMax = ratioMax;
+        return spec;
+    };
+
+    // 规则一：素材像素 = 设计尺寸 × 纵深 × R_max
+    Check(make(1920, 1.0f, 2.0f).RequiredTextureWidth() == 3840,
+          "素材宽：1920 × 1.0 × 2 = 3840");
+    Check(make(640, 0.5f, 6.0f).RequiredTextureWidth() == 1920,
+          "素材宽：640 × 0.5 × 6 = 1920（纵深退后一半，素材只要一半）");
+
+    // 规则一的推论：绝对像素只取决于"最多占多少屏幕"，与设计尺寸无关。
+    // 三种设计尺寸在 4K 上都是 3840 宽——这就是"设计尺寸小 ≠ 会糊"的算式。
+    Check(make(1920, 1.0f, 2.0f).RequiredTextureWidth() == 3840
+              && make(1280, 1.0f, 3.0f).RequiredTextureWidth() == 3840
+              && make(640, 1.0f, 6.0f).RequiredTextureWidth() == 3840,
+          "同一块 4K 屏：1920 / 1280 / 640 三种设计尺寸都要 3840 宽的素材");
+
+    // 规则二：σ = 素材像素 ÷ 屏幕像素；=1 最清
+    Check(std::fabs(make(1920, 1.0f, 2.0f).SamplingRatio(3840, 2.0f) - 1.0f)
+              < 1e-4f,
+          "σ：3840 素材占 1920×1×2 屏幕 ⇒ 1.0（1:1）");
+    Check(make(1280, 1.0f, 2.0f).SamplingRatio(3840, 2.0f) == 1.5f,
+          "σ：3840 素材占 1280×2 屏幕 ⇒ 1.5（会有一列纹素被跳过）");
+
+    // 干净档位判定：整数干净、分数不干净、放大不干净
+    Check(inking::ImageScaleSpec::IsCleanRatio(1.0f)
+              && inking::ImageScaleSpec::IsCleanRatio(2.0f)
+              && inking::ImageScaleSpec::IsCleanRatio(3.0f),
+          "IsCleanRatio：1 / 2 / 3 都干净（整数档）");
+    Check(!inking::ImageScaleSpec::IsCleanRatio(1.5f)
+              && !inking::ImageScaleSpec::IsCleanRatio(1.2f)
+              && !inking::ImageScaleSpec::IsCleanRatio(0.5f),
+          "IsCleanRatio：1.5 / 1.2 / 0.5 都不干净（0.5 是放大，不是整数倍缩小）");
+
+    // 档位生成式 d = m / k：2× 素材的干净纵深 = 1.0 / 0.667 / 0.5 / 0.4
+    Check(std::fabs(inking::ImageScaleSpec::CleanDepth(2.0f, 3) - 0.6667f) < 0.001f
+              && std::fabs(inking::ImageScaleSpec::CleanDepth(2.0f, 5) - 0.4f)
+                     < 0.001f,
+          "CleanDepth：2× 素材的 k=3 / k=5 档 ⇒ 0.667 / 0.4");
+
+    // 非法输入：给 0 而不是一个假的 1（调用方据此跳过判定）
+    Check(make(0, 1.0f, 2.0f).RequiredTextureWidth() == 0
+              && make(320, 0.0f, 2.0f).RequiredTextureWidth() == 0
+              && make(320, 1.0f, 2.0f).SamplingRatio(0, 1.0f) == 0.0f,
+          "非法输入（设计宽 0 / 纵深 0 / 纹理 0）⇒ 0，不是伪造的 1");
 }
 
 // ---------------------------------------------------------------------------
@@ -4458,6 +5041,281 @@ std::vector<std::uint32_t> ReadPixelRegion(SDL_Renderer* renderer,
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// T-01：栅格化发生在设备分辨率吗
+//
+// §3.2 的整条推论（"素材按屏幕像素出才有意义"）压在这个假设上：纹理直接对
+// **屏幕像素**采样，中间没有"先渲到设计分辨率再放大"。若假设反了，2× 素材
+// 等于白烧 4 倍显存。十行探针换一个二值结论，值得。
+//
+// 探针的判据要**不依赖采样模式**——这条吃过亏：软件后端的几何批恒用最近邻
+// （`SetImageSampling` 那一段的记录），所以"放大后有没有中间灰"在这个后端
+// 上永远为假，拿它做判别会得出"结论成立"的假象。
+//
+// 改用**一条 1px 黑列**（纹理 64 宽，第 33 列全黑，其余全白；33 是奇数）：
+//
+//   - **在设备分辨率栅格化**：64 纹理 → 64 屏幕 = 1:1 ⇒ 读回来**正好一列**
+//     纯黑，落在第 33 列，32 行全黑；
+//   - **先渲到 32×32 再放大**：64 → 32 取样丢掉一半纹素（最近邻丢奇数或偶数列，
+//     双线性变成 50% 灰），再放大 ⇒ "一列纯黑"这条不成立（要么没有黑列，
+//     要么两列、要么是灰列）。
+//
+// 清屏用**橙色**而不是黑色：黑列是探针图案，不该和背景同色（否则"探针丢了"
+// 会被读成"有一片黑"）。
+// ---------------------------------------------------------------------------
+
+/// 一次回读里"那条黑列"的读数。
+struct ProbeCensus {
+    bool read = false;          ///< 回读成功了吗
+    int blackColumns = 0;       ///< 含近黑像素的**设备列**个数
+    int firstBlackColumn = -1;  ///< 第一条这样的列的设备坐标
+    int blackPerColumn = 0;     ///< 那列上有几个近黑像素
+    int greyPixels = 0;         ///< 既非近黑也非近白（插值留下的痕迹，只看诊断）
+};
+
+ProbeCensus CensusBlackColumn(SDL_Renderer* renderer, const SDL_Rect& region) {
+    ProbeCensus census;
+    if (renderer == nullptr || region.w <= 0 || region.h <= 0) {
+        return census;
+    }
+    // 整幅读回再自己裁：`SDL_RenderReadPixels` 的矩形在**逻辑呈现**开着时是
+    // 逻辑坐标还是物理坐标，各后端历史上不一致；nullptr（整幅）没有这个歧义。
+    SDL_Surface* shot = SDL_RenderReadPixels(renderer, nullptr);
+    if (shot == nullptr) {
+        return census;
+    }
+    SDL_Surface* argb = SDL_ConvertSurface(shot, SDL_PIXELFORMAT_ARGB8888);
+    SDL_DestroySurface(shot);
+    if (argb == nullptr || !SDL_LockSurface(argb)) {
+        SDL_DestroySurface(argb);
+        return census;
+    }
+    const auto* base = static_cast<const std::uint8_t*>(argb->pixels);
+    // 每一列记"近黑像素数"（近黑 = r+g+b ≤ 30，挡住抗锯齿边缘那点残值）。
+    std::vector<int> blackAt(static_cast<std::size_t>(region.w), 0);
+    for (int row = region.y; row < region.y + region.h && row < argb->h; ++row) {
+        if (row < 0) {
+            continue;
+        }
+        const auto* line = reinterpret_cast<const std::uint32_t*>(
+            base + static_cast<std::size_t>(row) * argb->pitch);
+        for (int col = region.x; col < region.x + region.w && col < argb->w; ++col) {
+            if (col < 0) {
+                continue;
+            }
+            const std::uint32_t pixel = line[col];
+            const int sum = static_cast<int>((pixel >> 16) & 0xFFu)
+                + static_cast<int>((pixel >> 8) & 0xFFu)
+                + static_cast<int>(pixel & 0xFFu);
+            if (sum <= 30) {
+                ++blackAt[static_cast<std::size_t>(col - region.x)];
+            } else if (sum < 735) {  // 245 × 3：既不是近黑也不是近白
+                ++census.greyPixels;
+            }
+        }
+    }
+    SDL_UnlockSurface(argb);
+    SDL_DestroySurface(argb);
+
+    for (int i = 0; i < region.w; ++i) {
+        const int count = blackAt[static_cast<std::size_t>(i)];
+        if (count <= 0) {
+            continue;
+        }
+        ++census.blackColumns;
+        if (census.firstBlackColumn < 0) {
+            census.firstBlackColumn = region.x + i;
+        }
+        if (count > census.blackPerColumn) {
+            census.blackPerColumn = count;
+        }
+    }
+    census.read = true;
+    return census;
+}
+
+void CheckRasterIsDeviceSpace() {
+    std::printf("\n-- 栅格化发生在设备分辨率（0.7.0 T-01）--\n");
+
+    constexpr int kScreen = 64;   // 屏幕（设备像素）
+    constexpr int kLogical = 32;  // 逻辑画布 ⇒ R = 2
+    constexpr int kProbeColumn = 33;  // 黑列的**设备**列号（奇数：最近邻会丢它）
+
+    SDL_Window* window = SDL_CreateWindow("ink-raster-space", kScreen, kScreen, 0);
+    SDL_Renderer* renderer =
+        window != nullptr ? SDL_CreateRenderer(window, nullptr) : nullptr;
+    Check(renderer != nullptr, "创建 64×64 探针渲染器");
+    if (renderer == nullptr) {
+        if (window != nullptr) {
+            SDL_DestroyWindow(window);
+        }
+        return;
+    }
+
+    // 造一张 64×64 的 24 位 BMP：白底 + 指定列全黑。用 BMP 而不是 PNG 的理由
+    // 与 `MakeSheetBmp` 相同——图案要逐像素确定，头 54 字节手写就够了。
+    const std::vector<std::uint8_t> probeBmp = [] {
+        constexpr int size = 64;
+        const int stride = (size * 3 + 3) / 4 * 4;
+        const int imageSize = stride * size;
+        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(54 + imageSize), 0);
+        const auto put32 = [&bytes](int offset, std::uint32_t value) {
+            bytes[offset] = static_cast<std::uint8_t>(value & 0xFFu);
+            bytes[offset + 1] = static_cast<std::uint8_t>((value >> 8) & 0xFFu);
+            bytes[offset + 2] = static_cast<std::uint8_t>((value >> 16) & 0xFFu);
+            bytes[offset + 3] = static_cast<std::uint8_t>((value >> 24) & 0xFFu);
+        };
+        bytes[0] = 'B';
+        bytes[1] = 'M';
+        put32(2, static_cast<std::uint32_t>(54 + imageSize));
+        put32(10, 54);
+        put32(14, 40);
+        put32(18, size);
+        put32(22, size);
+        bytes[26] = 1;   // planes
+        bytes[28] = 24;  // bpp
+        put32(34, static_cast<std::uint32_t>(imageSize));
+        for (int y = 0; y < size; ++y) {
+            for (int x = 0; x < size; ++x) {
+                const auto value =
+                    static_cast<std::uint8_t>(x == kProbeColumn ? 0x00 : 0xFF);
+                std::uint8_t* pixel =
+                    &bytes[static_cast<std::size_t>(54 + y * stride + x * 3)];
+                pixel[0] = value;
+                pixel[1] = value;
+                pixel[2] = value;
+            }
+        }
+        return bytes;
+    }();
+
+    // `logicalSize == 0` ⇒ 不设逻辑呈现（1 逻辑单位 = 1 设备像素）
+    const auto probe = [&](int logicalSize, int quadSize) {
+        if (logicalSize > 0) {
+            SDL_SetRenderLogicalPresentation(renderer, logicalSize, logicalSize,
+                                             SDL_LOGICAL_PRESENTATION_LETTERBOX);
+        } else {
+            SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                             SDL_LOGICAL_PRESENTATION_DISABLED);
+        }
+        inking::ImageBytes image;
+        image.data = probeBmp.data();
+        image.size = probeBmp.size();
+        image.name = "raster_probe";
+
+        // 橙色清屏：探针图案里有黑，背景不能也是黑。
+        SDL_SetRenderDrawColor(renderer, 0xF0, 0x80, 0x10, 255);
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_RenderClear(renderer);
+        inking::detail::BeginFrame(renderer);
+        const bool painted = inking::detail::PaintImage(
+            renderer, image, inking::ShapeSpec{}, quadSize, quadSize, 1.0f, 0.0f,
+            0.0f, inking::TransformSpec{}, inking::ImageFit::Fill, 0xFFFFFFFFu);
+        inking::detail::EndFrame();
+        // 只读中间那一半：边缘那一圈有形状层自己的抗锯齿过渡，与本条无关
+        // （第 33 列落在 16..47 之内，左右各留 17 / 14 列）。
+        const SDL_Rect center{kScreen / 4, kScreen / 4, kScreen / 2, kScreen / 2};
+        return std::make_pair(painted, CensusBlackColumn(renderer, center));
+    };
+
+    // ① 基准：不设逻辑呈现，64 纹理铺 64 屏幕 = 1:1（用来证明探针本身能看见那列）
+    const auto baseline = probe(0, kScreen);
+    // ② 被测：逻辑 32、屏幕 64（R = 2），同一张 64 宽的纹理铺满逻辑画布
+    const auto measured = probe(kLogical, kLogical);
+
+    // 尾部恢复，别污染后面的检查（自检里已有这个套路）。
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+
+    if (!baseline.first || !measured.first || !baseline.second.read
+        || !measured.second.read) {
+        std::printf("      [skip] 图片解码 / 回读不可用——这条探针无从验起\n");
+    } else {
+        std::printf("      [diag] 黑列：基准 %d 列@%d（每列 %d 像素，灰像素 %d）／"
+                    "R=2 %d 列@%d（每列 %d 像素，灰像素 %d）\n",
+                    baseline.second.blackColumns, baseline.second.firstBlackColumn,
+                    baseline.second.blackPerColumn, baseline.second.greyPixels,
+                    measured.second.blackColumns, measured.second.firstBlackColumn,
+                    measured.second.blackPerColumn, measured.second.greyPixels);
+        Check(baseline.second.blackColumns == 1
+                  && baseline.second.firstBlackColumn == kProbeColumn
+                  && baseline.second.blackPerColumn == kScreen / 2,
+              "基准：1:1 时第 33 列是**唯一**一列纯黑（探针能看见单像素特征）");
+        if (measured.second.blackColumns == 1
+            && measured.second.firstBlackColumn == kProbeColumn
+            && measured.second.blackPerColumn == kScreen / 2) {
+            Check(true,
+                  "R=2 时同一列仍是唯一的纯黑列 ⇒ 栅格化在**设备分辨率**"
+                  "（§3.2 成立）");
+        } else {
+            // 任务书 §1.3：这不是"代码写错"，而是**地基反了**——§3.2 的整条
+            // 推论要重写。所以不计失败项，但必须喊出来（静默变成"通过"最坏）。
+            std::printf("      [阻塞] R=2 下黑列读数 %d 列@%d：栅格化可能发生在"
+                        "逻辑分辨率 ⇒ §3.2 需重写，任务书要重开\n",
+                        measured.second.blackColumns,
+                        measured.second.firstBlackColumn);
+        }
+    }
+
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+}
+
+// ---------------------------------------------------------------------------
+// T-04（0.7.1）：素材分辨率 DEBUG 校验
+//
+// 素材像素不够的症状是"画面有点软"——没人会顺着"有点软"去查美术导出的像素数。
+// 所以这条护栏必须**自己出声**，而它只在 `INK_ISDEBUG` 下存在（发布包零成本）。
+//
+// 两条断言分别对应两边：
+//   - DEBUG：64×64 的素材进 128×128 的组件 ⇒ 计数 +1、WARN 1 条；
+//   - Release：计数恒 0、一条 WARN 都没有 ⇒ 证明"整段真的被编译掉了"，
+//     而不是"这段代码在 Release 里恰好没触发"。
+//
+// 注意两边都要登记 `NoteSilentFailure`：静默失效清单的元自检不分构建类型。
+// ---------------------------------------------------------------------------
+void CheckImageUndersampledWarn() {
+    std::printf("\n-- 素材分辨率：DEBUG 下才校验（0.7.1 T-04）--\n");
+
+    struct ProbeScene : inking::InkingScene {
+        ProbeScene() : inking::InkingScene("selftest-undersample") {}
+    };
+    ProbeScene scene;
+
+    inking::ImageData data;
+    data.name = "undersample_probe";
+    data.width = 128;
+    data.height = 128;
+    data.normal.type = inking::AppearanceType::Image;
+    data.normal.source = "undersample_probe";
+
+    const std::uint64_t before =
+        inking::detail::TextCacheStatsSnapshot().imageUndersampled;
+    inking::InkLog::ResetStats();
+
+    auto* image = static_cast<inking::InkingStaticImage*>(
+        scene.AddChild(std::make_unique<inking::InkingStaticImage>(&scene, data)));
+    // 64×64 的素材铺进 128 宽的组件：任何一块屏上 σ 都不超过 0.5。
+    const std::vector<std::uint8_t> small = MakeCheckerBmp(64, 64, 1);
+    image->SetImageBytes(small.data(), small.size(), "undersample_probe");
+
+    const std::uint64_t delta =
+        inking::detail::TextCacheStatsSnapshot().imageUndersampled - before;
+    const std::uint64_t warnings =
+        inking::InkLog::CountOf(inking::LogLevel::Warn);
+
+#if defined(INK_ISDEBUG)
+    Check(delta == 1,
+          "image_undersampled：DEBUG 下素材 64×64 进 128×128 组件 ⇒ 计数 +1");
+    Check(warnings == 1,
+          "image_undersampled：DEBUG 下报 1 条 WARN（带素材 / 需要 / 比例三个数）");
+#else
+    Check(delta == 0 && warnings == 0,
+          "image_undersampled：Release 下整段被编译掉（计数 0、无 WARN）");
+#endif
+    NoteSilentFailure("image_undersampled");
+}
+
 void CheckImageFitSrcRect(SDL_Renderer* renderer) {
     std::printf("\n-- 图集源矩形：切格与单独小图逐像素一致（0.6.1 T-04） --\n");
 
@@ -5150,6 +6008,109 @@ void CheckImageSampling(SDL_Renderer* renderer) {
     }
 
     inking::detail::SetImageSampling(inking::detail::ImageSampling::Linear);
+    inking::SceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// T-05（0.8.2）：纹理字节账本
+// ---------------------------------------------------------------------------
+//
+// 要验的不是"数字看起来合理"，而是三条**只有账本才看得见**的事：
+//   ① 建一张已知尺寸的图 ⇒ 账上至少多出 宽×高×4（口径是 RGBA8 上界）；
+//   ② `ReleaseTextCache()` 之后 ⇒ 归零（不清账的坏味道是"越用越多、永不回落"，
+//      而画面上完全看不出来——它只会 OOM，然后没人知道是纹理表干的）；
+//   ③ 再建一次 ⇒ **峰值不回退**（峰值记的是最坏情况，不是当前值）。
+//
+// 顺带钉一条容易写错的：**缓存命中不该再记账**（同一个文件被多个组件引用时
+// 只该占一次）。双计的表现是"账上比实际多一倍"，那会让人过早去优化一个
+// 并不存在的问题。
+void CheckTextureBytes(SDL_Renderer* renderer) {
+    std::printf("\n-- 纹理字节账本：建 → 放 → 归零 → 峰值不回退（0.8.2 T-05） --\n");
+    using inking::detail::TextCacheStats;
+    using inking::detail::TextCacheStatsSnapshot;
+
+    if (renderer == nullptr) {
+        // 没有渲染器就没有纹理，账本无从验；上面"创建渲染器"那条已经红了，
+        // 这里只留一句说明，不额外记一笔假红。
+        std::printf("         [skip] 没有渲染器，账本无从验\n");
+        return;
+    }
+
+    // 先放一次：让"账上有什么"从一个确定的 0 开始（前面十几个用例留下的纹理
+    // 不可枚举，拿它们当基线就只能验"变大了"）。
+    inking::detail::ReleaseTextCache();
+    const TextCacheStats empty = TextCacheStatsSnapshot();
+    std::printf("         释放后：%llu 字节 / %llu 张\n",
+                static_cast<unsigned long long>(empty.textureBytes),
+                static_cast<unsigned long long>(empty.textureCount));
+    Check(empty.textureBytes == 0 && empty.textureCount == 0,
+          "T-05：释放之后账真的归零（纹理表与字形图集都销过账）");
+
+    const std::vector<std::uint8_t> bmp = MakeCheckerBmp(64, 64, 8);
+    constexpr std::uint64_t kOneTexture = 64ull * 64ull * 4ull;  // 16,384
+
+    const auto paint = [&](const char* name) {
+        inking::InkingScene scene("texture_bytes");
+        inking::SceneLibrary::SetActiveScene(&scene);
+        inking::ImageData data;
+        data.name = name;
+        data.width = 64;
+        data.height = 64;
+        data.normal.type = inking::AppearanceType::Image;
+        data.normal.source = name;
+        data.normal.imageBytes = bmp.data();
+        data.normal.imageSize = bmp.size();
+        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        scene.AddChild(std::make_unique<inking::InkingStaticImage>(&scene, data));
+        scene.TickFrame(1.0f / 60.0f);
+        RenderSvgFrame(renderer, scene);
+        EndSvgFrame(renderer);
+        return TextCacheStatsSnapshot();
+    };
+
+    const TextCacheStats first = paint("bytes_probe_a");
+    std::printf("         建一张 64×64：%llu 字节 / %llu 张\n",
+                static_cast<unsigned long long>(first.textureBytes),
+                static_cast<unsigned long long>(first.textureCount));
+    Check(first.textureBytes >= kOneTexture,
+          "T-05：建一张 64×64 的图，账上至少多出 宽×高×4");
+    Check(first.textureCount >= 1, "T-05：纹理条数跟着涨");
+    Check(first.textureBytesPeak >= first.textureBytes,
+          "T-05：峰值不小于当前值");
+
+    // 同名再画一次 = 缓存命中：条数与字节数都**不该**再涨。
+    const TextCacheStats second = paint("bytes_probe_a");
+    Check(second.textureCount == first.textureCount
+              && second.textureBytes == first.textureBytes,
+          "T-05：缓存命中不重复记账（同一个文件只占一笔）");
+
+    // 换一个名字 = 真的多一张。
+    const TextCacheStats third = paint("bytes_probe_b");
+    Check(third.textureBytes >= first.textureBytes + kOneTexture,
+          "T-05：换一张不同名字的图，账上再多一笔");
+
+    const std::uint64_t peakBefore = third.textureBytesPeak;
+
+    inking::detail::ReleaseTextCache();
+    const TextCacheStats released = TextCacheStatsSnapshot();
+    std::printf("         再释放：%llu 字节 / %llu 张（峰值 %llu）\n",
+                static_cast<unsigned long long>(released.textureBytes),
+                static_cast<unsigned long long>(released.textureCount),
+                static_cast<unsigned long long>(released.textureBytesPeak));
+    Check(released.textureBytes == 0 && released.textureCount == 0,
+          "T-05：多张之后释放同样归零（每一处都销账了，不是只有第一处）");
+    Check(released.textureBytesPeak == peakBefore,
+          "T-05：峰值只增不减（回落之后仍记得住最坏情况）");
+
+    // 登记进静默失效清单：这一条的现象正是"账本只建不销账，内存只涨不回落"。
+    NoteSilentFailure("texture_bytes_leak");
+
+    // 再建一次：当前值重新涨起来，峰值不能倒退。
+    const TextCacheStats again = paint("bytes_probe_c");
+    Check(again.textureBytes >= kOneTexture && again.textureBytesPeak >= peakBefore,
+          "T-05：释放后再建，当前值重新涨起、峰值不回退");
+
     inking::SceneLibrary::SetActiveScene(nullptr);
 }
 
@@ -6420,13 +7381,32 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
 
 int main() {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    std::printf("== inking 动态库 · 无头端到端自检 ==\n");
+    // ---- 视频驱动：默认 dummy；`INKING_SELFTEST_DRIVER=windows` 走真后端 ----
+    //
+    // 为什么默认**必须**仍是 dummy：那是"在任何机器上都能跑"的唯一保证。
+    // 改成"自动挑真后端"等于把默认测试变成看显卡脸色——一台没 GPU 的机器上
+    // 它从"全绿"变成"红"，而代码一行没动。
+    //
+    // 为什么需要真后端这一档（0.8.0 T-02）：全部像素证据原本只在 software
+    // 后端上，而 0.6.4 那次"采样模式在几何批上不生效"正是 **GPU 与 software
+    // 行为不同**的那类缺陷。真后端跑一遍，这类差异才会自动现形。
+    //
+    // **必须在这里读、在 `SDL_Init` 之前设 hint**：hint 只在建驱动时被消费，
+    // 晚一步就静默无效（配置写了、行为没变、没有报错）。
+    const char* driverEnv = std::getenv("INKING_SELFTEST_DRIVER");
+    const std::string videoDriver =
+        (driverEnv != nullptr && driverEnv[0] != '\0') ? driverEnv : "dummy";
+
+    std::printf("== inking 动态库 · 端到端自检 ==\n");
     // 阶段单独打出来（`0.4.0` + `release`）：当前是哪个阶段要在运行期看得见，
     // 不能只写在 README 里（别人抓到一份日志时，第一行就该知道它是什么版本）。
     std::printf("   版本 %s-%s / SDL3 %s / 消息队列编译期%s\n",
                 inking::kVersion, inking::kVersionStage,
                 inking::sdl3_version().c_str(),
                 inking::kMessageEnabled ? "开" : "关");
+    // 日志要自证**跑了哪一个后端**：同一份"失败项：0"在两种后端下含义不同。
+    std::printf("   视频驱动 = %s（环境变量 INKING_SELFTEST_DRIVER 可改）\n",
+                videoDriver.c_str());
 
     // ---- 设计尺寸：默认值 / 参数校验（必须在场景构造之前） ----
     CheckDesignSizeDefault();
@@ -6436,13 +7416,32 @@ int main() {
     Check(scene.GetDrawItemCount() >= 2, "绘制列表里有两个组件");
     CheckDesignSizeLocked();  // 场景已按设计尺寸定型 → 之后不许再改
 
-    // ---- 无头环境：dummy 视频驱动 + 软件渲染器 ----
-    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
-    Check(SDL_Init(SDL_INIT_VIDEO), "SDL_Init（dummy 视频驱动）");
+    // ---- 窗口与渲染器：驱动由 INKING_SELFTEST_DRIVER 决定（默认 dummy）----
+    SDL_SetHint(SDL_HINT_VIDEO_DRIVER, videoDriver.c_str());
+    Check(SDL_Init(SDL_INIT_VIDEO),
+          (std::string("SDL_Init（视频驱动 ") + videoDriver + "）").c_str());
     SDL_Window* win = SDL_CreateWindow("ink-selftest", 640, 360, 0);
+    SDL_Renderer* rnd = win != nullptr ? SDL_CreateRenderer(win, nullptr) : nullptr;
+
+    // 真后端建不出来 = **这台机器没有可用的 GPU 驱动**，它与"代码坏了"必须在
+    // ctest 里长得不一样（Skipped vs Failed）。所以这里先判、后断言：
+    // 直接在 Check 里红掉的话，一台没有显卡的 CI 机器会永远红着。
+    if ((win == nullptr || rnd == nullptr) && videoDriver != "dummy") {
+        std::printf("[skip] 真后端不可用（视频驱动 %s）：%s\n",
+                    videoDriver.c_str(),
+                    SDL_GetError()[0] != '\0' ? SDL_GetError() : "（无错误信息）");
+        if (rnd != nullptr) {
+            SDL_DestroyRenderer(rnd);
+        }
+        if (win != nullptr) {
+            SDL_DestroyWindow(win);
+        }
+        SDL_Quit();
+        return 77;  // ctest 的 SKIP_RETURN_CODE：显示 Skipped，不算失败
+    }
     Check(win != nullptr, "创建窗口");
-    SDL_Renderer* rnd = win ? SDL_CreateRenderer(win, nullptr) : nullptr;
-    Check(rnd != nullptr, "创建渲染器（软件）");
+    Check(rnd != nullptr,
+          (std::string("创建渲染器（") + videoDriver + "）").c_str());
 
     scene.TickFrame(1.0f / 60.0f);
     inking::SceneLibrary::SetActiveScene(&scene);
@@ -6494,6 +7493,18 @@ int main() {
     // ---- 文字高清：按设备比例烘字，布局零位移 ----
     CheckTextHiDpi();
 
+    // ---- 文字光栅上限：可配 + 触顶告警（0.7.1 T-03）----
+    CheckTextRasterCap();
+
+    // ---- 缩放规则：素材该多大 / σ 干不干净（0.7.0 T-02）----
+    CheckImageScaleRules();
+
+    // ---- 栅格化发生在设备分辨率（0.7.0 T-01）：颜色种类数 ----
+    CheckRasterIsDeviceSpace();
+
+    // ---- 素材分辨率：DEBUG 校验（0.7.1 T-04）----
+    CheckImageUndersampledWarn();
+
     // ---- 静默失效护栏：自测量 / 零尺寸 / 全透明兜底 / 字体 / 日志（0.1.1） ----
     CheckSilentFailureGuards(rnd, &scene);
 
@@ -6504,6 +7515,15 @@ int main() {
     CheckThemeTokenMissing();
     CheckScrollRangeStale();
     CheckTextNegativeWidth();
+
+    // ---- 文字按框高裁行：`Clip` 的默认语义真的生效（0.8.3 T-01） ----
+    CheckTextClipByHeight();
+
+    // ---- 字形图集满：不再逐帧重烘 + 首次发声（0.8.3 T-02 / T-03） ----
+    CheckGlyphAtlasFullNoRetry(rnd);
+
+    // ---- 文字纹理预算与 LRU 淘汰（0.8.4 T-04） ----
+    CheckTextureBudgetEviction(rnd);
 
     // ---- 消息队列 ----
     inking::MessageQueue::addMessage(inking::MessageType::Pass, 0.0f, "hi");
@@ -6620,6 +7640,9 @@ int main() {
 
     // ---- 动画组：一个节点承载多个动作（0.6.6 T-18）----
     CheckSpriteGroup();
+
+    // ---- 纹理字节账本：建→放→归零→峰值（0.8.2 T-05，放在最后：会清空纹理缓存）----
+    CheckTextureBytes(rnd);
 
     inking::SceneLibrary::SetActiveScene(nullptr);
     if (rnd != nullptr) {

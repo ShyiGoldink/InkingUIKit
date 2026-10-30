@@ -5,7 +5,252 @@
 
 ---
 
-## 0.6.6 —— 2026-10-28（**当前：发布版**：换配置 / 不规则图集 / 动画组）
+## 0.8.5（`0.8.3` / `0.8.4` **未单独发版**：文字层的上限与静默）
+
+> 来源：任务书 [`plans/2026-10-30-text-layer-caps.md`](plans/2026-10-30-text-layer-caps.md)
+> （本日缺陷排查：`-Wall -Wextra` 全量编译的严格告警 / `-fanalyzer` 66 个 TU 0 条 /
+> 7 个探针实测）。
+> 一条结论拆成 5 个任务：**文字层有三条路径没有上限、且全部静默**。
+> 三个批次（0.8.3 止血 / 0.8.4 发声与预算 / 0.8.5 告警门）在同一次发版里交付，
+> 所以版本号直接是 **0.8.5**——与 0.7.0 未单发、只发 0.7.1 是同一个惯例。
+
+### 修复
+
+- **文字会画到组件框外**（T-01，0.8.3）：`TextOverflow::Clip` 是默认值、头文件里写着
+  "多余的行不画"，但**从来没有实现过**——`maxHeight` 只参与垂直对齐。实测 300×40 的
+  标签 + 100 个汉字：7 行全画，**框外 10,030 个亮像素**。现在排版层按"累计行高 ≤
+  `maxHeight − 上下 padding`"丢尾行并置 `truncated`；命令行改完是 **1 行 / 框外 0**。
+  两条边界：**至少留一行**（框比一行还矮也画，不让标签静默变空白）、**不缩字号**。
+  想让长文案溢出的把 `height` 设 0 即恢复旧行为（不需要改库）。
+- **图集满之后每帧白烘一遍字形**（T-02，0.8.3）：1024² 图集灌满后，文字一个字都没变
+  也每帧把整段重新栅格化再失败（实测 19 次/帧、60 帧多烘 1140 次），最后照样退回整段
+  渲染。新增 `TextLayer::glyphAtlasFull`：满了整条逐字形路直接短路，行为与之前**一致**，
+  只是不再白烧 CPU。复位只在 `ReleaseGlyphAtlas()`（换比例 / 换字号档 /
+  `ReleaseTextCache`）。
+
+### 新增
+
+- **图集满会发声**（T-03，0.8.4）：第一次满时一条 WARN（已用格数 / 上限 / 后果），
+  计数进 `GlyphAtlasStats::full`。静默失效清单新增第 13 条 `glyph_atlas_full`
+  （`AGENTS.md` §7 + `kSilentFailures` + `NoteSilentFailure` 三处同改）。
+- **文字纹理的字节预算与 LRU 淘汰**（T-04，0.8.4）：`detail::SetTextureBudget(bytes)`，
+  **默认 0 = 不淘汰**（与 0.8.3 逐字节相同）。`SceneLibrary::RenderScene` 每帧先调
+  `detail::BeginTextFrame` 推进帧号；超预算就从最久没用过的条目丢起，丢之前先
+  `FlushGeometry()`（批里可能还引用着那张纹理）。四条边界写进
+  `api/InkingRender.md` §4.1：瞬时上界是"预算 + 本帧新增"、字形图集不参与淘汰、
+  预算比图集还小时放弃淘汰、字节数按 RGBA8 上界算（偏保守）。
+  实测：预算 0 时 402 张长串 ⇒ 12.8 MB 只涨不落；预算 8 MB ⇒ 8.43 MB
+  （≤ 8 MB + 单张 61,776），淘汰 271 次，被丢的串重画能重建。
+- **严格告警门 `strict_warnings`**（T-05，0.8.5）：`ctest` 从 6 条变 7 条。用同一批源
+  （`src/` + `tools/inkgen/`）、另一套 flags（`-Wall -Wextra -Wshadow -Wcast-qual
+  -Wuseless-cast -Werror`）编一个 `OBJECT` 库，目标 `EXCLUDE_FROM_ALL`（不进 `all`，
+  日常构建耗时不变）。改前严格 flags 下 25 条真告警，已逐条清掉；`-Woverloaded-virtual`
+  指向 `InkingWidget::Activate` 被隐藏的那一批**这一轮不改**（改名是公开面变更），
+  门里显式 `-Wno-` 并注明原因。门本身**人工验过红绿**（临时加一个 unused 变量 ⇒ 报
+  `-Werror=unused-variable`；删掉恢复）。
+
+### 变更
+
+- 删掉三个"没人读的参数"：`detail::fillShapeTextured` 的 `hasAlpha`（0.6.2 矩形图片
+  并进几何批之后两条路逐位相同）、`HitsThumb` 的 `vertical`（`ScrollBarMetrics` 里
+  已经按轴算好了）、`AudioLoadFromMemory` 的 `AudioLoadMode`（从内存加载只有
+  "整段解进内存"一种，传 `Streaming` 是假的）。**0.x 不承诺 ABI**，但这三处会让
+  旧代码编译不过——按 0.x 的惯例，改签名就是改签名。
+- `InkingStaticLabel::LayoutForWidth` / `CacheMatches` 多一个 `availableHeight`
+  参数（private，外部看不到）；排版缓存键加高度（漏了就是"改了框高、行数没变"）。
+
+### 文档
+
+- `api/InkingRender.md` §4.1 新增"字节预算与 LRU 淘汰"；§五 更正"图集满了会整张重建"
+  这句错话（真实行为是退回整段渲染 + 一条 WARN）；文本排版那一节补"框高即上限"。
+- `API.md` §2 补"文字与框高"一段；§7 的沙箱注补一条实测陷阱：**手工跑自检要把
+  msys64 的 `ucrt64/bin` 放进 PATH**，否则 `SDL_IOFromFile` 失败、字体打不开，
+  自检会打印"没有可读字体"并跳过像素断言（那是环境，不是缺陷）。
+- `TaskGuide.md` A7 补记"`Clip` 之前没实现"这件事与本轮的落点。
+- `AGENTS.md` §6 追加第 113~115 条（告警门必须共用宏 / `-Werror` 与工具链耦合 /
+  删死参数之前先想它是不是历史遗留的决定）。
+
+### 已知限制
+
+- **帧内峰值不受预算约束**：淘汰发生在帧首，本帧刚烘出来的纹理不能丢（丢了当场缺字），
+  所以一帧里烘出 40 MB，那一帧照样是 40 MB。
+- **预算小于字形图集（1024² ≈ 4 MB）时不做淘汰**：否则每帧清空重烘，比不设预算更糟。
+- 图集"满了"是**粗粒度**判断：它只说明"这一格塞不进去"，更小的字形其实还塞得下。
+  按字形做 negative cache 能多塞几个小字，但要多一张表与失效逻辑，这一轮不做。
+
+---
+
+## 0.7.1 之后（**未单独发版**：证据链 / 交付路径 / 内存账本）
+
+> 来源：任务书 [`plans/2026-10-29-evidence-and-delivery.md`](plans/2026-10-29-evidence-and-delivery.md)
+> （「这个项目还需要什么」的五条建议，逐条核实后的 5 个任务、3 个批次）。
+> **不改任何渲染行为**：只把"已经对了"变成"随时可验证"，再加一本内存账。
+> 版本号仍是 **0.7.1**——`dist/inking-0.7.1-win64` 这份预编译包**已经包含**本节全部
+> 改动（见包内 `BUILD.txt` 验证记录），统一 bump 到 0.8.0 留给下一次发版。
+
+### 新增
+
+- **行为自检进了 `ctest`**（T-01）：`ctest` 从 4 条变 5 条，多出来的那条跑的是
+  565+ 项产品行为断言。此前"`ctest` 全绿"证明不了产品能用。
+  `-DINK_BUILD_EXAMPLES=OFF` 的构建里没有自检 exe，靠 `if(TARGET …)` 守卫少注册一条
+  ——有意为之，不是漏配。
+- **真后端一档**（T-02）：环境变量 `INKING_SELFTEST_DRIVER=windows` 让自检跑
+  direct3d11（`ctest` 里是第二条测试 `selftest_windows`，仅 Windows 注册）。
+  默认仍是 `dummy`（"任何机器都能跑"的唯一保证）。真后端建不出窗口时打印
+  `[skip] 真后端不可用` 并 `return 77`，`ctest` 显示 **Skipped** 而不是 Failed。
+  动机：0.6.4 那次"采样模式在软件后端几何批上不生效"正是 GPU 与 software 行为
+  不同的一类，只验一种后端永远抓不到。
+- **纹理字节账本**（T-05）：`TextCacheStats` 加 `textureBytes`（当前）/
+  `textureBytesPeak`（峰值）/ `textureCount`（条数）。四个建纹理的入口（字形图集 /
+  整段文字 / 图片 / SVG）在**拿到有效句柄之后**记账，四条释放路径（SVG 档位淘汰 /
+  换渲染器 / `ReleaseTextCache` / `ReleaseGlyphAtlas`）同步销账。
+  口径是 **RGBA8 上界**（`宽×高×4`），**不含渲染器内部缓冲**、也**不做淘汰决策**。
+- **静默失效清单新增 `texture_bytes_leak`**（`AGENTS.md` §7 + `kSilentFailures` +
+  `NoteSilentFailure` 三处同改）：账本只建不销账时，内存只涨不回落、画面上看不出来。
+- **示例素材随包分发**：包里多了 `bin/assets/design.svg` 与 `walk.png`（1.3 KB + 894 B）。
+  不带它们时，包里那个 demo 照样起窗、退出码 0，但背景是黑的、图集那块是空的——
+  "双击看效果"这条路径等于没走通，而且不报任何错。
+
+### 变更
+
+- `tools/package.sh` 加**一致性护栏**（T-04）：`include/inking.h`（版本号的唯一真相）
+  比 `build-release/bin/libinking.dll` 新时直接失败并提示先重建；缺
+  `inking_demo_selftest.exe` 也失败。此前两者互不比对，忘了重建会**静默**打出
+  "标着新版本、装着旧代码"的包。判据用 mtime 而不是"DLL 里搜版本串"——实测 DLL 里
+  搜不到任何一个版本号（`kVersion` 是 inline constexpr，未必被引用）。
+- `tools/BUILD.txt` 补"重新打包（维护者）"三步，写明护栏挡住什么、挡不住什么。
+- `examples/minimal/CMakeLists.txt` 注释不再写死 `inking-0.5.2-win64`（写死就是下一次
+  的过期文档）。
+- **`dist/` 从 0.5.3 追到 0.7.1**（T-03）：`find_package(inking CONFIG)`、安装布局、
+  DLL 闭包（19 个）这条路径 5 个版本没被走过，本轮实测走通；`examples/minimal`
+  用该包 configure + build + 运行全通过。**旧包保留不删**（可能有人钉着它）。
+
+### 文档
+
+- `docs/zh/API.md` §7：删掉"不要看退出码"那段（退出码就是失败项数，`0.1.1` 起
+  已可直接当判据），补 ctest 6 条与 `INKING_SELFTEST_DRIVER` 的用法。
+- `docs/zh/api/InkingRender.md`：`TextCacheStats` 补三个字段与**四条口径边界**
+  （偏高 / 不含渲染器内部缓冲 / 只统计这一层 / 只记账不决策）。
+- `docs/AGENTS.md` 第 29 条：补"示例自检一直不在列表里"这件事的结局与正确落点。
+
+### 已知限制
+
+- **`textureBytes` 偏高**：不透明图真实分配可能是 RGB888、贴图可能有对齐填充；
+  精确值的路（`SDL_GetTextureProperties`）已被 0.5.1 实测否掉（返回 UNKNOWN）。
+- **账本不含渲染器自己的内部缓冲**，所以它不是"进程显存占用"。
+- **一致性护栏抓不住"改了代码但忘了 bump 版本号"**：那属于版本纪律；mtime 只回答
+  "这份二进制比这份头新吗"。另外 git checkout / 解压会刷 mtime，可能误报一次
+  （提示语里写了"先重建一次"）。
+- **`examples/pet` 与 `examples/sharp` 不在包里**：它们是仓库内的验收用例，不是
+  运行期依赖（`sharp` 那张 5.97 MB 素材因此不进包，源码在仓库里）。
+
+---
+
+## 0.7.1 —— 2026-10-29（**当前：发布版**：缩放护栏 / 素材分辨率提示）
+
+> 来源：关于「设计像素 / 素材像素 / 纵深缩放 / 边缘模糊」的四轮讨论。任务书
+> [`plans/2026-10-29-scaling-and-device-pixels.md`](plans/2026-10-29-scaling-and-device-pixels.md)
+> 把结论收敛成**三条静态规则 + 两个小护栏**（0.7.0 规则 / 0.7.1 护栏）。
+> **0.7.0 没有单独发版**，两个批次在这一版一起收口。
+>
+> 两个明确的"不做"，避免以后再讨论：**不做运行期重采样、不做按目标尺寸的缓存表**
+> （本库取向是"内存换效率"）；"任意尺寸不失真"这条**放弃**，清晰度改由静态规则
+> 保证。抗锯齿带按设备像素改造推迟到 `1.x.x`（它与素材分辨率无关）。
+
+### 新增
+
+- **`SetTextRasterCap` / `GetTextRasterCap`**（`render/InkingText.h`，T-03）：文字光栅
+  比例上限从常量变成运行期可配（默认仍是 3，夹在 `[1, 8]`）。
+  "设计 640 + 4K 屏"（R = 6）那种配置可以提到 6×，代价是单字纹理面积 ×4。
+- **`TextCacheStats::rasterCapped`**（T-03）：触顶（夹取）次数。夹取不再是静默的——
+  第一次触顶报 1 条 WARN（带设计尺寸 / 想要的倍数 / 当前上限），之后只涨计数。
+- **素材分辨率 DEBUG 校验**（`detail::WarnIfImageUndersampled`，T-04）：`INK_ISDEBUG`
+  下在"字节到手"的三个入口（构造 / `SetImageBytes` / `LoadAsset`）比一次
+  "素材够不够它占的屏幕"，`σ < 0.75` 就 WARN 并计数（`image_undersampled`）。
+  Release 构建里整段被编译掉——零日志、零解码。
+- **静默失效清单新增两条**：`text_raster_capped` / `image_undersampled`
+  （`docs/AGENTS.md` §7 + `kSilentFailures` + `NoteSilentFailure` 三处同改）。
+
+### 变更
+
+- 文字层的 `kMaxTextRasterRatio` 常量 → `TextLayer::rasterCap` 字段（`kDefaultTextRasterCap`
+  = 3）。**不调 setter 的进程与 0.7.0 逐像素相同。**
+- 每次调 `SetTextRasterCap` 都会**重新武装**触顶告警（同值调用也算一次决策）：这是
+  为了让"只报一次"能被自检确定性复现。
+
+### 文档
+
+- `docs/zh/api/InkingRender.md`：补 `SetTextRasterCap` / `WarnIfImageUndersampled` 两节。
+
+### 已知限制
+
+- 素材够不够**只在 DEBUG 下检查**：发布包里没有任何提示（零成本换来"发布包不吵"）。
+- `WarnIfImageUndersampled` 的 `R_max` 用**主显示器桌面 ÷ 设计画布**近似：多显示器、
+  以及"窗口被拖到更大的那块屏"这两件事它都不知道。
+- 像素风素材（进程级 `SetImageSampling(Nearest)`）与 SVG **直接跳过**这条检查——
+  它们"放大"是正确用法。
+
+---
+
+## 0.7.0 —— 2026-10-29（并入 0.7.1：缩放规则落地）
+
+### 新增
+
+- **`dataStruct/InkingImageScale.h`**（纯头、无 SDL，T-02）：把三条规则做成
+  可调用、可断言的纯函数，与 `ImageFitSpec` 同一形态。
+  - `RequiredTextureWidth()`：素材宽 = 设计尺寸 × 纵深 × `R_max`；
+  - `SamplingRatio(纹理宽, R)` / `SamplingRatioAtMax()`：σ = 素材像素 ÷ 屏幕像素；
+  - `IsCleanRatio(σ)`：σ 是不是整数（干净档位）；`CleanDepth(m, k)`：干净纵深 = `m / k`。
+- **`examples/sharp`**（T-05）：720p 设计尺寸 + 一张 1536×2752 的真实素材
+  （`assets/nailong-art-01.png`，5.97 MB / 5.69 MiB），`1/2/3` 切 Fill / Contain / Cover、
+  `F11` 全屏、`ESC` 退出，每次显示状态变化打印设计 / 素材 / 绘制 / 屏幕 / R / σ。
+- **自检 `CheckImageScaleRules`**（T-02）：逐字对着任务书 §3 的数字断言。
+- **自检 `CheckRasterIsDeviceSpace`**（T-01）：验"栅格化发生在设备分辨率"。
+
+### 确认（T-01 的实测结论）
+
+**成立**（软件后端 + dummy 视频驱动实测）。判据是"纹理里的一条 1px 黑列在 R=2 时
+是否仍是唯一的一列纯黑"，读数：
+
+| 情形 | 黑列读数 |
+| - | - |
+| 基准（无逻辑呈现，64 纹理铺 64 屏幕） | **1 列 @ x=33**，每列 32 像素，灰像素 0 |
+| R=2（逻辑 32、屏幕 64） | **1 列 @ x=33**，每列 32 像素，灰像素 0 |
+| 对照组（先渲 32×32 再放大，`build/probe_devspace.cpp`） | **0 列**（黑列被丢掉） |
+
+前两行相同 ⇒ 中间没有"先缩到逻辑分辨率再放大"这一步，§3.2 那整条推论（素材按屏幕
+像素出才有意义）成立；第三行说明判据**有区分力**（不是"怎么测都是一列"）。
+GPU（direct3d11）后端没有实测，留作人工验收项。
+
+### 文档
+
+- `docs/zh/API.md` 新增 **§9 素材该多大（缩放规则）**：四个量、三条规则、干净档位表、
+  σ 判读表、`ImageScaleSpec` 用法，全部引用纯函数而不是抄公式。
+- `docs/zh/API.md` §3.1 / §8 索引登记新头文件；公开头计数按实测更新。
+
+### 验收（T-05 人工目视，2026-10-29）
+
+自动部分（可核对）：四档 `R` 与 `σ` 与任务书预测表**逐项一致**——Cover
+1.20 / 0.80 / 0.60 / 0.40，Contain 3.82 / 2.55 / 1.91 / 1.27。
+
+人工部分（Shyi 执行）：**符合预测**。原话是"看上去是 ok 的"——Cover 越全屏越软、
+Contain 越全屏越清，方向与预测一致；**同时记录一条保留意见**：目视本人对"我能看出
+多软"这件事没把握，所以这条按**低置信度符合**记，**不据此放宽任何规则**。
+
+> 这一条的可迁移结论只有一个：**这张画风上 2.5× 放大（σ=0.40）不至于难看到不能接受**。
+> 它是内容相关的观感，不是"规则可以松"的证据——规则管的是"素材该出多大"，
+> 而 σ<1 意味着放大这件事**确实发生了**，只是这张画的容错高。
+
+### 已知限制（本版明确接受）
+
+- **小设计尺寸 + 大屏时边缘略糊**：羽化带仍按设计像素（`kFeatherPixels = 1.0f`），
+  R≠1 时那一圈会失真。它与素材分辨率**无关**（羽化在顶点 alpha 上），推迟到 `1.x.x`。
+- **`Cover` 全屏一定越看越软**（素材只够它自己的像素数）：`examples/sharp` 的
+  `Cover` 列就是这样——那是规则的正确结果，不是缺陷。
+
+---
+
+## 0.6.6 —— 2026-10-28（发布版：换配置 / 不规则图集 / 动画组）
 
 > 来源：用户用自己的素材（CraftPix 史莱姆包）实测后追加三批需求——「修缺口 /
 > 不规则图集 + assets / 动画组」。核实、九成以上的取舍见

@@ -1,8 +1,10 @@
 #include <render/InkingGlyphAtlas.h>
 #include <render/InkingText.h>
 
+#include <dataStruct/InkingImageScale.h>
 #include <render/InkingBatch.h>
 #include <render/InkingDraw.h>
+#include <config/window_config.h>  // DesignWidth/Height：触顶告警里要报"设计多少"
 #include <detail/InkLog.h>
 
 #include <render/InkingSvg.h>
@@ -38,16 +40,24 @@ namespace inking {
 
 namespace {
 
+/// 烘字比例上限的**默认值**：3 倍以上继续加清晰度收益递减，而纹理面积按
+/// `ratio²` 涨。0.7.1 起它只是默认值，运行期可经 `SetTextRasterCap` 改
+/// （夹在 `[kMinTextRasterCap, kMaxTextRasterCap]`）。
+constexpr float kDefaultTextRasterCap = 3.0f;
+
+/// 上限的取值范围。下限 1 = "不做高清"（0.1.1 之前的行为）；上限 8 是"再往上
+/// 单字纹理面积就是 1× 的 64 倍"的那条线。
+constexpr float kMinTextRasterCap = 1.0f;
+constexpr float kMaxTextRasterCap = 8.0f;
+
 /// 纹理表里的一项。width/height 是**设备像素**（栅格化出来就是这么大）。
 struct TextureEntry {
     SDL_Texture* texture = nullptr;
     float width = 0.0f;
     float height = 0.0f;
-    /// 这张纹理带不带 alpha 通道。**在创建时从 surface 的格式记下来**——
-    /// 不能事后问 `SDL_GetTextureProperties`：`SDL_CreateTextureFromSurface`
-    /// 建出来的纹理拿不到格式属性（返回 UNKNOWN，于是"有 alpha"被误判成"没有"，
-    /// 矩形图片又走回几何批那条路，透明区重新变黑）。
-    bool hasAlpha = false;
+    // （这里曾经有一个 `bool hasAlpha`，用来选"要不要绕开几何批"。0.8.5 删了：
+    //  0.6.2 T-08 之后两条路逐位相同，它再也没人读——见 `fillShapeTextured`
+    //  里"矩形 + Fill"那段注释。一个没人读的字段比没有更容易骗人。）
     /**
      * 这张纹理是**图片**还是**字形**（0.6.4 T-12）。
      *
@@ -56,6 +66,26 @@ struct TextureEntry {
      * "字好像糙了一点"，没人会想到是图片开关干的）。
      */
     bool isImage = false;
+    /**
+     * 这张纹理在显存里占多少字节（0.8.2 T-05）。
+     *
+     * 口径：**宽 × 高 × 4（RGBA8 上界）**，不是真实分配量。为什么用上界：
+     * `SDL_CreateTextureFromSurface` 建出来的纹理拿不到像素格式
+     * （`SDL_GetTextureProperties` 返回 UNKNOWN，0.5.1 实测），所以算不出精确值；
+     * 而对这个字段唯一的问题——"会不会炸"——偏高是安全方向。
+     *
+     * 偏高的来源：不透明图实际可能是 RGB888、贴图可能有对齐填充；
+     * **不含**渲染器自己的内部缓冲（那部分这个库看不到）。
+     */
+    std::uint64_t bytes = 0;
+    /**
+     * 最后一次被用到是**第几帧**（0.8.4 T-04，帧号由 `BeginTextFrame` 递增）。
+     *
+     * 淘汰只按它排序：最久没用过的先丢。为什么用帧号而不是时间戳：帧号单调、
+     * 无浮点比较、也不受系统时钟跳变影响；"同一帧里用过"这件事有精确判据
+     * （`lastUsedFrame == frameSerial`），而时间戳只能猜一个窗口。
+     */
+    std::uint64_t lastUsedFrame = 0;
 };
 
 /// 这一层的全部状态：函数内静态量，避开静态初始化顺序问题；UI 线程使用，不加锁。
@@ -88,6 +118,30 @@ struct TextLayer {
     std::uint64_t texturesCreated = 0;
     std::uint64_t cacheHits = 0;
 
+    // --- 内存账本（0.8.2 T-05）---------------------------------------------
+    /// 纹理表 + 字形图集**当前**占用的字节（RGBA8 上界，口径见 `TextureEntry::bytes`）。
+    ///
+    /// 为什么需要：上限散在三处（`kMaxSvgVariants` / `glyphPacker{1024}` /
+    /// `kMaxTextRasterCap`），彼此不知道对方占了多大，而"这套素材会不会炸内存"
+    /// 这个问题此前**没有数字可答**。`examples/pet` 那套 73 帧 321×900 按 RGBA
+    /// 算约 84 MB——这种量级必须有账可查。
+    std::uint64_t textureBytes = 0;
+    /// 峰值：只增不减（"长跑之后已经回落"时仍然记得住最坏情况）。
+    std::uint64_t textureBytesPeak = 0;
+    /// 字形图集纹理自己占多少（图集纹理也是真显存，且通常是最贵的一张）。
+    std::uint64_t glyphAtlasBytes = 0;
+
+    // --- 预算与淘汰（0.8.4 T-04）-------------------------------------------
+    /// 每帧递增的帧号，用来给 `TextureEntry::lastUsedFrame` 打时间戳。
+    std::uint64_t frameSerial = 0;
+    /// 纹理字节预算；**0 = 不淘汰**（与 0.8.3 逐字节相同）。
+    ///
+    /// 默认 0 是有意的：第一次做淘汰，不能悄悄改掉所有人的内存行为。等
+    /// `examples/*` 与两套 ctest 跑过一轮，再讨论要不要给个非零默认值。
+    std::uint64_t budgetBytes = 0;
+    /// 真的丢了几张（观测口：没有它，"淘汰生效了没有"在画面上完全看不出来）。
+    std::uint64_t textureEvictions = 0;
+
     // --- SVG 纹理（0.5.1）--------------------------------------------------
     /// 真光栅化了几次（缓存命中不算）。`AGENTS.md` §6 第 40 条：能合并的地方
     /// 都要有可断言的计数，否则"缓存生效了没有"在画面上看不出来。
@@ -111,6 +165,18 @@ struct TextLayer {
     /// 占着图集。所以比例一 crossed 就丢掉图集，让它按新比例重贴。
     float rasterRatio = 1.0f;
 
+    /// 烘字比例的上限（0.7.1 T-03）。默认值 = 0.7.0 的行为（3×）。
+    float rasterCap = kDefaultTextRasterCap;
+    /// 触顶次数（观测口；WARN 只报一次，计数每次都涨）。
+    std::uint64_t rasterCapped = 0;
+    /// 本档上限的触顶 WARN 报过了没有（改上限时复位，见 `SetTextRasterCap`）。
+    bool rasterCapReported = false;
+
+    /// 判定为"素材像素不够"的次数（0.7.1 T-04；只在 `INK_ISDEBUG` 下会涨）。
+    std::uint64_t imageUndersampled = 0;
+    /// 素材偏小的告警只报一次（键 = 图片名）。
+    std::unordered_set<std::string> undersampleReported;
+
     // --- 字形图集（B4 后半）------------------------------------------------
     /// 图集纹理：**普通 STATIC 纹理**（由 CPU 侧的 surface 上传）。
     SDL_Texture* glyphAtlas = nullptr;
@@ -118,6 +184,18 @@ struct TextLayer {
     SDL_Surface* glyphAtlasSurface = nullptr;
     /// 打包器：只算坐标（见 `InkingGlyphAtlas.h`）。
     GlyphAtlas glyphPacker{1024};
+    /**
+     * 图集**已经满了**（0.8.3 T-02）。
+     *
+     * 为什么需要一个标志：图集满之后 `PaintTextGlyphByGlyph` 仍然每帧把整段文字
+     * 逐字形烘一遍再失败（实测 60 帧多烘 1140 次 = 19 次/帧），最后照样退回整段
+     * 渲染——**白烧的 CPU 一点效果都没有**，而画面上完全看不出来。置了这个标志
+     * 就整条路直接短路到整段渲染，与今天的最终行为一致，只是不再白烘。
+     *
+     * 复位只有一处：`ReleaseGlyphAtlas()`（换比例 / 换字号档 / 释放缓存都会经过
+     * 它）。漏掉复位的后果是"新图集一上来就宣布自己满了"——文字永久退化成整段。
+     */
+    bool glyphAtlasFull = false;
     /// 键 = 字体路径 + 字号 + 字形 → 它在图集里的落点与前进量。
     std::unordered_map<std::string, detail::GlyphBitmap> glyphs;
     detail::GlyphAtlasStats glyphStats{};
@@ -126,6 +204,45 @@ struct TextLayer {
 TextLayer& layer() {
     static TextLayer instance;
     return instance;
+}
+
+// ---------------------------------------------------------------------------
+// 内存账本（0.8.2 T-05）：**只记账，不决策**
+// ---------------------------------------------------------------------------
+//
+// 这一对函数被四处调用（建纹理 / SVG 档位淘汰 / 换渲染器 / 释放缓存），
+// 每一处都必须成对：漏减的表现是"越用越多、永不回落"，而画面上完全看不出来
+// ——只有"建→放→归零"这条自检钉得住。
+//
+// **先上传成功再记账**：反过来（先加后建）时，建纹理失败会留下一笔永不释放的
+// 账——那正是"账本骗人"的经典形态，比没有账本更糟：它会让你以为数字是对的。
+
+/// 记一笔"新增了一张纹理"。**必须在拿到有效句柄之后调**。
+void NoteTextureBytesAdded(std::uint64_t bytes) {
+    TextLayer& state = layer();
+    state.textureBytes += bytes;
+    if (state.textureBytes > state.textureBytesPeak) {
+        state.textureBytesPeak = state.textureBytes;
+    }
+}
+
+/// 记一笔"放掉了一张纹理"。
+///
+/// **钳到 0**：顺序错一次时账本宁可变小，也不能变成天文数字（无符号下溢是
+/// 16 EB，那会让"当前占用"这个数从此没法看）。
+void NoteTextureBytesRemoved(std::uint64_t bytes) {
+    TextLayer& state = layer();
+    state.textureBytes =
+        bytes <= state.textureBytes ? state.textureBytes - bytes : 0;
+}
+
+/// 一张 surface 建成纹理后按 RGBA8 算的上界字节数。
+std::uint64_t TextureBytesOf(const SDL_Surface* surface) {
+    if (surface == nullptr || surface->w <= 0 || surface->h <= 0) {
+        return 0;
+    }
+    return static_cast<std::uint64_t>(surface->w)
+           * static_cast<std::uint64_t>(surface->h) * 4u;
 }
 
 /**
@@ -180,9 +297,6 @@ std::string SizeKey(float pixelSize) {
 // `window/`（分层不倒退）。
 // ---------------------------------------------------------------------------
 
-/// 上限：3 倍以上继续加清晰度收益递减，而纹理面积按 `ratio²` 涨。
-constexpr float kMaxTextRasterRatio = 3.0f;
-
 /// SVG 单张 surface 的像素上限（16M ≈ 4096×4096）。一张 3200×1800 的稿是
 /// 5.76M px（23 MB ARGB），已经够大；再往上就是拿内存换肉眼看不出的锐度。
 constexpr int kMaxSvgRasterPixels = 16 * 1024 * 1024;
@@ -218,10 +332,32 @@ float RendererDeviceRatio(SDL_Renderer* renderer) {
 }
 
 /// 取当前烘字比例，并在比例变化时丢掉过期的字形图集。
+///
+/// **触顶必须发声**（0.7.1 T-03）：`ratio` 被上限夹住时画面只是"比理论值糊一点"，
+/// 而"糊一点"没有基线可比——看起来就像"这台机器上字体本身不好"。所以夹取时
+/// 计数 +1，并报**一次** WARN（键是"这一档上限"：改了上限会重新有机会报，
+/// 因为那是另一次决策）。
 float currentRasterRatio(SDL_Renderer* renderer) {
     const float raw = RendererDeviceRatio(renderer);
-    const float ratio = raw > kMaxTextRasterRatio ? kMaxTextRasterRatio : raw;
     TextLayer& state = layer();
+    const float cap = state.rasterCap;
+    float ratio = raw;
+    if (raw > cap) {
+        ratio = cap;
+        ++state.rasterCapped;
+        if (!state.rasterCapReported) {
+            state.rasterCapReported = true;
+            char detail[256];
+            std::snprintf(
+                detail, sizeof(detail),
+                "文字按 %.2f× 烘，但屏幕要 %.2f×（设计 %d×%d）——超出上限后会被"
+                "放大，字会偏糊。要更清就调 detail::SetTextRasterCap(%.1f)，"
+                "代价是字形纹理面积按比例² 涨",
+                static_cast<double>(cap), static_cast<double>(raw),
+                DesignWidth(), DesignHeight(), static_cast<double>(raw));
+            INK_LOG_WARN("InkingText", detail);
+        }
+    }
     if (std::fabs(ratio - state.rasterRatio) > 0.01f) {
         // 只丢图集，**不**丢纹理表：那张表里还有图片纹理（`PaintImage`），
         // 它们与比例无关，重解码一遍纯属浪费。整段文字的纹理按设备字号
@@ -231,6 +367,7 @@ float currentRasterRatio(SDL_Renderer* renderer) {
     }
     return ratio;
 }
+
 
 #if defined(INK_HAS_SDL3_TTF)
 
@@ -489,6 +626,10 @@ void EnsureRenderer(SDL_Renderer* renderer) {
     if (state.renderer == renderer) {
         return;
     }
+    // 这些纹理随旧渲染器一起死了：**只销账，不 DestroyTexture**（句柄已经野了）。
+    for (const auto& item : state.textures) {
+        NoteTextureBytesRemoved(item.second.bytes);
+    }
     state.textures.clear();
     state.svgKeysByName.clear();
     // **字形图集也必须丢**：它的纹理同样绑在旧渲染器上。留着复用等于拿一张
@@ -573,14 +714,14 @@ TextureEntry* InsertTexture(SDL_Renderer* renderer, const std::string& key,
     entry.width = static_cast<float>(surface->w);
     entry.height = static_cast<float>(surface->h);
     entry.isImage = isImage;
-    const SDL_PixelFormatDetails* surfaceDetails =
-        SDL_GetPixelFormatDetails(surface->format);
-    entry.hasAlpha =
-        surfaceDetails != nullptr && surfaceDetails->Amask != 0u;
     entry.texture = SDL_CreateTextureFromSurface(renderer, surface);
     if (entry.texture == nullptr) {
         return nullptr;
     }
+    // 句柄到手之后才记账（顺序见上面那对函数的注释）。
+    entry.bytes = TextureBytesOf(surface);
+    // 刚建出来的纹理当然"本帧用过"：淘汰只丢更老的，绝不能丢正在画的这一张。
+    entry.lastUsedFrame = layer().frameSerial;
     SDL_SetTextureBlendMode(entry.texture, SDL_BLENDMODE_BLEND);
     // **在入表之前设完**：读者不必担心"表里有一张还没设过采样模式的纹理"。
     SDL_SetTextureScaleMode(
@@ -590,6 +731,9 @@ TextureEntry* InsertTexture(SDL_Renderer* renderer, const std::string& key,
     TextLayer& state = layer();
     ++state.texturesCreated;
     auto inserted = state.textures.emplace(key, entry);
+    if (inserted.second) {
+        NoteTextureBytesAdded(entry.bytes);
+    }
     return &inserted.first->second;
 }
 
@@ -612,6 +756,9 @@ TextureEntry* AcquireTexture(SDL_Renderer* renderer, const TextRequest& request,
     auto found = state.textures.find(key);
     if (found != state.textures.end()) {
         ++state.cacheHits;
+        // 命中就是"这一帧用过"（0.8.4 T-04）：LRU 全靠这一行，漏了它之后
+        // 最常用的那几张会被当成最久没用的先丢掉——缓存越热、丢得越快。
+        found->second.lastUsedFrame = state.frameSerial;
         return &found->second;
     }
 
@@ -761,6 +908,7 @@ TextureEntry* AcquireImageTexture(SDL_Renderer* renderer,
             found != state.textures.end()) {
             ++state.svgCacheHits;
             ++state.cacheHits;
+            found->second.lastUsedFrame = state.frameSerial;  // T-04：命中即"本帧用过"
             return &found->second;
         }
 
@@ -802,6 +950,7 @@ TextureEntry* AcquireImageTexture(SDL_Renderer* renderer,
             keys.erase(keys.begin());
             if (const auto it = state.textures.find(victim);
                 it != state.textures.end()) {
+                NoteTextureBytesRemoved(it->second.bytes);
                 if (it->second.texture != nullptr) {
                     SDL_DestroyTexture(it->second.texture);
                 }
@@ -829,6 +978,7 @@ TextureEntry* AcquireImageTexture(SDL_Renderer* renderer,
     auto found = state.textures.find(key);
     if (found != state.textures.end()) {
         ++state.cacheHits;
+        found->second.lastUsedFrame = state.frameSerial;  // T-04：命中即"本帧用过"
         return &found->second;
     }
 
@@ -910,6 +1060,114 @@ void SetImageSampling(ImageSampling mode) noexcept {
 
 ImageSampling GetImageSampling() noexcept { return SamplingSlot(); }
 
+// 上限的两个入口必须落在**匿名命名空间之外**：它俩是公开头里声明的符号，
+// 写进匿名命名空间就变成内部链接——DLL 里压根不会有这个符号，而自检 /
+// 消费方会在**链接期**才发现（本仓库那次 0.7.1 的静默 `ld returned 1`：
+// 消息里不说是哪个符号，只有 `nm` 对账才看得出来）。
+bool SetTextRasterCap(float cap) noexcept {
+    if (!std::isfinite(cap) || cap <= 0.0f) {
+        return false;
+    }
+    TextLayer& state = layer();
+    const float clamped =
+        cap < kMinTextRasterCap ? kMinTextRasterCap
+        : (cap > kMaxTextRasterCap ? kMaxTextRasterCap : cap);
+    state.rasterCap = clamped;
+    // 每次**被调用**都重新武装"触顶告警"：调用本身就是一次决策（配置改过 /
+    // 用户显式设了一次），而"同值调用不重新武装"会让自检没法确定性地复现那条
+    // WARN——前一个用例已经把它消费掉了，第二个用例就永远读到 0 条。
+    state.rasterCapReported = false;
+    return true;
+}
+
+float GetTextRasterCap() noexcept { return layer().rasterCap; }
+
+
+// ---------------------------------------------------------------------------
+// 纹理字节预算与 LRU 淘汰（0.8.4 T-04）
+// ---------------------------------------------------------------------------
+//
+// 为什么"帧首"做淘汰：只有在帧边界上还知道自己"这一帧要用哪些纹理"——本帧已经
+// 建出来 / 命中过的条目都带着 `lastUsedFrame == frameSerial`，它们一个都不能丢
+// （丢了就是当场缺字）；反过来，上一帧及更早用过的条目，说明这一帧还没轮到它。
+//
+// 为什么先 `FlushGeometry()`：几何批里可能还引用着要丢的那张纹理（上一帧留下的
+// 顶点）。先 Destroy 再 Flush 就是 use-after-free——而且它在 software 后端上
+// 未必立刻崩，可能只是画面缺一块，最难查的那一类。
+//
+// 三条边界（写在这里，免得被当成缺陷报）：
+//   1. **瞬时上界是"预算 + 本帧新增"**：淘汰只发生在帧首，本帧刚建的不能丢；
+//   2. **字形图集不参与淘汰**：它是共享资源（1024² ≈ 4 MB），丢了要重烘全部字形，
+//      代价远大于省下的那几 MB。因此预算比图集还小时**直接放弃淘汰**——否则
+//      每帧都会把整张文字纹理表清空再重烘，那是比"没有预算"糟得多的性能悬崖；
+//   3. `textureBytes` 是 RGBA8 **上界**（见 `TextureEntry::bytes`），按它算预算
+//      会偏保守——这是安全方向。
+void SetTextureBudget(std::uint64_t bytes) noexcept { layer().budgetBytes = bytes; }
+
+std::uint64_t GetTextureBudget() noexcept { return layer().budgetBytes; }
+
+void BeginTextFrame(SDL_Renderer* renderer) noexcept {
+    if (renderer == nullptr) {
+        return;  // 没有渲染器就没有纹理，帧号也不必推进
+    }
+    TextLayer& state = layer();
+    ++state.frameSerial;
+
+    const std::uint64_t budget = state.budgetBytes;
+    if (budget == 0 || state.textureBytes <= budget) {
+        return;  // 默认档：一个字节都不动（与 0.8.3 逐字节相同）
+    }
+    if (budget <= state.glyphAtlasBytes) {
+        return;  // 预算比共享图集还小：淘汰救不了场，见上面第 2 条
+    }
+
+    // 批里可能还引用着等一下要丢的纹理：先刷出去，**顺序不能反**。
+    detail::FlushGeometry();
+
+    // 候选 = 本帧没碰过的条目。`lastUsedFrame` 相同时（同一帧里建的一批）按
+    // 键名排一下，纯粹为了**确定性**：淘汰顺序会进日志与自检，不能依赖哈希序。
+    std::vector<std::pair<std::uint64_t, const std::string*>> victims;
+    victims.reserve(state.textures.size());
+    for (const auto& item : state.textures) {
+        if (item.second.lastUsedFrame < state.frameSerial) {
+            victims.emplace_back(item.second.lastUsedFrame, &item.first);
+        }
+    }
+    std::sort(victims.begin(), victims.end(),
+              [](const std::pair<std::uint64_t, const std::string*>& a,
+                 const std::pair<std::uint64_t, const std::string*>& b) {
+                  if (a.first != b.first) {
+                      return a.first < b.first;
+                  }
+                  return *a.second < *b.second;
+              });
+
+    for (const auto& victim : victims) {
+        if (state.textureBytes <= budget) {
+            break;  // 回到预算内就停手：多丢一张都是白丢
+        }
+        const auto it = state.textures.find(*victim.second);
+        if (it == state.textures.end()) {
+            continue;  // 理论上不会发生（候选来自同一张表），保险起见
+        }
+        if (it->second.texture != nullptr) {
+            SDL_DestroyTexture(it->second.texture);
+        }
+        NoteTextureBytesRemoved(it->second.bytes);
+        const std::string dropped = it->first;
+        state.textures.erase(it);
+        ++state.textureEvictions;
+
+        // SVG 的"档位表"里也要摘掉：那张表最多留 `kMaxSvgVariants` 个键，留着
+        // 已删的键会让同一张图每次换比例都白淘汰一次（键还在、纹理没了）。
+        for (auto& entry : state.svgKeysByName) {
+            std::vector<std::string>& keys = entry.second;
+            keys.erase(std::remove(keys.begin(), keys.end(), dropped), keys.end());
+        }
+    }
+}
+
+
 TextCacheStats TextCacheStatsSnapshot() noexcept {
     const TextLayer& state = layer();
     TextCacheStats stats;
@@ -923,6 +1181,20 @@ TextCacheStats TextCacheStatsSnapshot() noexcept {
     stats.svgEvictions = state.svgEvictions;
     stats.svgFailures = state.svgFailures;
     stats.svgUnsupportedElements = state.svgUnsupportedElements;
+    stats.rasterCapped = state.rasterCapped;
+    stats.imageUndersampled = state.imageUndersampled;
+    // 账本：条数**当场数**（纹理表 + 字形图集那张），字节数用累计值。
+    // 条数不单独维护一个计数器，是为了让它天然不可能与表不一致。
+    stats.textureBytes = state.textureBytes;
+    stats.textureBytesPeak = state.textureBytesPeak;
+    // 两条自增而不是"一次加法 + 一次 cast"：`size_t` 在 64 位上与 `uint64_t`
+    // 是同一类型，写 cast 会被 `-Wuseless-cast` 抓住；而 cast 在 32 位上又是
+    // 必须的。写成自增两边都不犯。
+    stats.textureCount = state.textures.size();
+    if (state.glyphAtlas != nullptr) {
+        ++stats.textureCount;
+    }
+    stats.textureEvictions = state.textureEvictions;
     return stats;
 }
 
@@ -1002,12 +1274,32 @@ GlyphBitmap AcquireGlyph(SDL_Renderer* renderer, const std::string& fontPath,
         SDL_FillSurfaceRect(state.glyphAtlasSurface, nullptr, 0);
     }
 
-    const GlyphAtlas::Slot slot =
-        state.glyphPacker.Insert(surface->w, surface->h);
+    // 本格要多大——先记下来：`SDL_DestroySurface` 之后 `surface` 就野了，
+    // 而满图集那条路上还要拿这两个数写日志（曾把 `surface->w` 写进日志格式串，
+    // 那是一次 use-after-free）。
+    const int glyphWidth = surface->w;
+    const int glyphHeight = surface->h;
+    const GlyphAtlas::Slot slot = state.glyphPacker.Insert(glyphWidth, glyphHeight);
     if (!slot.valid) {
         // 图集满了：**不硬塞**，让调用方退回整段渲染——字不能消失。
+        //
+        // 置标志（T-02）：之后 `PaintTextGlyphByGlyph` 整条路短路，不再每帧重烘
+        // 一遍再失败。WARN 只在这一刻（false → true）发（T-03）——挂在入口判会
+        // 每帧一条，那等于把日志刷成墙。
         SDL_DestroySurface(surface);
         ++state.glyphStats.failed;
+        if (!state.glyphAtlasFull) {
+            state.glyphAtlasFull = true;
+            char detail[320];
+            std::snprintf(
+                detail, sizeof(detail),
+                "字形图集满了（已用 %d 格 / 上限 %d×%d，本格需要 %d×%d）：之后"
+                "文字改走「整段一张纹理」，内存与首帧耗时都会涨，字号越多越明显。"
+                "要腾地方就调 detail::ReleaseTextCache()（会重新烘全部字形）",
+                state.glyphPacker.SlotCount(), state.glyphPacker.Size(),
+                state.glyphPacker.Size(), glyphWidth, glyphHeight);
+            INK_LOG_WARN("InkingText", detail);
+        }
         return result;
     }
 
@@ -1020,6 +1312,10 @@ GlyphBitmap AcquireGlyph(SDL_Renderer* renderer, const std::string& fontPath,
                 SDL_CreateTextureFromSurface(renderer, state.glyphAtlasSurface);
             if (state.glyphAtlas != nullptr) {
                 SDL_SetTextureBlendMode(state.glyphAtlas, SDL_BLENDMODE_BLEND);
+                // 图集纹理也进账本：它通常是**最贵的一张**（1024² = 4 MB，
+                // 而单条文字纹理往往只有几十 KB）。漏记它，账本就少算一个量级。
+                state.glyphAtlasBytes = TextureBytesOf(state.glyphAtlasSurface);
+                NoteTextureBytesAdded(state.glyphAtlasBytes);
                 uploaded = true;
             }
         } else {
@@ -1057,6 +1353,7 @@ GlyphBitmap AcquireGlyph(SDL_Renderer* renderer, const std::string& fontPath,
 GlyphAtlasStats GlyphAtlasSnapshot() {
     GlyphAtlasStats stats = layer().glyphStats;
     stats.slots = layer().glyphPacker.SlotCount();
+    stats.full = layer().glyphAtlasFull;
     return stats;
 }
 
@@ -1075,6 +1372,10 @@ void ReleaseGlyphAtlas() {
         SDL_DestroyTexture(state.glyphAtlas);
         state.glyphAtlas = nullptr;
     }
+    // 销账放在 Destroy 之外：句柄已经是 null 但账还没销（中途失败过一次）时，
+    // 这里也要归零——否则那 4 MB 会跟着进程活一辈子。
+    NoteTextureBytesRemoved(state.glyphAtlasBytes);
+    state.glyphAtlasBytes = 0;
     if (state.glyphAtlasSurface != nullptr) {
         SDL_DestroySurface(state.glyphAtlasSurface);
         state.glyphAtlasSurface = nullptr;
@@ -1082,6 +1383,10 @@ void ReleaseGlyphAtlas() {
     state.glyphPacker.Reset();
     state.glyphs.clear();
     state.glyphStats = GlyphAtlasStats{};
+    // 新图集是空的 ⇒ "满了"这个结论作废（T-02）。漏掉这一行的后果：换分辨率 /
+    // 换字号档之后图集明明还有空间，文字却永久退化成整段渲染——而画面上
+    // 只是"稍慢、字略不一样"，没人会想到是上一张图集留下的标志。
+    state.glyphAtlasFull = false;
 }
 
 /// 按 `\n` 切行（`\r` 直接丢掉，于是 `\r\n` 也认）：逐字形那条路要自己处理换行
@@ -1116,6 +1421,12 @@ bool PaintTextGlyphByGlyph(SDL_Renderer* renderer, const TextRequest& request,
                            float rasterScale, float ratio, int width,
                            int height, float mag, float pixelX, float pixelY,
                            const TransformSpec& transform) {
+    // 图集已经满了就**不必再试**（T-02）：这条路最终也就是"取不到字形 → 退回
+    // 整段渲染"，而每次尝试都要把整段文字逐字形烘一遍（实测 19 次/帧）。
+    // 短路之后行为与今天**完全一致**，只是不再白烧 CPU。
+    if (layer().glyphAtlasFull) {
+        return false;
+    }
     void* font = AcquireFont(fontPath, deviceSize);
     if (font == nullptr) {
         return false;  // 没字体：交给整段那条路（它会走退化画法）
@@ -1321,8 +1632,7 @@ bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
     // 真绘制交给形状层：**同一份形状网格**（轮廓 + 羽化）带上 UV 与纹理，
     // 于是"按形状裁剪"这件事不需要纹理层再实现一遍。
     fillShapeTextured(renderer, shape, width, height, mag, pixelX, pixelY,
-                      transform, entry->texture, entry->hasAlpha, spec,
-                      tintColor);
+                      transform, entry->texture, spec, tintColor);
     return true;
 }
 
@@ -1373,13 +1683,131 @@ bool ProbeImageSize(const ImageBytes& image, int* width, int* height) {
     return true;
 }
 
-void ReleaseTextCache() noexcept {    TextLayer& state = layer();
+// ---------------------------------------------------------------------------
+// 素材够不够这块屏幕（0.7.1 T-04）——**只在 DEBUG 下真的检查**
+//
+// 判据与 `ImageScaleSpec` 同一套算术，只是 R 的来源换了：这里没有组件实例、
+// 也没有渲染器，用"主显示器桌面 ÷ 设计画布"近似 R_max（任务书 §3.1 的 R_max
+// 本来就是这个意思：**最大目标屏**，不是当前窗口）。
+//
+// 为什么用桌面而不是"当前窗口"：构造期可能还没有窗口，而窗口尺寸随用户拖拽
+// 变化——用它会让同一次启动里的告警随窗口大小忽有忽无。桌面对"这台机器最好
+// 的屏"是一个稳定上界，正是 R_max 要的量。
+// ---------------------------------------------------------------------------
+
+#if defined(INK_ISDEBUG)
+
+namespace {
+
+/// 主显示器桌面对设计画布的倍率（R_max 的近似）。拿不到时按 1（保守：少报）。
+float MaxScreenRatio() {
+    const int designWidth = DesignWidth();
+    const int designHeight = DesignHeight();
+    if (designWidth <= 0 || designHeight <= 0) {
+        return 1.0f;
+    }
+    const SDL_DisplayID display = SDL_GetPrimaryDisplay();
+    if (display == 0) {
+        return 1.0f;
+    }
+    // 这个 SDL 版本的签名返回指针（不是写回出参），见 SDL_video.h。
+    const SDL_DisplayMode* mode = SDL_GetDesktopDisplayMode(display);
+    if (mode == nullptr || mode->w <= 0 || mode->h <= 0) {
+        return 1.0f;
+    }
+    const float byWidth = static_cast<float>(mode->w) / designWidth;
+    const float byHeight = static_cast<float>(mode->h) / designHeight;
+    const float ratio = byWidth < byHeight ? byWidth : byHeight;
+    return ratio < 1.0f ? 1.0f : ratio;
+}
+
+}  // namespace
+
+void WarnIfImageUndersampled(const ImageBytes& image, int designWidth,
+                             int designHeight, int srcWidth,
+                             int srcHeight) noexcept {
+    if (image.Empty() || designWidth <= 0 || designHeight <= 0) {
+        return;
+    }
+    // SVG 的"素材分辨率"没有意义：它按目标框光栅化，给多大就出多大。
+    if (LooksLikeSvg(image.data, image.size)) {
+        return;
+    }
+    // 像素风素材是**故意放大**的（`SetImageSampling(Nearest)` 就是那个开关）：
+    // 4×4 的素材铺 40×40 是正确用法，不是"素材不够"。
+    if (GetImageSampling() == ImageSampling::Nearest) {
+        return;
+    }
+    int imageWidth = 0;
+    int imageHeight = 0;
+    if (!ProbeImageSize(image, &imageWidth, &imageHeight)) {
+        return;  // 没接 SDL3_image / 字节坏了：别在这个护栏里再报一次同样的错
+    }
+    // 图集的一帧：比的是**这一帧**的像素，不是整张图集。
+    const int availableWidth = srcWidth > 0 ? srcWidth : imageWidth;
+    const int availableHeight = srcHeight > 0 ? srcHeight : imageHeight;
+    const float ratioMax = MaxScreenRatio();
+
+    ImageScaleSpec spec;
+    spec.designWidth = designWidth;
+    spec.depth = 1.0f;
+    spec.ratioMax = ratioMax;
+    const float needWidth = spec.ScreenWidthMax();
+    const float sigmaWidth =
+        availableWidth > 0 ? availableWidth / needWidth : 0.0f;
+
+    ImageScaleSpec specHeight;
+    specHeight.designWidth = designHeight;
+    specHeight.depth = 1.0f;
+    specHeight.ratioMax = ratioMax;
+    const float needHeight = specHeight.ScreenWidthMax();
+    const float sigmaHeight =
+        availableHeight > 0 ? availableHeight / needHeight : 0.0f;
+
+    // 取较小的那个 σ：宽高**任一维不够**，放大都会发软。
+    const float sigma = sigmaWidth < sigmaHeight ? sigmaWidth : sigmaHeight;
+    if (!(sigma > 0.0f) || sigma >= 0.75f) {
+        return;  // 留 25% 余量：刚好卡线的素材不值得喊
+    }
+
+    TextLayer& state = layer();
+    ++state.imageUndersampled;
+    if (!state.undersampleReported.insert(image.name).second) {
+        return;  // 同名只报一次（序列帧换帧会反复走到这里）
+    }
+    char detail[512];
+    std::snprintf(
+        detail, sizeof(detail),
+        "素材偏小：%s 是 %d×%d 像素，但这个 %d×%d（设计尺寸）的组件在 %.2f× 的"
+        "屏幕上要 %d×%d 才够（σ=%.2f）；放大会发软。按 ImageScaleSpec 的规则出图"
+        "（素材像素 = 设计尺寸 × 纵深 × R_max）",
+        image.name.c_str(), availableWidth, availableHeight, designWidth,
+        designHeight, static_cast<double>(ratioMax),
+        static_cast<int>(std::lround(needWidth)),
+        static_cast<int>(std::lround(needHeight)), static_cast<double>(sigma));
+    INK_LOG_WARN("InkingText", detail);
+}
+
+#else
+
+void WarnIfImageUndersampled(const ImageBytes&, int, int, int, int) noexcept {
+    // Release：整段被编译掉。`TextCacheStats::imageUndersampled` 因此恒为 0
+    //（自检两边都断言：不是"素材都够"，是"这段代码没编进来"）。
+}
+
+#endif
+
+void ReleaseTextCache() noexcept {
+    TextLayer& state = layer();
     // 图集与字形表也是"属于渲染器"的东西：**先**放掉（§6 第 46 条）。
     ReleaseGlyphAtlas();
     for (auto& item : state.textures) {
         if (item.second.texture != nullptr) {
             SDL_DestroyTexture(item.second.texture);
         }
+        // 逐条销账。回收站不能"清表时把整个字段置 0"：这里只是**一部分**
+        // 纹理（图集那张已经在上面的 ReleaseGlyphAtlas 里销过了）。
+        NoteTextureBytesRemoved(item.second.bytes);
     }
     state.textures.clear();
     state.svgKeysByName.clear();

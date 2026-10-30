@@ -277,14 +277,117 @@ void ReleaseTextCache() noexcept;
 顺序永远是"先 `ReleaseTextCache`，再 `SDL_DestroyRenderer`"。幂等，可重复调，
 同时会 `TTF_Quit`（与内部那次 `TTF_Init` 配对）。
 
+>**SetTextRasterCap / GetTextRasterCap**（0.7.1 T-03）
+
+```C++
+bool SetTextRasterCap(float cap) noexcept;   // 夹在 [1, 8]，默认 3
+float GetTextRasterCap() noexcept;
+```
+
+文字按**设备像素**烘（设计字号 × R），纹理面积按 `ratio²` 涨，所以一直夹在 3 倍。
+问题在"设计 640 + 4K 屏"（R = 6）这种配置：文字按 3× 烘、屏幕上再放大 2× ⇒ 糊，
+而**日志里一个字都没有**（静默夹取）。
+
+两个动作拆开：
+
+- **可配**：`SetTextRasterCap(6)` 之后按 6× 烘（代价：单字纹理面积 ×4）；
+- **触顶发声**：夹取时 `TextCacheStats::rasterCapped` +1，并报**一条** WARN
+  （只报一次；**每次调用 setter 都会重新武装**这次告警，所以自检能确定性复现）。
+
+不调 setter 的进程与 0.7.0 逐像素相同。上限不重烘已缓存的字形：缓存键里含设备字号，
+下一次按新比例自然分档。
+
+>**WarnIfImageUndersampled**（0.7.1 T-04，**只在 `INK_ISDEBUG` 下存在**）
+
+```C++
+void WarnIfImageUndersampled(const ImageBytes& image, int designWidth,
+                             int designHeight, int srcWidth = 0,
+                             int srcHeight = 0) noexcept;
+```
+
+判"素材像素够不够它占的屏幕像素"：需要宽 = 组件设计宽 × `R_max`，`σ < 0.75` 就 WARN
+（带素材 / 需要 / σ 三个数），同名只报一次。`R_max` 用**主显示器桌面 ÷ 设计画布**
+近似（构造期可能还没有窗口，而窗口尺寸随拖拽变；桌面对"这台机器最好的屏"是稳定上界）。
+
+Release 构建里整个函数体被编译掉（`ImageStaticImage.cpp` 的调用点也在 `#if` 里），
+所以发布包零成本、零日志。像素风素材（进程级 `Nearest`）与 SVG 直接跳过——它们
+"放大"是正确用法。
+
 >**TextCacheStats**
 
 ```C++
-struct TextCacheStats { std::uint64_t texturesCreated = 0; std::uint64_t cacheHits = 0; };
+struct TextCacheStats {
+    // 计数（"缓存有没有生效"的观测口）
+    std::uint64_t texturesCreated = 0, cacheHits = 0, fontFallbacks = 0;
+    std::uint64_t svgRasters = 0, svgSecondPasses = 0, svgCacheHits = 0;
+    std::uint64_t svgClamps = 0, svgEvictions = 0, svgFailures = 0;
+    std::uint64_t svgUnsupportedElements = 0;
+    std::uint64_t rasterCapped = 0, imageUndersampled = 0;
+    // 内存账本（0.8.2 T-05）
+    std::uint64_t textureBytes = 0;      // 当前占用（**上界**）
+    std::uint64_t textureBytesPeak = 0;  // 历史峰值（只增不减）
+    std::uint64_t textureCount = 0;      // 纹理条数（字形图集计 1）
+    std::uint64_t textureEvictions = 0;  // LRU 真的丢了几张（0.8.4 T-04）
+};
 TextCacheStats TextCacheStatsSnapshot() noexcept;
 ```
 
 "缓存有没有生效"功能上看不出来（画出来一模一样，只是白干活），只有计数抓得住。
+
+**`textureBytes` 是上界，不是精确分配量**（0.8.2 T-05）：按 `宽 × 高 × 4`（RGBA8）
+算。`SDL_CreateTextureFromSurface` 建出来的纹理拿不到像素格式
+（`SDL_GetTextureProperties` 返回 UNKNOWN），精确值无从得知；而对"会不会炸"这个
+用途，偏高是安全方向。
+
+四条边界：
+
+- **偏高**：不透明图的实际分配可能是 RGB888，贴图可能有对齐填充；
+- **不含渲染器自己的内部缓冲**（后缓冲、批处理顶点缓存）——那部分本库看不到，
+  `textureBytes` 只回答"纹理缓存占多少"；
+- **只统计这一层**：文字 / 图片 / SVG 纹理 + 字形图集，不含 surface、解码后的字节、
+  字体句柄；
+- **记账与决策分开**（0.8.4 起）：账本是"现在多少"，淘汰是 `SetTextureBudget`
+  的事，而它**默认关闭**。
+
+### 4.1 字节预算与 LRU 淘汰（0.8.4 T-04）
+
+```C++
+void SetTextureBudget(std::uint64_t bytes) noexcept;  // 0（默认）= 不淘汰
+std::uint64_t GetTextureBudget() noexcept;
+void BeginTextFrame(SDL_Renderer* renderer) noexcept;  // 由 RenderScene 每帧调
+```
+
+`probe_text_cost` 的实测背景：同样 1334 行，用 3 个不同字时 **1 张 / 4 MB / 221 ms**，
+用 2 万个不同字时 **1220 张 / 43.7 MB / 1603 ms**。淘汰之前，全库唯一的回收口是
+`ReleaseTextCache()`（全清）。
+
+做法：`SceneLibrary::RenderScene` 在 `scene->Render()` **之前**调 `BeginTextFrame`——
+推进帧号；若 `textureBytes > budget`，先 `FlushGeometry()`（批里可能还引用着要丢的
+纹理），再从 `lastUsedFrame` 最小的条目丢起，直到回到预算内。
+
+四条必须记住的边界：
+
+- **默认 0 = 不淘汰**，与 0.8.3 逐字节相同（第一次做淘汰，不悄悄改所有人的内存行为）；
+- **瞬时上界是"预算 + 本帧新增"**：淘汰只在帧首，本帧刚建的纹理不能丢（丢了当场缺字），
+  所以一帧里烘出 40 MB，那一帧照样是 40 MB；
+- **字形图集不参与淘汰**（共享资源，丢了要重烘全部字形）；预算设得比图集
+  （1024² ≈ 4 MB）还小时**放弃淘汰**——否则每帧清空重烘，比不设预算更糟；
+- 计数用 RGBA8 上界，所以按它算预算偏保守（安全方向）。
+
+> 想回到改动前的行为：`SetTextureBudget(0)`；或者不调 `BeginTextFrame`
+> （淘汰完全惰性，其余行为不变）。
+
+用法（回答"这套素材吃多少显存"）：
+
+```C++
+const auto stats = inking::detail::TextCacheStatsSnapshot();
+std::printf("纹理 %llu 张 / 现在 %.1f MB / 峰值 %.1f MB\n",
+            (unsigned long long)stats.textureCount,
+            stats.textureBytes / 1048576.0,
+            stats.textureBytesPeak / 1048576.0);
+```
+
+参考量级：`examples/pet` 那套 73 帧 321×900 的素材按 RGBA 算约 **84 MB**。
 
 ## 五、字形图集
 
@@ -315,8 +418,14 @@ public:
 
 `detail` 侧（`AcquireGlyph` / `LayOutGlyphs` / `GlyphAtlasSnapshot` /
 `SetGlyphAtlasEnabled` / `GlyphAtlasTexture` / `ReleaseGlyphAtlas`）是内部实现：
-按需烘一个字形、返回它的 UV 与位置。图集满了会整张重建（旧槽全部失效，所以调用方
-每帧都要重新问 UV，不要缓存）。
+按需烘一个字形、返回它的 UV 与位置。**图集满了不会整张重建**（0.8.3 之前这里写错了）：
+`AcquireGlyph` 返回 `valid == false`、调用方**退回整段渲染**，同时
+
+- 置 `GlyphAtlasStats::full` 并**只在第一次满时发一条 WARN**（带已用格数 / 上限 /
+  后果）——这条 WARN 是"文字从此改走整段纹理（内存与首帧耗时都涨）"的唯一声音；
+- 之后**整条逐字形路短路**：不再每帧把整段文字烘一遍再失败（实测改动前 19 次/帧）；
+- 只有 `ReleaseGlyphAtlas()`（换比例 / 换字号档 / `ReleaseTextCache`）会把 `full`
+  复位。图集是**共享资源**：清它的代价是全部字形重烘，所以别为了"腾一格"去清。
 
 > 高清那条路上，图集按 `fontSize × mag × ratio` 烘字形、画出来除回 `ratio`，
 > 于是布局零位移。比例变化只丢字形图集（纹理表里还有图片，别一起清）。
@@ -345,10 +454,16 @@ float LineOffsetX(float lineWidth, float availableWidth, TextAlignH align);
 4. **行首空白丢掉**；
 5. 行高 = `该行测量高度 × lineSpacing`；整块高 = 各行高之和（不含 padding）；
 6. 宽度 = **最宽的一行**，再加 padding；
-7. 受 `maxLines` / `maxWidth` 限制而有剩余内容时：`Ellipsis` 在最后一行末尾补 `…`
-   （**先回退字符**直到放得下），`Clip` 直接丢掉；两种都置 `truncated`；
+7. 受 `maxLines` / `maxWidth` / `maxHeight` 限制而有剩余内容时：`Ellipsis` 在最后一行末尾补 `…`
+   （**先回退字符**直到放得下），`Clip` 直接丢掉；两种都置 `truncated`。**三条限制取更严的那个**，
+   顺序是"先 `maxLines`、再 `maxHeight`"，两步都在垂直对齐之前；
 8. `padding` **先扣**：可排宽度 = `maxWidth − 左右 padding`；扣完 ≤ 0 时**不换行**
    （一行硬断成零宽的行没有意义）——有意行为，不是漏判。
+
+> **框高即上限**（0.8.3 T-01）：`maxHeight` 不只是垂直对齐的参照，它**真的会丢行**——
+> 累计行高超过 `maxHeight − 上下 padding` 时尾部那些行整行不排。这就是 `TextOverflow::Clip`
+> （默认值）的实现。两条边界：**至少留一行**（框比一行还矮也画一行，宁可溢出几像素也不让
+> 标签静默变空白）；**不缩字号**（"自动缩小"是另一件事，不做）。
 
 空串返回 `empty = true`、尺寸只剩 padding。
 
@@ -370,4 +485,4 @@ float LineOffsetX(float lineWidth, float availableWidth, TextAlignH align);
 
 ---
 
-> 本文档对应版本：**0.6.6（0.x 发布版）**。
+> 本文档对应版本：**0.8.5（0.x 发布版）**。

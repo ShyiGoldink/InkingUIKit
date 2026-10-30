@@ -906,8 +906,7 @@ std::uint32_t InkingStaticVideo::GetDroppedFrameCount() const noexcept {
 void InkingStaticVideo::onRender(float pixelX, float pixelY) const {
     Impl& impl = *_impl;
 #if defined(INK_HAS_FFMPEG)
-    Pump(impl);
-    if (impl.finished && !_finishedNotified) {
+    Pump(impl);    if (impl.finished && !_finishedNotified) {
         // 播完通知一次。`finished` 与 `_finishedNotified` 都是 mutable——
         // `onRender` 是 const，而"发通知"正是逻辑常量性允许的那种写入。
         _finishedNotified = true;
@@ -924,11 +923,20 @@ void InkingStaticVideo::onRender(float pixelX, float pixelY) const {
         // 画面走**形状层**：形状裁剪 / UV / 跟随变换 / 圆角羽化全复用 B1 那份实现。
         detail::fillShapeTextured(detail::currentRenderer(), GetShape(), GetWidth(),
                                   GetHeight(), mag, pixelX, pixelY,
-                                  GetDisplayTransform(), impl.texture,
-                                  /*hasAlpha=*/false, spec,
+                                  GetDisplayTransform(), impl.texture, spec,
                                   _data.normal.color);
         return;
     }
+#else
+    // 没接 FFmpeg（`INK_HAS_FFMPEG` 未定义）：整段解码逻辑被编掉，`impl` 只剩
+    // "没有画面"这一种状态。显式标一下，否则严格告警门会报 unused。
+    //
+    // **这里留一个记号**：本仓库的 `CMakeLists.txt` 目前**没有任何地方定义这个
+    // 宏**，也就是说视频解码那条路一份代码在、从来没被编进去过——能编、能链、
+    // 功能是空的，与 0.6.x 的 `INK_HAS_SDL3_MIXER` 漏定义完全同型
+    // （`docs/AGENTS.md` §2）。要不要打开它属于另一个任务（得先有一个视频素材
+    // 与一条像素断言），见 `docs/zh/plans/2026-10-30-text-layer-caps.md` §7。
+    (void)impl;
 #endif
     // 没有画面（没后端 / 素材没打开 / 还没解出第一帧）：退回**兜底色**。
     // 把画面变成一个洞比"缺视频"更难查——形状 / 描边阴影照常画。

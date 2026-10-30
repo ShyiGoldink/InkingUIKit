@@ -78,7 +78,7 @@ std::uint64_t Mix(std::uint64_t value) {
 
 /// 密钥流的第 `index` 个字节（同一密钥 + 同一位置永远同一个值 ⇒ 可逆）。
 std::uint8_t KeyByte(std::uint64_t keyHash, std::size_t index) {
-    const std::uint64_t block = static_cast<std::uint64_t>(index / 8);
+    const std::uint64_t block = index / 8;  // size_t → uint64_t 是隐式加宽
     const std::size_t offset = index % 8;
     const std::uint64_t word = Mix(keyHash + block * kGoldenGamma);
     return static_cast<std::uint8_t>((word >> (offset * 8)) & 0xFFu);

@@ -687,4 +687,4 @@ std::size_t GetMaxCellCandidates() const noexcept;
 
 ---
 
-> 本文档对应版本：**0.6.6（0.x 发布版）**。
+> 本文档对应版本：**0.8.5（0.x 发布版）**。

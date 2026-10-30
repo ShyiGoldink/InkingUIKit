@@ -2,10 +2,26 @@
 
 **一个用 SDF 形状 + 锚点定位写 UI 的 C++20 前端框架（动态链接库）。**
 
-> ## ✅ 当前版本：**0.6.6 发布版**（`0.6.6-release`）
+> ## ✅ 当前版本：**0.8.5 发布版**（`0.8.5-release`）
 >
 > - 0.x 期间接口 / ABI / 行为仍可能在次版本变化，升级请对照
 >   [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)；`1.0.0` 起才冻结。
+> - **0.8.5 变更：文字层三条"没有上限且静默"的路子收口**（0.8.3 / 0.8.4 未单独发版）。
+>   ① 标签的 `height` **现在真的是文字上限**——装不下的行整行不画（`TextOverflow::Clip`
+>   的默认语义此前一直没实现，300×40 的标签会把 7 行全画到框外）；要恢复旧行为把
+>   `height` 设 0。② 字形图集满了之后**不再每帧重烘一遍**（此前 19 次/帧、日志无声），
+>   现在首次满报一条 WARN 并进静默失效清单。③ 文字纹理有了**字节预算与 LRU 淘汰**
+>   （`detail::SetTextureBudget`，**默认 0 = 不淘汰**，与 0.8.3 逐字节相同）。
+>   另外新增 `ctest` 第 7 条 `strict_warnings`：同一批源用 `-Wall -Wextra -Wshadow
+>   -Wcast-qual -Wuseless-cast -Werror` 再编一遍，有告警即红。
+> - **0.7.1 / 0.7.0 新增：缩放规则与素材分辨率**（两块一批收口）。规则做成纯函数
+>   `dataStruct/InkingImageScale.h`：素材宽 = 设计尺寸 × 纵深 × `R_max`、
+>   σ 可判干不干净（`IsCleanRatio`）、干净纵深 = 素材倍率 ÷ 整数（`CleanDepth`）；
+>   文档见 [`API.md` §9](docs/zh/API.md)；验收示例 `examples/sharp`（720p 设计 +
+>   一张 1536×2752 的真实素材，`1/2/3` 切 fit、`F11` 全屏，逐档打印 R 与 σ）。
+>   **不做**运行期重采样与按尺寸缓存表，"任意尺寸不失真"这条明确放弃；
+>   文字光栅上限改为可配（`detail::SetTextRasterCap`，默认仍是 3×）+ 触顶 WARN；
+>   `INK_ISDEBUG` 下对偏小的素材 WARN（发布包零成本）。
 > - **0.6.6 新增：动画组 `InkingSpriteGroup`**——一个角色多个动作，
 >   `SwitchTo("run")` 换的是**配置**不是节点（节点数恒 1，没有隐藏节点参与绘制
 >   遍历与命中）；`animationChanged`、`resize` 可关。
@@ -36,9 +52,10 @@
 > - **0.5.0 有破坏性接口改动**：指针钩子改为
 >   `onPointerPress(PointerButton, bool)` / `onPointerClick(PointerButton, float, float)`，
 >   迁移样板见 CHANGELOG「0.5.0 / 变更」。
-> - **预编译包仍是 0.5.3**（[`dist/inking-0.5.3-win64.zip`](dist/)）：0.6.6 目前要从
->   源码构建（`cmake -B build -G Ninja` + `cmake --build build`），DLL 即
->   `build/bin/libinking.dll`。编译需要 MSYS2 UCRT64（MinGW ABI）。
+> - **预编译包已更新到 0.8.5**（[`dist/inking-0.8.5-win64.zip`](dist/)）：0.7.1 / 0.5.3 那两份
+>   保留不删（有人可能钉着它）。也可以用源码构建（`cmake -B build -G Ninja` +
+>   `cmake --build build`），DLL 即 `build/bin/libinking.dll`。两种方式都需要
+>   MSYS2 UCRT64（MinGW ABI）——**运行**示例不需要，**编译**才需要。
 > - 只在 **Windows + MSYS2 UCRT64 + Ninja** 上构建过；Linux / macOS 未验证。
 > - 可用于内部评估与产品集成验证；正式 `1.0.0` 预计 2026 年 11 月底前推出。
 
@@ -109,14 +126,29 @@ cmake --build build -j
 == 失败项：0 ==
 ```
 
-**看这一行，不要只看退出码。** 当前实测 **339 项 ok / 0 项失败**（退出码也等于失败项数，
-可以直接用；项数会随环境略有浮动——没有可读字体时文字高清那几条会打成 `[skip]`）。
+**看这一行，也看退出码——它们是同一个数**（`main` 直接 `return g_fail`）。
+当前实测 **599 项 ok / 0 项失败 / 0 项 skip**，两档后端同数（0.8.3~0.8.5 之前是
+575 项 + 2 项 skip；项数会随环境浮动——**没有可读字体时**文字高清与裁行那几条会打成
+`[skip]`，那是环境不是缺陷，见 [`API.md` §7 的注](docs/zh/API.md)）。
 
 自检不需要显示器：`0.4.0` 起可以直接 `InkingWindow::Open()` + `RunFrames(n)` 手动跑帧，
 或者用 `RenderToTexture()` 完全不开窗口出图（详见 `docs/zh/api/InkingWindow.md`）。
 
 ```bash
-ctest --test-dir build --output-on-failure   # 若有 CXXCSS 配置，还会跑生成链路的编译自检
+ctest --test-dir build --output-on-failure   # 7 条：配置校验 / 字段表 / 生成链路编译 /
+                                             # 严格告警门 / 静默清单对账 /
+                                             # 行为自检（software）/ 行为自检（真后端）
+```
+
+行为自检**已经在 ctest 里**（0.8.0 T-01）：`ctest` 全绿现在真的意味着 599 项产品行为
+断言都过了。第 7 条 `strict_warnings` 是 0.8.5 加的：同一批源用严格 flags + `-Werror`
+再编一遍（`ctest -R strict_warnings`，约 30 s，目标不进 `all`，日常构建不变慢）。
+想只跑某一种后端：
+
+```bash
+ctest --test-dir build -R '^selftest$'           # 默认 dummy（软件渲染）
+ctest --test-dir build -R selftest_windows       # direct3d11（仅 Windows）
+INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 手动指定后端
 ```
 
 ### 4. 构建选项
@@ -162,14 +194,17 @@ tools/package.sh          # 搬运 + 收 DLL 闭包 + 许可 + 校验和 + zip
 ```
 
 ```
-inking-0.5.3-win64/
+inking-0.8.5-win64/
 ├─ BUILD.txt            版本阶段、工具链、依赖版本、SHA-256、验证记录、已知限制、许可
 ├─ README.md            本文件
 ├─ bin/                 libinking.dll · inking_demo.exe · inking_demo_selftest.exe
 │                       inkgen.exe · 19 个运行期 DLL（SDL3 及其传递依赖）
+│                       assets/（demo 用的 design.svg 与 walk.png，1 个文件才几 KB）
 ├─ lib/                 libinking.dll.a（导入库）· cmake/inking/（find_package 配置）
-├─ include/             91 个公开头（`#include <widget/InkingWidget.h>` 的搜索根）
-├─ docs/                API 文档（`API.md` + `api/`）、配置格式、变更记录
+├─ include/             97 个公开头（`#include <widget/InkingWidget.h>` 的搜索根）
+├─ docs/                **完整文档**：`API.md` + `api/`（18 个专页）+ `CHANGELOG.md`
+│                       + `TaskGuide` / `SKILL` / `AGENTS`（工程约定与踩坑）
+│                       + `plans/`（11 份设计记录）+ `CXXCSS.md`（配置格式）
 ├─ examples/CXXCSS/     配置样例（喂给 `inkgen.exe`）
 ├─ examples/minimal/    最小可运行工程（只依赖本包，验证 find_package）
 └─ licenses/            第三方许可原文 + THIRD-PARTY-NOTICES.md
@@ -197,15 +232,15 @@ target_link_libraries(my_app PRIVATE inking::inking)
 
 ## 用预编译包（不编译源码）
 
-把 `inking-0.5.3-win64.zip` 解到任意目录，那个目录就是 **SDK 根**（下文写 `<SDK>`）：
+把 `inking-0.8.5-win64.zip` 解到任意目录，那个目录就是 **SDK 根**（下文写 `<SDK>`）：
 
 ```
 <SDK>/
 ├─ bin/                 libinking.dll · inkgen.exe · 19 个运行期 DLL
-├─ include/             91 个公开头（#include <widget/InkingWidget.h> 的搜索根）
+├─ include/             97 个公开头（#include <widget/InkingWidget.h> 的搜索根）
 ├─ lib/                 libinking.dll.a · cmake/inking/（find_package 用）
 ├─ docs/                API 文档
-├─ examples/CXXCSS/     配置样例（19 个 json + CXXCSS.md）
+├─ examples/CXXCSS/     配置样例（21 个 json + CXXCSS.md）
 ├─ examples/minimal/    最小工程（CMakeLists.txt + main.cpp）
 ├─ licenses/            第三方许可
 └─ BUILD.txt · README.md · LICENSE
@@ -437,9 +472,11 @@ add_custom_command(TARGET my_app POST_BUILD
 ## 目录结构
 
 ```
-include/            91 个公开头（按子系统分目录，与 src/ 一一对称）
+include/            97 个公开头（按子系统分目录，与 src/ 一一对称）
 src/                61 个 .cpp + 3 个内部头
 examples/demo/      演示 + 无头自检（两个目标）
+examples/pet/       桌宠（无边框 + 透明 + 序列帧；素材运行时给路径）
+examples/sharp/     清晰度验收（720p 设计尺寸 + 一张真实素材，逐档打印 R 与 σ）
 examples/minimal/   最小工程（只依赖预编译包，随包分发）
 tools/inkgen/       CXXCSS → C++ 的生成器
 tools/package.sh    打包：搬运 + 收 DLL 闭包 + 许可 + 校验和 + zip
@@ -465,9 +502,9 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 | --- | --- |
 | [`docs/zh/UsageGuide.md`](docs/zh/UsageGuide.md) | **手把手教程**：从设计大小、第一个场景、第一个组件（图片）到 CMake 与编译运行，CXXCSS / API 两条路线并行 |
 | [`docs/zh/API.md`](docs/zh/API.md) | **从这里读起**：五分钟上手 + 模块地图 + 头文件全量索引 |
-| [`docs/zh/api/`](docs/zh/api/) | 17 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver / FixedPopup + Anchor / ShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
+| [`docs/zh/api/`](docs/zh/api/) | 18 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver / FixedPopup / Json + Anchor / ShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
 | [`CXXCSS/CXXCSS.md`](CXXCSS/CXXCSS.md) | 配置格式：目录与命名、公共骨架、形状层词汇表、Button 字段全表 |
-| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.5.3 的逐条变化） |
+| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.8.5 的逐条变化） |
 | [`examples/minimal/README.md`](examples/minimal/README.md) | 最小工程：三步构建 + 运行期 DLL 拷贝 |
 
 ---
@@ -477,6 +514,10 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 1. **无显示 / 受限环境里的文字**：某些环境里 `SDL_IOFromFile` 对**所有**路径都失败
    （同路径 `fopen` 正常），于是 `TTF_OpenFont` 打不开字体、文字退化成占位画法。
    自检支持环境变量 `INK_TEST_FONT` 指定可读字体；**"没字体"不是代码缺陷**。
+   2026-10-30 实测过一条更常见的成因：**`PATH` 上有多份 `SDL3.dll`**（本机
+   `C:/SDL3/lib/x64/` 与 msys64 那份版本差一年多），选错那份就编不出可用的字体路径
+   ——命令行手工跑自检看不到字体时，先把 msys64 的 `ucrt64/bin` 放进 `PATH` 再试
+   （`ctest` 与 `tools/package.sh` 本来就是这么跑的）。
 2. **单行输入框**：多行、撤销 / 重做、Tab 焦点遍历、输入法候选窗定位都未做。
 3. **两种 `svg` 的边界不同**：按钮的 `AppearanceType::Svg` 只认**一个图形元素**、一种填充、
    几何必须等于组件框（生成期转成 `ShapeSpec`）；整张设计稿请用 `Image` 的 `type:"svg"`
@@ -490,8 +531,28 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 6. **音频需要显式 `AudioInit()`**：窗口层只在 `Show()` 之后每帧调 `AudioTick`、
    关窗时调 `AudioShutdown`，**不会**替你初始化。不调时整层空转、`AudioReady()` 为 false，
    而且不报错（`AudioInit()` 返回 false 通常意味着构建期漏了 `INK_HAS_SDL3_MIXER`）。
-7. **编译警告**：`src/window/InkingWindow.cpp` 里重复 `#define NOMINMAX`
-   （C++ 标准库的 `os_defines.h` 已经定义过）。无害，但可以先判 `#ifndef` 再定义。
+7. **标签的 `height` 就是文字上限**（0.8.5 起，**行为变化**）：装不下的行整行不画
+   （`TextOverflow::Clip` 的默认语义之前一直没实现，长文案会画到框外）。**至少留一行**、
+   **不缩字号**；`TextLayoutResult::truncated` 是被截断的观测口。要让长文案溢出的把
+   `height` 设 0 即恢复旧行为（不需要改库）。
+8. **"任意尺寸不失真"这条明确放弃**（0.7.x）：不做运行期重采样、不做按目标尺寸的
+   缓存表（会把内存推向失控）。清晰度改由**静态规则**保证——素材按屏幕像素出
+   （`ImageScaleSpec::RequiredTextureWidth`）、纵深落在整数档（`CleanDepth`）。
+   规则看 [`API.md` §9](docs/zh/API.md)。因此：素材只够它自己的像素数时，全屏一定越看越软
+   （`examples/sharp` 的 `Cover` 列就是活例），**这是规则的正确结果，不是缺陷**。
+9. **小设计尺寸 + 大屏时边缘略糊**：抗锯齿（羽化）带仍按**设计像素**
+   （`kFeatherPixels = 1.0f`），所以 `R ≠ 1` 时那一圈会失真。它与素材分辨率**无关**
+   （羽化在顶点 alpha 上），按设备像素改造推迟到 `1.x.x`——代价是要动顶点缓存键。
+10. **素材偏小只在 `INK_ISDEBUG` 下提示**：发布包里没有任何日志（零成本换来"不吵"），
+    判定用的 `R_max` 也只是"主显示器桌面 ÷ 设计画布"的近似。
+11. **文字纹理预算的上界是"预算 + 本帧新增"**（0.8.5）：淘汰只发生在帧首，本帧刚烘出来的
+    纹理不能丢（丢了当场缺字）。另外**字形图集不参与淘汰**（共享资源，丢了要重烘全部字形），
+    所以预算设得比图集（1024² ≈ 4 MB）还小时**会放弃淘汰**——那比不设预算更糟。
+    默认预算是 **0 = 不淘汰**，与 0.8.3 逐字节相同；要用就显式
+    `detail::SetTextureBudget(bytes)`。
+12. **字形图集"满"是粗粒度判断**（0.8.5）：它只说"刚才这一格塞不进去"，更小的字形其实
+    还塞得下。满了之后整条逐字形路会短路（退回"整段一张纹理"），首次满报一条 WARN。
+    按字形做 negative cache 能多塞几个小字，但要多一张表与失效逻辑，本轮不做。
 
 > **`0.1.0-test` 之后已修掉的两条历史限制**：
 > ① `TaskQueue` 退出时 join 管家线程的死锁（以前进程"打印完失败项就不返回"，
@@ -520,4 +581,4 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 
 ---
 
-> 版本 `0.5.3`（发布版） · 最后更新 2026-10-24
+> 版本 `0.8.5`（发布版） · 最后更新 2026-10-30

@@ -108,6 +108,9 @@ private:
         TextAlignV alignV = TextAlignV::Top;
         LayoutSpacing padding{};
         float availableWidth = 0.0f;
+        /// 排这一次时用的**高度上限**（0 = 不限）。它 0.8.3 起真的影响"排几行"
+        /// （T-01），所以必须进键——漏了就是"改了框高、行数没变"。
+        float availableHeight = 0.0f;
         int maxLines = 0;
         TextWrap wrap = TextWrap::Word;
         TextOverflow overflow = TextOverflow::Clip;
@@ -116,11 +119,14 @@ private:
         TextLayoutResult result{};
     };
 
-    /// 按给定可用宽度排版（带缓存）。`available <= 0` 表示"宽度不限"。
-    const TextLayoutResult& LayoutForWidth(float available) const;
+    /// 按给定可用宽度 / 高度排版（带缓存）。
+    /// `available <= 0` 表示"宽度不限"；`availableHeight <= 0` 表示"高度不限"
+    /// （装不下的行**不排**，见 `TextLayoutRequest::maxHeight`）。
+    const TextLayoutResult& LayoutForWidth(float available,
+                                          float availableHeight) const;
 
     /// 缓存键是否还匹配（逐字段比，见 `LayoutCache` 的注释）。
-    bool CacheMatches(float available) const noexcept;
+    bool CacheMatches(float available, float availableHeight) const noexcept;
 
     /**
      * 文字色**真正要画**的值。

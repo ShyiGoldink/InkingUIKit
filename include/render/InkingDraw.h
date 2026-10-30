@@ -154,16 +154,16 @@ void strokeShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
  * @param fit       适配模式 + 框尺寸 + 图尺寸（`ImageFitSpec`）。它决定 UV 与
  *                  `contain` 的留白。
  * @param tintColor 只取 alpha：过渡时做淡入淡出（图片本身不换色）。
- * @param hasAlpha  这张纹理带不带 alpha 通道（**调用方从建纹理时的 surface
- *                  格式记下来**，别在这里问 `SDL_GetTextureProperties`——见
- *                  `InkingText.cpp` 里 `TextureEntry::hasAlpha` 的注释）。
- *                  它只影响**矩形 + Fill** 那条快路：带 alpha 的图必须绕开
- *                  几何批直接贴图，否则透明区会被画成黑色。
+ *
+ * **没有 `hasAlpha` 参数了**（0.8.5）：它原来只用来决定"带 alpha 的图要不要
+ * 绕开几何批"，而 0.6.2 T-08 之后两条路逐位相同（SDL 3.4.16 实测），参数就
+ * 再也没人读——一个没人读的参数比没有更容易骗人。历史上那个坑（透明区发黑）
+ * 记在 `fillShapeTextured` 的"矩形 + Fill"注释里。
  */
 void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
                        int height, float magnification, float pixelX,
                        float pixelY, const TransformSpec& transform,
-                       SDL_Texture* texture, bool hasAlpha,
-                       const ImageFitSpec& fit, std::uint32_t tintColor);
+                       SDL_Texture* texture, const ImageFitSpec& fit,
+                       std::uint32_t tintColor);
 
 }  // namespace inking::detail

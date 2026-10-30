@@ -111,8 +111,13 @@ ScrollBarMetrics ComputeScrollBar(bool vertical, float viewportWidth,
 float ScrollFromTrackClick(bool vertical, float clickX, float clickY,
                            const ScrollBarMetrics& bar, float range) noexcept;
 
-/// 这一点落在滑块上吗（按下时用它决定"是拖滑块还是跳过去"）。
-bool HitsThumb(bool vertical, float x, float y,
-               const ScrollBarMetrics& bar) noexcept;
+/**
+ * 这一点落在滑块上吗（按下时用它决定"是拖滑块还是跳过去"）。
+ *
+ * **0.8.5 删掉了 `bool vertical`**：`ScrollBarMetrics` 里的 `thumbX/thumbY/
+ * thumbWidth/thumbHeight` 已经按各自的轴算好了，再传一个"是竖的还是横的"
+ * 根本没人读——一个没人读的参数比没有更容易骗人。
+ */
+bool HitsThumb(float x, float y, const ScrollBarMetrics& bar) noexcept;
 
 }  // namespace inking
