@@ -150,6 +150,18 @@ inking 0.8.5（发布版）—— Windows x64 构建信息
       ——本机 `PATH` 上有第二份 `C:/SDL3/lib/x64/SDL3.dll`（比 msys64 那份旧一年多），
       选错那份就编不出可用的字体路径。症状是自检打印"没有可读字体"并跳过像素断言，
       那是环境不是缺陷（`docs/zh/API.md` §7 有这条注）。
+  15. **包内验收（本版）**：`env -i`，PATH 只留 `C:\Windows\system32` 与 `C:\Windows`
+      ——不含 MSYS2 / 工具链 / Python，模拟只拿到 zip 的机器：
+      - `bin/inking_demo_selftest.exe` ⇒ **599 项 ok / 0 项 skip / 失败项 0**，退出码 0
+        （字体在包内**真的能打开**：这台机器上 PATH 里没有第二份 SDL3.dll 可抢）。
+      - `bin/inking_demo.exe`（`INK_CAPTURE` + `INK_AUTOQUIT`）⇒ 1280×720 PNG，
+        100,346 字节，退出码 0；**设计稿背景 + 全部控件 + 中文文字同屏**，且与构建树
+        那份截图**逐字节相同**（`bin/assets/` 与 DLL 闭包都对）。
+      - `examples/minimal` 拷到包外构建 ⇒ configure（11.7 s）/ build / link 全通过；
+        用包装出来的 `hello.exe` 在 `env -i` 下运行 5 秒仍在（窗口已起、DLL 闭包解析
+        成功；它是主循环程序，退出靠用户关窗，所以判据是"活着"而不是"退出码 0"）。
+      - 完整性：**222 个文件**、zip 8.6 MB；`SHA256SUMS.txt` **221 条全 OK**
+        （`BUILD.txt` 自己不计入）；解压后再跑一次自检 ⇒ 失败项 0。
 
   1. 构建：`cmake --build build-release -j` 全部目标通过，无 error（只有一条已知的
      NOMINMAX 重定义警告）。
