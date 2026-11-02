@@ -49,7 +49,7 @@
 规则只能有一条——跨子树、跨簇、跨溢出桶都要能统一比较，否则不同来源的候选之间无法定序。
 它现在实现的是**局部层级**（A8b），但仍然是**严格全序**，所以这一条不变量没变。
 
-`HitTable` 里候选按 z 降序填，"第一个真正包含该点的"就是最上面那个（§10.2）。
+`InkingHitTable` 里候选按 z 降序填，"第一个真正包含该点的"就是最上面那个（§10.2）。
 **渲染顺序与命中顺序必须共用同一个比较器**。
 
 > 局部层级（A8b）已经落下：`IsAbove` 现在是"从根到自己的 (z, 注册序号) 序列按字典序
@@ -83,7 +83,7 @@
 
 ```
 窗口层（InkingWindow::runLoop）
-  ├─ ShortcutRegistry::Dispatch         ← 最先：命中快捷键就消费本帧该 Down 事件
+  ├─ InkingShortcutRegistry::Dispatch         ← 最先：命中快捷键就消费本帧该 Down 事件
   ├─ 指针：SetPointerState / SetPointerWheel
   ├─ 键盘：PushKeyDown / PushKeyUp / PushTextInput → 焦点节点
   ├─ 场景：DispatchPointer()            ← 每帧一次：捕获 → 悬停 → 派发
@@ -92,7 +92,7 @@
 
 三条纪律：
 
-1. **快捷键先于一切**：命中即消费本帧的 `KeyDown`（`KeyboardInput::ConsumeFrameEvent`），
+1. **快捷键先于一切**：命中即消费本帧的 `KeyDown`（`InkingKeyboardInput::ConsumeFrameEvent`），
    但**不动跨帧的 `IsKeyDown`**——业务仍能通过状态查询看到"键是按下着的"。
 2. **指针是"推"，状态是"拉"**：静态组件由场景推 `onPointerHover(bool)` / `onPointerPress(bool)`；
    动态组件不进表、不被遍历，只能在自己的 Tick 里读 `GetPointerX/Y` 自己判（§7）。
@@ -170,16 +170,16 @@
 ## 6. 命中的三态
 
 ```cpp
-enum class HitKind {
+enum class InkingHitKind {
     Block,        ///< 事件到此为止（半透明遮罩也属于这一类，遮挡 ≠ 未命中）
     PassThrough,  ///< 有东西，但它让过（继续往下找）
     Miss,         ///< 这里没东西
 };
 
-struct HitResult {          // 三态 + 目标，两样一起给：投递需要目标
-    HitKind kind = HitKind::Miss;
+struct InkingHitResult {          // 三态 + 目标，两样一起给：投递需要目标
+    InkingHitKind kind = InkingHitKind::Miss;
     InkingWidget* target = nullptr;
-    bool IsHit() const noexcept { return kind != HitKind::Miss && target != nullptr; }
+    bool IsHit() const noexcept { return kind != InkingHitKind::Miss && target != nullptr; }
 };
 ```
 
@@ -192,10 +192,10 @@ struct HitResult {          // 三态 + 目标，两样一起给：投递需要�
 策略由写入口改、由场景合并**。
 
 **合并只发生在同一层**（0.4.1 明确划线）：静态表内部会把 PassThrough 记下、
-继续往下找 Block（`HitTable.cpp` 的 `Query`）；**跨静态 / 动态那一步不做**——
+继续往下找 Block（`InkingHitTable.cpp` 的 `Query`）；**跨静态 / 动态那一步不做**——
 动态的 PassThrough 目前不会让给下层的静态 Block，答案仍是那个动态组件。
 要做"点了穿透到下层"必须同时改 `QueryHit`（三态合并）与 `DispatchPointer`
-（它现在完全不看 `HitKind`，`topmost = hit.IsHit() ? hit.target : nullptr`），
+（它现在完全不看 `InkingHitKind`，`topmost = hit.IsHit() ? hit.target : nullptr`），
 见 §15 第 1 行与 §17 第 3 条。
 
 ---
@@ -224,7 +224,7 @@ inside 真变时置位），所以**鼠标不动就一次都不判**。改之前
 
 典型实现是 `InkingDynamicButton::JudgePointer()`：它把指针位置与自己的包络比一次，
 得出 hover / pressed 两个 bool，再驱动状态机；边沿、捕获、点击三步住在
-`detail::PointerProbe`（两档共用一套语义，见 §17）。之所以不回调场景：
+`inking_detail::PointerProbe`（两档共用一套语义，见 §17）。之所以不回调场景：
 
 - 场景的查询是**按表**的，动态组件不在表里，问它只能线性扫——比自判贵；
 - 自判的输入是"当前这一帧的状态"，与 §11「命中与渲染同一个 t」天然一致。
@@ -236,7 +236,7 @@ inside 真变时置位），所以**鼠标不动就一次都不判**。改之前
   `kind = Block`）。两个动态组件重叠时也按 z 序取最上面那个
   （`topmostDynamicHit` 从绘制列表尾部往前扫）。
   **不参与的只有输入归属**：动态组件仍收不到 §3 那三个推钩子，只能自判（第 2 条）。
-- 动态组件在表里只留一个**洞**（`HitTable::AddHole`）：点落在洞里时，场景才去
+- 动态组件在表里只留一个**洞**（`InkingHitTable::AddHole`）：点落在洞里时，场景才去
   `topmostDynamicHit()` 现问。洞的作用是**省这一趟**，不是表达遮挡。
 
 ---
@@ -286,7 +286,7 @@ inside 真变时置位），所以**鼠标不动就一次都不判**。改之前
 
 ---
 
-## 10. 命中表（HitTable）
+## 10. 命中表（InkingHitTable）
 
 形态：**簇（粗块）→ 簇内均匀格子 → CSR 候选数组**。表**不认识场景**：
 它只收"条目（节点 + 包络 + 让不让过）"和"动态洞的包络"，
@@ -370,7 +370,7 @@ Clear() → 逐条 AddEntry(...) / AddHole(...) → Build() → 反复 Query()
 - 组件要键盘就必须**声明**（`WantsKeyboardFocus()`）——不声明就拿不到。
   `InkingTextInput` 是典型例子：不声明就永远收不到按键。
 - 键盘事件走**两条路径**（A3）：① `InkingKeyboardTarget` 的 `onKeyDown` / `onKeyUp` /
-  `onTextInput` 钩子（编译期确定、零分配）；② 状态查询 `KeyboardInput::IsKeyDown`
+  `onTextInput` 钩子（编译期确定、零分配）；② 状态查询 `InkingKeyboardInput::IsKeyDown`
   （跨帧状态，供"按住持续移动"这类逻辑）。
 - **两条都要**：只有状态查询就做不出"按一下触发一次"（会每帧触发）；
   只有事件就做不出"按住加速"。
@@ -414,9 +414,9 @@ Clear() → 逐条 AddEntry(...) / AddHole(...) → Build() → 反复 Query()
 
 | # | 问题 | 现状 | 出路 |
 | --- | --- | --- | --- |
-| **1** | **动态组件的遮挡与输入归属** | **几何遮挡已参与**（`QueryHit` 按 `IsAbove` 合并，两个动态组件重叠时也按 z 序取最上面那个）；**输入归属不参与**（动态仍收不到推钩子，由 `onPointerStateChanged` 唤起自判，见 §7 第 2 条）。**跨静态 / 动态的点击透传未实现**：动态的 `PassThrough` 不让给下层的静态 Block | 透传要同时改 `QueryHit`（三态合并）与 `DispatchPointer`（它不消费 `HitKind`），属"改派发架构"那一档，**未排期**（0.4.1 明确不做） |
+| **1** | **动态组件的遮挡与输入归属** | **几何遮挡已参与**（`QueryHit` 按 `IsAbove` 合并，两个动态组件重叠时也按 z 序取最上面那个）；**输入归属不参与**（动态仍收不到推钩子，由 `onPointerStateChanged` 唤起自判，见 §7 第 2 条）。**跨静态 / 动态的点击透传未实现**：动态的 `PassThrough` 不让给下层的静态 Block | 透传要同时改 `QueryHit`（三态合并）与 `DispatchPointer`（它不消费 `InkingHitKind`），属"改派发架构"那一档，**未排期**（0.4.1 明确不做） |
 | 2 | **多指针 / 多点触控** | **这一版不做**。只认**第一根按下的手指**，后来的明确忽略；`FINGER_UP` 与 `FINGER_CANCELED` 都算抬起 | 指针状态要从单值改成带 id 的表；捕获也要按 id 存 |
-| 3 | **局部层级（堆叠上下文，A8b）** | 未做。`Select` 用"给自己一个高 z（默认 200）"换"展开在内容之上" | 把 `IsAbove` 换成"从根向下的 z 序列按字典序比较"；`HitTable` 里补 §10.5 规则 4 的跨簇仲裁 |
+| 3 | **局部层级（堆叠上下文，A8b）** | 未做。`Select` 用"给自己一个高 z（默认 200）"换"展开在内容之上" | 把 `IsAbove` 换成"从根向下的 z 序列按字典序比较"；`InkingHitTable` 里补 §10.5 规则 4 的跨簇仲裁 |
 | 4 | **标脏送到最近的表边界** | 未做，统一"整表脏" | 出口已经集中在 `MarkStructureChanged()`，只改这一处 |
 | 5 | **键盘的"切走再回来"** | 已处理（捕获作废 + 失焦收尾），但只覆盖窗口失焦，不覆盖输入法抢占 | 需要 IME 事件的显式建模 |
 
@@ -432,8 +432,8 @@ Clear() → 逐条 AddEntry(...) / AddHole(...) → Build() → 反复 Query()
 | --- | --- |
 | 每帧只判断一次 | `InkingScene::SetPointerState` / `DispatchPointer` |
 | 层级序（树序 + 兄弟内 z） | `InkingWidget::IsAbove` |
-| 三态 | `scene/HitTable.h` 的 `HitKind` / `HitResult` |
-| 命中表 | `scene/HitTable.h`（簇 + 格子 + CSR + 动态洞） |
+| 三态 | `scene/InkingHitTable.h` 的 `InkingHitKind` / `InkingHitResult` |
+| 命中表 | `scene/InkingHitTable.h`（簇 + 格子 + CSR + 动态洞） |
 | 命中脏 | `InkingWidget::_dirty` / `kHitQuietFrames = 3` |
 | 重绘脏 | `InkingWidget::IsRepaintDirty` / `kRepaintQuietFrames = 5` |
 | 指针脏 | `InkingScene::IsPointerDirty` |
@@ -444,7 +444,7 @@ Clear() → 逐条 AddEntry(...) / AddHole(...) → Build() → 反复 Query()
 | 捕获 | `InkingScene::_pressedNode`（内部） |
 | 动态自判 | `InkingDynamicButton::JudgePointer` |
 | 输入归属（容器深挖） | `InkingScene::QueryHit` 里的 `normalize`（静态 / 动态同一套） |
-| 边沿 / 捕获 / 点击判定 | `detail::PointerProbe`（`include/detail/InkingPointerProbe.h`） |
+| 边沿 / 捕获 / 点击判定 | `inking_detail::PointerProbe`（`include/detail/InkingPointerProbe.h`） |
 | 动态采样时机 | `InkingScene::DispatchPointer` 第 0 步（`_pointerDirty` → `onPointerStateChanged`） |
 | 滚动不标脏 | `InkingStaticPanel` 的 `_scrollX/_scrollY` |
 
@@ -481,7 +481,7 @@ Clear() → 逐条 AddEntry(...) / AddHole(...) → Build() → 反复 Query()
 - **动态的采样至多差一帧**：通知在帧首，组件若在通知里改了几何，本帧命中仍按旧列表算。
 - **动态组件不进 `_pressedNode`**：场景的捕获表只记静态节点；动态的"按下之后滑出去仍算
   它按着"由 `PointerProbe` 自己维护，语义与静态档一致（同点松开才算一次 `click`）。
-- **两档的边沿判定只有一份**：`detail::PointerProbe`。别在组件里再抄 `_wasDown` /
+- **两档的边沿判定只有一份**：`inking_detail::PointerProbe`。别在组件里再抄 `_wasDown` /
   `_captured`——第三份必然走形（`InkingButtonLike` 那次拆分就是因为这个）。
 
 ---

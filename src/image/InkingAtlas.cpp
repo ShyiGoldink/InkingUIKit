@@ -4,18 +4,16 @@
 
 #include <cmath>
 
-namespace inking {
-
 namespace {
 
 /// 帧矩形落在图集内吗（只做"非负 + 宽高为正"这层，边界由组件构造期量图再验）。
-bool FrameRectUsable(const ShapeBounds& rect) noexcept {
+bool FrameRectUsable(const InkingShapeBounds& rect) noexcept {
     return rect.width > 0.0f && rect.height > 0.0f && rect.x >= 0.0f && rect.y >= 0.0f;
 }
 
 }  // namespace
 
-std::size_t AtlasData::FindIndex(const std::string& animationName) const noexcept {
+std::size_t InkingAtlasData::FindIndex(const std::string& animationName) const noexcept {
     for (std::size_t i = 0; i < animations.size(); ++i) {
         if (animations[i].name == animationName) {
             return i;
@@ -24,12 +22,12 @@ std::size_t AtlasData::FindIndex(const std::string& animationName) const noexcep
     return kNotFound;
 }
 
-std::string AtlasData::Validate() const {
+std::string InkingAtlasData::Validate() const {
     if (animations.empty()) {
         return "图集里没有任何动画（" + name + "）";
     }
     for (std::size_t i = 0; i < animations.size(); ++i) {
-        const AtlasAnimation& animation = animations[i];
+        const InkingAtlasAnimation& animation = animations[i];
         if (animation.frames.empty()) {
             return "动画 \"" + animation.name + "\" 没有帧";
         }
@@ -55,23 +53,23 @@ std::string AtlasData::Validate() const {
     return {};
 }
 
-SpriteData MakeSpriteData(const AtlasData& atlas, std::size_t animationIndex,
+InkingSpriteData InkingMakeSpriteData(const InkingAtlasData& atlas, std::size_t animationIndex,
                           const std::uint8_t* imageBytes, std::size_t imageSize) {
-    SpriteData data;
+    InkingSpriteData data;
     data.name = atlas.name;
-    data.normal.type = AppearanceType::Image;
+    data.normal.type = InkingAppearanceType::Image;
 
     if (animationIndex >= atlas.animations.size()) {
         // 越界不是"返回空"就完事：调用方多半是拿 `FindIndex()` 的返回值直接喂进来，
         // 而 `kNotFound` 是个巨大的 `size_t`——不打一条日志，画面只是一片空白。
-        INK_LOG_ERROR(std::string(kAtlasModuleName),
+        INK_LOG_ERROR(std::string(InkingAtlasModuleName),
                       "动画下标越界（图集 \"" + atlas.name + "\"，要第 "
                           + std::to_string(animationIndex) + " 条，共 "
                           + std::to_string(atlas.animations.size()) + " 条）");
-        return data;  // 没有 frames 也没有 sheet：`SpriteData::Validate()` 会说清楚
+        return data;  // 没有 frames 也没有 sheet：`InkingSpriteData::Validate()` 会说清楚
     }
 
-    const AtlasAnimation& animation = atlas.animations[animationIndex];
+    const InkingAtlasAnimation& animation = atlas.animations[animationIndex];
 
     // 名字带上图集名：同屏两个图集都有 "walk" 时，日志/观测口才分得开。
     if (!atlas.name.empty()) {
@@ -105,4 +103,3 @@ SpriteData MakeSpriteData(const AtlasData& atlas, std::size_t animationIndex,
     return data;
 }
 
-}  // namespace inking

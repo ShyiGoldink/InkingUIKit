@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <utility>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 namespace {
 
@@ -41,8 +41,8 @@ bool MatchesFilter(const std::string& text, const std::string& filter) {
  * `clipChildren` **必须关着**：展开的那一列挂在收起按钮外面（下面或上面），
  * 剪了就什么都看不见。这也是"不引入浮层"那条约定的代价，写在类注释里了。
  */
-PanelData MakePanelData(const SelectStyle& style) {
-    PanelData panel;
+InkingPanelData MakePanelData(const SelectStyle& style) {
+    InkingPanelData panel;
     panel.name = "select";
     panel.width = style.closedLook.width > 0 ? style.closedLook.width : 200;
     panel.height = style.closedLook.height > 0 ? style.closedLook.height : 36;
@@ -103,16 +103,16 @@ float OptionsOffsetY(const SelectStyle& style) {
 
 }  // namespace
 
-ButtonData MakeDefaultClosedLook() {
-    ButtonData look;
+InkingButtonData MakeDefaultClosedLook() {
+    InkingButtonData look;
     look.name = "selectClosed";
     look.width = 200;
     look.height = 36;
-    look.shape = ShapeSpec::RoundedRect(theme::kRadiusItem);
+    look.shape = InkingShapeSpec::RoundedRect(theme::kRadiusItem);
     // 亮色：白底 + 1px 浅描边；悬停 / 按下用主色浅底。
-    look.normal = ButtonAppearance(AppearanceType::Color, theme::kSurface);
-    look.hover = ButtonAppearance(AppearanceType::Color, theme::kAccentSoft);
-    look.onclicked = ButtonAppearance(AppearanceType::Color,
+    look.normal = InkingButtonAppearance(InkingAppearanceType::Color, theme::kSurface);
+    look.hover = InkingButtonAppearance(InkingAppearanceType::Color, theme::kAccentSoft);
+    look.onclicked = InkingButtonAppearance(InkingAppearanceType::Color,
                                       theme::kAccentSoftPressed);
     look.hoverInheritsNormal = false;
     look.onclickedInheritsNormal = false;
@@ -120,7 +120,7 @@ ButtonData MakeDefaultClosedLook() {
     look.stroke.color = theme::kOutline;
     look.text.fontSize = 16.0f;
     look.text.leftSpace = 12.0f;  // 文字靠左（右边还要留给 ▾ 指示符）
-    look.text.alignV = TextAlignV::Middle;  // 垂直居中：按钮高 36、字号 16
+    look.text.alignV = InkingTextAlignV::Middle;  // 垂直居中：按钮高 36、字号 16
     look.text.topSpace = 0.0f;
     look.text.path = theme::DefaultFontPath();
     look.textColor = theme::kTextPrimary;
@@ -145,7 +145,7 @@ SelectStyle SelectStyle::MakeDefault() {
     style.filterLook.width = style.closedLook.width - 2;
     style.filterLook.height = static_cast<int>(style.filterHeight + 0.5f);
     style.filterLook.style.fontSize = 15.0f;
-    style.filterLook.style.padding = LayoutSpacing{8.0f, 4.0f, 8.0f, 4.0f};
+    style.filterLook.style.padding = InkingLayoutSpacing{8.0f, 4.0f, 8.0f, 4.0f};
     style.filterLook.style.fontPath = theme::DefaultFontPath();
     style.filterLook.color = theme::kTextPrimary;
     style.filterLook.caretColor = theme::kAccentStrong;
@@ -158,7 +158,7 @@ Select::Select(InkingWidget* parent, const SelectStyle& style)
       _closed(this, [&style] {
           // 收起按钮是 Select 的**子节点**：它自己的偏移与锚点清零（相对父级左上角），
           // 那份"放到场景哪里"的锚点/偏移已经被 Select 自己用掉了（见 MakePanelData）。
-          ButtonData look = style.closedLook;
+          InkingButtonData look = style.closedLook;
           look.traceAnchor = InkingChangeAnchor::LeftTop;
           look.selfAnchor = InkingChangeAnchor::LeftTop;
           look.offsetX = 0.0f;
@@ -183,7 +183,7 @@ Select::Select(InkingWidget* parent, const SelectStyle& style)
           return options;
       }()),
       _filter(this, [&style] {
-          TextInputData data = style.filterLook;
+          InkingTextInputData data = style.filterLook;
           if (data.width <= 0) {
               data.width = style.closedLook.width;
           }
@@ -421,4 +421,4 @@ void Select::onAnimationTick(float deltaSeconds) {
     }
 }
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

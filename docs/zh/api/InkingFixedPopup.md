@@ -38,7 +38,7 @@
 | --- | --- | --- |
 | `SetCloseOnOutsideClick(bool)` | `true` | 点在浮窗外部关闭 |
 | `SetTakeFocusOnOpen(bool)` | `true` | 打开时夺取键盘焦点（关掉就不再是焦点模态） |
-| `SetClampBounds(const ShapeBounds&)` | 父级矩形 | 收窄落位范围（父级坐标） |
+| `SetClampBounds(const InkingShapeBounds&)` | 父级矩形 | 收窄落位范围（父级坐标） |
 | `ClearClampBounds()` | — | 恢复默认 |
 
 ### 观测
@@ -48,7 +48,7 @@
 
 ## 落位怎么算
 
-`detail::SolvePopupPlacement`（`detail/InkingPopupPlacement.h`，纯函数）：
+`inking_detail::SolvePopupPlacement`（`detail/InkingPopupPlacement.h`，纯函数）：
 
 1. 按自锚点 `(0,0)` 摆 ⇒ 向右下展开；
 2. 该方向放不下 ⇒ **翻到对侧**（自锚点变 `(1,1)`）；

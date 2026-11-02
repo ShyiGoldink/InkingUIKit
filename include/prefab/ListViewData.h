@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 /// 模块名常量：日志与自检要用。
 inline constexpr const char* kListModuleName = "ListView";
@@ -57,10 +57,10 @@ enum class ListSelectionMode : std::uint8_t {
  * 照用户配的用。
  */
 struct ListViewStyle {
-    PanelData panel{};
+    InkingPanelData panel{};
 
-    /// 行外观模板（`ButtonData`）。换成自己那份配置生成的类即可（同 C1）。
-    ButtonData rowLook{};
+    /// 行外观模板（`InkingButtonData`）。换成自己那份配置生成的类即可（同 C1）。
+    InkingButtonData rowLook{};
 
     /// 行高（设计坐标）。**必须大于 0**：窗口化靠它算位置。
     float rowHeight = 32.0f;
@@ -103,6 +103,6 @@ struct ListViewStyle {
 };
 
 /// 一份"深灰行 + 浅色字"的默认行外观（三态各不相同，继承关系显式关掉）。
-ButtonData MakeDefaultRowLook();
+InkingButtonData MakeDefaultRowLook();
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

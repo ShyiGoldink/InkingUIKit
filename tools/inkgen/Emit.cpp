@@ -42,8 +42,8 @@ std::string Double(double value) {
 
 /// 布局字段（A6）的赋值块。定义在下面——这里先声明一次，
 /// `ButtonBody` 与 `PanelBody` 都能用（它们在定义之前）。
-std::string LayoutAssignments(const inking::LayoutSpec& spec,
-                              const inking::LayoutItem& item,
+std::string LayoutAssignments(const InkingLayoutSpec& spec,
+                              const InkingLayoutItem& item,
                               const std::string& indent,
                               const std::string& specTarget,
                               const std::string& itemTarget);
@@ -109,79 +109,79 @@ std::string PathArrayName(const ButtonConfig& button, std::size_t index) {
     return "k" + button.identifier + "Path";
 }
 
-/// `inking::Easing` 的枚举名——生成代码里要写出 `inking::Easing::EaseOut` 这种字面量。
-const char* EasingIdentifier(inking::Easing easing) {
+/// `InkingEasing` 的枚举名——生成代码里要写出 `InkingEasing::EaseOut` 这种字面量。
+const char* EasingIdentifier(InkingEasing easing) {
     switch (easing) {
-        case inking::Easing::EaseIn:
+        case InkingEasing::EaseIn:
             return "EaseIn";
-        case inking::Easing::EaseOut:
+        case InkingEasing::EaseOut:
             return "EaseOut";
-        case inking::Easing::EaseInOut:
+        case InkingEasing::EaseInOut:
             return "EaseInOut";
-        case inking::Easing::Linear:
+        case InkingEasing::Linear:
         default:
             return "Linear";
     }
 }
 
-/// `inking::LineCap` 的枚举名——生成代码里要写出 `inking::LineCap::Round` 这种字面量。
-const char* LineCapIdentifier(inking::LineCap cap) {
+/// `InkingLineCap` 的枚举名——生成代码里要写出 `InkingLineCap::Round` 这种字面量。
+const char* LineCapIdentifier(InkingLineCap cap) {
     switch (cap) {
-        case inking::LineCap::Round:
+        case InkingLineCap::Round:
             return "Round";
-        case inking::LineCap::Square:
+        case InkingLineCap::Square:
             return "Square";
-        case inking::LineCap::Butt:
+        case InkingLineCap::Butt:
         default:
             return "Butt";
     }
 }
 
-/// `inking::TextAlignH` 的枚举名（A7 的标签排版）。
-const char* TextAlignHIdentifier(inking::TextAlignH align) {
+/// `InkingTextAlignH` 的枚举名（A7 的标签排版）。
+const char* TextAlignHIdentifier(InkingTextAlignH align) {
     switch (align) {
-        case inking::TextAlignH::Center:
+        case InkingTextAlignH::Center:
             return "Center";
-        case inking::TextAlignH::Right:
+        case InkingTextAlignH::Right:
             return "Right";
-        case inking::TextAlignH::Left:
+        case InkingTextAlignH::Left:
         default:
             return "Left";
     }
 }
 
-/// `inking::TextAlignV` 的枚举名。
-const char* TextAlignVIdentifier(inking::TextAlignV align) {
+/// `InkingTextAlignV` 的枚举名。
+const char* TextAlignVIdentifier(InkingTextAlignV align) {
     switch (align) {
-        case inking::TextAlignV::Middle:
+        case InkingTextAlignV::Middle:
             return "Middle";
-        case inking::TextAlignV::Bottom:
+        case InkingTextAlignV::Bottom:
             return "Bottom";
-        case inking::TextAlignV::Top:
+        case InkingTextAlignV::Top:
         default:
             return "Top";
     }
 }
 
-/// `inking::TextWrap` 的枚举名。
-const char* TextWrapIdentifier(inking::TextWrap wrap) {
+/// `InkingTextWrap` 的枚举名。
+const char* TextWrapIdentifier(InkingTextWrap wrap) {
     switch (wrap) {
-        case inking::TextWrap::NoWrap:
+        case InkingTextWrap::NoWrap:
             return "NoWrap";
-        case inking::TextWrap::Anywhere:
+        case InkingTextWrap::Anywhere:
             return "Anywhere";
-        case inking::TextWrap::Word:
+        case InkingTextWrap::Word:
         default:
             return "Word";
     }
 }
 
-/// `inking::TextOverflow` 的枚举名。
-const char* TextOverflowIdentifier(inking::TextOverflow overflow) {
+/// `InkingTextOverflow` 的枚举名。
+const char* TextOverflowIdentifier(InkingTextOverflow overflow) {
     switch (overflow) {
-        case inking::TextOverflow::Ellipsis:
+        case InkingTextOverflow::Ellipsis:
             return "Ellipsis";
-        case inking::TextOverflow::Clip:
+        case InkingTextOverflow::Clip:
         default:
             return "Clip";
     }
@@ -206,7 +206,7 @@ std::vector<std::string> SplitNamespace(const std::string& nameSpace) {
     return parts;
 }
 
-/// `inking::cxxcss::RegisterAllButtons` —— 生成代码里引用自己的完整名字时用。
+/// `cxxcss::RegisterAllButtons` —— 生成代码里引用自己的完整名字时用。
 std::string Qualified(const std::string& nameSpace, const std::string& symbol) {
     return nameSpace + "::" + symbol;
 }
@@ -246,75 +246,75 @@ std::string CloseNamespaces(const std::vector<std::string>& parts,
  * @param indent 行首缩进
  * @param target 赋值目标（`data.shape` 之类）
  */
-std::string ShapeAssignment(const inking::ShapeSpec& shape,
+std::string ShapeAssignment(const InkingShapeSpec& shape,
                             const std::string& indent,
                             const std::string& target,
                             const std::string& pathArray = {}) {
     std::ostringstream out;
     switch (shape.kind) {
-        case inking::ShapeKind::RoundedRect:
-            out << indent << target << " = inking::ShapeSpec::RoundedRect("
+        case InkingShapeKind::RoundedRect:
+            out << indent << target << " = InkingShapeSpec::RoundedRect("
                 << Float(shape.radius) << ");\n";
             break;
-        case inking::ShapeKind::Circle:
-            out << indent << target << " = inking::ShapeSpec::Circle();\n";
+        case InkingShapeKind::Circle:
+            out << indent << target << " = InkingShapeSpec::Circle();\n";
             break;
-        case inking::ShapeKind::Ellipse:
-            out << indent << target << " = inking::ShapeSpec::Ellipse();\n";
+        case InkingShapeKind::Ellipse:
+            out << indent << target << " = InkingShapeSpec::Ellipse();\n";
             break;
-        case inking::ShapeKind::Capsule:
-            out << indent << target << " = inking::ShapeSpec::Capsule();\n";
+        case InkingShapeKind::Capsule:
+            out << indent << target << " = InkingShapeSpec::Capsule();\n";
             break;
-        case inking::ShapeKind::Ring:
-            out << indent << target << " = inking::ShapeSpec::Ring("
+        case InkingShapeKind::Ring:
+            out << indent << target << " = InkingShapeSpec::Ring("
                 << Float(shape.thickness) << ");\n";
             break;
-        case inking::ShapeKind::Line:
-            out << indent << target << " = inking::ShapeSpec::Line("
-                << Float(shape.thickness) << ", inking::LineCap::"
+        case InkingShapeKind::Line:
+            out << indent << target << " = InkingShapeSpec::Line("
+                << Float(shape.thickness) << ", InkingLineCap::"
                 << LineCapIdentifier(shape.cap) << ");\n";
             break;
-        case inking::ShapeKind::Polygon:
-            out << indent << target << " = inking::ShapeSpec::Polygon("
+        case InkingShapeKind::Polygon:
+            out << indent << target << " = InkingShapeSpec::Polygon("
                 << shape.sides << ", " << Float(shape.rotation) << ");\n";
             break;
-        case inking::ShapeKind::ChamferRect:
-            out << indent << target << " = inking::ShapeSpec::ChamferRect("
+        case InkingShapeKind::ChamferRect:
+            out << indent << target << " = InkingShapeSpec::ChamferRect("
                 << Float(shape.chamfer) << ");\n";
             break;
-        case inking::ShapeKind::Star:
-            out << indent << target << " = inking::ShapeSpec::Star(" << shape.points
+        case InkingShapeKind::Star:
+            out << indent << target << " = InkingShapeSpec::Star(" << shape.points
                 << ", " << Float(shape.innerRatio) << ", "
                 << Float(shape.rotation) << ");\n";
             break;
-        case inking::ShapeKind::Superellipse:
-            out << indent << target << " = inking::ShapeSpec::Superellipse("
+        case InkingShapeKind::Superellipse:
+            out << indent << target << " = InkingShapeSpec::Superellipse("
                 << Float(shape.exponent) << ");\n";
             break;
-        case inking::ShapeKind::Arc:
-            out << indent << target << " = inking::ShapeSpec::Arc("
+        case InkingShapeKind::Arc:
+            out << indent << target << " = InkingShapeSpec::Arc("
                 << Float(shape.thickness) << ", " << Float(shape.startAngle)
                 << ", " << Float(shape.sweepAngle) << ");\n";
             break;
-        case inking::ShapeKind::PolygonPath:
+        case InkingShapeKind::PolygonPath:
             // 点列烘成文件作用域的静态数组（生命周期是整个进程），这里只传名字
-            // ——`ShapeSpec` 里存的是视图（见 `InkingShapeSpec.h` 的字段注释）。
-            out << indent << target << " = inking::ShapeSpec::PolygonPath("
+            // ——`InkingShapeSpec` 里存的是视图（见 `InkingShapeSpec.h` 的字段注释）。
+            out << indent << target << " = InkingShapeSpec::PolygonPath("
                 << (pathArray.empty() ? "nullptr" : pathArray) << ", "
                 << shape.pathPointCount << ");\n";
             break;
-        case inking::ShapeKind::Rect:
+        case InkingShapeKind::Rect:
         default:
-            out << indent << target << " = inking::ShapeSpec::Rect();\n";
+            out << indent << target << " = InkingShapeSpec::Rect();\n";
             break;
     }
     return out.str();
 }
 
 /**
- * `SpriteData` 的**帧表 / 图集 / 播放参数**（0.6.1 T-06）。
+ * `InkingSpriteData` 的**帧表 / 图集 / 播放参数**（0.6.1 T-06）。
  *
- * `ButtonBody` 已经把基础字段烘好了（`SpriteData` 派生自 `ImageData`，那部分
+ * `ButtonBody` 已经把基础字段烘好了（`InkingSpriteData` 派生自 `InkingImageData`，那部分
  * 逐字相同：`normal` 的外观与字节、形状、锚点、`runtime`、`hitPassThrough`）。
  * 这里只补这一层独有的三样东西，**不重抄基础字段**——重抄一遍就等着走偏。
  *
@@ -322,19 +322,19 @@ std::string ShapeAssignment(const inking::ShapeSpec& shape,
  * 也让"改过什么"在产物里一眼看得出来。
  */
 std::string SpriteBody(const ImageConfig& image, std::size_t imageIndex) {
-    const inking::SpriteData& sprite = image.sprite;
+    const InkingSpriteData& sprite = image.sprite;
     std::ostringstream out;
 
     if (!sprite.frames.empty()) {
         out << "    data.frames.resize(" << sprite.frames.size() << ");\n";
         for (std::size_t i = 0; i < sprite.frames.size(); ++i) {
-            const inking::ButtonAppearance& frame = sprite.frames[i];
+            const InkingButtonAppearance& frame = sprite.frames[i];
             const std::string array =
                 SpriteFrameArrayName(image.button, imageIndex, i);
             const bool hasBytes = i < image.spriteFrameBytes.size()
                 && !image.spriteFrameBytes[i].empty();
             out << "    data.frames[" << i
-                << "].type = inking::AppearanceType::Image;\n";
+                << "].type = InkingAppearanceType::Image;\n";
             if (!frame.source.empty()) {
                 out << "    data.frames[" << i << "].source = "
                     << Quote(frame.source) << ";\n";
@@ -345,16 +345,16 @@ std::string SpriteBody(const ImageConfig& image, std::size_t imageIndex) {
                 out << "    data.frames[" << i << "].imageSize = sizeof("
                     << array << ");\n";
             }
-            if (frame.imageFit != inking::ImageFit::Fill) {
+            if (frame.imageFit != InkingImageFit::Fill) {
                 out << "    data.frames[" << i
-                    << "].imageFit = inking::ImageFit::"
-                    << (frame.imageFit == inking::ImageFit::Contain ? "Contain"
+                    << "].imageFit = InkingImageFit::"
+                    << (frame.imageFit == InkingImageFit::Contain ? "Contain"
                                                                    : "Cover")
                     << ";\n";
             }
         }
     } else {
-        const inking::SpriteData::SpriteSheet& sheet = sprite.sheet;
+        const InkingSpriteData::SpriteSheet& sheet = sprite.sheet;
         if (!sheet.source.empty()) {
             out << "    data.sheet.source = " << Quote(sheet.source) << ";\n";
         }
@@ -381,8 +381,8 @@ std::string SpriteBody(const ImageConfig& image, std::size_t imageIndex) {
 
     // 帧事件：一帧可以挂多个，顺序按配置原样烘（运行期按帧号升序扫，
     // 同帧内保持这个顺序）。
-    for (const inking::SpriteData::SpriteEvent& event : sprite.events) {
-        out << "    data.events.push_back(inking::SpriteData::SpriteEvent{"
+    for (const InkingSpriteData::SpriteEvent& event : sprite.events) {
+        out << "    data.events.push_back(InkingSpriteData::SpriteEvent{"
             << event.frame << ", " << Quote(event.name) << "});\n";
     }
 
@@ -406,7 +406,7 @@ std::string SpriteBody(const ImageConfig& image, std::size_t imageIndex) {
 }
 
 /**
- * 一份配置 → 一个"造 ButtonData"的表达式块。
+ * 一份配置 → 一个"造 InkingButtonData"的表达式块。
  *
  * 用**逐字段赋值**而不是聚合初始化 `{...}`：字段多、顺序敏感，聚合初始化一旦
  * 有人插了新成员就会静默错位（值都还在，只是落到了别的字段上）。
@@ -414,13 +414,13 @@ std::string SpriteBody(const ImageConfig& image, std::size_t imageIndex) {
  */
 std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
                        std::size_t imageIndex,
-                       // 图片（A11）复用这一份：数据同构（`ImageData` 派生自
-                       // `ButtonData`），差别只有"类型名"与"末尾多一行
+                       // 图片（A11）复用这一份：数据同构（`InkingImageData` 派生自
+                       // `InkingButtonData`），差别只有"类型名"与"末尾多一行
                        // runtimeAsset"。重写一遍逐字段烘法就等着两处走偏
-                       // ——那正是 `ImageData` 选择继承的原因。
-                       const char* dataType = "inking::ButtonData",
+                       // ——那正是 `InkingImageData` 选择继承的原因。
+                       const char* dataType = "InkingButtonData",
                        const std::string& tailLines = {}) {
-    const inking::ButtonData& data = button.data;
+    const InkingButtonData& data = button.data;
     std::ostringstream out;
 
     out << indent << dataType << " data;\n";
@@ -429,15 +429,15 @@ std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
     out << indent << "data.height = " << data.height << ";\n";
 
     const auto appearance = [&](const std::string& field,
-                                const inking::ButtonAppearance& value,
+                                const InkingButtonAppearance& value,
                                 const std::vector<std::uint8_t>* imageBytes,
                                 const std::string& imageArray) {
         out << indent << "data." << field << ".type = "
-            << (value.type == inking::AppearanceType::Color
-                    ? "inking::AppearanceType::Color"
-                    : (value.type == inking::AppearanceType::Image
-                           ? "inking::AppearanceType::Image"
-                           : "inking::AppearanceType::Svg"))
+            << (value.type == InkingAppearanceType::Color
+                    ? "InkingAppearanceType::Color"
+                    : (value.type == InkingAppearanceType::Image
+                           ? "InkingAppearanceType::Image"
+                           : "InkingAppearanceType::Svg"))
             << ";\n";
         out << indent << "data." << field << ".color = " << Color(value.color)
             << ";\n";
@@ -457,8 +457,8 @@ std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
                 << Float(value.transitionSeconds) << ";\n";
         }
         // 缓动曲线：缺省的 linear 不写（写了也只是把同样的值抄一遍）。
-        if (value.easing != inking::Easing::Linear) {
-            out << indent << "data." << field << ".easing = inking::Easing::"
+        if (value.easing != InkingEasing::Linear) {
+            out << indent << "data." << field << ".easing = InkingEasing::"
                 << EasingIdentifier(value.easing) << ";\n";
         }
         // 布局通道（T-5）：这个状态自己的尺寸。0（没写）就不写那一行。
@@ -472,7 +472,7 @@ std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
         }
         // 图像字节：**只借一个视图**，真正的存储在文件作用域的静态数组里
         // （见 MakeSource 开头那段——它的生命周期是整个进程，比按钮长）。
-        if (value.type == inking::AppearanceType::Image && imageBytes != nullptr
+        if (value.type == InkingAppearanceType::Image && imageBytes != nullptr
             && !imageBytes->empty()) {
             out << indent << "data." << field << ".imageBytes = " << imageArray
                 << ";\n";
@@ -480,17 +480,17 @@ std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
                 << imageArray << ");\n";
         }
         // 图片适配模式（B1）：缺省 fill 不写那一行。
-        if (value.imageFit != inking::ImageFit::Fill) {
-            out << indent << "data." << field << ".imageFit = inking::ImageFit::"
-                << (value.imageFit == inking::ImageFit::Contain ? "Contain"
+        if (value.imageFit != InkingImageFit::Fill) {
+            out << indent << "data." << field << ".imageFit = InkingImageFit::"
+                << (value.imageFit == InkingImageFit::Contain ? "Contain"
                                                              : "Cover")
                 << ";\n";
         }
-        // 变换：同样只在真配了的时候写。字段顺序就是 TransformSpec 的声明顺序
+        // 变换：同样只在真配了的时候写。字段顺序就是 InkingTransformSpec 的声明顺序
         // （translateX / translateY / rotate / scale）——聚合初始化靠这个顺序，
         // 写反了不会报错，只会静默地把 rotate 当成 scale。
         if (!value.transform.IsIdentity()) {
-            out << indent << "data." << field << ".transform = inking::TransformSpec{"
+            out << indent << "data." << field << ".transform = InkingTransformSpec{"
                 << Float(value.transform.translateX) << ", "
                 << Float(value.transform.translateY) << ", "
                 << Float(value.transform.rotate) << ", "
@@ -523,7 +523,7 @@ std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
             << ";\n";
     }
     if (data.shadow.offsetX != 0.0f || data.shadow.offsetY != 0.0f
-        || data.shadow.color != inking::ShadowSpec{}.color) {
+        || data.shadow.color != InkingShadowSpec{}.color) {
         out << indent << "data.shadow.offsetX = " << Float(data.shadow.offsetX)
             << ";\n";
         out << indent << "data.shadow.offsetY = " << Float(data.shadow.offsetY)
@@ -539,14 +539,14 @@ std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
     out << indent << "data.text.topSpace = " << Float(data.text.topSpace)
         << ";\n";
     // 对齐只在**不是默认值**时输出：老配置的产物一个字节都不变（diff 干净）。
-    if (data.text.align != inking::TextAlignH::Left) {
-        out << indent << "data.text.align = inking::TextAlignH::"
-            << (data.text.align == inking::TextAlignH::Center ? "Center" : "Right")
+    if (data.text.align != InkingTextAlignH::Left) {
+        out << indent << "data.text.align = InkingTextAlignH::"
+            << (data.text.align == InkingTextAlignH::Center ? "Center" : "Right")
             << ";\n";
     }
-    if (data.text.alignV != inking::TextAlignV::Top) {
-        out << indent << "data.text.alignV = inking::TextAlignV::"
-            << (data.text.alignV == inking::TextAlignV::Middle ? "Middle"
+    if (data.text.alignV != InkingTextAlignV::Top) {
+        out << indent << "data.text.alignV = InkingTextAlignV::"
+            << (data.text.alignV == InkingTextAlignV::Middle ? "Middle"
                                                             : "Bottom")
             << ";\n";
     }
@@ -569,9 +569,9 @@ std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
         out << indent << "data.label = " << Quote(data.label) << ";\n";
     }
 
-    out << indent << "data.selfAnchor = inking::AnchorPoint{" << Float(data.selfAnchor.x)
+    out << indent << "data.selfAnchor = InkingAnchorPoint{" << Float(data.selfAnchor.x)
         << ", " << Float(data.selfAnchor.y) << "};\n";
-    out << indent << "data.traceAnchor = inking::AnchorPoint{"
+    out << indent << "data.traceAnchor = InkingAnchorPoint{"
         << Float(data.traceAnchor.x) << ", " << Float(data.traceAnchor.y)
         << "};\n";
     out << indent << "data.offsetX = " << Float(data.offsetX) << ";\n";
@@ -599,19 +599,19 @@ std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
  * **只在非默认时输出**：绝大多数组件不带布局（`kind = None`、item 全空），
  * 每个生成类都摊开写一遍默认值只会让产物变胖、还淹没真正配了的东西。
  */
-std::string LayoutAssignments(const inking::LayoutSpec& spec,
-                              const inking::LayoutItem& item,
+std::string LayoutAssignments(const InkingLayoutSpec& spec,
+                              const InkingLayoutItem& item,
                               const std::string& indent,
                               const std::string& specTarget,
                               const std::string& itemTarget) {
     std::ostringstream out;
 
-    if (spec.kind != inking::LayoutKind::None) {
-        out << indent << specTarget << ".kind = inking::LayoutKind::"
-            << (spec.kind == inking::LayoutKind::Grid ? "Grid" : "Stack")
+    if (spec.kind != InkingLayoutKind::None) {
+        out << indent << specTarget << ".kind = InkingLayoutKind::"
+            << (spec.kind == InkingLayoutKind::Grid ? "Grid" : "Stack")
             << ";\n";
-        if (spec.axis == inking::LayoutAxis::Horizontal) {
-            out << indent << specTarget << ".axis = inking::LayoutAxis::Horizontal;\n";
+        if (spec.axis == InkingLayoutAxis::Horizontal) {
+            out << indent << specTarget << ".axis = InkingLayoutAxis::Horizontal;\n";
         }
         if (spec.gap != 0.0f) {
             out << indent << specTarget << ".gap = " << Float(spec.gap) << ";\n";
@@ -627,35 +627,35 @@ std::string LayoutAssignments(const inking::LayoutSpec& spec,
         spacing("right", spec.padding.right);
         spacing("bottom", spec.padding.bottom);
 
-        const auto justifyName = [](inking::LayoutJustify value) {
+        const auto justifyName = [](InkingLayoutJustify value) {
             switch (value) {
-                case inking::LayoutJustify::Center: return "Center";
-                case inking::LayoutJustify::End: return "End";
-                case inking::LayoutJustify::SpaceBetween: return "SpaceBetween";
-                case inking::LayoutJustify::SpaceAround: return "SpaceAround";
-                case inking::LayoutJustify::SpaceEvenly: return "SpaceEvenly";
-                case inking::LayoutJustify::Start:
+                case InkingLayoutJustify::Center: return "Center";
+                case InkingLayoutJustify::End: return "End";
+                case InkingLayoutJustify::SpaceBetween: return "SpaceBetween";
+                case InkingLayoutJustify::SpaceAround: return "SpaceAround";
+                case InkingLayoutJustify::SpaceEvenly: return "SpaceEvenly";
+                case InkingLayoutJustify::Start:
                 default: return "Start";
             }
         };
-        const auto alignName = [](inking::LayoutAlign value) {
+        const auto alignName = [](InkingLayoutAlign value) {
             switch (value) {
-                case inking::LayoutAlign::Center: return "Center";
-                case inking::LayoutAlign::End: return "End";
-                case inking::LayoutAlign::Stretch: return "Stretch";
-                case inking::LayoutAlign::Start:
+                case InkingLayoutAlign::Center: return "Center";
+                case InkingLayoutAlign::End: return "End";
+                case InkingLayoutAlign::Stretch: return "Stretch";
+                case InkingLayoutAlign::Start:
                 default: return "Start";
             }
         };
-        if (spec.justify != inking::LayoutJustify::Start) {
-            out << indent << specTarget << ".justify = inking::LayoutJustify::"
+        if (spec.justify != InkingLayoutJustify::Start) {
+            out << indent << specTarget << ".justify = InkingLayoutJustify::"
                 << justifyName(spec.justify) << ";\n";
         }
-        if (spec.align != inking::LayoutAlign::Stretch) {
-            out << indent << specTarget << ".align = inking::LayoutAlign::"
+        if (spec.align != InkingLayoutAlign::Stretch) {
+            out << indent << specTarget << ".align = InkingLayoutAlign::"
                 << alignName(spec.align) << ";\n";
         }
-        if (spec.kind == inking::LayoutKind::Grid) {
+        if (spec.kind == InkingLayoutKind::Grid) {
             out << indent << specTarget << ".columns = " << spec.columns << ";\n";
             if (spec.rowGap != 0.0f) {
                 out << indent << specTarget << ".rowGap = " << Float(spec.rowGap)
@@ -706,14 +706,14 @@ std::string LayoutAssignments(const inking::LayoutSpec& spec,
         if (item.hasSelfAlign) {
             const char* name = "Start";
             switch (item.selfAlign) {
-                case inking::LayoutAlign::Center: name = "Center"; break;
-                case inking::LayoutAlign::End: name = "End"; break;
-                case inking::LayoutAlign::Stretch: name = "Stretch"; break;
-                case inking::LayoutAlign::Start:
+                case InkingLayoutAlign::Center: name = "Center"; break;
+                case InkingLayoutAlign::End: name = "End"; break;
+                case InkingLayoutAlign::Stretch: name = "Stretch"; break;
+                case InkingLayoutAlign::Start:
                 default: break;
             }
             out << indent << itemTarget << ".hasSelfAlign = true;\n";
-            out << indent << itemTarget << ".selfAlign = inking::LayoutAlign::" << name
+            out << indent << itemTarget << ".selfAlign = InkingLayoutAlign::" << name
                 << ";\n";
         }
     }
@@ -722,23 +722,23 @@ std::string LayoutAssignments(const inking::LayoutSpec& spec,
 }
 
 /**
- * 一份面板配置 → 一个"造 PanelData"的表达式块。
+ * 一份面板配置 → 一个"造 InkingPanelData"的表达式块。
  *
  * 与 `ButtonBody` 是同一套写法（逐字段赋值、只写真配了的字段）。面板少一截：
  * 没有三态、没有文字、没有图像字节；多一截：两个具名状态（closed / open）
  * 和 `startOpen`。
  */
 std::string PanelBody(const PanelConfig& panel, const std::string& indent) {
-    const inking::PanelData& data = panel.data;
+    const InkingPanelData& data = panel.data;
     std::ostringstream out;
 
-    out << indent << "inking::PanelData data;\n";
+    out << indent << "InkingPanelData data;\n";
     out << indent << "data.name = " << Quote(data.name) << ";\n";
     out << indent << "data.width = " << data.width << ";\n";
     out << indent << "data.height = " << data.height << ";\n";
 
     const auto appearance = [&](const std::string& field,
-                                const inking::PanelAppearance& value) {
+                                const InkingPanelAppearance& value) {
         out << indent << "data." << field << ".color = " << Color(value.color)
             << ";\n";
         // 语义色的 token 名：`color` 是**烘焙主题**下的字面量，这个名字留给
@@ -752,20 +752,20 @@ std::string PanelBody(const PanelConfig& panel, const std::string& indent) {
             out << indent << "data." << field << ".transitionSeconds = "
                 << Float(value.transitionSeconds) << ";\n";
         }
-        if (value.easing != inking::Easing::Linear) {
-            out << indent << "data." << field << ".easing = inking::Easing::"
+        if (value.easing != InkingEasing::Linear) {
+            out << indent << "data." << field << ".easing = InkingEasing::"
                 << EasingIdentifier(value.easing) << ";\n";
         }
         if (!value.transform.IsIdentity()) {
             out << indent << "data." << field
-                << ".transform = inking::TransformSpec{"
+                << ".transform = InkingTransformSpec{"
                 << Float(value.transform.translateX) << ", "
                 << Float(value.transform.translateY) << ", "
                 << Float(value.transform.rotate) << ", "
                 << Float(value.transform.scale) << "};\n";
         }
         // 描边 / 阴影（0.2.0 T-07）：只写真配了的（与按钮同一条
-        // "缺省即不输出"——`StrokeSpec.width <= 0`、`ShadowSpec.color` 全透明
+        // "缺省即不输出"——`InkingStrokeSpec.width <= 0`、`InkingShadowSpec.color` 全透明
         // 本来就是"不画"）。
         if (value.stroke.width > 0.0f) {
             out << indent << "data." << field << ".stroke.width = "
@@ -774,7 +774,7 @@ std::string PanelBody(const PanelConfig& panel, const std::string& indent) {
                 << Color(value.stroke.color) << ";\n";
         }
         if (value.shadow.offsetX != 0.0f || value.shadow.offsetY != 0.0f
-            || value.shadow.color != inking::ShadowSpec{}.color) {
+            || value.shadow.color != InkingShadowSpec{}.color) {
             out << indent << "data." << field << ".shadow.offsetX = "
                 << Float(value.shadow.offsetX) << ";\n";
             out << indent << "data." << field << ".shadow.offsetY = "
@@ -795,19 +795,19 @@ std::string PanelBody(const PanelConfig& panel, const std::string& indent) {
         out << indent << "data.startOpen = true;\n";
     }
     if (data.clipChildren) {
-        // A5：裁剪只在显式声明时生成，默认那份 PanelData 就是 false。
+        // A5：裁剪只在显式声明时生成，默认那份 InkingPanelData 就是 false。
         out << indent << "data.clipChildren = true;\n";
     }
 
     if (data.scroll.enabled) {
         // B12：滚动容器只在配了 `"scroll"` 段时生成（默认那份是关的）。
         // 颜色这里不写——语义色走 Theme 表，生成期解析成字面量（和别的段一样）。
-        const inking::ScrollSpec& scroll = data.scroll;
-        const auto axisName = [](inking::ScrollAxisMode mode) {
+        const InkingScrollSpec& scroll = data.scroll;
+        const auto axisName = [](InkingScrollAxisMode mode) {
             switch (mode) {
-            case inking::ScrollAxisMode::Always:
+            case InkingScrollAxisMode::Always:
                 return "Always";
-            case inking::ScrollAxisMode::Never:
+            case InkingScrollAxisMode::Never:
                 return "Never";
             default:
                 return "Auto";
@@ -821,10 +821,10 @@ std::string PanelBody(const PanelConfig& panel, const std::string& indent) {
         out << indent << "data.scroll.wheelStep = " << Float(scroll.wheelStep)
             << ";\n";
         out << indent
-            << "data.scroll.verticalBar = inking::ScrollAxisMode::"
+            << "data.scroll.verticalBar = InkingScrollAxisMode::"
             << axisName(scroll.verticalBar) << ";\n";
         out << indent
-            << "data.scroll.horizontalBar = inking::ScrollAxisMode::"
+            << "data.scroll.horizontalBar = InkingScrollAxisMode::"
             << axisName(scroll.horizontalBar) << ";\n";
         out << indent << "data.scroll.barWidth = " << Float(scroll.barWidth)
             << ";\n";
@@ -836,9 +836,9 @@ std::string PanelBody(const PanelConfig& panel, const std::string& indent) {
             << ";\n";
     }
 
-    out << indent << "data.selfAnchor = inking::AnchorPoint{" << Float(data.selfAnchor.x)
+    out << indent << "data.selfAnchor = InkingAnchorPoint{" << Float(data.selfAnchor.x)
         << ", " << Float(data.selfAnchor.y) << "};\n";
-    out << indent << "data.traceAnchor = inking::AnchorPoint{"
+    out << indent << "data.traceAnchor = InkingAnchorPoint{"
         << Float(data.traceAnchor.x) << ", " << Float(data.traceAnchor.y)
         << "};\n";
     out << indent << "data.offsetX = " << Float(data.offsetX) << ";\n";
@@ -856,7 +856,7 @@ std::string PanelBody(const PanelConfig& panel, const std::string& indent) {
 }
 
 /**
- * 一份标签配置 → 一个"造 LabelData"的表达式块（A7 的生成器段）。
+ * 一份标签配置 → 一个"造 InkingLabelData"的表达式块（A7 的生成器段）。
  *
  * 照 `PanelBody` 抄：逐字段赋值、只写真配了的字段。标签的三块是
  * **文字内容**（`text`）、**排版样式**（`style` 那几项 + 换行 / 省略）、
@@ -865,22 +865,22 @@ std::string PanelBody(const PanelConfig& panel, const std::string& indent) {
  * 高度那一项有意只在 > 0 时写：0 就是"由内容撑高"，写出来只是把默认值抄一遍。
  */
 std::string LabelBody(const LabelConfig& label, const std::string& indent) {
-    const inking::LabelData& data = label.data;
+    const InkingLabelData& data = label.data;
     std::ostringstream out;
 
-    out << indent << "inking::LabelData data;\n";
+    out << indent << "InkingLabelData data;\n";
     out << indent << "data.name = " << Quote(data.name) << ";\n";
     out << indent << "data.width = " << data.width << ";\n";
     if (data.height > 0) {
         out << indent << "data.height = " << data.height << ";\n";
     }
 
-    // 文字内容：字面量或**占位符**（运行期交给 ResolveText 查语言表）。
+    // 文字内容：字面量或**占位符**（运行期交给 InkingResolveText 查语言表）。
     if (!data.text.empty()) {
         out << indent << "data.text = " << Quote(data.text) << ";\n";
     }
     // 文字色：缺省是白，只在不同时写一行。
-    if (data.color != inking::LabelData{}.color) {
+    if (data.color != InkingLabelData{}.color) {
         out << indent << "data.color = " << Color(data.color) << ";\n";
     }
     // token 与颜色**分开写**：即使颜色恰好等于缺省白，只要它是语义色，
@@ -890,8 +890,8 @@ std::string LabelBody(const LabelConfig& label, const std::string& indent) {
             << ";\n";
     }
 
-    // 排版样式：与 TextStyle 的默认值不同的才写（默认值不占产物篇幅）。
-    const inking::TextStyle defaultStyle{};
+    // 排版样式：与 InkingTextStyle 的默认值不同的才写（默认值不占产物篇幅）。
+    const InkingTextStyle defaultStyle{};
     if (data.style.fontSize != defaultStyle.fontSize) {
         out << indent << "data.style.fontSize = " << Float(data.style.fontSize)
             << ";\n";
@@ -916,11 +916,11 @@ std::string LabelBody(const LabelConfig& label, const std::string& indent) {
         out << "};\n";
     }
     if (data.style.align != defaultStyle.align) {
-        out << indent << "data.style.align = inking::TextAlignH::"
+        out << indent << "data.style.align = InkingTextAlignH::"
             << TextAlignHIdentifier(data.style.align) << ";\n";
     }
     if (data.style.alignV != defaultStyle.alignV) {
-        out << indent << "data.style.alignV = inking::TextAlignV::"
+        out << indent << "data.style.alignV = InkingTextAlignV::"
             << TextAlignVIdentifier(data.style.alignV) << ";\n";
     }
     // 文字与文本框四边的留白：四边各写非 0 的那些。
@@ -936,21 +936,21 @@ std::string LabelBody(const LabelConfig& label, const std::string& indent) {
     padding("bottom", data.style.padding.bottom);
 
     // 换行 / 省略 / 行数上限：缺省（word / clip / 不限）不写。
-    if (data.wrap != inking::TextWrap::Word) {
-        out << indent << "data.wrap = inking::TextWrap::"
+    if (data.wrap != InkingTextWrap::Word) {
+        out << indent << "data.wrap = InkingTextWrap::"
             << TextWrapIdentifier(data.wrap) << ";\n";
     }
-    if (data.overflow != inking::TextOverflow::Clip) {
-        out << indent << "data.overflow = inking::TextOverflow::"
+    if (data.overflow != InkingTextOverflow::Clip) {
+        out << indent << "data.overflow = InkingTextOverflow::"
             << TextOverflowIdentifier(data.overflow) << ";\n";
     }
     if (data.maxLines != 0) {
         out << indent << "data.maxLines = " << data.maxLines << ";\n";
     }
 
-    out << indent << "data.selfAnchor = inking::AnchorPoint{" << Float(data.selfAnchor.x)
+    out << indent << "data.selfAnchor = InkingAnchorPoint{" << Float(data.selfAnchor.x)
         << ", " << Float(data.selfAnchor.y) << "};\n";
-    out << indent << "data.traceAnchor = inking::AnchorPoint{"
+    out << indent << "data.traceAnchor = InkingAnchorPoint{"
         << Float(data.traceAnchor.x) << ", " << Float(data.traceAnchor.y)
         << "};\n";
     out << indent << "data.offsetX = " << Float(data.offsetX) << ";\n";
@@ -967,7 +967,7 @@ std::string LabelBody(const LabelConfig& label, const std::string& indent) {
 }
 
 /**
- * 一份语言表配置 → 一个"造 TextTable"的表达式块（A7 的生成器段）。
+ * 一份语言表配置 → 一个"造 InkingTextTable"的表达式块（A7 的生成器段）。
  *
  * 与别的组件不同，它不是"一个类 + 一份数据"：语言表是**全局表**，产物里就是
  * 一组字面量 + 一个安装函数（见 `MakeSource`）。这里只负责把表本体写出来。
@@ -976,10 +976,10 @@ std::string LabelBody(const LabelConfig& label, const std::string& indent) {
  * 不需要再做任何映射——错位在生成期就红了。
  */
 std::string TextTableBody(const TextConfig& text, const std::string& indent) {
-    const inking::TextTable& table = text.table;
+    const InkingTextTable& table = text.table;
     std::ostringstream out;
 
-    out << indent << "inking::TextTable table;\n";
+    out << indent << "InkingTextTable table;\n";
     out << indent << "table.languages = {";
     for (std::size_t i = 0; i < table.languages.size(); ++i) {
         if (i != 0) {
@@ -989,9 +989,9 @@ std::string TextTableBody(const TextConfig& text, const std::string& indent) {
     }
     out << "};\n";
 
-    for (const inking::TextEntry& entry : table.entries) {
+    for (const InkingTextEntry& entry : table.entries) {
         out << indent << "{\n";
-        out << indent << "    inking::TextEntry entry;\n";
+        out << indent << "    InkingTextEntry entry;\n";
         out << indent << "    entry.key = " << Quote(entry.key) << ";\n";
         out << indent << "    entry.translations = {";
         for (std::size_t i = 0; i < entry.translations.size(); ++i) {
@@ -1047,10 +1047,27 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "#include <button/InkingStaticButton.h>\n";
     }
     if (!panels.empty()) {
+        // 动态档的头只在这一批真有动态面板时 include（G-08）：没有动态面板
+        // 的项目不必多拖一个头。**基类换了而 include 没换 = 生成物编不过**
+        // （`inkgen_compile_check` 会抓，它就是为这件事存在的）。
+        bool anyDynamicPanel = false;
+        for (const PanelConfig& panel : panels) {
+            anyDynamicPanel = anyDynamicPanel || panel.dynamic;
+        }
+        if (anyDynamicPanel) {
+            out << "#include <panel/InkingDynamicPanel.h>\n";
+        }
         out << "#include <panel/InkingStaticPanel.h>\n";
         out << "#include <panel/PanelData.h>\n";
     }
     if (!labels.empty()) {
+        bool anyDynamicLabel = false;
+        for (const LabelConfig& label : labels) {
+            anyDynamicLabel = anyDynamicLabel || label.dynamic;
+        }
+        if (anyDynamicLabel) {
+            out << "#include <text/InkingDynamicLabel.h>\n";
+        }
         out << "#include <text/InkingStaticLabel.h>\n";
         out << "#include <text/LabelData.h>\n";
     }
@@ -1059,15 +1076,40 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
     }
     if (!images.empty()) {
         out << "#include <image/ImageData.h>\n";
-        out << "#include <image/InkingStaticImage.h>\n";
         // 帧动画那份只在这一批真有 sprite 配置时 include：没有动画的项目
         // 不必多拖一个头。（0.6.1 T-06）
+        //
+        // `dynamic`（G-08）与"是不是帧动画"**正交**，所以基类的四种组合各有
+        // 自己的头：图片 → StaticImage / DynamicImage，帧动画 → Sprite /
+        // DynamicSprite。这里按"这一批实际用到哪些"逐个决定，不看配置数量。
         bool anySprite = false;
+        bool anyStaticImage = false;
+        bool anyStaticSprite = false;
+        bool anyDynamicImage = false;
+        bool anyDynamicSprite = false;
         for (const ImageConfig& image : images) {
             anySprite = anySprite || image.isSprite;
+            if (image.isSprite) {
+                anyStaticSprite = anyStaticSprite || !image.dynamic;
+                anyDynamicSprite = anyDynamicSprite || image.dynamic;
+            } else {
+                anyStaticImage = anyStaticImage || !image.dynamic;
+                anyDynamicImage = anyDynamicImage || image.dynamic;
+            }
+        }
+        if (anyDynamicImage) {
+            out << "#include <image/InkingDynamicImage.h>\n";
+        }
+        if (anyDynamicSprite) {
+            out << "#include <image/InkingDynamicSprite.h>\n";
+        }
+        if (anyStaticImage) {
+            out << "#include <image/InkingStaticImage.h>\n";
+        }
+        if (anyStaticSprite) {
+            out << "#include <image/InkingSprite.h>\n";
         }
         if (anySprite) {
-            out << "#include <image/InkingSprite.h>\n";
             out << "#include <image/SpriteData.h>\n";
         }
     }
@@ -1108,12 +1150,12 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "// 第一行）。库是预编译 DLL，根锚点 / logical presentation / 缩放档位 /\n";
         out << "// 窗口标志都烘在它自己那一侧，所以这件事只能由**运行期**一个调用完成——\n";
         out << "// 下面那些常量只把配置值带出来，本身不产生任何效果。\n";
-        out << "// 晚了调不会静默失效：`SetDesignSize` / `ApplyWindowConfig` 会报错。\n";
+        out << "// 晚了调不会静默失效：`InkingSetDesignSize` / `InkingApplyWindowConfig` 会报错。\n";
         out << "// ---------------------------------------------------------------------------\n";
         out << "\n/// 设计画布宽（= json 的 design.width 字段）。\n";
-        out << "inline constexpr int kDesignWidth = " << config.width << ";\n";
+        out << "inline constexpr int InkingLegacyDesignWidth = " << config.width << ";\n";
         out << "\n/// 设计画布高（= json 的 design.height 字段）。\n";
-        out << "inline constexpr int kDesignHeight = " << config.height << ";\n";
+        out << "inline constexpr int InkingLegacyDesignHeight = " << config.height << ";\n";
         if (config.borderless.has_value()) {
             out << "\n/// 无边框（= json 的 window.borderless 字段）。\n";
             out << "inline constexpr bool kBorderless = "
@@ -1145,7 +1187,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
             out << "\n/// 起始场景名（= json 的 window.startScene 字段）。\n";
             out << "///\n";
             out << "/// 它只是**常量**：`Show()` 还是要自己调，传这个值就行——\n";
-            out << "/// `window.Show(inking::cxxcss::kStartScene);`\n";
+            out << "/// `window.Show(cxxcss::kStartScene);`\n";
             out << "inline constexpr const char* kStartScene = "
                 << Quote(*config.startScene) << ";\n";
         }
@@ -1153,16 +1195,16 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << " * 把配置交给运行期。返回 false = 有字段没生效（读 ERROR 日志看是哪一项）。\n";
         out << " *\n";
         out << " * **顺序写死在这里，别拆开自己调**：设计尺寸必须最先落地——窗口第一次\n";
-        out << " * 构造时就按它定型，顺序反了 `SetDesignSize` 会被拒绝（是报错，\n";
+        out << " * 构造时就按它定型，顺序反了 `InkingSetDesignSize` 会被拒绝（是报错，\n";
         out << " * 不是静默半生效）。\n";
         out << " *\n";
         out << " * 幂等：同一个值调多次没有副作用，所以不存在\"该不该再调一次\"的问题。\n";
         out << " */\n";
         out << "inline bool ApplyConfig() {\n";
-        out << "    bool ok = inking::SetDesignSize(kDesignWidth, kDesignHeight);\n";
+        out << "    bool ok = InkingSetDesignSize(InkingLegacyDesignWidth, InkingLegacyDesignHeight);\n";
         if (hasWindow) {
             out << "\n    // json 里没写的字段留空 = 不动库里的默认值。\n";
-            out << "    inking::WindowConfig window;\n";
+            out << "    InkingWindowConfig window;\n";
             if (config.borderless.has_value()) {
                 out << "    window.borderless = kBorderless;\n";
             }
@@ -1181,7 +1223,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
                 out << "    window.fullscreen = kStartFullscreen;\n";
             }
             out << "    // 回读校验在库那边：窗口 setter 的返回值分不清\"幂等\"和\"失败\"。\n";
-            out << "    ok = (inking::ApplyWindowConfig(window) == 0) && ok;\n";
+            out << "    ok = (InkingApplyWindowConfig(window) == 0) && ok;\n";
         }
         out << "    return ok;\n";
         out << "}\n";
@@ -1198,8 +1240,8 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "// 生成类之后：拼错名字编译期就红，配置\"取不到\"这件事在类型上不可能发生。\n";
         out << "//\n";
         out << "// 基类由 json 的 \"dynamic\" 决定（静态 / 动态是二选一）：\n";
-        out << "//   不写或 false → inking::InkingStaticButton（几何构造即定型，进命中表）\n";
-        out << "//   true         → inking::InkingDynamicButton（几何可运行期改，自己拉指针输入）\n";
+        out << "//   不写或 false → InkingStaticButton（几何构造即定型，进命中表）\n";
+        out << "//   true         → InkingDynamicButton（几何可运行期改，自己拉指针输入）\n";
         out << "// ---------------------------------------------------------------------------\n";
     }
 
@@ -1212,8 +1254,8 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         }
 
         const char* const baseClass = button.dynamic
-                                          ? "inking::InkingDynamicButton"
-                                          : "inking::InkingStaticButton";
+                                          ? "InkingDynamicButton"
+                                          : "InkingStaticButton";
         out << "\n/// " << button.name << "（来自 " << PathToUtf8(button.filePath)
             << (button.dynamic ? "，动态按钮" : "，静态按钮")
             << ExtendsNote(button.extendsFrom) << "）\n";
@@ -1224,7 +1266,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "    static constexpr const char* kName = " << Quote(button.name)
             << ";\n\n";
         out << "    explicit " << button.identifier
-            << "(inking::InkingWidget* parent)\n";
+            << "(InkingWidget* parent)\n";
         out << "        : " << baseClass << "(parent, Data()) {}\n\n";
         out << "    /**\n";
         out << "     * 这份配置。值全是字面量，烘在构建产物里——\n";
@@ -1233,38 +1275,46 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "     * 函数内静态量：首次使用时才初始化，避开静态初始化 / 析构顺序问题\n";
         out << "     * （docs/AGENTS.md §6 第 12 条）。内容全是常量，多线程读也安全。\n";
         out << "     */\n";
-        out << "    static const inking::ButtonData& Data();\n\n";
-        out << "    /// 把这份配置登记进 inking::ButtonLibrary（给\"按名字查\"的用法）。\n";
+        out << "    static const InkingButtonData& Data();\n\n";
+        out << "    /// 把这份配置登记进 InkingButtonLibrary（给\"按名字查\"的用法）。\n";
         out << "    static void Register();\n";
         out << "};\n";
     }
 
     if (!panels.empty()) {
         out << "\n// ---------------------------------------------------------------------------\n";
-        out << "// 面板（Panel）：容器组件，只有**静态档**\n";
+        out << "// 面板（Panel）：容器组件，两档\n";
         out << "//\n";
         out << "// 它与按钮的差别不是「少几行」，而是「另一类」：面板是**容器**——开合时\n";
         out << "// 它的变换作用于整棵子树（子节点绘制与命中一起动），子孙不进命中表。\n";
-        out << "// 所以它的类只需要把 `PanelData` 交上去，行为全在 `inking::InkingStaticPanel` 里。\n";
+        out << "// 所以它的类只需要把 `InkingPanelData` 交上去，行为全在基类里。\n";
         out << "//\n";
-        out << "// 没有 `Register()`：面板**没有**按名字查的库（按钮有 `ButtonLibrary`，\n";
+        out << "// 基类由 json 的 \"dynamic\" 决定（G-08）：\n";
+        out << "//   不写或 false → InkingStaticPanel（几何构造即定型）\n";
+        out << "//   true         → InkingDynamicPanel（几何可运行期改，自己拉指针输入）\n";
+        out << "//\n";
+        out << "// 没有 `Register()`：面板**没有**按名字查的库（按钮有 `InkingButtonLibrary`，\n";
         out << "// 那是给「运行期才知道名字」的用法准备的）。面板只有数据构造这一条路，\n";
         out << "// 所以它的 name 必须是合法标识符——生成期会拦下不合法的。\n";
         out << "// ---------------------------------------------------------------------------\n";
     }
 
     for (const PanelConfig& panel : panels) {
+        const char* const baseClass = panel.dynamic
+                                          ? "InkingDynamicPanel"
+                                          : "InkingStaticPanel";
         out << "\n/// " << panel.name << "（来自 " << PathToUtf8(panel.filePath)
-            << "，静态面板" << ExtendsNote(panel.extendsFrom) << "）\n";
-        out << "class " << panel.identifier
-            << " : public inking::InkingStaticPanel {\n";
+            << (panel.dynamic ? "，动态面板" : "，静态面板")
+            << ExtendsNote(panel.extendsFrom) << "）\n";
+        out << "class " << panel.identifier << " : public " << baseClass
+            << " {\n";
         out << "public:\n";
         out << "    /// 查找键（= json 的 name 字段）。\n";
         out << "    static constexpr const char* kName = " << Quote(panel.name)
             << ";\n\n";
         out << "    explicit " << panel.identifier
-            << "(inking::InkingWidget* parent)\n";
-        out << "        : inking::InkingStaticPanel(parent, Data()) {}\n\n";
+            << "(InkingWidget* parent)\n";
+        out << "        : " << baseClass << "(parent, Data()) {}\n\n";
         out << "    /**\n";
         out << "     * 这份配置。值全是字面量，烘在构建产物里——\n";
         out << "     * 没有查表、没有\"取不到就退回默认外观\"这条路。\n";
@@ -1272,7 +1322,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "     * 函数内静态量：首次使用时才初始化，避开静态初始化 / 析构顺序问题\n";
         out << "     * （docs/AGENTS.md §6 第 12 条）。内容全是常量，多线程读也安全。\n";
         out << "     */\n";
-        out << "    static const inking::PanelData& Data();\n";
+        out << "    static const InkingPanelData& Data();\n";
         out << "};\n";
     }
 
@@ -1283,24 +1333,32 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "// 它也是一个组件（一个名字一个类），但**没有按名字查的库**——和面板一样，\n";
         out << "// 名字必须是合法标识符：生成不出类就等于没有任何用法。\n";
         out << "//\n";
-        out << "// 行为全在 `inking::InkingStaticLabel` 里：默认**不吃点击**（标签常压在按钮 /\n";
-        out << "// 图片上）、`MeasureLayout` 报内容尺寸（A6 那条「label 按文字撑高」）、\n";
-        out << "// `text.content` 是占位符时会走 `ResolveText` 查语言表。\n";
+        out << "// 行为全在基类里：默认**不吃点击**（标签常压在按钮 / 图片上）、\n";
+        out << "// `MeasureLayout` 报内容尺寸（A6 那条「label 按文字撑高」）、\n";
+        out << "// `text.content` 是占位符时会走 `InkingResolveText` 查语言表。\n";
+        out << "//\n";
+        out << "// 基类由 json 的 \"dynamic\" 决定（G-08）：\n";
+        out << "//   不写或 false → InkingStaticLabel\n";
+        out << "//   true         → InkingDynamicLabel（还能 Resize / FitToContent）\n";
         out << "// ---------------------------------------------------------------------------\n";
     }
 
     for (const LabelConfig& label : labels) {
+        const char* const baseClass = label.dynamic
+                                          ? "InkingDynamicLabel"
+                                          : "InkingStaticLabel";
         out << "\n/// " << label.name << "（来自 " << PathToUtf8(label.filePath)
-            << "，静态标签" << ExtendsNote(label.extendsFrom) << "）\n";
-        out << "class " << label.identifier
-            << " : public inking::InkingStaticLabel {\n";
+            << (label.dynamic ? "，动态标签" : "，静态标签")
+            << ExtendsNote(label.extendsFrom) << "）\n";
+        out << "class " << label.identifier << " : public " << baseClass
+            << " {\n";
         out << "public:\n";
         out << "    /// 查找键（= json 的 name 字段）。\n";
         out << "    static constexpr const char* kName = " << Quote(label.name)
             << ";\n\n";
         out << "    explicit " << label.identifier
-            << "(inking::InkingWidget* parent)\n";
-        out << "        : inking::InkingStaticLabel(parent, Data()) {}\n\n";
+            << "(InkingWidget* parent)\n";
+        out << "        : " << baseClass << "(parent, Data()) {}\n\n";
         out << "    /**\n";
         out << "     * 这份配置。值全是字面量，烘在构建产物里——\n";
         out << "     * 没有查表、没有\"取不到就退回默认外观\"这条路。\n";
@@ -1308,38 +1366,43 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "     * 函数内静态量：首次使用时才初始化，避开静态初始化 / 析构顺序问题\n";
         out << "     * （docs/AGENTS.md §6 第 12 条）。内容全是常量，多线程读也安全。\n";
         out << "     */\n";
-        out << "    static const inking::LabelData& Data();\n";
+        out << "    static const InkingLabelData& Data();\n";
         out << "};\n";
     }
 
     for (const ImageConfig& image : images) {
+        // 四种基类（G-08）："是不是帧动画"决定数据与绘制路径，"dynamic"决定档位。
+        // 两者正交，所以这里写成一棵两层的选择，而不是两个 if 拼字符串。
+        const char* const baseClass
+            = image.isSprite
+                  ? (image.dynamic ? "InkingDynamicSprite"
+                                   : "InkingSprite")
+                  : (image.dynamic ? "InkingDynamicImage"
+                                   : "InkingStaticImage");
+        const char* const kindNote
+            = image.isSprite
+                  ? (image.dynamic ? "，动态帧动画" : "，帧动画")
+                  : (image.dynamic ? "，动态图片" : "，静态图片");
         out << "\n/// " << image.name << "（来自 " << PathToUtf8(image.filePath)
-            << (image.isSprite ? "，帧动画" : "，静态图片")
-            << ExtendsNote(image.extendsFrom) << "）\n";
-        out << "class " << image.identifier
-            << " : public "
-            << (image.isSprite ? "inking::InkingSprite"
-                              : "inking::InkingStaticImage")
+            << kindNote << ExtendsNote(image.extendsFrom) << "）\n";
+        out << "class " << image.identifier << " : public " << baseClass
             << " {\n";
         out << "public:\n";
         out << "    /// 查找键（= json 的 name 字段）。\n";
         out << "    static constexpr const char* kName = " << Quote(image.name)
             << ";\n\n";
         out << "    explicit " << image.identifier
-            << "(inking::InkingWidget* parent)\n";
-        out << "        : "
-            << (image.isSprite ? "inking::InkingSprite"
-                              : "inking::InkingStaticImage")
-            << "(parent, Data()) {}\n\n";
+            << "(InkingWidget* parent)\n";
+        out << "        : " << baseClass << "(parent, Data()) {}\n\n";
         out << "    /**\n";
         out << "     * 这份配置。值全是字面量（或一个 assets 相对路径），烘在构建产物里。\n";
         out << "     *\n";
         out << "     * 配了 `\"runtime\": true` 的那张图，产物里**只有路径**——字节由\n";
-        out << "     * 运行期的 `inking::AssetLoad` 从资源根读（换图不用重编，exe 也不随\n";
+        out << "     * 运行期的 `InkingAssetLoad` 从资源根读（换图不用重编，exe 也不随\n";
         out << "     * 图片数量膨胀）。\n";
         out << "     */\n";
-        out << "    static const inking::"
-            << (image.isSprite ? "SpriteData" : "ImageData")
+        out << "    static const "
+            << (image.isSprite ? "InkingSpriteData" : "InkingImageData")
             << "& Data();\n";
         out << "};\n";
     }
@@ -1350,9 +1413,9 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "//\n";
         out << "// 它是四种类型里唯一**不是组件**的那个：没有类、没有实例，只有一份全局\n";
         out << "// 数据 + 一个安装函数；启动期自动装一次（见源文件末尾那个启动对象）。\n";
-        out << "// 所以业务代码通常一个字都不用写，直接用 `inking::cxxcss` 里的标签就行。\n";
+        out << "// 所以业务代码通常一个字都不用写，直接用 `cxxcss` 里的标签就行。\n";
         out << "//\n";
-        out << "// 换语言：`inking::SetTextLanguage(\"en\")`。**不用通知任何组件**——语言版本号\n";
+        out << "// 换语言：`InkingSetTextLanguage(\"en\")`。**不用通知任何组件**——语言版本号\n";
         out << "// 一变，标签的排版缓存自然失效，下一帧自己重查、重排。\n";
         out << "// ---------------------------------------------------------------------------\n";
         out << "\n/// 这张语言表有几门语言 / 几条占位符（自检与工具用）。\n";
@@ -1361,7 +1424,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "inline constexpr std::size_t kTextEntryCount = "
             << textTables.front().table.entries.size() << ";\n";
         out << "\n/// 这张语言表的**本体**（进程内静态量：首次用到才构造）。\n";
-        out << "const inking::TextTable& GeneratedTextTable();\n";
+        out << "const InkingTextTable& GeneratedTextTable();\n";
         out << "\n/// 把它装进运行期（**整表替换**；缺省语言取自 json 的 default）。\n";
         out << "/// 启动期已经自动调过一次；手动再调就是「重新装一遍」。\n";
         out << "void InstallGeneratedTextTable();\n";
@@ -1375,7 +1438,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "// 生成期做了两件事：`$token` 按烘焙主题换成字面量（= 不切主题时的默认色）、\n";
         out << "// 把 token 名留在组件数据里。运行期换肤就是按名字重查，所以：\n";
         out << "//\n";
-        out << "//     inking::SetActiveTheme(\"light\");   // 切（启动期已装好全部主题表）\n";
+        out << "//     InkingSetActiveTheme(\"light\");   // 切（启动期已装好全部主题表）\n";
         out << "//\n";
         out << "// **颜色变不改几何**：换肤只让颜色重查，不重排、不重烘命中表；顶点缓存\n";
         out << "// 的键里带颜色，所以换的那一帧重算一次、之后照旧复用。\n";
@@ -1395,15 +1458,15 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
         out << "\n// ---------------------------------------------------------------------------\n";
         out << "// 图集描述（Atlas）：一张图里的多个具名动画\n";
         out << "//\n";
-        out << "// 它不是组件：产物里没有类，只有一个 `inking::AtlasData`。用法是把它转成某个\n";
+        out << "// 它不是组件：产物里没有类，只有一个 `InkingAtlasData`。用法是把它转成某个\n";
         out << "// `InkingSprite` 的配置——**同一份图集可以被多个 sprite 共用**（字节只有一份、\n";
         out << "// 纹理只有一张）：\n";
         out << "//\n";
-        out << "//     const inking::AtlasData& atlas = AtlasSlime();\n";
-        out << "//     const inking::SpriteData walkData = inking::MakeSpriteData(\n";
+        out << "//     const InkingAtlasData& atlas = AtlasSlime();\n";
+        out << "//     const InkingSpriteData walkData = InkingMakeSpriteData(\n";
         out << "//         atlas, atlas.FindIndex(\"walk\"), bytes, size);\n";
         out << "//     auto* sprite = scene.AddChild(\n";
-        out << "//         std::make_unique<inking::InkingSprite>(&scene, walkData));\n";
+        out << "//         std::make_unique<InkingSprite>(&scene, walkData));\n";
         out << "// ---------------------------------------------------------------------------\n";
         for (const AtlasConfig& atlas : atlases) {
             out << "\n/// 图集 \"" << atlas.name << "\"（" << atlas.data.animations.size()
@@ -1412,7 +1475,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
                 out << (i == 0 ? "" : " / ") << atlas.data.animations[i].name;
             }
             out << "）。\n";
-            out << "const inking::AtlasData& " << atlas.identifier << "();\n";
+            out << "const InkingAtlasData& " << atlas.identifier << "();\n";
         }
         out << "\n/// 本次生成里有多少份图集描述。\n";
         out << "inline constexpr std::size_t kAtlasCount = " << atlases.size()
@@ -1429,7 +1492,7 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
     out << "inline constexpr std::size_t kLabelCount = " << labels.size()
         << ";\n";
 
-    out << "\n/// 把本次生成的全部**按钮**配置登记进 inking::ButtonLibrary。\n";
+    out << "\n/// 把本次生成的全部**按钮**配置登记进 InkingButtonLibrary。\n";
     out << "///\n";
     out << "/// **不是**按钮能用的前提——每个按钮类自己带着数据。这个入口是给\n";
     out << "/// 「按名字查配置」那类用法准备的（自检、工具、将来运行期换皮肤）。\n";
@@ -1469,7 +1532,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
         || !images.empty() || !textTables.empty()) {
         out << "namespace {\n\n";
         // 图像字节（T-4）：生成期从文件读进来的，烘成**文件作用域的静态数组**。
-        // 生命周期是整个进程——比任何按钮都长，所以 ButtonData 里只借一个视图。
+        // 生命周期是整个进程——比任何按钮都长，所以 InkingButtonData 里只借一个视图。
         for (std::size_t i = 0; i < buttons.size(); ++i) {
             const ButtonConfig& button = buttons[i];
             for (int state = 0; state < 3; ++state) {
@@ -1499,9 +1562,9 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
                 out << "};\n\n";
             }
 
-            // 形状的顶点表（B2）：和图像字节同一个道理——`ShapeSpec` 里只有视图，
+            // 形状的顶点表（B2）：和图像字节同一个道理——`InkingShapeSpec` 里只有视图，
             // 本体烘成文件作用域的静态数组（生命周期是整个进程）。
-            if (button.data.shape.kind == inking::ShapeKind::PolygonPath
+            if (button.data.shape.kind == InkingShapeKind::PolygonPath
                 && !button.pathPoints.empty()) {
                 out << "/// " << button.name << " 的形状顶点表（"
                     << (button.pathPoints.size() / 2) << " 个点，设计坐标）\n";
@@ -1525,7 +1588,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
             const ButtonConfig& button = buttons[i];
             out << "/// " << button.name << "（来自 " << PathToUtf8(button.filePath)
                 << "）\n";
-            out << "inking::ButtonData Build" << i << "() {\n";
+            out << "InkingButtonData Build" << i << "() {\n";
             out << ButtonBody(button, "    ", i);
             out << "}\n\n";
         }
@@ -1593,10 +1656,10 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
             }
             out << "/// " << image.name << "（来自 " << PathToUtf8(image.filePath)
                 << ExtendsNote(image.extendsFrom) << "）\n";
-            out << "inking::"
-                << (image.isSprite ? "SpriteData" : "ImageData")
+            out << ""
+                << (image.isSprite ? "InkingSpriteData" : "InkingImageData")
                 << " BuildImage" << i << "() {\n";
-            // 逐字复用按钮那套烘法（`ImageData` 派生自 `ButtonData`）：只把
+            // 逐字复用按钮那套烘法（`InkingImageData` 派生自 `InkingButtonData`）：只把
             // 类型名换掉、末尾补 `runtimeAsset`（0.5.1 起还有 `hitPassThrough`）。
             std::string tail = std::string("    data.runtimeAsset = ")
                 + (image.runtimeAsset ? "true" : "false") + ";\n";
@@ -1610,8 +1673,8 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
                 tail += SpriteBody(image, i + buttons.size());
             }
             out << ButtonBody(image.button, "    ", i + buttons.size(),
-                              image.isSprite ? "inking::SpriteData"
-                                             : "inking::ImageData",
+                              image.isSprite ? "InkingSpriteData"
+                                             : "InkingImageData",
                               tail);
             out << "}\n\n";
         }
@@ -1619,7 +1682,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
             const PanelConfig& panel = panels[i];
             out << "/// " << panel.name << "（来自 " << PathToUtf8(panel.filePath)
                 << ExtendsNote(panel.extendsFrom) << "）\n";
-            out << "inking::PanelData BuildPanel" << i << "() {\n";
+            out << "InkingPanelData BuildPanel" << i << "() {\n";
             out << PanelBody(panel, "    ");
             out << "}\n\n";
         }
@@ -1627,7 +1690,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
             const LabelConfig& label = labels[i];
             out << "/// " << label.name << "（来自 " << PathToUtf8(label.filePath)
                 << ExtendsNote(label.extendsFrom) << "）\n";
-            out << "inking::LabelData BuildLabel" << i << "() {\n";
+            out << "InkingLabelData BuildLabel" << i << "() {\n";
             out << LabelBody(label, "    ");
             out << "}\n\n";
         }
@@ -1635,7 +1698,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
             const TextConfig& text = textTables[i];
             out << "/// 语言表 " << text.name << "（来自 " << PathToUtf8(text.filePath)
                 << "）\n";
-            out << "inking::TextTable BuildTextTable" << i << "() {\n";
+            out << "InkingTextTable BuildTextTable" << i << "() {\n";
             out << TextTableBody(text, "    ");
             out << "}\n\n";
         }
@@ -1650,22 +1713,22 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
         if (button.identifier.empty()) {
             continue;
         }
-        out << "\nconst inking::ButtonData& " << button.identifier
+        out << "\nconst InkingButtonData& " << button.identifier
             << "::Data() {\n";
-        out << "    static const inking::ButtonData data = Build" << i << "();\n";
+        out << "    static const InkingButtonData data = Build" << i << "();\n";
         out << "    return data;\n";
         out << "}\n\n";
         out << "void " << button.identifier << "::Register() {\n";
-        out << "    inking::ButtonLibrary::Register(Data());\n";
+        out << "    InkingButtonLibrary::Register(Data());\n";
         out << "}\n";
     }
 
     // 每个面板类：只有 Data()——面板没有按名字查的库（见头文件里那段）。
     for (std::size_t i = 0; i < panels.size(); ++i) {
         const PanelConfig& panel = panels[i];
-        out << "\nconst inking::PanelData& " << panel.identifier
+        out << "\nconst InkingPanelData& " << panel.identifier
             << "::Data() {\n";
-        out << "    static const inking::PanelData data = BuildPanel" << i
+        out << "    static const InkingPanelData data = BuildPanel" << i
             << "();\n";
         out << "    return data;\n";
         out << "}\n";
@@ -1674,9 +1737,9 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
     // 每个标签类：同样只有 Data()（标签也没有按名字查的库）。
     for (std::size_t i = 0; i < labels.size(); ++i) {
         const LabelConfig& label = labels[i];
-        out << "\nconst inking::LabelData& " << label.identifier
+        out << "\nconst InkingLabelData& " << label.identifier
             << "::Data() {\n";
-        out << "    static const inking::LabelData data = BuildLabel" << i
+        out << "    static const InkingLabelData data = BuildLabel" << i
             << "();\n";
         out << "    return data;\n";
         out << "}\n";
@@ -1685,11 +1748,11 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
     // 每个图片类：同样只有 Data()（图片也没有按名字查的库）。
     for (std::size_t i = 0; i < images.size(); ++i) {
         const ImageConfig& image = images[i];
-        out << "\nconst inking::"
-            << (image.isSprite ? "SpriteData" : "ImageData") << "& "
+        out << "\nconst "
+            << (image.isSprite ? "InkingSpriteData" : "InkingImageData") << "& "
             << image.identifier << "::Data() {\n";
-        out << "    static const inking::"
-            << (image.isSprite ? "SpriteData" : "ImageData") << " data = "
+        out << "    static const "
+            << (image.isSprite ? "InkingSpriteData" : "InkingImageData") << " data = "
             << "BuildImage" << i << "();\n";
         out << "    return data;\n";
         out << "}\n";
@@ -1697,7 +1760,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
 
     // 语言表：本体 + 安装。它不是组件，所以只有这两个函数。
     if (!textTables.empty()) {
-        // 缺省语言：json 的 `default`；没写就用表里第一门（与 `InstallTextTable`
+        // 缺省语言：json 的 `default`；没写就用表里第一门（与 `InkingInstallTextTable`
         // 不传语言时的行为一致）。
         const std::string defaultLanguage
             = !textTables.front().defaultLanguage.empty()
@@ -1706,14 +1769,14 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
                          ? std::string()
                          : textTables.front().table.languages.front());
 
-        out << "\nconst inking::TextTable& GeneratedTextTable() {\n";
+        out << "\nconst InkingTextTable& GeneratedTextTable() {\n";
         out << "    // 函数内静态量：首次用到才构造（AGENTS.md §6 第 12 条）。\n";
-        out << "    static const inking::TextTable table = BuildTextTable0();\n";
+        out << "    static const InkingTextTable table = BuildTextTable0();\n";
         out << "    return table;\n";
         out << "}\n\n";
         out << "void InstallGeneratedTextTable() {\n";
         out << "    // 整表替换：装第二次就是重新装一遍（不该有别的地方再装表）。\n";
-        out << "    inking::InstallTextTable(BuildTextTable0(), "
+        out << "    InkingInstallTextTable(BuildTextTable0(), "
             << Quote(defaultLanguage) << ");\n";
         out << "}\n";
     }
@@ -1728,8 +1791,8 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
         out << "\nnamespace {\n\n";
         for (std::size_t i = 0; i < themes.size(); ++i) {
             const ThemeConfig& theme = themes[i];
-            out << "inking::ThemeTable BuildTheme" << i << "() {\n";
-            out << "    inking::ThemeTable table;\n";
+            out << "InkingThemeTable BuildTheme" << i << "() {\n";
+            out << "    InkingThemeTable table;\n";
             out << "    table.name = " << Quote(theme.name) << ";\n";
             for (const auto& entry : theme.colors) {
                 out << "    table.colors.push_back({"
@@ -1743,45 +1806,45 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
 
         out << "\nvoid InstallGeneratedThemes() {\n";
         out << "    // 装全部主题表（同名整张替换），再把**烘焙主题**设为活跃：\n";
-        out << "    // 生成出来的那份就是默认，切到别的主题只要 SetActiveTheme()。\n";
+        out << "    // 生成出来的那份就是默认，切到别的主题只要 InkingSetActiveTheme()。\n";
         for (std::size_t i = 0; i < themes.size(); ++i) {
-            out << "    inking::InstallThemeTable(BuildTheme" << i
+            out << "    InkingInstallThemeTable(BuildTheme" << i
                 << "());\n";
         }
-        out << "    inking::SetActiveTheme(" << Quote(themes.front().name)
+        out << "    InkingSetActiveTheme(" << Quote(themes.front().name)
             << ");\n";
         out << "}\n";
     }
 
     // 图集描述：一个访问函数一份静态量（0.6.5 T-17）。
     //
-    // 为什么是"函数内静态量"而不是命名空间级的 `const AtlasData kXxx`：
+    // 为什么是"函数内静态量"而不是命名空间级的 `const InkingAtlasData kXxx`：
     // ① 它带 vector/string，构造是**动态初始化**，命名空间级会撞静态初始化顺序；
     // ② 写在头文件里要么每个 TU 一份（ODR），要么得 `inline`，两种都不如
     //    "谁先要谁把它拉起来"干净——这也是本库到处用的那套（`AGENTS.md` §2 第 1 条）。
     for (const AtlasConfig& atlas : atlases) {
-        out << "\nconst inking::AtlasData& " << atlas.identifier << "() {\n";
-        out << "    static const inking::AtlasData data = [] {\n";
-        out << "        inking::AtlasData built;\n";
+        out << "\nconst InkingAtlasData& " << atlas.identifier << "() {\n";
+        out << "    static const InkingAtlasData data = [] {\n";
+        out << "        InkingAtlasData built;\n";
         out << "        built.name = " << Quote(atlas.name) << ";\n";
-        for (const inking::AtlasAnimation& animation : atlas.data.animations) {
+        for (const InkingAtlasAnimation& animation : atlas.data.animations) {
             out << "        {\n";
-            out << "            inking::AtlasAnimation animation;\n";
+            out << "            InkingAtlasAnimation animation;\n";
             out << "            animation.name = " << Quote(animation.name) << ";\n";
             out << "            animation.source = " << Quote(animation.source) << ";\n";
             out << "            animation.fps = " << Double(animation.fps) << ";\n";
             if (!animation.loop) {
                 out << "            animation.loop = false;\n";
             }
-            for (const inking::ShapeBounds& frame : animation.frames) {
-                out << "            animation.frames.push_back(inking::ShapeBounds{"
+            for (const InkingShapeBounds& frame : animation.frames) {
+                out << "            animation.frames.push_back(InkingShapeBounds{"
                     << Float(frame.x) << ", " << Float(frame.y) << ", "
                     << Float(frame.width) << ", " << Float(frame.height)
                     << "});\n";
             }
-            for (const inking::SpriteData::SpriteEvent& event : animation.events) {
+            for (const InkingSpriteData::SpriteEvent& event : animation.events) {
                 out << "            animation.events.push_back("
-                       "inking::SpriteData::SpriteEvent{"
+                       "InkingSpriteData::SpriteEvent{"
                     << event.frame << ", " << Quote(event.name) << "});\n";
             }
             out << "            built.animations.push_back(std::move(animation));\n";
@@ -1801,7 +1864,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
     } else {
         out << "    // 先把上一批（同一个生成集合）撤下，再重新登记：这样重复调用、\n";
         out << "    // 运行期重建都不报 NameTaken，也不会碰到别的库内容。\n";
-        out << "    inking::ButtonLibrary::BeginRegistrationBatch();\n\n";
+        out << "    InkingButtonLibrary::BeginRegistrationBatch();\n\n";
         out << "    // 注意：**按钮能用不依赖这一步**。每个按钮类自己带着数据；\n";
         out << "    // 这里只是把同一份配置也放进按名字查的表里。\n";
 
@@ -1810,7 +1873,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
             if (button.identifier.empty()) {
                 out << "    {\n";
                 out << "        // 名字不是合法标识符，没有对应的类，只能在这里登记。\n";
-                out << "        inking::ButtonLibrary::Register(Build" << i
+                out << "        InkingButtonLibrary::Register(Build" << i
                     << "());\n";
                 out << "    }\n";
                 continue;
@@ -1818,7 +1881,7 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
             out << "    " << button.identifier << "::Register();\n";
         }
 
-        out << "\n    inking::ButtonLibrary::EndRegistrationBatch();\n";
+        out << "\n    InkingButtonLibrary::EndRegistrationBatch();\n";
     }
     out << "}\n";
 
@@ -1831,8 +1894,8 @@ std::string MakeSource(const LoadResult& loaded, const EmitOptions& options) {
 
     out << "\nnamespace {\n\n";
     out << "/**\n";
-    out << " * 启动期把生成出来的东西接到运行期上：主题表装进 `InstallThemeTable`、\n";
-    out << " * 按钮配置登记进按名字查的表、语言表装进 `InstallTextTable`。\n";
+    out << " * 启动期把生成出来的东西接到运行期上：主题表装进 `InkingInstallThemeTable`、\n";
+    out << " * 按钮配置登记进按名字查的表、语言表装进 `InkingInstallTextTable`。\n";
     out << " *\n";
     out << " * 依赖静态初始化顺序的写法在这里是**安全**的：那几处用的都是函数内\n";
     out << " * 静态量，谁先碰它谁把它拉起来，所以这个对象的构造一定发生在库可用之后。\n";
@@ -1919,7 +1982,7 @@ EmitResult Emit(const LoadResult& loaded, const EmitOptions& options) {
 
     const std::vector<std::string> parts = SplitNamespace(options.nameSpace);
     if (parts.empty()) {
-        result.error = "命名空间为空（--namespace 形如 inking::cxxcss）";
+        result.error = "命名空间为空（--namespace 形如 cxxcss）";
         return result;
     }
     for (const std::string& part : parts) {

@@ -16,17 +16,15 @@
 
 namespace {
 
-constexpr const char* kModuleName = "MessageQueue";
+constexpr const char* kModuleName = "InkingMessageQueue";
 
 }  // namespace
 
-namespace inking {
+std::mutex InkingMessageQueue::_mutex;
+std::condition_variable InkingMessageQueue::_condition;
+std::queue<InkingMessage> InkingMessageQueue::_messageQueue = {};
 
-std::mutex MessageQueue::_mutex;
-std::condition_variable MessageQueue::_condition;
-std::queue<Message> MessageQueue::_messageQueue = {};
-
-void MessageQueue::addMessage(MessageType messageType,
+void InkingMessageQueue::addMessage(InkingMessageType messageType,
                               float delayTime,
                               const std::string& message) {
     if (message.empty()) {
@@ -40,33 +38,33 @@ void MessageQueue::addMessage(MessageType messageType,
         const auto delay = std::chrono::milliseconds(
             static_cast<long long>(static_cast<double>(delayTime) * 1000.0));
 
-        Task<std::any> task;
+        InkingTask<std::any> task;
         task.action = [messageType, message](const std::vector<std::any>&) -> std::any {
             addMessage(messageType, 0.0f, message);
             return {};
         };
-        TaskQueue::instance().addTask(std::move(task), delay);
+        InkingTaskQueue::instance().addTask(std::move(task), delay);
         return;
     }
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        _messageQueue.push(Message{messageType, delayTime, message});
+        _messageQueue.push(InkingMessage{messageType, delayTime, message});
     }
     _condition.notify_one();
 
     INK_LOG_DEBUG(kModuleName, "消息入队：" + message);
 }
 
-void MessageQueue::quickMessage(bool success,
+void InkingMessageQueue::quickMessage(bool success,
                                 float delayTime,
                                 const std::string& message) {
-    addMessage(success ? MessageType::Pass : MessageType::Error, delayTime, message);
+    addMessage(success ? InkingMessageType::Pass : InkingMessageType::Error, delayTime, message);
 }
 
-std::vector<Message> MessageQueue::drainMessages() {
+std::vector<InkingMessage> InkingMessageQueue::drainMessages() {
     std::lock_guard<std::mutex> lock(_mutex);
-    std::vector<Message> messages;
+    std::vector<InkingMessage> messages;
     while (!_messageQueue.empty()) {
         messages.push_back(_messageQueue.front());
         _messageQueue.pop();
@@ -74,16 +72,15 @@ std::vector<Message> MessageQueue::drainMessages() {
     return messages;
 }
 
-void MessageQueue::waitForMessage(std::chrono::milliseconds timeout) {
+void InkingMessageQueue::waitForMessage(std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(_mutex);
     _condition.wait_for(lock, timeout, [] { return !_messageQueue.empty(); });
 }
 
-std::size_t MessageQueue::pendingCount() {
+std::size_t InkingMessageQueue::pendingCount() {
     std::lock_guard<std::mutex> lock(_mutex);
     return _messageQueue.size();
 }
 
-}  // namespace inking
 
 #endif  // INK_ISMESSAGE

@@ -9,20 +9,18 @@
 
 namespace {
 
-constexpr const char* kModuleName = "TaskQueue";
+constexpr const char* kModuleName = "InkingTaskQueue";
 
 /** 队列为空时管家线程最多睡多久（有任务入队时会立刻被唤醒，所以这个值只是兜底）。 */
 constexpr auto kIdleWait = std::chrono::hours(1);
 
 }  // namespace
 
-namespace inking {
-
-TaskQueue& TaskQueue::instance() {
+InkingTaskQueue& InkingTaskQueue::instance() {
     // 函数内静态量 + **故意不析构**（new 出来的裸指针，永不 delete）。
     //
-    // 为什么不用 `static TaskQueue inst;`：那份静态量会在**进程退出 / DLL 卸载**
-    // 时被销毁，而那时可能正持着加载器锁；`~TaskQueue()` 要 `quit()` + join
+    // 为什么不用 `static InkingTaskQueue inst;`：那份静态量会在**进程退出 / DLL 卸载**
+    // 时被销毁，而那时可能正持着加载器锁；`~InkingTaskQueue()` 要 `quit()` + join
     // 管家线程，而工作线程退出过程中又要拿加载器锁 ⇒ **死锁**。
     //
     // 实测症状：self-test 打印完"失败项：N"之后就不再返回，进程永远不退出，
@@ -33,14 +31,14 @@ TaskQueue& TaskQueue::instance() {
     // 代价：库被**中途** FreeLibrary 的场景不再安全（管家线程还在跑已卸载的
     // 代码），那不是本框架的用法。
     //
-    // 本体搬出头的理由见 TaskQueue.h：动态库下 exe 与 DLL 必须共用同一个队列，
+    // 本体搬出头的理由见 InkingTaskQueue.h：动态库下 exe 与 DLL 必须共用同一个队列，
     // 否则各起一组管家线程。
-    static TaskQueue* inst = new TaskQueue();
+    static InkingTaskQueue* inst = new InkingTaskQueue();
     return *inst;
 }
 
-TaskQueue::TaskQueue() {
-    _threadLoop = std::make_unique<ThreadPool>();
+InkingTaskQueue::InkingTaskQueue() {
+    _threadLoop = std::make_unique<InkingThreadPool>();
     _threadLoop->init(
         // 谓词：有任务到期时才唤醒管家线程（只看队列非空不行，延迟任务会空转）
         [this]() { return hasDueTask(); },
@@ -52,10 +50,10 @@ TaskQueue::TaskQueue() {
     INK_LOG_DEBUG(kModuleName, "任务队列已随单例创建而启动");
 }
 
-TaskQueue::~TaskQueue() {
+InkingTaskQueue::~InkingTaskQueue() {
     // 注意：正常退出路径**不会**走到这里——`instance()` 用的是永不析构的裸指针
     // （理由见那里的注释）。这段收尾只在"真的 delete 了单例"时才跑，而那是本
-    // 框架里不存在的用法；保留它是为了让 ThreadPool 的停止 + join 有一个明确的
+    // 框架里不存在的用法；保留它是为了让 InkingThreadPool 的停止 + join 有一个明确的
     // 归属，而不是散在别处或干脆丢掉。
     if (!_threadLoop) {
         return;
@@ -66,15 +64,15 @@ TaskQueue::~TaskQueue() {
     _threadLoop.reset();
 }
 
-void TaskQueue::addTask(Task<std::any> task) {
+void InkingTaskQueue::addTask(InkingTask<std::any> task) {
     addTask(std::move(task), std::chrono::milliseconds(0));
 }
 
-void TaskQueue::addTask(Task<std::any> task, std::chrono::milliseconds delay) {
+void InkingTaskQueue::addTask(InkingTask<std::any> task, std::chrono::milliseconds delay) {
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _queue.emplace(Clock::now() + delay,
-                       std::make_unique<Task<std::any>>(std::move(task)));
+                       std::make_unique<InkingTask<std::any>>(std::move(task)));
     }
 
     // 只叫醒一个管家线程：一条任务只需要一个执行者。
@@ -84,18 +82,18 @@ void TaskQueue::addTask(Task<std::any> task, std::chrono::milliseconds delay) {
     _threadLoop->wake();
 }
 
-bool TaskQueue::isEmpty() const {
+bool InkingTaskQueue::isEmpty() const {
     std::lock_guard<std::mutex> lock(_mutex);
     return _queue.empty();
 }
 
-bool TaskQueue::hasDueTask() const {
+bool InkingTaskQueue::hasDueTask() const {
     std::lock_guard<std::mutex> lock(_mutex);
     // multimap 按到期时刻排序，所以只看第一个就够了
     return !_queue.empty() && _queue.begin()->first <= Clock::now();
 }
 
-std::chrono::milliseconds TaskQueue::timeUntilNextDue() const {
+std::chrono::milliseconds InkingTaskQueue::timeUntilNextDue() const {
     std::lock_guard<std::mutex> lock(_mutex);
     if (_queue.empty()) {
         return kIdleWait;
@@ -109,8 +107,8 @@ std::chrono::milliseconds TaskQueue::timeUntilNextDue() const {
     return std::chrono::duration_cast<std::chrono::milliseconds>(due - now);
 }
 
-void TaskQueue::executeTask() {
-    std::unique_ptr<Task<std::any>> task;
+void InkingTaskQueue::executeTask() {
+    std::unique_ptr<InkingTask<std::any>> task;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         if (_queue.empty()) {
@@ -138,5 +136,4 @@ void TaskQueue::executeTask() {
     }
 }
 
-}  // namespace inking
 

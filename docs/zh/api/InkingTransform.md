@@ -30,28 +30,28 @@
 
 你可以使用 `#include <dataStruct/InkingTransform.h>` 来引入该头文件。
 
-> 复合变换（相似仿射 `Affine`）在 `dataStruct/InkingAffine.h`：那个文件**依赖本文件**，
-> 用 `AffineFromTransform` 把本文件的一次变换写成仿射，再做多层的复合与求逆。
+> 复合变换（相似仿射 `InkingAffine`）在 `dataStruct/InkingAffine.h`：那个文件**依赖本文件**，
+> 用 `InkingAffineFromTransform` 把本文件的一次变换写成仿射，再做多层的复合与求逆。
 
 ## 用到的数据结构
 
->**Point2**
+>**InkingPoint2**
 
 设计坐标系里的一个点。变换的进出参都用它。
 
 ```C++
-struct Point2 {
+struct InkingPoint2 {
     float x = 0.0f;
     float y = 0.0f;
 };
 ```
 
->**TransformSpec**
+>**InkingTransformSpec**
 
 一个状态的**目标变换**。缺省（全零 + `scale` 1）是单位变换。
 
 ```C++
-struct TransformSpec {
+struct InkingTransformSpec {
     float translateX = 0.0f;  // 设计坐标
     float translateY = 0.0f;  // 设计坐标
     float rotate = 0.0f;      // 度，顺时针为正
@@ -78,13 +78,13 @@ struct TransformSpec {
 >**float rotate**
 
 旋转角度，单位是**度**、**顺时针为正**（屏幕坐标 y 向下）。
-它和 `ShapeSpec::rotation` / `ShapeSpec::startAngle` 是同一套角度约定。
+它和 `InkingShapeSpec::rotation` / `InkingShapeSpec::startAngle` 是同一套角度约定。
 
 >**float scale**
 
 **均匀**缩放系数。默认 `1.0`。**负值等于镜像**（允许，但很少用）。
 `0` 是配置错误（形状被压成一个点、逆变换不存在），生成期就会拦；
-真漏到运行期时按 `1` 处理，见 `InverseTransform()`。
+真漏到运行期时按 `1` 处理，见 `InkingInverseTransform()`。
 
 ## APIS
 
@@ -101,22 +101,22 @@ constexpr bool IsIdentity() const noexcept;
 注意判据是**精确相等**（不是"接近"）：它要回答的是"配置里这次到底有没有写"，
 而不是"看起来像不像没动"。
 
->**SameTransform(a, b)**
+>**InkingSameTransform(a, b)**
 原名:
 
 ```C++
-constexpr bool SameTransform(const TransformSpec& a,
-                             const TransformSpec& b) noexcept;
+constexpr bool InkingSameTransform(const InkingTransformSpec& a,
+                             const InkingTransformSpec& b) noexcept;
 ```
 
 两个变换**按位相等**。用来判断"这次切换其实什么都没变"——那就**连过渡都不用起**。
 与 `IsIdentity()` 同一套精确比较的口径。
 
->**ApplyTransform(transform, x, y, cx, cy)**
+>**InkingApplyTransform(transform, x, y, cx, cy)**
 原名:
 
 ```C++
-inline Point2 ApplyTransform(const TransformSpec& transform, float x, float y,
+inline InkingPoint2 InkingApplyTransform(const InkingTransformSpec& transform, float x, float y,
                              float cx, float cy);
 ```
 
@@ -134,29 +134,29 @@ y' = cy + dx·sin(radians) + dy·cos(radians) + translateY
 
 `(cx, cy)` 是**调用方传进来的中心**（组件的中心），本文件不认识组件，也不替你算它。
 
->**InverseTransform(transform, x, y, cx, cy)**
+>**InkingInverseTransform(transform, x, y, cx, cy)**
 原名:
 
 ```C++
-inline Point2 InverseTransform(const TransformSpec& transform, float x, float y,
+inline InkingPoint2 InkingInverseTransform(const InkingTransformSpec& transform, float x, float y,
                                float cx, float cy);
 ```
 
 **反向：变换后的坐标 → 本地坐标**。**命中用。**
 
-它必须与 `ApplyTransform` **严格互逆**：顺序反过来、旋转走**转置**（同一个
+它必须与 `InkingApplyTransform` **严格互逆**：顺序反过来、旋转走**转置**（同一个
 `cosA` / `sinA`，符号换过来）、缩放取倒数。做法是"先把平移和中心一起减掉 →
 反向旋转 → 反向缩放"。
 
 `scale == 0` 时**没有逆**（形状被压成一个点），这里退回按 `1` 处理——那本来是配置错误
 （生成期就会拦），但**宁可不命中，也不要除零得到 `inf` 之后到处乱命中**。
 
->**LerpTransform(from, to, t)**
+>**InkingLerpTransform(from, to, t)**
 原名:
 
 ```C++
-inline TransformSpec LerpTransform(const TransformSpec& from,
-                                   const TransformSpec& to, float t);
+inline InkingTransformSpec InkingLerpTransform(const InkingTransformSpec& from,
+                                   const InkingTransformSpec& to, float t);
 ```
 
 两个变换之间**线性插值**，四项（`translateX` / `translateY` / `rotate` / `scale`）各插一遍。
@@ -171,7 +171,7 @@ inline TransformSpec LerpTransform(const TransformSpec& from,
 
 `constexpr` 常量：π 与"度 → 弧度"。
 
-名字带 `transform` 前缀是**必须的**：`inking::detail::kPi` 这种通用名字框架里已经有别的实现
+名字带 `transform` 前缀是**必须的**：`inking_detail::kPi` 这种通用名字框架里已经有别的实现
 在用（例如 `InkingDraw.cpp` 的形状填充），而 `detail` 里的**重名不会报"重复定义"**，
 只会在使用处报"引用不明确"，更难查。加工具函数时照这个习惯带前缀。
 

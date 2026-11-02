@@ -22,7 +22,7 @@ ParseResult LoadJsonFile(const std::string& path) {
     buffer << stream.rdbuf();
 
     // BOM 由 `Parse` 统一处理，这里不重复。
-    result = inking::json::Parse(buffer.str());
+    result = inking_json::Parse(buffer.str());
     if (!result.ok) {
         // 错误已经带"第 N 行第 M 列"，这里只补文件名前缀——两边都补一次会得到
         // "路径：路径：第 N 行…"（踩过）。

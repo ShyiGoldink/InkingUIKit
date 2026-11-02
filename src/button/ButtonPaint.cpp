@@ -7,7 +7,7 @@
 
 #include <cstdint>
 
-namespace inking::detail {
+namespace inking_detail {
 
 namespace {
 
@@ -33,7 +33,7 @@ float Magnify(const InkingAnchor& node) {
 
 /// 文字占位块的颜色兜底：文字色纯透明时看不到，给个不透明的白。
 std::uint32_t VisibleTextColor(std::uint32_t color) {
-    return ColorAlpha(color) == 0u ? 0xFFFFFFFFu : color;
+    return InkingColorAlpha(color) == 0u ? 0xFFFFFFFFu : color;
 }
 
 }  // namespace
@@ -46,8 +46,8 @@ std::uint32_t VisibleTextColor(std::uint32_t color) {
 // ---------------------------------------------------------------------------
 
 void PaintSurfaceShadow(SDL_Renderer* renderer, const InkingAnchor& node,
-                        const ShapeSpec& shape, const ShadowSpec& shadow,
-                        const TransformSpec& transform, float pixelX,
+                        const InkingShapeSpec& shape, const InkingShadowSpec& shadow,
+                        const InkingTransformSpec& transform, float pixelX,
                         float pixelY) {
     // ① 阴影：形状的**偏移实心副本**（没有模糊，见 InkingDecoration.h）。
     // 先画它，后面两笔才盖在上面。它跟变换一起走（旋转的组件，阴影也转）。
@@ -61,11 +61,11 @@ void PaintSurfaceShadow(SDL_Renderer* renderer, const InkingAnchor& node,
 }
 
 void PaintSurfaceFill(SDL_Renderer* renderer, const InkingAnchor& node,
-                      const ShapeSpec& shape, std::uint32_t fillColor,
-                      const TransformSpec& transform, float pixelX,
+                      const InkingShapeSpec& shape, std::uint32_t fillColor,
+                      const InkingTransformSpec& transform, float pixelX,
                       float pixelY) {
     // ② 填充：形状怎么变成像素（三角化 + 边缘羽化 + 顶点过变换）在
-    // `detail::fillShape` 里，按钮 / 面板 / 基类默认矩形共用同一份实现。
+    // `inking_detail::fillShape` 里，按钮 / 面板 / 基类默认矩形共用同一份实现。
     if (renderer == nullptr) {
         return;
     }
@@ -74,8 +74,8 @@ void PaintSurfaceFill(SDL_Renderer* renderer, const InkingAnchor& node,
 }
 
 void PaintSurfaceStroke(SDL_Renderer* renderer, const InkingAnchor& node,
-                        const ShapeSpec& shape, const StrokeSpec& stroke,
-                        const TransformSpec& transform, float pixelX,
+                        const InkingShapeSpec& shape, const InkingStrokeSpec& stroke,
+                        const InkingTransformSpec& transform, float pixelX,
                         float pixelY) {
     // ③ 描边：宽度一半在形状外、一半在内。最后画，才能压在填充/图片的边缘上
     // （描边外半圈本来就该盖住底下那点像素）。
@@ -88,9 +88,9 @@ void PaintSurfaceStroke(SDL_Renderer* renderer, const InkingAnchor& node,
 }
 
 void PaintSurface(SDL_Renderer* renderer, const InkingAnchor& node,
-                  const ShapeSpec& shape, const StrokeSpec& stroke,
-                  const ShadowSpec& shadow, std::uint32_t fillColor,
-                  const TransformSpec& transform, float pixelX, float pixelY) {
+                  const InkingShapeSpec& shape, const InkingStrokeSpec& stroke,
+                  const InkingShadowSpec& shadow, std::uint32_t fillColor,
+                  const InkingTransformSpec& transform, float pixelX, float pixelY) {
     PaintSurfaceShadow(renderer, node, shape, shadow, transform, pixelX, pixelY);
     PaintSurfaceFill(renderer, node, shape, fillColor, transform, pixelX,
                      pixelY);
@@ -98,11 +98,11 @@ void PaintSurface(SDL_Renderer* renderer, const InkingAnchor& node,
                        pixelY);
 }
 
-void PaintButtonAppearance(const InkingAnchor& node, const ShapeSpec& shape,
-                           const ButtonAppearance& appearance,
-                           const StrokeSpec& stroke, const ShadowSpec& shadow,
+void PaintButtonAppearance(const InkingAnchor& node, const InkingShapeSpec& shape,
+                           const InkingButtonAppearance& appearance,
+                           const InkingStrokeSpec& stroke, const InkingShadowSpec& shadow,
                            std::uint32_t displayColor,
-                           const TransformSpec& transform, float pixelX,
+                           const InkingTransformSpec& transform, float pixelX,
                            float pixelY) {
     // 三态之间的差别体现在**颜色（含 alpha）+ 变换**上（T-4 之后还多了外观
     // 类型：img 画一张纹理），形状与尺寸完全不动——这正是静态按钮能一边有动画、
@@ -111,7 +111,7 @@ void PaintButtonAppearance(const InkingAnchor& node, const ShapeSpec& shape,
     // 三笔已经抽成公共件（T-07）：纯色路径整段走 `PaintSurface`；
     // 图片路径只换中间那笔（填充 → 纹理），顺序仍是阴影 → 填充/图片 → 描边。
     SDL_Renderer* renderer = currentRenderer();
-    const bool hasImage = appearance.type == AppearanceType::Image
+    const bool hasImage = appearance.type == InkingAppearanceType::Image
         && appearance.imageBytes != nullptr && appearance.imageSize > 0;
     if (!hasImage) {
         PaintSurface(renderer, node, shape, stroke, shadow, displayColor,
@@ -125,7 +125,7 @@ void PaintButtonAppearance(const InkingAnchor& node, const ShapeSpec& shape,
     // ---- ② 图片（中间那笔换成纹理） ----
     bool painted = false;
     {
-        const ImageBytes image{appearance.imageBytes, appearance.imageSize,
+        const InkingImageBytes image{appearance.imageBytes, appearance.imageSize,
                                appearance.source};
         // ⚠️ 图片的调制色**固定为白**，不是 `displayColor`。
         //
@@ -153,25 +153,25 @@ void PaintButtonAppearance(const InkingAnchor& node, const ShapeSpec& shape,
                        pixelY);
 }
 
-ShapeBounds ButtonHitEnvelope(const ButtonData& data, const ShapeSpec& shape,
+InkingShapeBounds ButtonHitEnvelope(const InkingButtonData& data, const InkingShapeSpec& shape,
                               int width, int height) {
     // 每个状态**各自的尺寸**（T-5 的布局通道）：状态里没写就用组件自己的。
     // 尺寸不同 → 形状 AABB 与旋转中心都不同，所以这两样都得按状态现算。
-    const auto stateSize = [&](const ButtonAppearance& appearance, bool isWidth) {
+    const auto stateSize = [&](const InkingButtonAppearance& appearance, bool isWidth) {
         const float override = isWidth ? appearance.width : appearance.height;
         return override > 0.0f
                    ? static_cast<int>(override + 0.5f)
                    : (isWidth ? width : height);
     };
 
-    const auto transformedBounds = [&](const ButtonAppearance& appearance) {
+    const auto transformedBounds = [&](const InkingButtonAppearance& appearance) {
         const int stateWidth = stateSize(appearance, true);
         const int stateHeight = stateSize(appearance, false);
-        const TransformSpec& transform = appearance.transform;
+        const InkingTransformSpec& transform = appearance.transform;
 
-        // 形状本身的 AABB：圆和椭圆不是整块矩形（`GetShapeBounds` 已经算准了）。
-        const ShapeBounds local =
-            GetShapeBounds(shape, stateWidth, stateHeight);
+        // 形状本身的 AABB：圆和椭圆不是整块矩形（`InkingGetShapeBounds` 已经算准了）。
+        const InkingShapeBounds local =
+            InkingGetShapeBounds(shape, stateWidth, stateHeight);
         // 绕**这个状态的**中心做变换：和绘制 / 命中用的是同一个原点
         // （`InkingTransform.h` 定的"原点取组件中心"，而中心随尺寸走）。
         const float centerX = static_cast<float>(stateWidth) * 0.5f;
@@ -189,7 +189,7 @@ ShapeBounds ButtonHitEnvelope(const ButtonData& data, const ShapeSpec& shape,
         float maxX = 0.0f;
         float maxY = 0.0f;
         for (int i = 0; i < 4; ++i) {
-            const Point2 point = ApplyTransform(transform, xs[i], ys[i],
+            const InkingPoint2 point = InkingApplyTransform(transform, xs[i], ys[i],
                                                 centerX, centerY);
             if (i == 0) {
                 minX = maxX = point.x;
@@ -201,7 +201,7 @@ ShapeBounds ButtonHitEnvelope(const ButtonData& data, const ShapeSpec& shape,
             maxX = point.x > maxX ? point.x : maxX;
             maxY = point.y > maxY ? point.y : maxY;
         }
-        return ShapeBounds{minX, minY, maxX - minX, maxY - minY};
+        return InkingShapeBounds{minX, minY, maxX - minX, maxY - minY};
     };
 
     // **三个状态都要算**：悬停会平移+放大（还有 T-5 的尺寸变化）、按下会下沉。
@@ -210,13 +210,13 @@ ShapeBounds ButtonHitEnvelope(const ButtonData& data, const ShapeSpec& shape,
     //
     // 尺寸**每帧插值**（中间态介于两端之间），所以这份并集仍然覆盖得住：
     // 中间尺寸的 AABB 一定落在两端 AABB 的并集里（三个状态共享同一个左上角锚点，
-    // 见 `ButtonData.h` 里"从左上角生长"那条约定）——这就是**不用换表**的原因。
-    const ButtonAppearance* states[3] = {&data.normal, &data.hover,
+    // 见 `InkingButtonData.h` 里"从左上角生长"那条约定）——这就是**不用换表**的原因。
+    const InkingButtonAppearance* states[3] = {&data.normal, &data.hover,
                                          &data.onclicked};
 
-    ShapeBounds merged = transformedBounds(*states[0]);
+    InkingShapeBounds merged = transformedBounds(*states[0]);
     for (int i = 1; i < 3; ++i) {
-        const ShapeBounds one = transformedBounds(*states[i]);
+        const InkingShapeBounds one = transformedBounds(*states[i]);
         const float maxX = merged.x + merged.width;
         const float maxY = merged.y + merged.height;
         const float oneMaxX = one.x + one.width;
@@ -226,28 +226,28 @@ ShapeBounds ButtonHitEnvelope(const ButtonData& data, const ShapeSpec& shape,
         const float minY = one.y < merged.y ? one.y : merged.y;
         const float outMaxX = oneMaxX > maxX ? oneMaxX : maxX;
         const float outMaxY = oneMaxY > maxY ? oneMaxY : maxY;
-        merged = ShapeBounds{minX, minY, outMaxX - minX, outMaxY - minY};
+        merged = InkingShapeBounds{minX, minY, outMaxX - minX, outMaxY - minY};
     }
     return merged;
 }
 
-Point2 ButtonTextOffset(const InkingAnchor& node, const ButtonData& data) {
-    const Point2 configured{data.text.leftSpace, data.text.topSpace};
-    const bool needsMeasuring = data.text.align != TextAlignH::Left
-                                || data.text.alignV != TextAlignV::Top;
+InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data) {
+    const InkingPoint2 configured{data.text.leftSpace, data.text.topSpace};
+    const bool needsMeasuring = data.text.align != InkingTextAlignH::Left
+                                || data.text.alignV != InkingTextAlignV::Top;
     if (!needsMeasuring || data.label.empty()) {
         return configured;  // 老行为（默认路径，零开销）
     }
 
-    // 量一遍真实文字块。`MeasureText` 不依赖渲染器：拿不到字体时给估算值，
+    // 量一遍真实文字块。`InkingMeasureText` 不依赖渲染器：拿不到字体时给估算值，
     // 所以"居中"在没有字体子系统时也不会变成"从中间开始画"。
-    TextRequest probe;
+    InkingTextRequest probe;
     probe.text = data.label;
     probe.fontSize = data.text.fontSize > 0.0f ? data.text.fontSize
                                                : kDefaultFontSize;
     probe.fontPath = data.text.path;
     probe.fontPaths = data.text.paths;
-    const TextMetrics metrics = MeasureText(probe);
+    const InkingTextMetrics metrics = InkingMeasureText(probe);
     if (metrics.width <= 0.0f && metrics.height <= 0.0f) {
         return configured;  // 量不出来就退回配置值，别硬算出一个怪位置
     }
@@ -257,35 +257,35 @@ Point2 ButtonTextOffset(const InkingAnchor& node, const ButtonData& data) {
 
     float x = data.text.leftSpace;
     switch (data.text.align) {
-        case TextAlignH::Center:
+        case InkingTextAlignH::Center:
             x = (width - metrics.width) * 0.5f;
             break;
-        case TextAlignH::Right:
+        case InkingTextAlignH::Right:
             x = width - metrics.width - data.text.leftSpace;
             break;
-        case TextAlignH::Left:
+        case InkingTextAlignH::Left:
         default:
             break;  // 保持 leftSpace
     }
 
     float y = data.text.topSpace;
     switch (data.text.alignV) {
-        case TextAlignV::Middle:
+        case InkingTextAlignV::Middle:
             y = (height - metrics.height) * 0.5f;
             break;
-        case TextAlignV::Bottom:
+        case InkingTextAlignV::Bottom:
             y = height - metrics.height - data.text.topSpace;
             break;
-        case TextAlignV::Top:
+        case InkingTextAlignV::Top:
         default:
             break;  // 保持 topSpace
     }
 
-    return Point2{x, y};
+    return InkingPoint2{x, y};
 }
 
-void PaintButtonText(const InkingAnchor& node, const ButtonData& data,
-                     const TransformSpec& transform, float pixelX,
+void PaintButtonText(const InkingAnchor& node, const InkingButtonData& data,
+                     const InkingTransformSpec& transform, float pixelX,
                      float pixelY) {
     SDL_Renderer* renderer = currentRenderer();
     if (renderer == nullptr) {
@@ -296,8 +296,8 @@ void PaintButtonText(const InkingAnchor& node, const ButtonData& data,
     }
 
     // 文字走**纹理层**（include/render/InkingText.h）：它负责栅格化一次、
-    // 缓存、上色、以及跟着变换走。这里只把配置翻译成一次 TextRequest。
-    TextRequest request;
+    // 缓存、上色、以及跟着变换走。这里只把配置翻译成一次 InkingTextRequest。
+    InkingTextRequest request;
     request.text = data.label;
     request.fontSize =
         data.text.fontSize > 0.0f ? data.text.fontSize : kDefaultFontSize;
@@ -306,7 +306,7 @@ void PaintButtonText(const InkingAnchor& node, const ButtonData& data,
     request.color = VisibleTextColor(data.textColor);
     // 位置：`align` / `alignV` 为默认值时就是配置里的 leftSpace / topSpace；
     // 写了居中 / 右对齐 / 贴底时先量一遍文字块再算（见 `ButtonTextOffset`）。
-    const Point2 offset = ButtonTextOffset(node, data);
+    const InkingPoint2 offset = ButtonTextOffset(node, data);
     request.offsetX = offset.x;
     request.offsetY = offset.y;
 
@@ -314,4 +314,4 @@ void PaintButtonText(const InkingAnchor& node, const ButtonData& data,
               Magnify(node), pixelX, pixelY, transform);
 }
 
-}  // namespace inking::detail
+}  // namespace inking_detail

@@ -10,21 +10,20 @@
 #include <string>
 #include <vector>
 
-namespace inking {
 
-inline constexpr const char* kTextInputModuleName = "InkingTextInput";
+inline constexpr const char* InkingTextInputModuleName = "InkingTextInput";
 
 /**
  * @brief 输入框的数据（B7）：**标签那份 + 三样"编辑期"的东西**。
  *
- * 继承而不是再抄一份字段，理由和 `ImageData : ButtonData` 一样（A11）：输入框
+ * 继承而不是再抄一份字段，理由和 `InkingImageData : InkingButtonData` 一样（A11）：输入框
  * 就是"能打字的 label"——文字、字号、对齐、换行、颜色全都同构，多出来的只有
  * 光标与选区怎么画。生成器那边也因此能逐字复用标签的烘法。
  *
  * **这一版是单行输入框**（`wrap` 会被强制成 `noWrap`、粘贴时换行被丢掉）：
  * 多行要连排版、光标上下移动、滚动一起做，属于另一件事。
  */
-struct TextInputData : public LabelData {
+struct InkingTextInputData : public InkingLabelData {
     std::uint32_t caretColor = 0xFFEAF2FFu;      ///< 光标颜色 0xAARRGGBB
     std::uint32_t selectionColor = 0x663E7BD8u;  ///< 选区底色（半透明）
     float caretBlinkSeconds = 0.6f;              ///< 亮 / 灭各持续多久（0 = 不闪）
@@ -32,7 +31,7 @@ struct TextInputData : public LabelData {
 };
 
 /// 一个小矩形（设计坐标，**相对组件左上角**）：光标与选区都用它。
-struct TextInputRect {
+struct InkingTextInputRect {
     float x = 0.0f;
     float y = 0.0f;
     float width = 0.0f;
@@ -50,7 +49,7 @@ struct TextInputRect {
  * ---------------------------------------------------------------------------
  * 三条约定
  *
- * 1. **编辑状态是独立的一份**（`TextEditState`，纯逻辑、可单测）；每次改动之后
+ * 1. **编辑状态是独立的一份**（`InkingTextEditState`，纯逻辑、可单测）；每次改动之后
  *    `syncToLabel()` 把它交给基类 ⇒ 重排 + 重绘。所以"打一个字"的代价是
  *    一次排版（有缓存）+ 一次重绘，和 `SetText` 一样；
  * 2. **吃点击**（`SetHitPassThrough(false)`）：输入框要点击定位光标，而标签的
@@ -64,7 +63,7 @@ struct TextInputRect {
  */
 class InkingTextInput : public InkingStaticLabel {
 public:
-    InkingTextInput(InkingWidget* parent, const TextInputData& data);
+    InkingTextInput(InkingWidget* parent, const InkingTextInputData& data);
 
     /// Enter 提交：回调收到当前文本（校验 / 多语言由业务侧做）。
     InkingEvent<const std::string&> submitted;
@@ -82,8 +81,8 @@ public:
     /// 换整段文本（光标归零）：走编辑状态机，再同步给基类排版。
     void SetEditText(const std::string& text);
 
-    TextEditState& Edit() noexcept { return _edit; }
-    const TextEditState& Edit() const noexcept { return _edit; }
+    InkingTextEditState& Edit() noexcept { return _edit; }
+    const InkingTextEditState& Edit() const noexcept { return _edit; }
 
     // ---------------- 焦点 ----------------
 
@@ -101,7 +100,7 @@ public:
      *         返回 false 的键（比如字母）交给 `onTextInput`——那是 SDL 的
      *         `TEXT_INPUT` 事件，中文输入法组合好的结果从那里来。
      */
-    bool HandleKey(const KeyEvent& key);
+    bool HandleKey(const InkingKeyEvent& key);
 
     /// 一段文本输入（普通按键 / IME 提交都走它）。
     void HandleText(const std::string& text);
@@ -121,10 +120,10 @@ public:
     // ---------------- 几何观测（自检用；绘制用的也是这份） ----------------
 
     /// 光标矩形（设计坐标，相对组件左上角）。
-    TextInputRect CaretBox() const;
+    InkingTextInputRect CaretBox() const;
 
     /// 选区的矩形们（一行一个；没有选区时是空的）。
-    std::vector<TextInputRect> SelectionBoxes() const;
+    std::vector<InkingTextInputRect> SelectionBoxes() const;
 
     /// 某个点（设计坐标）对应的**字节偏移**（已吸附到码点边界）。
     std::size_t OffsetAtPoint(float designX, float designY) const;
@@ -171,12 +170,12 @@ public:
 protected:
     void onRender(float pixelX, float pixelY) const override;
     void onAnimationTick(float deltaSeconds) override;
-    void onKeyDown(const KeyEvent& key) override;
+    void onKeyDown(const InkingKeyEvent& key) override;
     void onTextInput(const std::string& text) override;
     void onFocusChanged(bool focused) override;
     /// 按下 / 抬起。**只认主键**：开始编辑 / 选区都是主键手势；
     /// 右键留给将来的"粘贴 / 全选"上下文菜单（0.5.0）。
-    void onPointerPress(PointerButton button, bool press) override;
+    void onPointerPress(InkingPointerButton button, bool press) override;
     void onPointerDrag(float designX, float designY, float deltaX,
                        float deltaY) override;
 
@@ -199,22 +198,22 @@ private:
 
     /// 光标 / 选区几何的共同底座：**字节偏移 → 行内矩形**。
     ///
-    /// 用了基类那份排好行的结果（`GetTextLayout()`，它是 `TextLine{begin,end,width,x,y,height}`）
-    /// 加 `MeasureText` 逐码点累加——所以比例字体下光标也贴在正确的字缝上。
+    /// 用了基类那份排好行的结果（`GetTextLayout()`，它是 `InkingTextLine{begin,end,width,x,y,height}`）
+    /// 加 `InkingMeasureText` 逐码点累加——所以比例字体下光标也贴在正确的字缝上。
     /// 返回的是**未滚动、未夹取**的原始坐标（`BoxForOffset` 会再套上滚动与夹取）。
-    TextInputRect RawBoxForOffset(std::size_t offset) const;
+    InkingTextInputRect RawBoxForOffset(std::size_t offset) const;
 
     /// 带滚动与夹取的光标 / 选区矩形（绘制与观测口用的都是这一份）。
-    TextInputRect BoxForOffset(std::size_t offset) const;
+    InkingTextInputRect BoxForOffset(std::size_t offset) const;
 
     /// 设计坐标 → 组件本地坐标（标签没有变换，减左上角就够）。
     float localX(float designX) const;
     float localY(float designY) const;
 
-    TextInputData _input{};
+    InkingTextInputData _input{};
 
     /// 编辑状态机（纯逻辑，B7 的核心；判据在 `ink_text_edit_test`）。
-    TextEditState _edit{};
+    InkingTextEditState _edit{};
 
     bool _focused = false;
     bool _caretVisible = true;
@@ -232,4 +231,3 @@ private:
     int _pastes = 0;
 };
 
-}  // namespace inking

@@ -7,8 +7,6 @@
 #include <cstdint>
 #include <memory>
 
-namespace inking {
-
 /**
  * @brief 一个**视频**组件（A14）：把一段视频（含音轨）播在一个形状框里。
  *
@@ -26,7 +24,7 @@ namespace inking {
  *      （`AGENTS.md` §6 第 37 条），而 `onRender` 是唯一每帧都会来的钩子。
  *      副作用是**白拿的**：被裁剪 / 不可见时不再解码（省 CPU），回到可见时
  *      按 pts 追帧（丢帧数有观测口）。
- *   3. **画面走形状层**（`detail::fillShapeTextured`）：形状裁剪、UV、跟随容器
+ *   3. **画面走形状层**（`inking_detail::fillShapeTextured`）：形状裁剪、UV、跟随容器
  *      变换、圆角羽化全部复用 B1 那份实现。于是"视频贴进圆角框、跟着容器动"
  *      不需要这里写一行几何代码；也和图片共用同一条纹理路径。
  *   4. **不认外部显示变换**（A13 那条通道默认关）：第一版不做"拖动视频"。
@@ -36,10 +34,10 @@ namespace inking {
  * ---------------------------------------------------------------------------
  * 音画同步（A14 的重点）
  *
- *   音轨挂在音频层的**外部 PCM 流轨道**上（`AudioOpenPcmStream`，见
+ *   音轨挂在音频层的**外部 PCM 流轨道**上（`InkingAudioOpenPcmStream`，见
  *   `include/audio/InkingAudio.h`）。于是音量 / 暂停 / 位置全归音频层那套
- *   （`AudioChannel::Voice`），而**音频位置就是主时钟**：每帧拿
- *   `AudioPcmStreamPositionSeconds()` 跟视频自己的 pts 比——超前就等，落后就
+ *   （`InkingAudioChannel::Voice`），而**音频位置就是主时钟**：每帧拿
+ *   `InkingAudioPcmStreamPositionSeconds()` 跟视频自己的 pts 比——超前就等，落后就
  *   丢帧。没接音频后端时退回**真实时间**当主时钟：精度差一档，但不会不动。
  *
  * 解码在**后台线程**（照 `AGENTS.md` §6 第 82 条那条分工：worker 只做"打开 +
@@ -51,7 +49,7 @@ public:
      * @param parent 上级锚点；非拥有。
      * @param data   配置数据（构造时会 `Normalize` 一次，并按 `source` 打开视频）。
      */
-    InkingStaticVideo(InkingWidget* parent, const VideoData& data);
+    InkingStaticVideo(InkingWidget* parent, const InkingVideoData& data);
 
     /// 析构要先**停掉解码线程**（生命周期比对象长的那类坑，见 §6 第 67 / 82 条）。
     ~InkingStaticVideo() override;
@@ -64,19 +62,19 @@ public:
     /// 指针在这个位置上吗（世界坐标）。**照常参与命中**：视频不是标签。
     bool HitTest(float worldX, float worldY) const override;
 
-    const ShapeSpec& GetShape() const noexcept;
+    const InkingShapeSpec& GetShape() const noexcept;
 
     /// 没有画面时用的兜底色（`normal.color`）。
     std::uint32_t GetDisplayColor() const noexcept;
 
-    TransformSpec GetDisplayTransform() const noexcept;
-    TransformSpec GetSubtreeTransform() const noexcept override;
+    InkingTransformSpec GetDisplayTransform() const noexcept;
+    InkingTransformSpec GetSubtreeTransform() const noexcept override;
 
     /// 命中索引用的包络（按形状与那一态的变换算，保守外扩由框架加）。
-    ShapeBounds GetHitEnvelope() const override;
+    InkingShapeBounds GetHitEnvelope() const override;
 
     /// 构造时用的那份配置（已经 Normalize 过）。
-    const VideoData& GetData() const noexcept;
+    const InkingVideoData& GetData() const noexcept;
 
     // ---- 播控（没接后端 / 没打开时都是**安全的空操作**） ----
 
@@ -169,15 +167,14 @@ protected:
 
 private:
     /// 把 data 搬进自己 + 基类；构造函数用。
-    void applyData(const VideoData& data);
+    void applyData(const InkingVideoData& data);
 
     std::unique_ptr<Impl> _impl;
 
-    VideoData _data{};
-    ButtonAppearance _renderAppearance{};
+    InkingVideoData _data{};
+    InkingButtonAppearance _renderAppearance{};
 
     /// "播完已经通知过了"：防重复发。也必须是 `mutable`（发它在 `onRender` 里）。
     mutable bool _finishedNotified = false;
 };
 
-}  // namespace inking

@@ -12,9 +12,9 @@
 
 ## 两种输入状态（0.5.0）
 
-`onPointerPress` / `onPointerClick` 带 `PointerButton` 参数。上层**永远只看到
+`onPointerPress` / `onPointerClick` 带 `InkingPointerButton` 参数。上层**永远只看到
 `Primary` / `Secondary`**，不需要知道这是鼠标左键、右键，还是触摸的轻点、长按——
-设备差异在窗口层与场景层就被吸收干净了（见 `<input/PointerButton.h>` 的文件头）。
+设备差异在窗口层与场景层就被吸收干净了（见 `<input/InkingPointerButton.h>` 的文件头）。
 
 | 设备输入 | 语义 |
 | --- | --- |
@@ -31,8 +31,8 @@
 | 钩子 | 参数 | 为什么 |
 | --- | --- | --- |
 | `onPointerHover` | `bool` | 只有主键有 hover——hover 是"我指着谁"，不是"我按着谁" |
-| `onPointerPress` | `PointerButton, bool` | 按下不关心位置；要位置问场景 |
-| `onPointerClick` | `PointerButton, float, float` | **必须**带坐标——它是事件，不带走就永久丢失 |
+| `onPointerPress` | `InkingPointerButton, bool` | 按下不关心位置；要位置问场景 |
+| `onPointerClick` | `InkingPointerButton, float, float` | **必须**带坐标——它是事件，不带走就永久丢失 |
 
 坐标是**按下点**（不是抬起点）：触摸长按的锚点是按下处，手指微动几像素不该让
 菜单跟着挪；鼠标右键按下与抬起通常同点，两者无差异。
@@ -76,15 +76,15 @@
 > 它们都是虚函数，而"没有重写它们"是**正常情况**——绝大多数组件不关心指针。
 > 只声明不定义的话，**基类 vtable 会引用一个不存在的符号**，会造成任何派生类
 > （哪怕一个钩子都不重写）在**链接期**拿到
-> `undefined reference to inking::InkingPointerHandler::onPointerWheel`。
+> `undefined reference to InkingPointerHandler::onPointerWheel`。
 
 所以这五个 `{}` 不是代码风格，**删掉就编不过**——而且报错的是链接期、
 离现场很远。
 
 ## 用到的数据结构
 
-`PointerButton` / `PointerSource` / `PointerDownState` / `ToIndex()`，来自
-`<input/PointerButton.h>`（纯值类型，不依赖 SDL）。本文件不再"零依赖"——0.5.0
+`InkingPointerButton` / `InkingPointerSource` / `InkingPointerDownState` / `InkingToIndex()`，来自
+`<input/InkingPointerButton.h>`（纯值类型，不依赖 SDL）。本文件不再"零依赖"——0.5.0
 之前它确实不引用任何类型，因为那时只有"一个 bool 的按下"。
 
 ## 属性
@@ -130,7 +130,7 @@ void PushPointerHover(bool hover) noexcept;
 原名:
 
 ```C++
-void PushPointerPress(PointerButton button, bool press) noexcept;
+void PushPointerPress(InkingPointerButton button, bool press) noexcept;
 ```
 
 **按下 / 抬起**：`true` 按下、`false` 抬起（转给 `onPointerPress`）。
@@ -145,7 +145,7 @@ void PushPointerPress(PointerButton button, bool press) noexcept;
 原名:
 
 ```C++
-void PushPointerClick(PointerButton button, float designX,
+void PushPointerClick(InkingPointerButton button, float designX,
                       float designY) noexcept;
 ```
 
@@ -211,7 +211,7 @@ virtual void onPointerHover(bool hover) {}
 原名:
 
 ```C++
-virtual void onPointerPress(PointerButton button, bool press) {}
+virtual void onPointerPress(InkingPointerButton button, bool press) {}
 ```
 
 按下 / 抬起。**抬起也是这条**（`press = false`）。
@@ -220,14 +220,14 @@ virtual void onPointerPress(PointerButton button, bool press) {}
 把按钮点亮，用户会以为左键生效了。不关心右键的组件写一行守卫即可：
 
 ```C++
-if (button != PointerButton::Primary) { return; }
+if (button != InkingPointerButton::Primary) { return; }
 ```
 
 >**onPointerClick(button, designX, designY)**
 原名:
 
 ```C++
-virtual void onPointerClick(PointerButton button, float designX,
+virtual void onPointerClick(InkingPointerButton button, float designX,
                             float designY) {}
 ```
 
@@ -236,8 +236,8 @@ virtual void onPointerClick(PointerButton button, float designX,
 最典型的用法是右键菜单：
 
 ```C++
-void MyWidget::onPointerClick(PointerButton button, float x, float y) {
-    if (button == PointerButton::Secondary) {
+void MyWidget::onPointerClick(InkingPointerButton button, float x, float y) {
+    if (button == InkingPointerButton::Secondary) {
         _menu->OpenAt(x, y);      // 坐标就是按下点，不必再换算
     }
 }

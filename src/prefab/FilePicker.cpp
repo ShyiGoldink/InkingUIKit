@@ -24,7 +24,7 @@
 #include <system_error>
 #include <utility>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 namespace {
 
@@ -73,8 +73,8 @@ std::string DriveLabel(const std::filesystem::path& root) {
     return text;
 }
 
-PanelData MakePanelData(const FilePickerStyle& style) {
-    PanelData panel = style.panel;
+InkingPanelData MakePanelData(const FilePickerStyle& style) {
+    InkingPanelData panel = style.panel;
     if (panel.name.empty()) {
         panel.name = "filePicker";
     }
@@ -121,20 +121,20 @@ bool MatchesExtension(const std::string& name,
     return false;
 }
 
-ButtonData PickerButtonLook() { return MakeDefaultPickerButtonLook(); }
+InkingButtonData PickerButtonLook() { return MakeDefaultPickerButtonLook(); }
 
 }  // namespace
 
-ButtonData MakeDefaultPickerButtonLook() {
-    ButtonData look;
+InkingButtonData MakeDefaultPickerButtonLook() {
+    InkingButtonData look;
     look.name = "filePickerButton";
     look.width = 96;
     look.height = 30;
-    look.shape = ShapeSpec::RoundedRect(theme::kRadiusButton);
+    look.shape = InkingShapeSpec::RoundedRect(theme::kRadiusButton);
     // 亮色：白底 + 1px 浅描边；悬停 / 按下用主色浅底。
-    look.normal = ButtonAppearance(AppearanceType::Color, theme::kSurface);
-    look.hover = ButtonAppearance(AppearanceType::Color, theme::kAccentSoft);
-    look.onclicked = ButtonAppearance(AppearanceType::Color,
+    look.normal = InkingButtonAppearance(InkingAppearanceType::Color, theme::kSurface);
+    look.hover = InkingButtonAppearance(InkingAppearanceType::Color, theme::kAccentSoft);
+    look.onclicked = InkingButtonAppearance(InkingAppearanceType::Color,
                                       theme::kAccentSoftPressed);
     look.hoverInheritsNormal = false;
     look.onclickedInheritsNormal = false;
@@ -142,8 +142,8 @@ ButtonData MakeDefaultPickerButtonLook() {
     look.stroke.color = theme::kOutline;
     look.text.fontSize = 15.0f;
     // 文字**居中**（"确定" / "取消"）：以前靠 leftSpace 手填，比例字体下必然歪。
-    look.text.align = TextAlignH::Center;
-    look.text.alignV = TextAlignV::Middle;
+    look.text.align = InkingTextAlignH::Center;
+    look.text.alignV = InkingTextAlignV::Middle;
     look.text.leftSpace = 0.0f;
     look.text.topSpace = 0.0f;
     look.text.path = theme::DefaultFontPath();
@@ -156,7 +156,7 @@ FilePickerStyle FilePickerStyle::MakeDefault() {
     style.panel.name = "filePicker";
     style.panel.width = 640;
     style.panel.height = 480;
-    style.panel.shape = ShapeSpec::RoundedRect(theme::kRadiusCard);
+    style.panel.shape = InkingShapeSpec::RoundedRect(theme::kRadiusCard);
     style.panel.closed.color = theme::kSurface;
     style.panel.open.color = theme::kSurface;
     style.panel.openInheritsClosed = false;
@@ -171,7 +171,7 @@ FilePickerStyle FilePickerStyle::MakeDefault() {
     style.pathInput.width = 640;
     style.pathInput.height = 32;
     style.pathInput.style.fontSize = 15.0f;
-    style.pathInput.style.padding = LayoutSpacing{8.0f, 6.0f, 8.0f, 6.0f};
+    style.pathInput.style.padding = InkingLayoutSpacing{8.0f, 6.0f, 8.0f, 6.0f};
     style.pathInput.style.fontPath = theme::DefaultFontPath();
     style.pathInput.color = theme::kTextPrimary;
     style.pathInput.caretColor = theme::kAccentStrong;
@@ -183,12 +183,12 @@ FilePickerStyle FilePickerStyle::MakeDefault() {
     style.shortcuts.panel.closed.color = 0x02000000u;  // 极淡（不能全透明）
     style.shortcuts.panel.open.color = style.shortcuts.panel.closed.color;
     style.shortcuts.panel.openInheritsClosed = false;
-    style.shortcuts.panel.layout.kind = LayoutKind::Stack;
-    style.shortcuts.panel.layout.axis = LayoutAxis::Horizontal;
-    style.shortcuts.panel.layout.justify = LayoutJustify::Start;
-    style.shortcuts.panel.layout.align = LayoutAlign::Stretch;
+    style.shortcuts.panel.layout.kind = InkingLayoutKind::Stack;
+    style.shortcuts.panel.layout.axis = InkingLayoutAxis::Horizontal;
+    style.shortcuts.panel.layout.justify = InkingLayoutJustify::Start;
+    style.shortcuts.panel.layout.align = InkingLayoutAlign::Stretch;
     style.shortcuts.panel.layout.gap = 4.0f;
-    style.shortcuts.panel.layout.padding = LayoutSpacing{0.0f, 0.0f, 0.0f, 0.0f};
+    style.shortcuts.panel.layout.padding = InkingLayoutSpacing{0.0f, 0.0f, 0.0f, 0.0f};
     style.shortcuts.itemHeight = 28.0f;
     style.shortcuts.itemLook = MakeDefaultPickerButtonLook();
     style.shortcuts.itemLook.width = 96;
@@ -217,19 +217,19 @@ FilePickerStyle FilePickerStyle::MakeDefault() {
     //
     // **不用 `MenuBar`**（0.5.3）：它自带 `hideInFullscreen` / `zoomWheel` 等窗口语义，
     // 而对话框的按钮行只是"横向排两个按钮"。这里只借它的排列口径（同一套 Stack
-    // 词汇），组件换成普通 `PanelData` —— 见 `FilePickerData.h` 的抬头。
+    // 词汇），组件换成普通 `InkingPanelData` —— 见 `FilePickerData.h` 的抬头。
     style.buttonBar.name = "filePickerButtonBar";
     style.buttonBar.width = 640;
     style.buttonBar.height = 40;
     style.buttonBar.closed.color = 0x02000000u;
     style.buttonBar.open.color = style.buttonBar.closed.color;
     style.buttonBar.openInheritsClosed = false;
-    style.buttonBar.layout.kind = LayoutKind::Stack;
-    style.buttonBar.layout.axis = LayoutAxis::Horizontal;
-    style.buttonBar.layout.justify = LayoutJustify::End;
-    style.buttonBar.layout.align = LayoutAlign::Center;
+    style.buttonBar.layout.kind = InkingLayoutKind::Stack;
+    style.buttonBar.layout.axis = InkingLayoutAxis::Horizontal;
+    style.buttonBar.layout.justify = InkingLayoutJustify::End;
+    style.buttonBar.layout.align = InkingLayoutAlign::Center;
     style.buttonBar.layout.gap = 8.0f;
-    style.buttonBar.layout.padding = LayoutSpacing{0.0f, 4.0f, 8.0f, 4.0f};
+    style.buttonBar.layout.padding = InkingLayoutSpacing{0.0f, 4.0f, 8.0f, 4.0f};
     style.buttonLook = MakeDefaultPickerButtonLook();
 
     style.mode = FilePickMode::OpenFile;
@@ -245,7 +245,7 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
     : InkingStaticPanel(parent, MakePanelData(style)),
       _style(style),
       _pathInput(this, [&style] {
-          TextInputData data = style.pathInput;
+          InkingTextInputData data = style.pathInput;
           data.width = style.panel.width;
           data.height = static_cast<int>(style.pathInputHeight + 0.5f);
           data.traceAnchor = InkingChangeAnchor::LeftTop;
@@ -292,7 +292,7 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
           return list;
       }()),
       _buttons(this, [&style] {
-          PanelData bar = style.buttonBar;
+          InkingPanelData bar = style.buttonBar;
           bar.width = style.panel.width;
           bar.height = static_cast<int>(style.buttonBarHeight + 0.5f);
           bar.traceAnchor = InkingChangeAnchor::LeftTop;
@@ -370,12 +370,12 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
     // 两个按钮是按钮栏的**直接子项**，位置由按钮栏的 Stack（横向 / 靠右 / 交叉轴居中）
     // 排出来——不自己算 x。宽度必须显式来自 `buttonLook.width`：`align = Center` 只管
     // 交叉轴，主轴尺寸仍是各自配置，留 0 会变成"两个按钮各占半条"。
-    ButtonData buttonLook = _style.buttonLook.width > 0
+    InkingButtonData buttonLook = _style.buttonLook.width > 0
                                 ? _style.buttonLook
                                 : PickerButtonLook();
     const auto addButton = [this, &buttonLook](const char* name, const std::string& label,
                                                bool accept) {
-        ButtonData look = buttonLook;
+        InkingButtonData look = buttonLook;
         look.name = name;
         look.label = label;
         auto* button = static_cast<InkingStaticButton*>(
@@ -684,4 +684,4 @@ bool FilePicker::Accept() {
 
 void FilePicker::Cancel() { canceled.Emit(); }
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

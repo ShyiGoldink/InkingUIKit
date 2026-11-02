@@ -2,13 +2,13 @@
 
 // Sprite 的**纯数据**定义（0.6.0 T-02），对应 CXXCSS 里 `image` 段的 sprite 分支。
 //
-// 为什么独立成类型、而不是往 `ImageData` 里加 `frames` / `sheet`：
+// 为什么独立成类型、而不是往 `InkingImageData` 里加 `frames` / `sheet`：
 //   - 普通图片不该背一组永远为空的帧表与校验（"每张静态图都多背 100 字节 + 一段
 //     走不到的分支"是纯粹的税）；
-//   - 反过来 sprite 又确实要 `ImageData` 的全部字段（`normal` 是图、`runtimeAsset`
+//   - 反过来 sprite 又确实要 `InkingImageData` 的全部字段（`normal` 是图、`runtimeAsset`
 //     决定字节从哪儿来、`hitPassThrough` 决定挡不挡点击），所以是**继承**而不是组合
-//     ——和 `ImageData : ButtonData` 同一条路（§2.1 第 7/8 条踩过这个坑：仓库里没有
-//     `ImageAppearance` 这个类型，帧的类型就是 `ButtonAppearance`）。
+//     ——和 `InkingImageData : InkingButtonData` 同一条路（§2.1 第 7/8 条踩过这个坑：仓库里没有
+//     `ImageAppearance` 这个类型，帧的类型就是 `InkingButtonAppearance`）。
 //
 // 两种素材**二选一**（用户"我全都要"落在"同一个组件支持两种来源"，不是"一份配置
 // 同时用两种"）：
@@ -26,28 +26,26 @@
 #include <string>
 #include <vector>
 
-namespace inking {
-
 /// 模块名常量（日志用；约定：每个模块都暴露一个）。
-inline constexpr const char* kSpriteModuleName = "InkingSprite";
+inline constexpr const char* InkingSpriteModuleName = "InkingSprite";
 
 /**
  * @brief 帧动画的配置（序列帧 / 图集二选一）。
  *
  * 字段名与 `CXXCSS.md` 的 sprite 段一一对应，不在这里改名——名字对不上时的排查
- * 成本比"换个更漂亮的命名"值钱得多（`ButtonData.h` 开头那段同一条理由）。
+ * 成本比"换个更漂亮的命名"值钱得多（`InkingButtonData.h` 开头那段同一条理由）。
  */
-struct SpriteData : public ImageData {
+struct InkingSpriteData : public InkingImageData {
     /**
      * @brief 图集描述：一张图切成 `columns × rows` 格，按行优先取帧。
      *
-     * 为什么 `source` 和 `SpriteData::normal.source` 并存：图集是"一张图 + 切法"，
+     * 为什么 `source` 和 `InkingSpriteData::normal.source` 并存：图集是"一张图 + 切法"，
      * 图上还压着 `fit` / 形状 / 命中这些**单图属性**（都在 `normal` 里），所以
      * `normal` 描述"这张图怎么画"，`sheet` 只描述"怎么切"。**`source` 留空 = 用
      * `normal.source`**——绝大多数配置只该写一处路径，重复写两次就是两份真相。
      */
     struct SpriteSheet {
-        std::string source;  ///< 图集路径；空 = 沿用 `SpriteData::normal.source`
+        std::string source;  ///< 图集路径；空 = 沿用 `InkingSpriteData::normal.source`
 
         int frameWidth = 0;   ///< 单格宽（像素）
         int frameHeight = 0;  ///< 单格高（像素）
@@ -103,7 +101,7 @@ struct SpriteData : public ImageData {
          * 不支持 TexturePacker 的 `spriteSourceSize`（帧内偏移）与 `rotated`——那要改
          * 绘制矩形原点与 UV，属于绘制层，任务书 §11 明确不做。
          */
-        std::vector<ShapeBounds> frameRects;
+        std::vector<InkingShapeBounds> frameRects;
 
         /// 有没有配过（任意一个几何字段非 0 就算配了）。
         bool IsConfigured() const noexcept {
@@ -156,19 +154,19 @@ struct SpriteData : public ImageData {
          * 自检直接断言它（不必为了验 margin/spacing 真画一张图）。
          * 未配置 / 越界时返回全零矩形（调用方据此跳过，不画错块）。
          */
-        ShapeBounds CellRect(std::size_t index) const noexcept {
+        InkingShapeBounds CellRect(std::size_t index) const noexcept {
             if (!frameRects.empty()) {
-                return index < frameRects.size() ? frameRects[index] : ShapeBounds{};
+                return index < frameRects.size() ? frameRects[index] : InkingShapeBounds{};
             }
             if (frameWidth <= 0 || frameHeight <= 0 || columns <= 0) {
-                return ShapeBounds{};
+                return InkingShapeBounds{};
             }
             const std::size_t column = index % static_cast<std::size_t>(columns);
             const std::size_t row = index / static_cast<std::size_t>(columns);
             if (rows > 0 && row >= static_cast<std::size_t>(rows)) {
-                return ShapeBounds{};
+                return InkingShapeBounds{};
             }
-            return ShapeBounds{
+            return InkingShapeBounds{
                 static_cast<float>(margin
                                    + static_cast<int>(column) * (frameWidth + spacing)),
                 static_cast<float>(margin
@@ -179,13 +177,13 @@ struct SpriteData : public ImageData {
     };
 
     /**
-     * 序列帧：每项是一张独立图（`AppearanceType::Image` 或 `Svg`）。
+     * 序列帧：每项是一张独立图（`InkingAppearanceType::Image` 或 `Svg`）。
      *
-     * 用 `ButtonAppearance` 而不是新造一个 "FrameAppearance"：帧就是"一张图 + 它
-     * 自己的字节"，那正是 `ButtonAppearance` 在 `type == Image` 时的全部内容
+     * 用 `InkingButtonAppearance` 而不是新造一个 "FrameAppearance"：帧就是"一张图 + 它
+     * 自己的字节"，那正是 `InkingButtonAppearance` 在 `type == Image` 时的全部内容
      * （`imageBytes` / `imageSize` / `imageFit`）。
      */
-    std::vector<ButtonAppearance> frames;
+    std::vector<InkingButtonAppearance> frames;
 
     /// 图集（`frames` 为空时才看它）。
     SpriteSheet sheet;
@@ -265,7 +263,7 @@ struct SpriteData : public ImageData {
     /**
      * 收尾：补齐默认值、夹取能修正的越界。**幂等**（重复调用结果不变）。
      *
-     * 与 `ButtonData::Normalize` / `PanelData::Normalize` 同一条规矩：这类收尾只在
+     * 与 `InkingButtonData::Normalize` / `InkingPanelData::Normalize` 同一条规矩：这类收尾只在
      * 一个地方做，不在渲染、命中、自检各判一次。生成器填完字段后调一次即可。
      *
      * **能修的就地修 + 记一条 WARN；修不了的留给 `Validate()` 报错**——两者分工
@@ -273,7 +271,7 @@ struct SpriteData : public ImageData {
      */
     void Normalize() {
         // 先让基类把三态继承、全透明兜底这些走完（`sprite` 也吃这一套）。
-        ImageData::Normalize();
+        InkingImageData::Normalize();
 
         if (!sheet.frameRects.empty()) {
             // 帧表非空：帧数**由表定**（0.6.5 T-14）。`count` 是网格的"末尾几格是空的"
@@ -286,7 +284,7 @@ struct SpriteData : public ImageData {
 
         const std::size_t count = FrameCount();
         if (count > 0 && startFrame >= count) {
-            INK_LOG_WARN(kSpriteModuleName,
+            INK_LOG_WARN(InkingSpriteModuleName,
                          "startFrame 越界（要第 " + std::to_string(startFrame)
                              + " 帧，共有 " + std::to_string(count)
                              + " 帧），已夹到最后一帧：" + name);
@@ -322,8 +320,8 @@ struct SpriteData : public ImageData {
 
         if (!frames.empty()) {
             for (std::size_t i = 0; i < frames.size(); ++i) {
-                const ButtonAppearance& frame = frames[i];
-                if (frame.type == AppearanceType::Color) {
+                const InkingButtonAppearance& frame = frames[i];
+                if (frame.type == InkingAppearanceType::Color) {
                     return "第 " + std::to_string(i)
                            + " 帧是纯色：帧必须是图片或 SVG";
                 }
@@ -348,7 +346,7 @@ struct SpriteData : public ImageData {
                        "\"起点\"这回事";
             }
             for (std::size_t i = 0; i < sheet.frameRects.size(); ++i) {
-                const ShapeBounds& rect = sheet.frameRects[i];
+                const InkingShapeBounds& rect = sheet.frameRects[i];
                 if (!(rect.width > 0.0f) || !(rect.height > 0.0f)) {
                     return "图集第 " + std::to_string(i) + " 帧的矩形宽高必须 > 0（当前 "
                            + std::to_string(rect.width) + "×"
@@ -403,7 +401,7 @@ struct SpriteData : public ImageData {
             return "图集没有图：sheet.source 与 normal.source 都是空的";
         }
         // 注意这里**不验**"切出来的尺寸是否等于图宽"——那要图片的真实尺寸，数据层
-        // 拿不到。这一条由 `InkingSprite` 构造期量一次图（`detail::ProbeImageSize`）
+        // 拿不到。这一条由 `InkingSprite` 构造期量一次图（`inking_detail::ProbeImageSize`）
         // 与 `SheetWidth()/SheetHeight()` 比对，不符就 ERROR（T-05）。
         return ValidateEvents();
     }
@@ -430,4 +428,3 @@ struct SpriteData : public ImageData {
     }
 };
 
-}  // namespace inking

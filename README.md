@@ -7,11 +7,11 @@
 > - 0.x 期间接口 / ABI / 行为仍可能在次版本变化，升级请对照
 >   [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)；`1.0.0` 起才冻结。
 > - **0.8.5 变更：文字层三条"没有上限且静默"的路子收口**（0.8.3 / 0.8.4 未单独发版）。
->   ① 标签的 `height` **现在真的是文字上限**——装不下的行整行不画（`TextOverflow::Clip`
+>   ① 标签的 `height` **现在真的是文字上限**——装不下的行整行不画（`InkingTextOverflow::Clip`
 >   的默认语义此前一直没实现，300×40 的标签会把 7 行全画到框外）；要恢复旧行为把
 >   `height` 设 0。② 字形图集满了之后**不再每帧重烘一遍**（此前 19 次/帧、日志无声），
 >   现在首次满报一条 WARN 并进静默失效清单。③ 文字纹理有了**字节预算与 LRU 淘汰**
->   （`detail::SetTextureBudget`，**默认 0 = 不淘汰**，与 0.8.3 逐字节相同）。
+>   （`inking_detail::SetTextureBudget`，**默认 0 = 不淘汰**，与 0.8.3 逐字节相同）。
 >   另外新增 `ctest` 第 7 条 `strict_warnings`：同一批源用 `-Wall -Wextra -Wshadow
 >   -Wcast-qual -Wuseless-cast -Werror` 再编一遍，有告警即红。
 > - **0.7.1 / 0.7.0 新增：缩放规则与素材分辨率**（两块一批收口）。规则做成纯函数
@@ -20,18 +20,18 @@
 >   文档见 [`API.md` §9](docs/zh/API.md)；验收示例 `examples/sharp`（720p 设计 +
 >   一张 1536×2752 的真实素材，`1/2/3` 切 fit、`F11` 全屏，逐档打印 R 与 σ）。
 >   **不做**运行期重采样与按尺寸缓存表，"任意尺寸不失真"这条明确放弃；
->   文字光栅上限改为可配（`detail::SetTextRasterCap`，默认仍是 3×）+ 触顶 WARN；
+>   文字光栅上限改为可配（`inking_detail::SetTextRasterCap`，默认仍是 3×）+ 触顶 WARN；
 >   `INK_ISDEBUG` 下对偏小的素材 WARN（发布包零成本）。
 > - **0.6.6 新增：动画组 `InkingSpriteGroup`**——一个角色多个动作，
 >   `SwitchTo("run")` 换的是**配置**不是节点（节点数恒 1，没有隐藏节点参与绘制
 >   遍历与命中）；`animationChanged`、`resize` 可关。
 > - **0.6.5 新增**：运行期换配置 `InkingSprite::SetSpriteData(data, keepPhase)`
 >   （订阅全保留、`keepPhase` 保留帧号）；**帧表** `SpriteSheet::frameRects`
->   （一页混装多个动作、帧宽高不等）；库内的 **`inking::json`** 小工具
->   （零异常 + 带行号 + 重复键报错）；**图集描述** `AtlasData` + `MakeSpriteData()`
+>   （一页混装多个动作、帧宽高不等）；库内的 **`inking_json`** 小工具
+>   （零异常 + 带行号 + 重复键报错）；**图集描述** `InkingAtlasData` + `InkingMakeSpriteData()`
 >   （一个图集被多个 sprite 共用）；inkgen 认 `CXXCSS/Atlas/*.json`。
 > - **0.6.4 新增**：图集起始格 `sheet.firstFrame`（"每行一个方向"的图集靠它播
->   第 1~3 行）；**图片采样模式**切换（`detail::SetImageSampling`，像素素材要硬边）。
+>   第 1~3 行）；**图片采样模式**切换（`inking_detail::SetImageSampling`，像素素材要硬边）。
 > - **0.6.3 新增：帧动画 `InkingSprite`**（整个 0.6.x 只做这一件事）。
 >   两种素材二选一——**序列帧**（每帧一份字节，换帧换视图）或**图集**
 >   （一张大图切 N 格，换帧只改源矩形，零解码、零新建纹理）；
@@ -42,15 +42,15 @@
 > - **0.6.2 变更**：矩形 + `Fill` 的图片默认并进几何批（50 个同图集 sprite 一帧
 >   从 50 次 `SDL_RenderTexture` 变成 1 次 `SDL_RenderGeometry`）。代价是矩形图片
 >   也开始吃形状网格的 **1px 羽化**（边缘从硬边变抗锯齿，与矩形按钮统一）；
->   要回旧行为用 `detail::SetImageBatchingEnabled(false)`。
+>   要回旧行为用 `inking_detail::SetImageBatchingEnabled(false)`。
 > - **0.6.1 新增**：图集切格 + 构造期几何校验（格数与图宽不符当场 `IsValid()==false`）；
 >   inkgen 认 `frames` / `sheet` / `events`，配了就生成 `InkingSprite` 类。
 > - **0.6.0 的一次修复值得单说**：`SetImageBytes(name)` 的键从没落到纹理缓存上，
 >   同尺寸换图会一直命中第一张（帧动画表现为"每帧都画第一帧"，且**不报错**）。
 > - **0.5.3**：`FilePicker` 的按钮栏不再复用 `MenuBar`（全屏下"确定 / 取消"曾整条
->   消失）、滚动容器的内容尺寸修准；字段更名为 `style.buttonBar`（`PanelData`）。
+>   消失）、滚动容器的内容尺寸修准；字段更名为 `style.buttonBar`（`InkingPanelData`）。
 > - **0.5.0 有破坏性接口改动**：指针钩子改为
->   `onPointerPress(PointerButton, bool)` / `onPointerClick(PointerButton, float, float)`，
+>   `onPointerPress(InkingPointerButton, bool)` / `onPointerClick(InkingPointerButton, float, float)`，
 >   迁移样板见 CHANGELOG「0.5.0 / 变更」。
 > - **预编译包已更新到 0.8.5**（[`dist/inking-0.8.5-win64.zip`](dist/)）：0.7.1 / 0.5.3 那两份
 >   保留不删（有人可能钉着它）。也可以用源码构建（`cmake -B build -G Ninja` +
@@ -68,7 +68,7 @@
 | 层 | 回答的问题 | 关键类型 |
 | --- | --- | --- |
 | **定位** | 我在哪儿 | `InkingAnchor`（锚点公式 + 父链 + 可见性 + 倍率） |
-| **数据** | 我长什么样 | `AnchorData` / `ButtonData` / `PanelData` / `ShapeSpec` / `LayoutSpec` |
+| **数据** | 我长什么样 | `InkingAnchorData` / `InkingButtonData` / `InkingPanelData` / `InkingShapeSpec` / `InkingLayoutSpec` |
 | **树** | 我在哪棵树里、谁点得到我 | `InkingWidget` + 静态 / 动态两档 |
 | **档位** | 几何会不会自己变 | `InkingStaticWidget` / `InkingDynamicWidget` |
 | **输入契约** | 我收不收指针 / 键盘 | `InkingPointerHandler` / `InkingKeyboardTarget` |
@@ -162,8 +162,8 @@ INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 手动指定�
 | `CMAKE_BUILD_TYPE` | `Release` | — |
 
 `INK_ISLOG` 恒为 `PUBLIC` 定义；`INK_ISDEBUG` 由 `INKING_DEBUG_LOG` 控制、**同样必须是
-PUBLIC**——两者都会改公开头里 `inline` 函数的**内容**（`kDefaultLogLevel` /
-`kDebugEnabled` / `INK_LOG_DEBUG` 宏），库与消费者看到不同的值就是 ODR 违例。
+PUBLIC**——两者都会改公开头里 `inline` 函数的**内容**（`InkingDefaultLogLevel` /
+`InkingDebugEnabled` / `INK_LOG_DEBUG` 宏），库与消费者看到不同的值就是 ODR 违例。
 所以正确的用法是"默认关、需要的人显式打开"，而不是把它藏进库自己的编译选项。
 
 ---
@@ -223,9 +223,9 @@ HarfBuzz、GLib 等），所以示例**解压即跑**，不需要装 MSYS2、也
 两种拿法：**源码内嵌**（作子目录）或**预编译包**（解压即 SDK）。后者是发布用的主路径，下面详述。
 
 ```cmake
-# 源码内嵌（最省事，拿得到 inking::inking 别名）
+# 源码内嵌（最省事，拿得到 inking 别名）
 add_subdirectory(third_party/InkingUIKit)
-target_link_libraries(my_app PRIVATE inking::inking)
+target_link_libraries(my_app PRIVATE inking)
 ```
 
 ---
@@ -286,12 +286,12 @@ project(MyApp LANGUAGES CXX)
 find_package(inking CONFIG REQUIRED)
 
 add_executable(MyApp main.cpp)
-target_link_libraries(MyApp PRIVATE inking::inking)
+target_link_libraries(MyApp PRIVATE inking)
 
 # 把 libinking.dll 拷到 exe 旁边 —— 不拷会静默退出（0xC0000135）
 add_custom_command(TARGET MyApp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:inking::inking>" "$<TARGET_FILE_DIR:MyApp>")
+            "$<TARGET_FILE:inking>" "$<TARGET_FILE_DIR:MyApp>")
 ```
 
 **`CMakePresets.json`**（把 `<SDK>` 换成你的解压路径，斜杠用 `/`）
@@ -323,29 +323,29 @@ add_custom_command(TARGET MyApp POST_BUILD
 #include <scene/InkingScene.h>
 #include <button/InkingStaticButton.h>
 
-class MyScene : public inking::InkingScene {
+class MyScene : public InkingScene {
 public:
-    MyScene() : inking::InkingScene("main") {   // 名字给 Show() 用
-        inking::ButtonData b;
+    MyScene() : InkingScene("main") {   // 名字给 Show() 用
+        InkingButtonData b;
         b.name = "hello";
         b.width = 200;
         b.height = 72;
         b.label = "点我";
-        b.normal    = inking::ButtonAppearance(inking::AppearanceType::Color, 0xFF3F7FD6u);
-        b.hover     = inking::ButtonAppearance(inking::AppearanceType::Color, 0xFF5A9BF0u);
-        b.onclicked = inking::ButtonAppearance(inking::AppearanceType::Color, 0xFF2F63AAu);
+        b.normal    = InkingButtonAppearance(InkingAppearanceType::Color, 0xFF3F7FD6u);
+        b.hover     = InkingButtonAppearance(InkingAppearanceType::Color, 0xFF5A9BF0u);
+        b.onclicked = InkingButtonAppearance(InkingAppearanceType::Color, 0xFF2F63AAu);
         b.hoverInheritsNormal = false;      // 不关这两条，hover/按下会被拉回 normal
         b.onclickedInheritsNormal = false;
-        b.selfAnchor = inking::InkingChangeAnchor::Center;
-        b.traceAnchor = inking::InkingChangeAnchor::Center;
-        b.shape = inking::ShapeSpec::RoundedRect(12.0f);
-        AddChild(std::make_unique<inking::InkingStaticButton>(this, b));
+        b.selfAnchor = InkingChangeAnchor::Center;
+        b.traceAnchor = InkingChangeAnchor::Center;
+        b.shape = InkingShapeSpec::RoundedRect(12.0f);
+        AddChild(std::make_unique<InkingStaticButton>(this, b));
     }
 };
 
 int main() {
     MyScene scene;
-    inking::InkingWindow::Instance().Show("main");   // 同步：跑到关窗为止
+    InkingWindow::Instance().Show("main");   // 同步：跑到关窗为止
 }
 ```
 
@@ -379,10 +379,10 @@ ink_add_generated(MyApp SOURCES ${MY_CSS})
 ```cpp
 #include <inkgen/button_service.h>          // 不是手写的文件
 
-class MyScene : public inking::InkingScene {
+class MyScene : public InkingScene {
 public:
-    MyScene() : inking::InkingScene("main") {
-        AddChild(std::make_unique<inking::cxxcss::NormalButton>(this));
+    MyScene() : InkingScene("main") {
+        AddChild(std::make_unique<cxxcss::NormalButton>(this));
     }
 };
 ```
@@ -416,9 +416,9 @@ file(GLOB MY_CSS CONFIGURE_DEPENDS
 
 ```cpp
 int main() {
-    inking::cxxcss::ApplyConfig();                        // ← 第一行：早于任何场景 / 窗口
+    cxxcss::ApplyConfig();                        // ← 第一行：早于任何场景 / 窗口
     MyScene scene;
-    inking::InkingWindow::Instance().Show(inking::cxxcss::kStartScene);
+    InkingWindow::Instance().Show(cxxcss::kStartScene);
 }
 ```
 
@@ -452,13 +452,13 @@ add_custom_command(TARGET my_app POST_BUILD
 
 | 名字 | 内容 |
 | --- | --- |
-| `inking::inking` | 库目标（传播 include、四个 SDL 目标、FFmpeg、三个编译宏） |
+| `inking` | 库目标（传播 include、四个 SDL 目标、FFmpeg、三个编译宏） |
 | `INKING_SDK_DIR` | SDK 根目录 |
 | `INKING_INKGEN` | `bin/inkgen.exe` 的绝对路径 |
 | `INKING_CXXCSS_DIR` | `examples/CXXCSS`（配置样例） |
 | `INKING_INKGEN_CMAKE` | 生成模块路径（`include()` 它才有 `ink_add_generated`） |
 
-`inking::inking` 会**传播** include 目录、四个 SDL 目标、FFmpeg 与三个编译宏
+`inking` 会**传播** include 目录、四个 SDL 目标、FFmpeg 与三个编译宏
 （`INK_ISLOG` / `INK_ISDEBUG` / `INK_ISMESSAGE`）——所以消费方不需要自己再配一遍。
 
 ```cpp
@@ -502,7 +502,7 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 | --- | --- |
 | [`docs/zh/UsageGuide.md`](docs/zh/UsageGuide.md) | **手把手教程**：从设计大小、第一个场景、第一个组件（图片）到 CMake 与编译运行，CXXCSS / API 两条路线并行 |
 | [`docs/zh/API.md`](docs/zh/API.md) | **从这里读起**：五分钟上手 + 模块地图 + 头文件全量索引 |
-| [`docs/zh/api/`](docs/zh/api/) | 18 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver / FixedPopup / Json + Anchor / ShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
+| [`docs/zh/api/`](docs/zh/api/) | 18 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver / FixedPopup / Json + Anchor / InkingShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
 | [`CXXCSS/CXXCSS.md`](CXXCSS/CXXCSS.md) | 配置格式：目录与命名、公共骨架、形状层词汇表、Button 字段全表 |
 | [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.8.5 的逐条变化） |
 | [`examples/minimal/README.md`](examples/minimal/README.md) | 最小工程：三步构建 + 运行期 DLL 拷贝 |
@@ -519,8 +519,8 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
    ——命令行手工跑自检看不到字体时，先把 msys64 的 `ucrt64/bin` 放进 `PATH` 再试
    （`ctest` 与 `tools/package.sh` 本来就是这么跑的）。
 2. **单行输入框**：多行、撤销 / 重做、Tab 焦点遍历、输入法候选窗定位都未做。
-3. **两种 `svg` 的边界不同**：按钮的 `AppearanceType::Svg` 只认**一个图形元素**、一种填充、
-   几何必须等于组件框（生成期转成 `ShapeSpec`）；整张设计稿请用 `Image` 的 `type:"svg"`
+3. **两种 `svg` 的边界不同**：按钮的 `InkingAppearanceType::Svg` 只认**一个图形元素**、一种填充、
+   几何必须等于组件框（生成期转成 `InkingShapeSpec`）；整张设计稿请用 `Image` 的 `type:"svg"`
    （运行期按目标像素光栅化，支持多图元 / 渐变 / `transform`，元素矩阵见 `CXXCSS.md` §3.10）。
 4. **SVG 里的 `text` / `use` / `<image>` / `clipPath` / `mask` / `filter` 不渲染**
    （SDL3_image 自带 nanosvg 的边界）：加载时打一条 WARN 列出元素与次数，画面按"没有它"画
@@ -528,16 +528,16 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 5. **没有 portal（子节点逃不出父级）**：层级是局部的（树序 + 兄弟内 z，见 A8b），
    `zIndex` 只在兄弟之间生效、父容器永远在子孙之下。但"子节点盖住**父级的兄弟**"
    需要"提升到根层"的 portal 层，尚未提供——所以 `Select` 展开靠抬**自己**到 z=200。
-6. **音频需要显式 `AudioInit()`**：窗口层只在 `Show()` 之后每帧调 `AudioTick`、
-   关窗时调 `AudioShutdown`，**不会**替你初始化。不调时整层空转、`AudioReady()` 为 false，
-   而且不报错（`AudioInit()` 返回 false 通常意味着构建期漏了 `INK_HAS_SDL3_MIXER`）。
+6. **音频需要显式 `InkingAudioInit()`**：窗口层只在 `Show()` 之后每帧调 `InkingAudioTick`、
+   关窗时调 `InkingAudioShutdown`，**不会**替你初始化。不调时整层空转、`InkingAudioReady()` 为 false，
+   而且不报错（`InkingAudioInit()` 返回 false 通常意味着构建期漏了 `INK_HAS_SDL3_MIXER`）。
 7. **标签的 `height` 就是文字上限**（0.8.5 起，**行为变化**）：装不下的行整行不画
-   （`TextOverflow::Clip` 的默认语义之前一直没实现，长文案会画到框外）。**至少留一行**、
-   **不缩字号**；`TextLayoutResult::truncated` 是被截断的观测口。要让长文案溢出的把
+   （`InkingTextOverflow::Clip` 的默认语义之前一直没实现，长文案会画到框外）。**至少留一行**、
+   **不缩字号**；`InkingTextLayoutResult::truncated` 是被截断的观测口。要让长文案溢出的把
    `height` 设 0 即恢复旧行为（不需要改库）。
 8. **"任意尺寸不失真"这条明确放弃**（0.7.x）：不做运行期重采样、不做按目标尺寸的
    缓存表（会把内存推向失控）。清晰度改由**静态规则**保证——素材按屏幕像素出
-   （`ImageScaleSpec::RequiredTextureWidth`）、纵深落在整数档（`CleanDepth`）。
+   （`InkingImageScaleSpec::RequiredTextureWidth`）、纵深落在整数档（`CleanDepth`）。
    规则看 [`API.md` §9](docs/zh/API.md)。因此：素材只够它自己的像素数时，全屏一定越看越软
    （`examples/sharp` 的 `Cover` 列就是活例），**这是规则的正确结果，不是缺陷**。
 9. **小设计尺寸 + 大屏时边缘略糊**：抗锯齿（羽化）带仍按**设计像素**
@@ -549,13 +549,13 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
     纹理不能丢（丢了当场缺字）。另外**字形图集不参与淘汰**（共享资源，丢了要重烘全部字形），
     所以预算设得比图集（1024² ≈ 4 MB）还小时**会放弃淘汰**——那比不设预算更糟。
     默认预算是 **0 = 不淘汰**，与 0.8.3 逐字节相同；要用就显式
-    `detail::SetTextureBudget(bytes)`。
+    `inking_detail::SetTextureBudget(bytes)`。
 12. **字形图集"满"是粗粒度判断**（0.8.5）：它只说"刚才这一格塞不进去"，更小的字形其实
     还塞得下。满了之后整条逐字形路会短路（退回"整段一张纹理"），首次满报一条 WARN。
     按字形做 negative cache 能多塞几个小字，但要多一张表与失效逻辑，本轮不做。
 
 > **`0.1.0-test` 之后已修掉的两条历史限制**：
-> ① `TaskQueue` 退出时 join 管家线程的死锁（以前进程"打印完失败项就不返回"，
+> ① `InkingTaskQueue` 退出时 join 管家线程的死锁（以前进程"打印完失败项就不返回"，
 > 现在 1 秒退出、退出码 = 失败项数）；
 > ② 缺 CMake package config（`find_package(inking CONFIG)` 现在可用）。
 

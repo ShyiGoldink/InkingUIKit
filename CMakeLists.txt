@@ -193,7 +193,7 @@ include(cmake/inkgen.cmake)
 #   ink_add_generated(<目标>
 #       OUT_DIR   <include 根，约定在 build/ 下>
 #       (SOURCES  <json 文件列表> | DIR <CXXCSS 根>)
-#       [NAMESPACE inking::cxxcss] [HEADER inkgen/button_service.h])
+#       [NAMESPACE cxxcss] [HEADER inkgen/button_service.h])
 #
 # SOURCES 与 DIR **二选一**：DIR 让 inkgen 自己扫目录（`--dir`），组件多的时候
 # 命令行只有 1 个参数——工程放在中文路径下时，CMake 不会再因为命令行太长把它
@@ -242,7 +242,7 @@ function(ink_add_generated target)
         set(_gen_input ${GEN_SOURCES})
     endif()
     if(NOT GEN_NAMESPACE)
-        set(GEN_NAMESPACE "inking::cxxcss")
+        set(GEN_NAMESPACE "cxxcss")
     endif()
     if(NOT GEN_HEADER)
         set(GEN_HEADER "inkgen/button_service.h")
@@ -325,7 +325,7 @@ if(INK_ALL_CSS_CONFIGS)
     target_link_libraries(inkgen_compile_check PRIVATE inking::inking)
     ink_add_generated(inkgen_compile_check
         OUT_DIR   "${CMAKE_BINARY_DIR}"
-        NAMESPACE "inking::cxxcss"
+        NAMESPACE "cxxcss"
         HEADER    "inkgen/all/button_service.h"
         DIR       "${CMAKE_CURRENT_SOURCE_DIR}/CXXCSS")
 
@@ -383,6 +383,13 @@ if(INK_BUILD_TESTS)
     # 就是这么活了几个版本的）。代价是 6 个额外 TU，几秒钟。
     file(GLOB INK_TOOL_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/tools/inkgen/*.cpp")
+    # `compile_check.cpp` 是**唯一**不能进这道门的那个：它 include 的是
+    # **构建期生成**的头（`inkgen/all/button_service.h`，G-08 起它还要对生成的类
+    # 做 static_assert），而这道门是"纯源码"的门——干净构建树里那个头还不存在，
+    # 编它只会得到 "No such file or directory"。它自己不缺 -Werror 以外的覆盖：
+    # `inkgen_compile_check` 目标每次构建都真编它，而且它只有几十行断言、没有逻辑。
+    list(REMOVE_ITEM INK_TOOL_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/inkgen/compile_check.cpp")
 
     add_library(inking_strict OBJECT ${INK_SOURCES} ${INK_TOOL_SOURCES})
     # 借 `inking` 的 usage requirements 拿到 include 路径、PUBLIC 宏与 SDL/FFmpeg 头。

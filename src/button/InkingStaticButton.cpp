@@ -8,7 +8,6 @@
 
 #include <string>
 
-namespace inking {
 
 namespace {
 
@@ -30,7 +29,7 @@ int& unknownNameCount() {
 // ---------------------------------------------------------------------------
 
 InkingStaticButton::InkingStaticButton(InkingWidget* parent,
-                                       const ButtonData& data)
+                                       const InkingButtonData& data)
     : InkingStaticWidget(parent, data.name) {
     applyData(data);
     finishConstruction(/*foundInLibrary=*/true);
@@ -39,7 +38,7 @@ InkingStaticButton::InkingStaticButton(InkingWidget* parent,
 InkingStaticButton::InkingStaticButton(InkingWidget* parent,
                                        const std::string& name)
     : InkingStaticWidget(parent, name) {
-    const ButtonData* registered = FindData(name);
+    const InkingButtonData* registered = FindData(name);
     if (registered != nullptr) {
         applyData(*registered);
     } else {
@@ -50,12 +49,12 @@ InkingStaticButton::InkingStaticButton(InkingWidget* parent,
         // 日志、给一个空按钮、并让计数加一——于是它是**可断言**的。
         ++unknownNameCount();
         INK_LOG_ERROR(
-            std::string(kButtonModuleName),
+            std::string(InkingButtonModuleName),
             "按名字构造却查不到配置，给了一个空按钮：" + name
                 + "（名字拼错了？或者这里该用生成出来的按钮类——"
                   "生成的类是数据烘在类里，不查表）");
 
-        ButtonData empty;
+        InkingButtonData empty;
         empty.name = name;
         applyData(empty);
     }
@@ -70,11 +69,11 @@ void InkingStaticButton::finishConstruction(bool /*foundInLibrary*/) {
     // 尺寸为 0 的按钮画不出来也点不到，这几乎总是配置漏了 width/height。
     // 文案与判据从 `0.1.1` 起统一到 Widget 层的 `WarnIfZeroSize`（T-02）：
     // 以前每个组件各写一句，措辞不同、漏接一处也没人发现（标签就漏了）。
-    WarnIfZeroSize(kButtonModuleName);
+    WarnIfZeroSize(InkingButtonModuleName);
 }
 
-void InkingStaticButton::applyData(const ButtonData& data) {
-    // 拷一份再收尾：调用方给的 ButtonData 可能是"还没补齐三态"的，
+void InkingStaticButton::applyData(const InkingButtonData& data) {
+    // 拷一份再收尾：调用方给的 InkingButtonData 可能是"还没补齐三态"的，
     // 而本类要求 _data 永远处于补齐状态（渲染与命中都按它来）。
     _data = data;
     _data.Normalize();
@@ -85,10 +84,10 @@ void InkingStaticButton::applyData(const ButtonData& data) {
     ResetButtonLook(_data);
 
     if (!_data.text.path.empty() || _data.text.fontSize > 0.0f) {
-        // 配了字号 / 字体时记一笔：文字是**纹理层**画的（`detail::PaintButtonText`
+        // 配了字号 / 字体时记一笔：文字是**纹理层**画的（`inking_detail::PaintButtonText`
         // → `PaintText`），拿不到字体就退化成占位方块——所以这行日志是排查
         // "字怎么长这样"的第一站（不是"尚未落地"，那条注释是 T-3 之前的旧话）。
-        INK_LOG_DEBUG(std::string(kButtonModuleName),
+        INK_LOG_DEBUG(std::string(InkingButtonModuleName),
                       "按钮文字：字号 " + std::to_string(_data.text.fontSize)
                           + "，字体 \""
                           + (_data.text.path.empty() ? std::string("(机器默认)")
@@ -107,7 +106,7 @@ void InkingStaticButton::applyData(const ButtonData& data) {
     //   1. 静态组件的几何是**构造即定型**的，那些写入口（Resize /
     //      ChangeSelfAnchor / …）按设计只存在于动态档，加了就破掉
     //      "拿到 InkingAnchor* 也改不了静态几何"这条类型上的保证；
-    //   2. 但"按名字构造"这条路，基类构造函数只拿到名字（它不知道 ButtonData
+    //   2. 但"按名字构造"这条路，基类构造函数只拿到名字（它不知道 InkingButtonData
     //      这个类型，也不该知道），尺寸与锚点是**在这之后**才从库里取到的。
     //      不给它写进去，按钮就是个 0×0——画不出来也点不到。
     //
@@ -146,19 +145,19 @@ void InkingStaticButton::applyData(const ButtonData& data) {
 // 查询
 // ---------------------------------------------------------------------------
 
-const ButtonData* InkingStaticButton::FindData(const std::string& name) {
-    return ButtonLibrary::Find(name);
+const InkingButtonData* InkingStaticButton::FindData(const std::string& name) {
+    return InkingButtonLibrary::Find(name);
 }
 
 bool InkingStaticButton::HitTest(float worldX, float worldY) const {
     // 世界坐标 → 本地 → 形状判定，三步和绘制共用同一套定义
-    // （`detail::HitTestShape`：它会把祖先子树变换与自己的变换各取一次逆）。
+    // （`inking_detail::HitTestShape`：它会把祖先子树变换与自己的变换各取一次逆）。
     // 变换取的是**当前显示**那份（过渡进行中是插值值），与绘制同源。
-    return detail::HitTestShape(*this, GetShape(), GetDisplayTransform(),
+    return inking_detail::HitTestShape(*this, GetShape(), GetDisplayTransform(),
                                 worldX, worldY);
 }
 
-const ShapeSpec& InkingStaticButton::GetShape() const noexcept {
+const InkingShapeSpec& InkingStaticButton::GetShape() const noexcept {
     return _data.shape;
 }
 
@@ -178,19 +177,19 @@ bool InkingStaticButton::HasLayoutAnimation() const noexcept {
     return HasButtonLayoutAnimation();
 }
 
-TransformSpec InkingStaticButton::GetSubtreeTransform() const noexcept {
+InkingTransformSpec InkingStaticButton::GetSubtreeTransform() const noexcept {
     // 三态变换同时作用于子节点（T-7）：既是"这个按钮的样子"，也是
     // "它这棵子树的样子"。取的就是屏幕上正在生效的那份。
     return GetDisplayTransform();
 }
 
-ShapeBounds InkingStaticButton::GetHitEnvelope() const {
+InkingShapeBounds InkingStaticButton::GetHitEnvelope() const {
     // 静态 / 动态共用同一份算法（src/button/ButtonPaint.cpp）：
     // "三态变换的并集"对表条目和洞是同一件事——它可能盖住哪儿。
-    return detail::ButtonHitEnvelope(_data, GetShape(), GetWidth(), GetHeight());
+    return inking_detail::ButtonHitEnvelope(_data, GetShape(), GetWidth(), GetHeight());
 }
 
-const ButtonData& InkingStaticButton::GetData() const noexcept {
+const InkingButtonData& InkingStaticButton::GetData() const noexcept {
     return _data;
 }
 
@@ -250,8 +249,8 @@ void InkingStaticButton::onAnimationTick(float deltaSeconds) {
 // "**这一帧**画出来跟上一帧不一样"，而帧是渲染帧：`MouseHover` 在事件泵里
 // 发生，那时候还没有"这一帧"可言；`Advance` 在帧通道里跑，正好是记账的地方。
 
-void InkingStaticButton::onButtonStateChanged(ButtonState /*from*/,
-                                              ButtonState /*to*/) {
+void InkingStaticButton::onButtonStateChanged(InkingButtonState /*from*/,
+                                              InkingButtonState /*to*/) {
     // 只同步基类颜色，**不标脏**：三态切换的画面变化由状态机自己记成
     // "待报告"，下一帧 `onButtonDisplayAdvanced` 会把它报出来。
     // 在这里额外标一次会把它标重，而且"没配过渡"那条路依旧只走一个出口。
@@ -293,18 +292,18 @@ void InkingStaticButton::onPointerHover(bool hover) {
     MouseHover(hover);
 }
 
-void InkingStaticButton::onPointerPress(PointerButton button, bool press) {
+void InkingStaticButton::onPointerPress(InkingPointerButton button, bool press) {
     // **右键不进三态**（0.5.0）：三态是"主键手势"的可视化。让右键点亮按钮，
     // 用户会以为左键生效了——而实际什么都没发生（右键走 contextClicked）。
-    if (button != PointerButton::Primary) {
+    if (button != InkingPointerButton::Primary) {
         return;
     }
     MousePress(press);
 }
 
-void InkingStaticButton::onPointerClick(PointerButton button, float designX,
+void InkingStaticButton::onPointerClick(InkingPointerButton button, float designX,
                                          float designY) {
-    if (button == PointerButton::Primary) {
+    if (button == InkingPointerButton::Primary) {
         TriggerClick();
     } else {
         // 次键：带按下点，业务直接喂 `MenuPopup::OpenAt(x, y)`。
@@ -321,7 +320,7 @@ void InkingStaticButton::onRender(float pixelX, float pixelY) const {
     // 两份实现各自演化就会出现"静态按钮和动态按钮画得不一样"。
     // 颜色取**当前显示**那份（过渡中是插值色），变换同样取当前那份
     // （命中那边会对它取逆，两边必须同源）。
-    detail::PaintButtonAppearance(*this, GetShape(), GetAppearance(),
+    inking_detail::PaintButtonAppearance(*this, GetShape(), GetAppearance(),
                                   _data.stroke, _data.shadow,
                                   GetDisplayColor(), GetDisplayTransform(),
                                   pixelX, pixelY);
@@ -331,8 +330,7 @@ void InkingStaticButton::onRender(float pixelX, float pixelY) const {
 }
 
 void InkingStaticButton::renderText(float pixelX, float pixelY) const {
-    detail::PaintButtonText(*this, _data, GetDisplayTransform(), pixelX,
+    inking_detail::PaintButtonText(*this, _data, GetDisplayTransform(), pixelX,
                             pixelY);
 }
 
-}  // namespace inking

@@ -154,14 +154,14 @@ bool InkingDynamicButton::Activate() override;  // 同上
 
 ## 布局（A6）
 
-规则（`LayoutSpec`）住在**父容器**的数据里，孩子只写自己的**意愿**（`LayoutItem`）。
+规则（`InkingLayoutSpec`）住在**父容器**的数据里，孩子只写自己的**意愿**（`InkingLayoutItem`）。
 算出来的尺寸与位置写进**运行期几何**（`_width` / `_height` / `_offsetX` / `_offsetY`），
 所以位置推导一条路都没变——绘制 / 命中 / AABB / 子树变换都不知道"有布局这回事"。
 
 - `MeasureLayout(constraints)`：`[√]` 钩子，**纯函数**（不许改几何、不许标脏、不许有副作用）。
 - `Relayout()` / `RelayoutParent()`：`[final]`，**显式**请求重排，幂等。
   **框架不做隐式重排**——凡"排布输入变了"（文字改长、列表增删、容器自己改尺寸）调用方要喊一声。
-- `ApplyLayoutRect()`：`protected`，**只有 `detail::layout::ArrangeSubtree` 是 friend**
+- `ApplyLayoutRect()`：`protected`，**只有 `inking_detail::layout::ArrangeSubtree` 是 friend**
   ——业务代码想调是**编译错误**，不是文档约定。
 
 详见 [InkingLayout.md](InkingLayout.md) 与 [InkingLayoutSolver.md](InkingLayoutSolver.md)。
@@ -170,14 +170,14 @@ bool InkingDynamicButton::Activate() override;  // 同上
 
 `InkingWidget` 不定义新的公开数据结构，构造参数与字段来源是：
 
-> **AnchorData**（`dataStruct/InkingAnchorData.h`，详见 [InkingAnchor.md](InkingAnchor.md)）
+> **InkingAnchorData**（`dataStruct/InkingAnchorData.h`，详见 [InkingAnchor.md](InkingAnchor.md)）
 
 构造时**拆存**成自己的字段（基类不存整份 data）：`selfAnchor` / `traceAnchor` /
 `offsetX/Y` / `width` / `height` / `zIndex` / `visible` / `color` / `layout` / `layoutItem`。
 
-> **TransformSpec**（[InkingTransform.md](InkingTransform.md)）
-> **LayoutSpec / LayoutItem / LayoutRect / LayoutSize / LayoutConstraints**（[InkingLayout.md](InkingLayout.md)）
-> **ShapeBounds**（[InkingShapeSpec.md](InkingShapeSpec.md)）
+> **InkingTransformSpec**（[InkingTransform.md](InkingTransform.md)）
+> **InkingLayoutSpec / InkingLayoutItem / InkingLayoutRect / InkingLayoutSize / InkingLayoutConstraints**（[InkingLayout.md](InkingLayout.md)）
+> **InkingShapeBounds**（[InkingShapeSpec.md](InkingShapeSpec.md)）
 
 ## APIS
 
@@ -191,7 +191,7 @@ bool InkingDynamicButton::Activate() override;  // 同上
 const std::string& GetName() const noexcept;
 ```
 
-节点名（配置驱动那条路与 CXXCSS / `ButtonLibrary` 里的名字一致）。
+节点名（配置驱动那条路与 CXXCSS / `InkingButtonLibrary` 里的名字一致）。
 
 >**GetParent()**
 
@@ -375,7 +375,7 @@ virtual bool HitTest(float worldX, float worldY) const;
 ```
 
 指针在这个位置上吗（**世界坐标 / 设计空间**）。默认 `false`：基类没有形状概念，
-"怎么算在里面"是组件的知识（按钮问自己的 SDF，`ShapeContains`）。
+"怎么算在里面"是组件的知识（按钮问自己的 SDF，`InkingShapeContains`）。
 它只回答"几何上在不在"，**不回答"要不要让过"**。
 
 >**HitTestNode(worldX, worldY)**
@@ -391,7 +391,7 @@ virtual InkingWidget* HitTestNode(float worldX, float worldY) noexcept;
 >**GetHitEnvelope()**
 
 ```C++
-virtual ShapeBounds GetHitEnvelope() const;
+virtual InkingShapeBounds GetHitEnvelope() const;
 ```
 
 命中索引用的**保守包络**（相对本节点左上角，设计坐标）。默认整块矩形——给大了只是候选多
@@ -513,7 +513,7 @@ void TickAnimation(float deltaSeconds) noexcept;
 >**构造函数（两种，都带 `dynamic`）**
 
 ```C++
-InkingWidget(InkingWidget* parent, const AnchorData& data, bool dynamic);
+InkingWidget(InkingWidget* parent, const InkingAnchorData& data, bool dynamic);
 InkingWidget(InkingWidget* parent, const std::string& name, bool dynamic);
 ```
 
@@ -537,7 +537,7 @@ virtual void onRender(float pixelX, float pixelY) const;
 ```
 
 本节点怎么画。入参是**设备像素**的绝对左上角（倍率已换算）。
-基类实现只是"按 color 填一个矩形"（`detail::FillDefaultRect`，矩形就是 `ShapeSpec::Rect()`，
+基类实现只是"按 color 填一个矩形"（`inking_detail::FillDefaultRect`，矩形就是 `InkingShapeSpec::Rect()`，
 走同一套形状填充，所以抗锯齿 / 倍率换算不会"按钮一条路、默认矩形另一条路"）。
 
 >**onAnimationTick(deltaSeconds)**
@@ -567,7 +567,7 @@ virtual void onDirty();
 >**MeasureLayout(constraints)**
 
 ```C++
-virtual LayoutSize MeasureLayout(const LayoutConstraints& constraints) const;
+virtual InkingLayoutSize MeasureLayout(const InkingLayoutConstraints& constraints) const;
 ```
 
 `[√]` 测量钩子：**我在这份约束下想要多大**。契约是**纯函数**——不许改几何、不许标脏、
@@ -595,7 +595,7 @@ void RelayoutParent() noexcept;
 | `InkingStaticLabel::SetTextColor` | 不会 | 只重绘（颜色不进排版） |
 | `SetVisible` / `ChangeZIndex` / `SetParent` | 不会 | 骨架变化，只标脏 + 通知场景重排列表 |
 | 动态档 `Resize` / `ChangeOffset` | 不会 | 容器尺寸变了要在 `onSizeChanged()` 里自己喊 `Relayout()` |
-| 换语言 `SetTextLanguage` | 不会 | 版本号会让排版缓存失效，但行数 / 高度可能变 ⇒ 换完喊一次 `Relayout()` |
+| 换语言 `InkingSetTextLanguage` | 不会 | 版本号会让排版缓存失效，但行数 / 高度可能变 ⇒ 换完喊一次 `Relayout()` |
 | 构造（标签） | **会**（`0.1.1`） | 构造期没有 `SetText` 触发，所以在构造末尾补一次 |
 
 「框架不做隐式重排」这条没变：它保证"什么时候重排"看得见，代价是调用方要记得喊。
@@ -604,11 +604,11 @@ void RelayoutParent() noexcept;
 >**ApplyLayoutRect(rect)**
 
 ```C++
-bool ApplyLayoutRect(const LayoutRect& rect) noexcept;
+bool ApplyLayoutRect(const InkingLayoutRect& rect) noexcept;
 ```
 
-布局层专用的几何写入口。**只有 `detail::layout::ArrangeSubtree` 是它的 friend**——
-业务代码想调它是**编译错误**，不是文档约定。名字带 `Layout`、参数是布局层的 `LayoutRect`，
+布局层专用的几何写入口。**只有 `inking_detail::layout::ArrangeSubtree` 是它的 friend**——
+业务代码想调它是**编译错误**，不是文档约定。名字带 `Layout`、参数是布局层的 `InkingLayoutRect`，
 不会被误认成 resize；幂等（矩形没变返回 false、一个脏都不标）。
 
 >**MarkAsSceneRoot(scene) / DetachSceneFromSubtree()**
@@ -627,7 +627,7 @@ void DetachSceneFromSubtree() noexcept;
 ```C++
 class InkingStaticWidget : public InkingWidget {
 public:
-    InkingStaticWidget(InkingWidget* parent, const AnchorData& data);
+    InkingStaticWidget(InkingWidget* parent, const InkingAnchorData& data);
     InkingStaticWidget(InkingWidget* parent, const std::string& name);
 protected:
     void onRender(float pixelX, float pixelY) const override;
@@ -642,12 +642,12 @@ protected:
 ```C++
 class InkingDynamicWidget : public InkingWidget {
 public:
-    InkingDynamicWidget(InkingWidget* parent, const AnchorData& data);
+    InkingDynamicWidget(InkingWidget* parent, const InkingAnchorData& data);
     InkingDynamicWidget(InkingWidget* parent, const std::string& name);
 
     bool Resize(int width, int height) noexcept;
-    bool ChangeSelfAnchor(const AnchorPoint& anchor) noexcept;
-    bool ChangeTraceAnchor(const AnchorPoint& anchor) noexcept;
+    bool ChangeSelfAnchor(const InkingAnchorPoint& anchor) noexcept;
+    bool ChangeTraceAnchor(const InkingAnchorPoint& anchor) noexcept;
     bool ChangeOffset(float offsetX, float offsetY) noexcept;
 
     void Tick(float deltaSeconds) noexcept { onTick(deltaSeconds); }

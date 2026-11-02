@@ -21,12 +21,12 @@
 //   - **字体**：默认用资源旁的**开源圆体**（资源圆体 / Resource Han Rounded，
 //     SIL OFL），拿不到就退回机器默认字体——见 `DefaultFontPath()`。
 //
-// 值都是 `0xAARRGGBB`（与 `AnchorData::color` 同一套）。
+// 值都是 `0xAARRGGBB`（与 `InkingAnchorData::color` 同一套）。
 
 #include <cstdint>
 #include <string>
 
-namespace inking::prefab::theme {
+namespace inking_prefab::theme {
 
 // ---------------------------------------------------------------------------
 // 颜色
@@ -76,7 +76,7 @@ inline constexpr std::uint32_t kDanger = 0xFFD33B3Bu;
 // ---------------------------------------------------------------------------
 // 圆角（设计坐标）
 //
-// 列表里的**行**故意不在这一组里：它用直角（`ShapeSpec::Rect()`），理由见
+// 列表里的**行**故意不在这一组里：它用直角（`InkingShapeSpec::Rect()`），理由见
 // `ListView.cpp` 的 `MakeDefaultRowLook`——行是表格单元，圆角看着"好奇怪"。
 // ---------------------------------------------------------------------------
 
@@ -93,12 +93,12 @@ inline constexpr float kRadiusCaption = 8.0f;   ///< 标题栏按钮
 /**
  * @brief 默认字体（**绝对路径**，UTF-8；空串 = 用机器默认字体）。
  *
- * 按顺序在**资源根**（exe 旁 `assets/`，见 `AssetRoot()`）里找这几个候选：
+ * 按顺序在**资源根**（exe 旁 `assets/`，见 `InkingAssetRoot()`）里找这几个候选：
  *   - `font/ResourceHanRoundedCN-Regular.ttf`（资源圆体 CN，SIL OFL，中文圆体首选）
  *   - `font/ZenMaruGothic-Regular.ttf`（禅圆体，OFL）
  *   - `font/MPLUSRounded1c-Regular.ttf`（M PLUS Rounded 1c，OFL）
  *
- * 都找不到就返回空串——那时 `TextRequest::fontPath` 为空，文字层会用机器默认
+ * 都找不到就返回空串——那时 `InkingTextRequest::fontPath` 为空，文字层会用机器默认
  * 字体（**不是不画**），所以"没放字体"不该让任何东西变红。
  *
  * 结果在**函数内静态量**里缓存（`AGENTS.md` §6 第 12 条：注册表 / 单例一律这么写），
@@ -106,4 +106,4 @@ inline constexpr float kRadiusCaption = 8.0f;   ///< 标题栏按钮
  */
 std::string DefaultFontPath();
 
-}  // namespace inking::prefab::theme
+}  // namespace inking_prefab::theme

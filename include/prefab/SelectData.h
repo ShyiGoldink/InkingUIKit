@@ -18,7 +18,7 @@
 #include <cstddef>
 #include <string>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 /// 模块名常量：日志与自检要用。
 inline constexpr const char* kSelectModuleName = "Select";
@@ -38,7 +38,7 @@ enum class SelectExpandDirection : std::uint8_t {
  */
 struct SelectStyle {
     /// 收起态那个按钮的外观 + 尺寸（它的宽高也决定展开容器的默认宽度）。
-    ButtonData closedLook{};
+    InkingButtonData closedLook{};
 
     /// 展开态那个选项栏（C1）的样式。尺寸默认跟收起按钮同宽。
     OptionBarStyle options{};
@@ -64,7 +64,7 @@ struct SelectStyle {
     bool filterable = false;
 
     /// 过滤框的数据（字号 / 内缩 / 光标颜色…）。`filterable` 为假时用不到。
-    TextInputData filterLook{};
+    InkingTextInputData filterLook{};
 
     /// 过滤框的高度（设计坐标）。
     float filterHeight = 30.0f;
@@ -95,6 +95,6 @@ struct SelectStyle {
 };
 
 /// 一份"深色圆角 + 浅色字 + 右侧一个 ▾"的收起态外观。
-ButtonData MakeDefaultClosedLook();
+InkingButtonData MakeDefaultClosedLook();
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

@@ -14,9 +14,9 @@
 //
 // 两条实现上的取舍：
 //   1. **录制与回放是两条路，但只有一份"画法"**：录制只存参数，回放才真的调
-//      `detail::fillShape` 那一套。绝不让"录制时顺手画一笔"——那样脏帧与干净帧
+//      `inking_detail::fillShape` 那一套。绝不让"录制时顺手画一笔"——那样脏帧与干净帧
 //      就成了两份实现，迟早分叉（`AGENTS.md` 里"抄第二遍就会分叉"那一族）；
-//   2. **借视图的数据要拷贝**：`ShapeSpec::PolygonPath` 借的是调用方的顶点表，
+//   2. **借视图的数据要拷贝**：`InkingShapeSpec::PolygonPath` 借的是调用方的顶点表，
 //      而回放发生在**以后**（下次重绘）——那时调用方的临时缓冲多半已经没了。
 //      所以录制时把点列拷进命令里（绘制器传临时点列也安全）。
 //
@@ -33,7 +33,7 @@
 #include <functional>
 #include <vector>
 
-namespace inking::detail {
+namespace inking_detail {
 
 /// 一条命令是哪种。
 enum class CanvasCommandKind : std::uint8_t {
@@ -56,7 +56,7 @@ struct CanvasCommand {
     CanvasCommandKind kind = CanvasCommandKind::FillShape;
 
     // ---- 形状类（FillShape / StrokeShape）----
-    ShapeSpec shape{};
+    InkingShapeSpec shape{};
     /// `PolygonPath` 的点列（**拷贝**一份，见文件头的取舍 2）。
     /// 回放时把 `shape.pathPoints` 指到这里，所以它必须活得比命令表短。
     std::vector<float> pathPoints{};
@@ -64,12 +64,12 @@ struct CanvasCommand {
     float y = 0.0f;
     float w = 0.0f;
     float h = 0.0f;
-    TransformSpec transform{};
+    InkingTransformSpec transform{};
     std::uint32_t color = 0u;
     float strokeWidth = 0.0f;
 
     // ---- 文本 ----
-    TextRequest text{};
+    InkingTextRequest text{};
 
     // ---- 裁剪（PushClip）----
     float clipX = 0.0f;
@@ -88,7 +88,7 @@ struct CanvasCommand {
  */
 class CanvasRecorder {
 public:
-    /// 开始录制前告诉它画布多大（`CanvasContext::Width/Height` 要用）。
+    /// 开始录制前告诉它画布多大（`InkingCanvasContext::Width/Height` 要用）。
     void BeginRecord(int width, int height) noexcept;
 
     /// 清空命令表（脏帧重新录制之前调）。
@@ -100,13 +100,13 @@ public:
     int NodeWidth() const noexcept { return _nodeWidth; }
     int NodeHeight() const noexcept { return _nodeHeight; }
 
-    // ---- 录制（由 `CanvasContext` 调；它只记，不画）----
-    void AddFillShape(const ShapeSpec& shape, float x, float y, float w, float h,
-                      std::uint32_t color, const TransformSpec& transform);
-    void AddStrokeShape(const ShapeSpec& shape, float x, float y, float w, float h,
+    // ---- 录制（由 `InkingCanvasContext` 调；它只记，不画）----
+    void AddFillShape(const InkingShapeSpec& shape, float x, float y, float w, float h,
+                      std::uint32_t color, const InkingTransformSpec& transform);
+    void AddStrokeShape(const InkingShapeSpec& shape, float x, float y, float w, float h,
                         float strokeWidth, std::uint32_t color,
-                        const TransformSpec& transform);
-    void AddDrawText(const TextRequest& request);
+                        const InkingTransformSpec& transform);
+    void AddDrawText(const InkingTextRequest& request);
     void AddPushClip(float x, float y, float w, float h);
     void AddPopClip();
     void AddImmediate(std::function<void(SDL_Renderer*)> draw);
@@ -126,7 +126,7 @@ public:
      *                      （混了就会让后来者继承一个奇怪的 clip 状态）。
      */
     void Replay(SDL_Renderer* renderer, float magnification, float pixelX,
-                float pixelY, const ShapeBounds& baseClip,
+                float pixelY, const InkingShapeBounds& baseClip,
                 bool baseClipValid) const;
 
 private:
@@ -135,4 +135,4 @@ private:
     int _nodeHeight = 0;
 };
 
-}  // namespace inking::detail
+}  // namespace inking_detail

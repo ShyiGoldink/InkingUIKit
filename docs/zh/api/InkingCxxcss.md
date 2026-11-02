@@ -16,13 +16,13 @@
 ## 一、一句话定位：生成类只是"把 Data() 递上去"
 
 ```cpp
-namespace inking::cxxcss {
-class OptionItem : public inking::InkingStaticButton {   // ← 基类由 json 的 "dynamic" 决定
+namespace cxxcss {
+class OptionItem : public InkingStaticButton {   // ← 基类由 json 的 "dynamic" 决定
 public:
     static constexpr const char* kName = "optionItem";
-    explicit OptionItem(inking::InkingWidget* parent)
-        : inking::InkingStaticButton(parent, Data()) {}
-    static const inking::ButtonData& Data();     // 全字面量，烘在构建产物里
+    explicit OptionItem(InkingWidget* parent)
+        : InkingStaticButton(parent, Data()) {}
+    static const InkingButtonData& Data();     // 全字面量，烘在构建产物里
     static void Register();                      // 仅按钮有
 };
 }
@@ -35,7 +35,7 @@ public:
    所以"这个类能干什么"要查 [InkingComponents.md](InkingComponents.md)，不在本页。
 2. **`Data()` 是函数内静态量**：首次使用时才初始化，避开静态初始化 / 析构顺序问题；
    内容全是常量，多线程读安全。
-3. **两条路等价**：生成类 vs 手写 `ButtonData` + `InkingStaticButton(parent, data)`
+3. **两条路等价**：生成类 vs 手写 `InkingButtonData` + `InkingStaticButton(parent, data)`
    最终是同一个构造。配置驱动只是省掉手写字面量、并拿到名字的编译期保险。
 
 ## 二、产物：两个文件
@@ -64,7 +64,7 @@ public:
 | `Text/` | **语言表静态数据 + 安装函数**（不是类） | — | — |
 | `Theme/` | **什么都不生成**（它是生成器的输入） | — | — |
 
-**只有按钮有 `Register()`**：`ButtonLibrary` 是"运行期才知道名字"那条路的落点
+**只有按钮有 `Register()`**：`InkingButtonLibrary` 是"运行期才知道名字"那条路的落点
 （自检、工具、将来换皮肤）。面板 / 标签没有按名字查的库——它们只有"数据构造"一条路，
 所以它们的 `name` **必须**是合法标识符（生成期会拦下不合法的）。
 
@@ -88,7 +88,7 @@ public:
 ## 四、命名：文件名 = `name` 字段 → PascalCase 类名
 
 ```text
-CXXCSS/Button/optionItem.json   →   inking::cxxcss::OptionItem   （kName = "optionItem"）
+CXXCSS/Button/optionItem.json   →   cxxcss::OptionItem   （kName = "optionItem"）
 ```
 
 1. **目录名 = 组件类型**（大小写不敏感、单复数都认）。认不出的目录名**报错**，不会猜。
@@ -99,7 +99,7 @@ CXXCSS/Button/optionItem.json   →   inking::cxxcss::OptionItem   （kName = "o
    只能按字符串名字用。
 5. **同名跨类型也是错**：一个按钮和一个面板同名，生成期就报"已经被 xxx 用了"
    （名字是运行期的全局查找键）。
-6. 生成类的命名空间由 **构建脚本指定**（`--namespace`），本项目用 `inking::cxxcss`。
+6. 生成类的命名空间由 **构建脚本指定**（`--namespace`），本项目用 `cxxcss`。
 
 ## 五、全局入口（生成头里那几个符号）
 
@@ -107,7 +107,7 @@ CXXCSS/Button/optionItem.json   →   inking::cxxcss::OptionItem   （kName = "o
 // —— 语言表 ——
 inline constexpr std::size_t kTextLanguageCount = 2;
 inline constexpr std::size_t kTextEntryCount    = 4;
-const inking::TextTable& GeneratedTextTable();     // 那张表的本体（进程内静态量）
+const InkingTextTable& GeneratedTextTable();     // 那张表的本体（进程内静态量）
 void InstallGeneratedTextTable();                  // 整表替换；启动期已自动调过一次
 
 // —— 计数（自检 / 工具用）——
@@ -115,7 +115,7 @@ inline constexpr std::size_t kButtonCount = 1;
 inline constexpr std::size_t kPanelCount  = 5;
 inline constexpr std::size_t kLabelCount  = 4;
 
-// —— 把本次生成的全部按钮配置登记进 ButtonLibrary ——
+// —— 把本次生成的全部按钮配置登记进 InkingButtonLibrary ——
 void RegisterAllButtons();                         // 幂等：先撤下上一批再登记
 ```
 
@@ -147,7 +147,7 @@ inkgen --out-dir <目录> [--namespace <ns>] [--header <名>] <file.json>...
 inkgen --validate <file.json>...
 
   --out-dir <目录>   产物目录（约定指向 build/，不存在会创建）
-  --namespace <ns>   生成代码的命名空间，默认 inking::cxxcss
+  --namespace <ns>   生成代码的命名空间，默认 cxxcss
   --header <名>      生成的头文件名，默认 button_service.h
   --validate         只校验，不写文件
   -h, --help         显示帮助
@@ -171,11 +171,11 @@ CMake 侧不用手写这些参数：`ink_add_generated(<目标> OUT_DIR ... SOUR
 | **按布局类型生成专用查找**（O(1) 命中，不走烘焙表） | ❌ **未做**（查询仍走烘焙表） |
 | "专属命中结构"这类特化 | ❌ 未做 |
 | **场景生成** | ❌ **有意不做**——场景是"编排"不是数据，手写就够（`CXXCSS.md` §7） |
-| `AppearanceType::Image` / `Svg` 的生成链 | ⚠ 数据面与纹理路已接，生成器那条链仍在落地 |
+| `InkingAppearanceType::Image` / `Svg` 的生成链 | ⚠ 数据面与纹理路已接，生成器那条链仍在落地 |
 
 ## 九、什么时候**不要**用生成器
 
-- 组件的尺寸 / 颜色要**运行期算**（例如按内容自适应、按数据上色）：手写 `ButtonData`
+- 组件的尺寸 / 颜色要**运行期算**（例如按内容自适应、按数据上色）：手写 `InkingButtonData`
   传进 `InkingStaticButton(parent, data)` 更直接。
 - 一次性小工具 / 自检：手写数据，不必为了三个按钮建一套 json。
 - 场景：永远手写（见上）。

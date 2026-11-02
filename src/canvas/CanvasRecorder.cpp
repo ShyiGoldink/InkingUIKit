@@ -1,6 +1,6 @@
 #include "CanvasRecorder.h"
 
-// `detail::AncestorClipInDevice` / `ClipBoundsInDevice` / `IntersectBounds` 在源项目里
+// `inking_detail::AncestorClipInDevice` / `ClipBoundsInDevice` / `IntersectBounds` 在源项目里
 // 住在**那个单体头** `include/ink/basic/InkingAnchor.h` 里，本文件是经它（或经
 // `InkingDraw.h` / `InkingHit.h`）**传递**拿到的。拆层之后它们落到
 // `detail/InkingGeometry.h`，而上面那几个头都不再传递它 ⇒ 必须显式包含。
@@ -14,7 +14,7 @@
 #include <cmath>
 #include <utility>
 
-namespace inking::detail {
+namespace inking_detail {
 namespace {
 
 /**
@@ -24,18 +24,18 @@ namespace {
  * 的绝对左上角、再过祖先子树变换。两份各写一遍就会出现"内容跟着容器转、
  * 裁剪框留在原地"——那正是 B12 踩过的那个坑（`AGENTS.md` §6 第 94 条）的同族。
  */
-ShapeBounds LocalRectToDevice(float lx, float ly, float lw, float lh,
+InkingShapeBounds LocalRectToDevice(float lx, float ly, float lw, float lh,
                               float magnification, float pixelX,
                               float pixelY) noexcept {
-    const ShapeBounds rect{pixelX + lx * magnification,
+    const InkingShapeBounds rect{pixelX + lx * magnification,
                            pixelY + ly * magnification, lw * magnification,
                            lh * magnification};
-    const Affine ancestor = currentAncestorAffine();
-    const Point2 corners[4] = {
-        ApplyAffine(ancestor, rect.x, rect.y),
-        ApplyAffine(ancestor, rect.x + rect.width, rect.y),
-        ApplyAffine(ancestor, rect.x, rect.y + rect.height),
-        ApplyAffine(ancestor, rect.x + rect.width, rect.y + rect.height)};
+    const InkingAffine ancestor = currentAncestorAffine();
+    const InkingPoint2 corners[4] = {
+        InkingApplyAffine(ancestor, rect.x, rect.y),
+        InkingApplyAffine(ancestor, rect.x + rect.width, rect.y),
+        InkingApplyAffine(ancestor, rect.x, rect.y + rect.height),
+        InkingApplyAffine(ancestor, rect.x + rect.width, rect.y + rect.height)};
 
     float minX = corners[0].x;
     float minY = corners[0].y;
@@ -47,16 +47,16 @@ ShapeBounds LocalRectToDevice(float lx, float ly, float lw, float lh,
         maxX = corners[i].x > maxX ? corners[i].x : maxX;
         maxY = corners[i].y > maxY ? corners[i].y : maxY;
     }
-    return ShapeBounds{minX, minY, maxX - minX, maxY - minY};
+    return InkingShapeBounds{minX, minY, maxX - minX, maxY - minY};
 }
 
 /**
- * 回放用的形状：`PolygonPath` 借的是顶点表（`ShapeSpec` 的既有约定），
+ * 回放用的形状：`PolygonPath` 借的是顶点表（`InkingShapeSpec` 的既有约定），
  * 录制时已经拷进命令里，这里把视图指回去。
  */
-ShapeSpec ShapeWithPoints(const CanvasCommand& command) {
-    ShapeSpec shape = command.shape;
-    if (shape.kind == ShapeKind::PolygonPath && command.pathPoints.size() >= 6) {
+InkingShapeSpec ShapeWithPoints(const CanvasCommand& command) {
+    InkingShapeSpec shape = command.shape;
+    if (shape.kind == InkingShapeKind::PolygonPath && command.pathPoints.size() >= 6) {
         shape.pathPoints = command.pathPoints.data();
         shape.pathPointCount =
             static_cast<int>(command.pathPoints.size() / 2);
@@ -70,11 +70,11 @@ int RoundSize(float value) noexcept {
 }
 
 /// 录制形状命令的公共部分（两处填一样的字段，抽一次省得漏）。
-void FillShapeCommand(CanvasCommand& command, const ShapeSpec& shape, float x,
+void FillShapeCommand(CanvasCommand& command, const InkingShapeSpec& shape, float x,
                       float y, float w, float h, std::uint32_t color,
-                      const TransformSpec& transform) {
+                      const InkingTransformSpec& transform) {
     command.shape = shape;
-    if (shape.kind == ShapeKind::PolygonPath && shape.pathPoints != nullptr
+    if (shape.kind == InkingShapeKind::PolygonPath && shape.pathPoints != nullptr
         && shape.pathPointCount >= 3) {
         // 拷一份：回放可能发生在很久以后，调用方那块缓冲多半已经没了。
         command.pathPoints.assign(shape.pathPoints,
@@ -97,19 +97,19 @@ void CanvasRecorder::BeginRecord(int width, int height) noexcept {
 
 void CanvasRecorder::Clear() noexcept { _commands.clear(); }
 
-void CanvasRecorder::AddFillShape(const ShapeSpec& shape, float x, float y,
+void CanvasRecorder::AddFillShape(const InkingShapeSpec& shape, float x, float y,
                                   float w, float h, std::uint32_t color,
-                                  const TransformSpec& transform) {
+                                  const InkingTransformSpec& transform) {
     CanvasCommand command;
     command.kind = CanvasCommandKind::FillShape;
     FillShapeCommand(command, shape, x, y, w, h, color, transform);
     _commands.push_back(std::move(command));
 }
 
-void CanvasRecorder::AddStrokeShape(const ShapeSpec& shape, float x, float y,
+void CanvasRecorder::AddStrokeShape(const InkingShapeSpec& shape, float x, float y,
                                     float w, float h, float strokeWidth,
                                     std::uint32_t color,
-                                    const TransformSpec& transform) {
+                                    const InkingTransformSpec& transform) {
     CanvasCommand command;
     command.kind = CanvasCommandKind::StrokeShape;
     FillShapeCommand(command, shape, x, y, w, h, color, transform);
@@ -117,7 +117,7 @@ void CanvasRecorder::AddStrokeShape(const ShapeSpec& shape, float x, float y,
     _commands.push_back(std::move(command));
 }
 
-void CanvasRecorder::AddDrawText(const TextRequest& request) {
+void CanvasRecorder::AddDrawText(const InkingTextRequest& request) {
     CanvasCommand command;
     command.kind = CanvasCommandKind::DrawText;
     command.text = request;
@@ -152,7 +152,7 @@ void CanvasRecorder::AddImmediate(std::function<void(SDL_Renderer*)> draw) {
 
 void CanvasRecorder::Replay(SDL_Renderer* renderer, float magnification,
                             float pixelX, float pixelY,
-                            const ShapeBounds& baseClip,
+                            const InkingShapeBounds& baseClip,
                             bool baseClipValid) const {
     if (renderer == nullptr) {
         return;
@@ -161,7 +161,7 @@ void CanvasRecorder::Replay(SDL_Renderer* renderer, float magnification,
 
     // 裁剪栈：**空栈 = "现在没有裁剪"**（不是"裁剪到无限大"）。栈非空时栈顶就是
     // 当前生效的那一份，于是 PushClip 是"与栈顶求交"、PopClip 是"退回上一层"。
-    std::vector<ShapeBounds> clipStack;
+    std::vector<InkingShapeBounds> clipStack;
     if (baseClipValid) {
         clipStack.push_back(baseClip);
     }
@@ -169,7 +169,7 @@ void CanvasRecorder::Replay(SDL_Renderer* renderer, float magnification,
     for (const CanvasCommand& command : _commands) {
         switch (command.kind) {
             case CanvasCommandKind::FillShape: {
-                const ShapeSpec shape = ShapeWithPoints(command);
+                const InkingShapeSpec shape = ShapeWithPoints(command);
                 fillShape(renderer, shape, RoundSize(command.w),
                           RoundSize(command.h), mag, pixelX + command.x * mag,
                           pixelY + command.y * mag, command.transform,
@@ -177,7 +177,7 @@ void CanvasRecorder::Replay(SDL_Renderer* renderer, float magnification,
                 break;
             }
             case CanvasCommandKind::StrokeShape: {
-                const ShapeSpec shape = ShapeWithPoints(command);
+                const InkingShapeSpec shape = ShapeWithPoints(command);
                 strokeShape(renderer, shape, RoundSize(command.w),
                             RoundSize(command.h), mag,
                             pixelX + command.x * mag,
@@ -190,18 +190,18 @@ void CanvasRecorder::Replay(SDL_Renderer* renderer, float magnification,
                     // 变换给单位：文字的朝向已经由"画布自己的变换"体现
                     // （那条通道在 `SubmitToRenderer` 里统一作用）。
                     PaintText(renderer, command.text, _nodeWidth, _nodeHeight,
-                              mag, pixelX, pixelY, TransformSpec{});
+                              mag, pixelX, pixelY, InkingTransformSpec{});
                 }
                 break;
             }
             case CanvasCommandKind::PushClip: {
-                const ShapeBounds own =
+                const InkingShapeBounds own =
                     LocalRectToDevice(command.clipX, command.clipY,
                                       command.clipW, command.clipH, mag, pixelX,
                                       pixelY);
                 // 与已有裁剪取交集（**叠加**语义，不是替换）：画布边界与祖先容器
                 // 都还在管着这一笔。
-                const ShapeBounds merged =
+                const InkingShapeBounds merged =
                     clipStack.empty() ? own
                                       : IntersectBounds(clipStack.back(), own);
                 clipStack.push_back(merged);
@@ -242,4 +242,4 @@ void CanvasRecorder::Replay(SDL_Renderer* renderer, float magnification,
     }
 }
 
-}  // namespace inking::detail
+}  // namespace inking_detail

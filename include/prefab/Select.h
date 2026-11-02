@@ -36,15 +36,13 @@
 #include <cstddef>
 #include <string>
 #include <vector>
-
-namespace inking {
-namespace prefab {
+namespace inking_prefab {
 
 /**
  * @brief C4：预制下拉 / 选择器。
  *
  * ```cpp
- * inking::prefab::Select picker(&scene);
+ * inking_prefab::Select picker(&scene);
  * picker.SetOptions({{"tianxin", "天心"}, {"luolisi", "洛里丝"}});
  * picker.selectionChanged.Subscribe([](const std::string& id, int index) { ... });
  * picker.SetExpanded(true);   // 展开（就地显示选项栏）
@@ -165,5 +163,4 @@ private:
     InkingTextInput _filter;
 };
 
-}  // namespace prefab
-}  // namespace inking
+}  // namespace inking_prefab

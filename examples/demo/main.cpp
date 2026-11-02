@@ -5,7 +5,7 @@
 //   <inking.h>                     版本 / 日志 / 消息队列 / 任务队列
 //   <window/InkingWindow.h>        窗口（Show() 跑主循环）
 //   <scene/InkingScene.h>          场景基类（构造即登记）
-//   <scene/SceneLibrary.h>         场景库
+//   <scene/InkingSceneLibrary.h>         场景库
 //   <button/InkingStaticButton.h>  静态按钮（三态只换颜色 → 进命中表）
 //   <button/InkingDynamicButton.h> 动态按钮（几何自己动 → 不进表，每帧 Tick）
 //   <text/InkingStaticLabel.h>     只读文字
@@ -15,7 +15,7 @@
 // 三件事在这份代码里各演示一条：
 //   1. **两种按钮的分工**：静态按钮走点击回调；动态按钮在 `onTick` 里自己
 //      挪位置（`ChangeOffset` 是动态档独有的几何写入口）；
-//   2. **场景「构造即登记」**：`DemoScene` 一构造就进了 `SceneLibrary`，
+//   2. **场景「构造即登记」**：`DemoScene` 一构造就进了 `InkingSceneLibrary`，
 //      `Show("demo")` 按名字找到它、激活它、跑主循环；
 //   3. **链接库边界**：示例不包含任何 `src/` 下的实现，全部经 DLL 调用；
 //   4. **帧动画（0.6.x）**：左上角是序列帧（8 张内联 SVG，12fps 转一圈），
@@ -69,18 +69,18 @@ constexpr std::uint32_t kTextDim   = 0xFF9A9AB0u;
 
 /// 造一份按钮配置。三态都显式写，并把两条 `*InheritsNormal` 关掉
 /// ——否则 `Normalize()` 会把 hover / onclicked 又拉回 normal 那一份。
-inking::ButtonData MakeButton(const std::string& name, int width, int height,
+InkingButtonData MakeButton(const std::string& name, int width, int height,
                               const std::string& label, std::uint32_t normal,
                               std::uint32_t hover, std::uint32_t pressed,
                               float radius) {
-    inking::ButtonData d;
+    InkingButtonData d;
     d.name = name;
     d.width = width;
     d.height = height;
 
-    d.normal = inking::ButtonAppearance(inking::AppearanceType::Color, normal);
-    d.hover = inking::ButtonAppearance(inking::AppearanceType::Color, hover);
-    d.onclicked = inking::ButtonAppearance(inking::AppearanceType::Color, pressed);
+    d.normal = InkingButtonAppearance(InkingAppearanceType::Color, normal);
+    d.hover = InkingButtonAppearance(InkingAppearanceType::Color, hover);
+    d.onclicked = InkingButtonAppearance(InkingAppearanceType::Color, pressed);
     d.hoverInheritsNormal = false;
     d.onclickedInheritsNormal = false;
 
@@ -91,33 +91,33 @@ inking::ButtonData MakeButton(const std::string& name, int width, int height,
 
     d.label = label;
     d.text.fontSize = 26.0f;
-    d.text.align = inking::TextAlignH::Center;
-    d.text.alignV = inking::TextAlignV::Middle;
+    d.text.align = InkingTextAlignH::Center;
+    d.text.alignV = InkingTextAlignV::Middle;
 
     // 锚点都由父级中心算：`traceAnchor` 是"落在父级的哪个百分比点"，
     // `selfAnchor` 是"自己的哪个点对上它"。两个都取 Center 就是正中对齐。
-    d.selfAnchor = inking::InkingChangeAnchor::Center;
-    d.traceAnchor = inking::InkingChangeAnchor::Center;
+    d.selfAnchor = InkingChangeAnchor::Center;
+    d.traceAnchor = InkingChangeAnchor::Center;
 
-    d.shape = inking::ShapeSpec::RoundedRect(radius);
+    d.shape = InkingShapeSpec::RoundedRect(radius);
     return d;
 }
 
 /// 造一份标签配置（居中、给定字号与颜色）。
-inking::LabelData MakeLabel(const std::string& name, int width, int height,
+InkingLabelData MakeLabel(const std::string& name, int width, int height,
                             const std::string& text, float fontSize,
                             std::uint32_t color) {
-    inking::LabelData d;
+    InkingLabelData d;
     d.name = name;
     d.width = width;
     d.height = height;
     d.text = text;
     d.style.fontSize = fontSize;
-    d.style.align = inking::TextAlignH::Center;
-    d.style.alignV = inking::TextAlignV::Middle;
+    d.style.align = InkingTextAlignH::Center;
+    d.style.alignV = InkingTextAlignV::Middle;
     d.color = color;
-    d.selfAnchor = inking::InkingChangeAnchor::Center;
-    d.traceAnchor = inking::InkingChangeAnchor::Center;
+    d.selfAnchor = InkingChangeAnchor::Center;
+    d.traceAnchor = InkingChangeAnchor::Center;
     return d;
 }
 
@@ -131,18 +131,18 @@ inking::LabelData MakeLabel(const std::string& name, int width, int height,
  * 输入照常：`InkingDynamicButton::onTick` 里那一句 `JudgePointer()` 是"自己拉
  * 指针"的实现，所以这里必须先调基类，再动几何。
  */
-class FloatingButton : public inking::InkingDynamicButton {
+class FloatingButton : public InkingDynamicButton {
 public:
-    FloatingButton(inking::InkingWidget* parent, const inking::ButtonData& data,
+    FloatingButton(InkingWidget* parent, const InkingButtonData& data,
                    float amplitude)
-        : inking::InkingDynamicButton(parent, data),
+        : InkingDynamicButton(parent, data),
           _baseX(data.offsetX),
           _baseY(data.offsetY),
           _amplitude(amplitude) {}
 
 protected:
     void onTick(float deltaSeconds) override {
-        inking::InkingDynamicButton::onTick(deltaSeconds);  // 先收输入
+        InkingDynamicButton::onTick(deltaSeconds);  // 先收输入
 
         _phase += deltaSeconds;
         const float dx = _amplitude * std::sin(_phase * 1.7f);
@@ -186,7 +186,7 @@ const std::array<std::string, 8>& SpinnerFrames() {
 /**
  * 示例场景。
  *
- * **构造即登记**：`InkingScene("demo")` 这一步就把自己挂进 `SceneLibrary`
+ * **构造即登记**：`InkingScene("demo")` 这一步就把自己挂进 `InkingSceneLibrary`
  * ——名字被占时会进入"停放态"（`IsRegistered()` 为 false），所以下面 `main`
  * 里那份断言不是多余的。
  *
@@ -194,9 +194,9 @@ const std::array<std::string, 8>& SpinnerFrames() {
  * 子树跟着销毁。构造参数里那个 `this` 是"父级"（非拥有、可后续换父），
  * 传它只是让组件在构造期就能沿父链找到场景与自己的绝对坐标。
  */
-class DemoScene : public inking::InkingScene {
+class DemoScene : public InkingScene {
 public:
-    DemoScene() : inking::InkingScene("demo") {
+    DemoScene() : InkingScene("demo") {
         BuildUi();
     }
 
@@ -207,21 +207,21 @@ private:
         //    `runtimeAsset = true` 表示字节在运行期从 exe 旁的 assets/ 读——
         //    换稿不用重编。`hitPassThrough = true` 让空白点击穿到下面（否则
         //    这块铺满全屏的图会把所有按钮都挡住，看起来像"按钮点不动"）。
-        inking::ImageData backdrop;
+        InkingImageData backdrop;
         backdrop.name = "design_backdrop";
-        backdrop.width = inking::DesignWidth();
-        backdrop.height = inking::DesignHeight();
+        backdrop.width = InkingDesignWidth();
+        backdrop.height = InkingDesignHeight();
         backdrop.runtimeAsset = true;
         backdrop.hitPassThrough = true;
-        backdrop.normal.type = inking::AppearanceType::Image;
+        backdrop.normal.type = InkingAppearanceType::Image;
         backdrop.normal.source = "design.svg";
-        backdrop.normal.imageFit = inking::ImageFit::Fill;
-        backdrop.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-        backdrop.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        backdrop.normal.imageFit = InkingImageFit::Fill;
+        backdrop.selfAnchor = InkingChangeAnchor::LeftTop;
+        backdrop.traceAnchor = InkingChangeAnchor::LeftTop;
         backdrop.offsetX = 0.0f;
         backdrop.offsetY = 0.0f;
-        backdrop.zIndex = inking::InkingZIndex::background;
-        AddChild(std::make_unique<inking::InkingStaticImage>(this, backdrop));
+        backdrop.zIndex = InkingZIndex::background;
+        AddChild(std::make_unique<InkingStaticImage>(this, backdrop));
 
         // 1) 菜单栏：无边框窗口的**自绘标题栏**（拖动 + 最小化 / 关闭），
         //    同时承担两件事——
@@ -230,31 +230,31 @@ private:
         //      · 全局快捷键：菜单项绑的组合不依赖焦点，全屏隐藏后照样能用。
         //    全屏由 `InkingWindow` 内置的 F11 切换；菜单栏在全屏时会自动隐藏
         //    （`MenuBarStyle::hideInFullscreen` 默认开）。
-        inking::prefab::MenuBarStyle barStyle =
-            inking::prefab::MenuBarStyle::MakeDefault();
+        inking_prefab::MenuBarStyle barStyle =
+            inking_prefab::MenuBarStyle::MakeDefault();
         barStyle.draggable = true;       // 按住空白处拖窗口
         barStyle.captionButtons = true;  // 右上角最小化 / 关闭
-        inking::prefab::MenuBar* bar = static_cast<inking::prefab::MenuBar*>(
-            AddChild(std::make_unique<inking::prefab::MenuBar>(this, barStyle)));
+        inking_prefab::MenuBar* bar = static_cast<inking_prefab::MenuBar*>(
+            AddChild(std::make_unique<inking_prefab::MenuBar>(this, barStyle)));
         _menuBar = bar;
 
-        inking::ButtonData item = MakeButton("menu_item", 92, 28, "", kGhost,
+        InkingButtonData item = MakeButton("menu_item", 92, 28, "", kGhost,
                                              kGhostHi, kGhostPr, 8.0f);
         item.text.fontSize = 20.0f;
         bar->AddButton(item, "放大",
-                       [] { inking::InkingWindow::Instance().ZoomBy(1); },
-                       inking::Shortcut::Parse("Ctrl+="));
+                       [] { InkingWindow::Instance().ZoomBy(1); },
+                       InkingShortcut::Parse("Ctrl+="));
         bar->AddButton(item, "缩小",
-                       [] { inking::InkingWindow::Instance().ZoomBy(-1); },
-                       inking::Shortcut::Parse("Ctrl+-"));
+                       [] { InkingWindow::Instance().ZoomBy(-1); },
+                       InkingShortcut::Parse("Ctrl+-"));
         bar->AddButton(item, "全屏",
-                       [] { inking::InkingWindow::Instance().ToggleFullscreen(); },
-                       inking::Shortcut::Parse("Ctrl+Enter"));
+                       [] { InkingWindow::Instance().ToggleFullscreen(); },
+                       InkingShortcut::Parse("Ctrl+Enter"));
         bar->AddButton(item, "切换动作", [this] { ToggleWalkerGroup(); },
-                       inking::Shortcut::Parse("F2"));
+                       InkingShortcut::Parse("F2"));
         bar->AddButton(item, "退出",
-                       [] { inking::InkingWindow::Instance().RequestExit(); },
-                       inking::Shortcut::Parse("Ctrl+Q"));
+                       [] { InkingWindow::Instance().RequestExit(); },
+                       InkingShortcut::Parse("Ctrl+Q"));
 
         // 1) 标题
         _title = AddLabel("title", "Inking 动态库示例", 900, 70, 44.0f, kText,
@@ -264,13 +264,13 @@ private:
                          900, 50, 22.0f, kTextDim, 10.0f);
 
         // 3) 静态按钮：点击计数
-        inking::ButtonData clickData = MakeButton("click_me", 260, 84, "点我",
+        InkingButtonData clickData = MakeButton("click_me", 260, 84, "点我",
                                                  kAccent, kAccentHi, kAccentPr,
                                                  14.0f);
         clickData.offsetY = -120.0f;
-        inking::InkingStaticButton* button =
-            static_cast<inking::InkingStaticButton*>(
-                AddChild(std::make_unique<inking::InkingStaticButton>(
+        InkingStaticButton* button =
+            static_cast<InkingStaticButton*>(
+                AddChild(std::make_unique<InkingStaticButton>(
                     this, clickData)));
         // 语义是"替换"：再设一次就是换掉上一个回调（要挂多个用 clicked.Subscribe）。
         button->SetOnClicked([this] {
@@ -284,10 +284,10 @@ private:
                            90.0f);
 
         // 5) 动态按钮：自己飘
-        inking::ButtonData floatData = MakeButton("floating", 240, 76, "我会飘",
+        InkingButtonData floatData = MakeButton("floating", 240, 76, "我会飘",
                                                  kGhost, kGhostHi, kGhostPr,
                                                  38.0f);
-        floatData.shape = inking::ShapeSpec::Capsule();
+        floatData.shape = InkingShapeSpec::Capsule();
         floatData.offsetY = 220.0f;
         AddChild(std::make_unique<FloatingButton>(this, floatData, 220.0f));
 
@@ -298,12 +298,12 @@ private:
         //     "调用方给点"这条能力）；
         //   · 右键 / 触摸长按 → 定点是**按下点**，这才是真正的上下文菜单。
         // 两条路都只是 `OpenAt(x, y)`：浮窗自己不关心定点从哪来。
-        _menu = std::make_unique<inking::prefab::MenuPopup>(this);
+        _menu = std::make_unique<inking_prefab::MenuPopup>(this);
 
-        inking::ButtonData menuItem;
-        menuItem.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+        InkingButtonData menuItem;
+        menuItem.normal = InkingButtonAppearance(InkingAppearanceType::Color,
                                                    0xFFFFFFFFu);
-        menuItem.hover = inking::ButtonAppearance(inking::AppearanceType::Color,
+        menuItem.hover = InkingButtonAppearance(InkingAppearanceType::Color,
                                                   0xFFEDE7F8u);
         menuItem.onclicked = menuItem.hover;
         menuItem.textColor = 0xFF33303Cu;
@@ -316,20 +316,20 @@ private:
                 _clicks = 0;
                 _status->SetText("点击次数：0");
             },
-            inking::Shortcut::Parse("Ctrl+R"));
+            InkingShortcut::Parse("Ctrl+R"));
         _menu->AddButton(menuItem, "切换全屏", [] {
-            inking::InkingWindow::Instance().ToggleFullscreen();
+            InkingWindow::Instance().ToggleFullscreen();
         });
         _menu->AddButton(menuItem, "退出", [] {
-            inking::InkingWindow::Instance().RequestExit();
+            InkingWindow::Instance().RequestExit();
         });
 
-        inking::ButtonData openData = MakeButton("open_menu", 220, 64, "打开菜单",
+        InkingButtonData openData = MakeButton("open_menu", 220, 64, "打开菜单",
                                                  kGhost, kGhostHi, kGhostPr,
                                                  12.0f);
         openData.offsetY = 320.0f;
-        auto* opener = static_cast<inking::InkingStaticButton*>(
-            AddChild(std::make_unique<inking::InkingStaticButton>(this,
+        auto* opener = static_cast<InkingStaticButton*>(
+            AddChild(std::make_unique<InkingStaticButton>(this,
                                                                  openData)));
         opener->SetOnClicked([this, opener] {
             // 定点 = 按钮左下角再往下 4 像素；靠近窗口右下时浮窗自己翻到对侧。
@@ -360,19 +360,19 @@ private:
      */
     void AddSpinner() {
         const auto& frames = SpinnerFrames();
-        inking::SpriteData data;
+        InkingSpriteData data;
         data.name = "spinner";
         data.width = 84;
         data.height = 84;
         data.fps = 12.0;
         data.loop = true;
         data.autoplay = true;
-        data.selfAnchor = inking::InkingChangeAnchor::Center;
-        data.traceAnchor = inking::InkingChangeAnchor::Center;
+        data.selfAnchor = InkingChangeAnchor::Center;
+        data.traceAnchor = InkingChangeAnchor::Center;
         data.offsetX = -520.0f;
         data.offsetY = -250.0f;
         for (std::size_t i = 0; i < frames.size(); ++i) {
-            inking::ButtonAppearance frame(inking::AppearanceType::Image,
+            InkingButtonAppearance frame(InkingAppearanceType::Image,
                                            0xFF000000u);
             // 缓存键 = 帧名：同名字才会复用纹理（8 帧各一份，所以各一个键）。
             frame.source = "spinner#" + std::to_string(i);
@@ -381,8 +381,8 @@ private:
             frame.imageSize = frames[i].size();
             data.frames.push_back(frame);
         }
-        _spinner = static_cast<inking::InkingSprite*>(
-            AddChild(std::make_unique<inking::InkingSprite>(this, data)));
+        _spinner = static_cast<InkingSprite*>(
+            AddChild(std::make_unique<InkingSprite>(this, data)));
     }
 
     /**
@@ -393,12 +393,12 @@ private:
      * 不用重编（`CXXCSS/Image/walker.json` 是同一个配置的"生成器"版本）。
      */
     void AddWalker() {
-        inking::SpriteData data;
+        InkingSpriteData data;
         data.name = "walker";
         data.width = 96;   // 显示放大一倍（每格 48）
         data.height = 96;
         data.runtimeAsset = true;
-        data.normal.type = inking::AppearanceType::Image;
+        data.normal.type = InkingAppearanceType::Image;
         data.normal.source = "walk.png";
         data.sheet.frameWidth = 48;
         data.sheet.frameHeight = 48;
@@ -408,12 +408,12 @@ private:
         // 第 0 / 2 帧是"脚落地"的两帧——帧事件由**帧号变化**驱动，
         // 掉帧也不会少算（这一点和"按时间到点触发"是两回事）。
         data.events = {{0, "step"}, {2, "step"}};
-        data.selfAnchor = inking::InkingChangeAnchor::Center;
-        data.traceAnchor = inking::InkingChangeAnchor::Center;
+        data.selfAnchor = InkingChangeAnchor::Center;
+        data.traceAnchor = InkingChangeAnchor::Center;
         data.offsetX = -520.0f;
         data.offsetY = 40.0f;
-        auto* walker = static_cast<inking::InkingSprite*>(
-            AddChild(std::make_unique<inking::InkingSprite>(this, data)));
+        auto* walker = static_cast<InkingSprite*>(
+            AddChild(std::make_unique<InkingSprite>(this, data)));
         walker->frameEvent.Subscribe([this](const std::string& name,
                                             std::size_t /*frame*/) {
             if (name != "step" || _stepsLabel == nullptr) {
@@ -439,31 +439,31 @@ private:
      */
     void AddWalkerGroup() {
         const auto makeAnimation = [](const char* name, double fps, int size) {
-            inking::SpriteData data;
+            InkingSpriteData data;
             data.name = name;
             data.width = size;
             data.height = size;
             data.runtimeAsset = true;
-            data.normal.type = inking::AppearanceType::Image;
+            data.normal.type = InkingAppearanceType::Image;
             data.normal.source = "walk.png";
             data.sheet.frameWidth = 48;
             data.sheet.frameHeight = 48;
             data.sheet.columns = 4;
             data.sheet.rows = 1;
             data.fps = fps;
-            data.selfAnchor = inking::InkingChangeAnchor::Center;
-            data.traceAnchor = inking::InkingChangeAnchor::Center;
+            data.selfAnchor = InkingChangeAnchor::Center;
+            data.traceAnchor = InkingChangeAnchor::Center;
             data.offsetX = -300.0f;
             data.offsetY = 180.0f;
             return data;
         };
 
-        inking::SpriteGroupData group;
+        InkingSpriteGroupData group;
         group.animations.emplace_back("walk", makeAnimation("walk", 8.0, 96));
         group.animations.emplace_back("run", makeAnimation("run", 20.0, 120));
 
-        _walkerGroup = static_cast<inking::InkingSpriteGroup*>(AddChild(
-            std::make_unique<inking::InkingSpriteGroup>(this, group, "walk")));
+        _walkerGroup = static_cast<InkingSpriteGroup*>(AddChild(
+            std::make_unique<InkingSpriteGroup>(this, group, "walk")));
         _actionLabel = AddLabel("walker_action", "动作：walk（F2 切换）", 360, 40,
                                 20.0f, kTextDim, 300.0f, -300.0f);
     }
@@ -481,30 +481,30 @@ private:
         }
     }
 
-    inking::InkingStaticLabel* AddLabel(const std::string& name,
+    InkingStaticLabel* AddLabel(const std::string& name,
                                         const std::string& text, int width,
                                         int height, float fontSize,
                                         std::uint32_t color, float offsetY,
                                         float offsetX = 0.0f) {
-        inking::LabelData data =
+        InkingLabelData data =
             MakeLabel(name, width, height, text, fontSize, color);
         data.offsetX = offsetX;
         data.offsetY = offsetY;
-        return static_cast<inking::InkingStaticLabel*>(
-            AddChild(std::make_unique<inking::InkingStaticLabel>(this, data)));
+        return static_cast<InkingStaticLabel*>(
+            AddChild(std::make_unique<InkingStaticLabel>(this, data)));
     }
 
-    inking::InkingStaticLabel* _title = nullptr;
-    inking::InkingStaticLabel* _hint = nullptr;
-    inking::InkingStaticLabel* _status = nullptr;
-    inking::InkingStaticLabel* _stepsLabel = nullptr;
-    inking::InkingStaticButton* _button = nullptr;
-    inking::InkingSprite* _spinner = nullptr;
-    inking::InkingSpriteGroup* _walkerGroup = nullptr;
-    inking::InkingStaticLabel* _actionLabel = nullptr;
+    InkingStaticLabel* _title = nullptr;
+    InkingStaticLabel* _hint = nullptr;
+    InkingStaticLabel* _status = nullptr;
+    InkingStaticLabel* _stepsLabel = nullptr;
+    InkingStaticButton* _button = nullptr;
+    InkingSprite* _spinner = nullptr;
+    InkingSpriteGroup* _walkerGroup = nullptr;
+    InkingStaticLabel* _actionLabel = nullptr;
     int _steps = 0;
-    inking::prefab::MenuBar* _menuBar = nullptr;
-    std::unique_ptr<inking::prefab::MenuPopup> _menu;
+    inking_prefab::MenuBar* _menuBar = nullptr;
+    std::unique_ptr<inking_prefab::MenuPopup> _menu;
     int _clicks = 0;
 };
 
@@ -512,10 +512,10 @@ private:
 
 int main(int /*argc*/, char** /*argv*/) {
     std::printf("[demo] Inking %s-%s / 链接到的 SDL3 %s\n",
-                inking::kVersion, inking::kVersionStage,
-                inking::sdl3_version().c_str());
+                InkingVersion, InkingVersionStage,
+                InkingSdl3_version().c_str());
     std::printf("[demo] 消息队列编译期启用：%s\n",
-                inking::kMessageEnabled ? "是" : "否");
+                InkingMessageEnabled ? "是" : "否");
 
     DemoScene scene;
     if (!scene.IsRegistered()) {
@@ -525,11 +525,11 @@ int main(int /*argc*/, char** /*argv*/) {
     }
 
     // Show() 是**同步**的：里面建窗口、跑主循环，直到关窗 / ESC 才返回。
-    // 它按名字从 SceneLibrary 找场景并设为活跃（不需要自己 SetActiveScene）。
+    // 它按名字从 InkingSceneLibrary 找场景并设为活跃（不需要自己 SetActiveScene）。
     //
     // 无边框：必须在 `Show()` **之前**设——那时它还只是记账，建窗口时直接带上
     // `SDL_WINDOW_BORDERLESS`，不会有一次"先带边框再拆掉"的窗口重建。
-    inking::InkingWindow& window = inking::InkingWindow::Instance();
+    InkingWindow& window = InkingWindow::Instance();
     window.SetBorderless(true);
     // ESC 的语义是"退一层"：全屏时先退全屏，再按一次才请求退出。退出前会过
     // 这道闸门——返回 false 就是"先别退"（业务可以在这里弹确认框）。

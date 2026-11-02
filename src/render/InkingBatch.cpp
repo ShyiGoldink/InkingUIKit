@@ -7,7 +7,7 @@
 // 提交层的实现：一个"当前帧"的缓冲 + 计数。UI 线程使用，不加锁
 // （和形状那一层的 scratch 缓冲同一条约定）。
 
-namespace inking::detail {
+namespace inking_detail {
 
 namespace {
 
@@ -141,7 +141,7 @@ void ApplyAncestorAffineToVertices(SDL_Vertex* vertices, std::size_t vertexCount
     }
     // 祖先子树变换（T-7）：顶点缓存里存的是**本地**坐标，容器挪动在这里体现——
     // 于是"容器动了"既不作废子节点的顶点缓存，又能让整棵子树跟着走。
-    const Affine ancestor = currentAncestorAffine();
+    const InkingAffine ancestor = currentAncestorAffine();
     for (std::size_t i = 0; i < vertexCount; ++i) {
         const float x = vertices[i].position.x + pixelX;
         const float y = vertices[i].position.y + pixelY;
@@ -196,7 +196,7 @@ void NoteImmediateDraw() noexcept {
     FlushGeometry();
 }
 
-void SetClipRect(SDL_Renderer* renderer, const ShapeBounds& deviceRect) noexcept {
+void SetClipRect(SDL_Renderer* renderer, const InkingShapeBounds& deviceRect) noexcept {
     // 先刷：攒着的顶点属于"上一个裁剪"，必须在旧裁剪下画完再换新的。
     FlushGeometry();
     if (renderer == nullptr) {
@@ -225,4 +225,4 @@ void ClearClipRect(SDL_Renderer* renderer) noexcept {
     }
 }
 
-}  // namespace inking::detail
+}  // namespace inking_detail

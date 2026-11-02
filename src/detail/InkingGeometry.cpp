@@ -12,9 +12,7 @@
 // 第 0 层渲染要用渲染层的 `fillShape` / `currentRenderer`（`SKILL.md` §3.5 的
 // 可选依赖思路：渲染层是框架内部共用的一层，不是公开 API）。
 #include <render/InkingDraw.h>
-
-namespace inking {
-namespace detail {
+namespace inking_detail {
 
 namespace {
 
@@ -27,19 +25,19 @@ float magnifyOf(const InkingWidget& node) {
 }  // namespace
 
 void FillDefaultRect(const InkingWidget& node, float pixelX, float pixelY) {
-    fillShape(currentRenderer(), ShapeSpec::Rect(), node.GetWidth(),
+    fillShape(currentRenderer(), InkingShapeSpec::Rect(), node.GetWidth(),
               node.GetHeight(), magnifyOf(node), pixelX, pixelY,
-              TransformSpec{}, node.GetColor());
+              InkingTransformSpec{}, node.GetColor());
 }
 
-Affine AncestorAffine(const InkingWidget& node) noexcept {
+InkingAffine AncestorAffine(const InkingWidget& node) noexcept {
     // 递归（深度通常很小）：A(node) = A(parent) ∘ (parent 的子树变换)。
     const InkingWidget* parent = node.GetParent();
     if (parent == nullptr) {
-        return Affine{};
+        return InkingAffine{};
     }
-    const Affine outer = AncestorAffine(*parent);
-    const TransformSpec transform = parent->GetSubtreeTransform();
+    const InkingAffine outer = AncestorAffine(*parent);
+    const InkingTransformSpec transform = parent->GetSubtreeTransform();
     if (transform.IsIdentity()) {
         return outer;
     }
@@ -48,7 +46,7 @@ Affine AncestorAffine(const InkingWidget& node) noexcept {
                         + static_cast<float>(parent->GetWidth()) * 0.5f;
     const float centerY = parent->GetAbsY()
                         + static_cast<float>(parent->GetHeight()) * 0.5f;
-    return ComposeAffine(outer, AffineFromTransform(transform, centerX, centerY));
+    return InkingComposeAffine(outer, InkingAffineFromTransform(transform, centerX, centerY));
 }
 
 /**
@@ -57,9 +55,9 @@ Affine AncestorAffine(const InkingWidget& node) noexcept {
  * （B12 的坑：滑出去的内容照样可见）；而祖先滚了，这个容器连同它的裁剪窗口
  * 当然要一起动——所以祖先链照旧用各自的子树变换。
  */
-Affine ClipChainAffine(const InkingWidget& node) noexcept {
-    Affine chain = AncestorAffine(node);
-    const TransformSpec transform = node.GetClipTransform();
+InkingAffine ClipChainAffine(const InkingWidget& node) noexcept {
+    InkingAffine chain = AncestorAffine(node);
+    const InkingTransformSpec transform = node.GetClipTransform();
     if (transform.IsIdentity()) {
         return chain;
     }
@@ -67,14 +65,14 @@ Affine ClipChainAffine(const InkingWidget& node) noexcept {
                         + static_cast<float>(node.GetWidth()) * 0.5f;
     const float centerY = node.GetAbsY()
                         + static_cast<float>(node.GetHeight()) * 0.5f;
-    return ComposeAffine(chain, AffineFromTransform(transform, centerX, centerY));
+    return InkingComposeAffine(chain, InkingAffineFromTransform(transform, centerX, centerY));
 }
 
-Affine SubtreeChainAffine(const InkingWidget& node) noexcept {
+InkingAffine SubtreeChainAffine(const InkingWidget& node) noexcept {
     // 祖先那一份先算出来，再叠上**自己**的子树变换：结果就是"对子节点生效的
     // 那一份"（= AncestorAffine(任意直接子节点)）。
-    Affine chain = AncestorAffine(node);
-    const TransformSpec transform = node.GetSubtreeTransform();
+    InkingAffine chain = AncestorAffine(node);
+    const InkingTransformSpec transform = node.GetSubtreeTransform();
     if (transform.IsIdentity()) {
         return chain;
     }
@@ -82,20 +80,20 @@ Affine SubtreeChainAffine(const InkingWidget& node) noexcept {
                         + static_cast<float>(node.GetWidth()) * 0.5f;
     const float centerY = node.GetAbsY()
                         + static_cast<float>(node.GetHeight()) * 0.5f;
-    return ComposeAffine(chain, AffineFromTransform(transform, centerX, centerY));
+    return InkingComposeAffine(chain, InkingAffineFromTransform(transform, centerX, centerY));
 }
 
-ShapeBounds ClipBoundsInDevice(const InkingWidget& node,
-                               const ShapeBounds& localBounds) noexcept {
+InkingShapeBounds ClipBoundsInDevice(const InkingWidget& node,
+                               const InkingShapeBounds& localBounds) noexcept {
     if (localBounds.width <= 0.0f || localBounds.height <= 0.0f) {
         // 空裁剪区 = 什么都不画（合法但罕见；直接给一个零矩形）。
-        return ShapeBounds{0.0f, 0.0f, 0.0f, 0.0f};
+        return InkingShapeBounds{0.0f, 0.0f, 0.0f, 0.0f};
     }
 
     const float scale = node.GetMagnification() > 0.0f
                           ? node.GetMagnification() : 1.0f;
     // ① 本地矩形 + 节点绝对布局位置，再乘展示倍率 → 设备像素（和顶点同源）。
-    ShapeBounds rect{(localBounds.x + node.GetAbsX()) * scale,
+    InkingShapeBounds rect{(localBounds.x + node.GetAbsX()) * scale,
                      (localBounds.y + node.GetAbsY()) * scale,
                      localBounds.width * scale, localBounds.height * scale};
 
@@ -103,15 +101,15 @@ ShapeBounds ClipBoundsInDevice(const InkingWidget& node,
     //    这里用 `ClipChainAffine`（不是 `SubtreeChainAffine`）：节点自己的
     //    **滚动位移不算**，否则裁剪窗口跟着内容跑、滑出去的内容还看得见（B12）。
     //    仿射的平移量也要乘倍率（和 `SubmitToRenderer` 里那份一致）。
-    const Affine chainRaw = ClipChainAffine(node);
+    const InkingAffine chainRaw = ClipChainAffine(node);
     if (!chainRaw.IsIdentity() || chainRaw.tx != 0.0f || chainRaw.ty != 0.0f) {
-        const Affine chain{chainRaw.a, chainRaw.b, chainRaw.tx * scale,
+        const InkingAffine chain{chainRaw.a, chainRaw.b, chainRaw.tx * scale,
                            chainRaw.ty * scale};
-        const Point2 corners[4] = {
-            ApplyAffine(chain, rect.x, rect.y),
-            ApplyAffine(chain, rect.x + rect.width, rect.y),
-            ApplyAffine(chain, rect.x, rect.y + rect.height),
-            ApplyAffine(chain, rect.x + rect.width, rect.y + rect.height)};
+        const InkingPoint2 corners[4] = {
+            InkingApplyAffine(chain, rect.x, rect.y),
+            InkingApplyAffine(chain, rect.x + rect.width, rect.y),
+            InkingApplyAffine(chain, rect.x, rect.y + rect.height),
+            InkingApplyAffine(chain, rect.x + rect.width, rect.y + rect.height)};
         float minX = corners[0].x;
         float minY = corners[0].y;
         float maxX = corners[0].x;
@@ -122,15 +120,15 @@ ShapeBounds ClipBoundsInDevice(const InkingWidget& node,
             maxX = corners[i].x > maxX ? corners[i].x : maxX;
             maxY = corners[i].y > maxY ? corners[i].y : maxY;
         }
-        rect = ShapeBounds{minX, minY, maxX - minX, maxY - minY};
+        rect = InkingShapeBounds{minX, minY, maxX - minX, maxY - minY};
     }
 
     return rect;
 }
 
-bool AncestorClipInDevice(const InkingWidget& node, ShapeBounds& out) noexcept {
+bool AncestorClipInDevice(const InkingWidget& node, InkingShapeBounds& out) noexcept {
     bool has = false;
-    ShapeBounds acc{};
+    InkingShapeBounds acc{};
 
     for (const InkingWidget* up = node.GetParent(); up != nullptr;
          up = up->GetParent()) {
@@ -138,7 +136,7 @@ bool AncestorClipInDevice(const InkingWidget& node, ShapeBounds& out) noexcept {
             continue;
         }
         // 单个祖先的裁剪区（本地矩形 → 设备像素）：与画布那边**共用同一份换算**。
-        const ShapeBounds rect =
+        const InkingShapeBounds rect =
             ClipBoundsInDevice(*up, up->GetSubtreeClipBounds());
 
         if (!has) {
@@ -157,20 +155,20 @@ bool AncestorClipInDevice(const InkingWidget& node, ShapeBounds& out) noexcept {
     return true;
 }
 
-ShapeBounds SubtreeHitEnvelope(const InkingWidget& node) noexcept {
+InkingShapeBounds SubtreeHitEnvelope(const InkingWidget& node) noexcept {
     // 先要自己的（按钮那边是三态变换的并集），再把每个子节点的子树包络
     // 按"相对本节点左上角"的偏移并进来。递归深度很小；成本正比于子树节点数，
     // 而且只在**建表**时付一次（容器动起来不用重烘，这正是这一档的目标）。
     // 显式限定到 `InkingWidget`：容器会把自己的 `GetHitEnvelope` 重写成"含子树"，
     // 这里要的是**它自己那一份**，否则就是无限递归。
-    ShapeBounds merged = node.InkingWidget::GetHitEnvelope();
+    InkingShapeBounds merged = node.InkingWidget::GetHitEnvelope();
     const float baseX = node.GetAbsX();
     const float baseY = node.GetAbsY();
     for (const InkingWidget* child : node.GetChildren()) {
         if (child == nullptr) {
             continue;
         }
-        ShapeBounds one = SubtreeHitEnvelope(*child);
+        InkingShapeBounds one = SubtreeHitEnvelope(*child);
         // 子节点的包络是**相对它自己**的，搬到本节点的坐标系里。
         const float offsetX = child->GetAbsX() - baseX;
         const float offsetY = child->GetAbsY() - baseY;
@@ -185,10 +183,9 @@ ShapeBounds SubtreeHitEnvelope(const InkingWidget& node) noexcept {
         const float minY = one.y < merged.y ? one.y : merged.y;
         const float outMaxX = oneMaxX > maxX ? oneMaxX : maxX;
         const float outMaxY = oneMaxY > maxY ? oneMaxY : maxY;
-        merged = ShapeBounds{minX, minY, outMaxX - minX, outMaxY - minY};
+        merged = InkingShapeBounds{minX, minY, outMaxX - minX, outMaxY - minY};
     }
     return merged;
 }
 
-}  // namespace detail
-}  // namespace inking
+}  // namespace inking_detail

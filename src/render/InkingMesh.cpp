@@ -4,7 +4,7 @@
 //
 // 一段历史：这一整块原先和 `fillShape` 一起住在 `InkingDraw.cpp` 的匿名
 // 名字空间里。拆出来的唯一理由是**它不需要 SDL**——而"轮廓采得对不对"是
-// 必须能单独断言的一件事（`AppendContour` 的轮廓和 `ShapeContains` 的判定
+// 必须能单独断言的一件事（`AppendContour` 的轮廓和 `InkingShapeContains` 的判定
 // 是同源关系，画错了和点错了是同一个 bug 的两副面孔）。
 
 #include <render/InkingMesh.h>
@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace inking::detail {
+namespace inking_detail {
 
 namespace {
 
@@ -78,7 +78,7 @@ int StepsForLength(float pixels, int minSteps, int maxSteps) {
     return std::clamp(raw, minSteps, maxSteps);
 }
 
-bool SameShape(const ShapeSpec& a, const ShapeSpec& b) {
+bool SameShape(const InkingShapeSpec& a, const InkingShapeSpec& b) {
     if (a.kind != b.kind || a.radius != b.radius
         || a.thickness != b.thickness || a.cap != b.cap
         || a.sides != b.sides || a.rotation != b.rotation
@@ -98,42 +98,42 @@ bool SameShape(const ShapeSpec& a, const ShapeSpec& b) {
     return true;
 }
 
-int ContourSteps(const ShapeSpec& scaled, float w, float h) {
+int ContourSteps(const InkingShapeSpec& scaled, float w, float h) {
     const float shorter = w < h ? w : h;
     switch (scaled.kind) {
-        case ShapeKind::RoundedRect: {
+        case InkingShapeKind::RoundedRect: {
             const float r = std::clamp(scaled.radius, 0.0f, shorter * 0.5f);
             // 每段 1/4 弧的弧长 = r * π/2。
             return StepsForLength(r * (kPi * 0.5f), kMinArcSteps, kMaxArcSteps);
         }
-        case ShapeKind::Circle:
+        case InkingShapeKind::Circle:
             return StepsForLength(kPi * shorter, kMinCircleSteps,
                                   kMaxCircleSteps);
-        case ShapeKind::Ellipse:
+        case InkingShapeKind::Ellipse:
             // 椭圆周长没有初等闭式；π(a+b) 是个够用的近似（介于 2πa 与 2πb 之间）。
             return StepsForLength(kPi * (w + h) * 0.5f, kMinCircleSteps,
                                   kMaxCircleSteps);
-        case ShapeKind::Capsule: {
+        case InkingShapeKind::Capsule: {
             // 两段半圆，每段弧长 π·r（r = 短边的一半）。
             const float r = shorter * 0.5f;
             return StepsForLength(kPi * r, kMinArcSteps, kMaxCircleSteps);
         }
-        case ShapeKind::Line: {
+        case InkingShapeKind::Line: {
             // 只有圆头才有弧；平头 / 方头是矩形（用不到 steps）。
             const float r = scaled.thickness * 0.5f;
             return StepsForLength(kPi * r, kMinArcSteps, kMaxCircleSteps);
         }
-        case ShapeKind::Superellipse:
+        case InkingShapeKind::Superellipse:
             // 周长没有简单闭式：n = 2 时是椭圆的 π(a+b)/2，n 大时逼近矩形。
             return StepsForLength(w + h, kMinCircleSteps, kMaxCircleSteps);
-        case ShapeKind::Polygon:
+        case InkingShapeKind::Polygon:
             // 每条边都是直的：点数就是 sides，不按弧长估（也就不会写死密度）。
             return kMinCircleSteps;
-        case ShapeKind::ChamferRect:
-        case ShapeKind::Star:
-        case ShapeKind::Arc:
-        case ShapeKind::PolygonPath:
-        case ShapeKind::Rect:
+        case InkingShapeKind::ChamferRect:
+        case InkingShapeKind::Star:
+        case InkingShapeKind::Arc:
+        case InkingShapeKind::PolygonPath:
+        case InkingShapeKind::Rect:
         default:
             // 点数固定（8 个角 / 2×points 个顶点 / 自建网格 / 顶点表 / 4 个角）：
             // 用不到 steps。
@@ -141,15 +141,15 @@ int ContourSteps(const ShapeSpec& scaled, float w, float h) {
     }
 }
 
-void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
+void AppendContour(std::vector<OutlinePoint>& out, const InkingShapeSpec& shape,
                    float w, float h, int steps, float offset) {
     const float shorter = w < h ? w : h;
     const float halfW = w * 0.5f;
     const float halfH = h * 0.5f;
 
     switch (shape.kind) {
-        case ShapeKind::RoundedRect: {
-            // 半径夹取在这里就地做（float 版）：ShapeSpec::ClampRadius 收的是
+        case InkingShapeKind::RoundedRect: {
+            // 半径夹取在这里就地做（float 版）：InkingShapeSpec::ClampRadius 收的是
             // 整数尺寸，而这里的 w/h 已经乘过展示倍率，不该再截断回整数。
             const float base = std::clamp(shape.radius, 0.0f, shorter * 0.5f);
 
@@ -172,22 +172,22 @@ void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
             break;
         }
 
-        case ShapeKind::Circle: {
-            // 正圆：直径取 min(w,h)，**居中**（和 ShapeSpec 的语义一致）。
+        case InkingShapeKind::Circle: {
+            // 正圆：直径取 min(w,h)，**居中**（和 InkingShapeSpec 的语义一致）。
             const float radius = std::max(0.0f, shorter * 0.5f + offset);
             AppendArc(out, halfW, halfH, radius, radius, 0.0f, 2.0f * kPi,
                       steps, false);
             break;
         }
 
-        case ShapeKind::Ellipse: {
+        case InkingShapeKind::Ellipse: {
             AppendArc(out, halfW, halfH, std::max(0.0f, halfW + offset),
                       std::max(0.0f, halfH + offset), 0.0f, 2.0f * kPi, steps,
                       false);
             break;
         }
 
-        case ShapeKind::Capsule: {
+        case InkingShapeKind::Capsule: {
             // 用满 w×h：半径取短边的一半，**脊椎线段**沿长轴放，两端各一个半圆。
             // 往外长就是半径变大（两端圆心不动），上下/左右两条直边跟着平移。
             const float base = shorter * 0.5f;
@@ -207,10 +207,10 @@ void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
             break;
         }
 
-        case ShapeKind::Line: {
+        case InkingShapeKind::Line: {
             // 水平线段、纵向居中。平头 / 方头是矩形，圆头是两端各一个半圆。
             const float half = shape.thickness * 0.5f;
-            if (shape.cap == LineCap::Round) {
+            if (shape.cap == InkingLineCap::Round) {
                 const float r = std::max(0.0f, half + offset);
                 AppendArc(out, w, halfH, r, r, 1.5f * kPi, 2.5f * kPi, steps,
                           true);
@@ -218,13 +218,13 @@ void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
                           true);
                 break;
             }
-            const float extra = shape.cap == LineCap::Square ? half : 0.0f;
+            const float extra = shape.cap == InkingLineCap::Square ? half : 0.0f;
             AppendBox(out, halfW, halfH, halfW + extra + offset,
                       std::max(0.0f, half + offset));
             break;
         }
 
-        case ShapeKind::Polygon: {
+        case InkingShapeKind::Polygon: {
             // 正多边形每条边都是直的：点数就是边数，不需要按弧长估采样密度。
             // 往外偏移 offset 等价于**内切圆半径**加 offset，也就是外接圆半径
             // 加 offset / cos(π/n)。
@@ -232,13 +232,13 @@ void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
             // 这里**直接算**，别再走 `ShapePolygonCircumradius(int,int)`——
             // 那会把乘过展示倍率的 w/h 截断回整数，倍率是小数时对不上。
             const float base = shorter * 0.5f;
-            const int sides = inking::detail::ShapePolygonSides(shape);
+            const int sides = inking_detail::ShapePolygonSides(shape);
             const float apothemScale =
                 std::cos(kPi / static_cast<float>(sides));
             const float r = std::max(0.0f, base + offset / apothemScale);
 
             const float angleStep = 2.0f * kPi / static_cast<float>(sides);
-            const float start = shape.rotation * inking::detail::shapeDegToRad;
+            const float start = shape.rotation * inking_detail::shapeDegToRad;
             for (int i = 0; i < sides; ++i) {
                 const float angle = start + angleStep * static_cast<float>(i);
                 out.push_back(OutlinePoint{halfW + std::cos(angle) * r,
@@ -247,14 +247,14 @@ void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
             break;
         }
 
-        case ShapeKind::ChamferRect: {
+        case InkingShapeKind::ChamferRect: {
             // 八条边（四条直边 + 四条 45° 斜边）。沿法向内缩 offset 等价于
             // **每条边各向内平移 offset**：直边是半轴减 offset，斜边的切点
             // 也跟着挪——于是切角长度要跟着缩，缩到 0 就退化成矩形。
             const float halfWidth = w * 0.5f - offset;
             const float halfHeight = h * 0.5f - offset;
             const float chamfer = std::clamp(
-                inking::detail::ShapeChamferAmount(shape.chamfer, w, h), 0.0f,
+                inking_detail::ShapeChamferAmount(shape.chamfer, w, h), 0.0f,
                 std::max(0.0f, std::min(halfWidth, halfHeight)));
 
             // 顺时针，从左上角那条斜边开始（屏幕 y 向下）。
@@ -277,10 +277,10 @@ void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
             break;
         }
 
-        case ShapeKind::Star: {
+        case InkingShapeKind::Star: {
             // 2×points 个顶点（外、内交替）。沿法向偏移在这里近似成"半径各加减
             // offset"——尖角处会略窄一点，但羽化带只有 1 像素，看不出来。
-            const int points = inking::detail::ShapeStarPoints(shape);
+            const int points = inking_detail::ShapeStarPoints(shape);
             const int count = points * 2;
             const float outer =
                 std::max(0.0f, shorter * 0.5f + offset);
@@ -288,7 +288,7 @@ void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
                 0.0f, shorter * 0.5f
                           * std::clamp(shape.innerRatio, 0.0f, 1.0f) + offset);
             const float step = 2.0f * kPi / static_cast<float>(count);
-            const float start = shape.rotation * inking::detail::shapeDegToRad;
+            const float start = shape.rotation * inking_detail::shapeDegToRad;
             for (int i = 0; i < count; ++i) {
                 const float radius = (i % 2) == 0 ? outer : inner;
                 const float angle = start + step * static_cast<float>(i);
@@ -298,12 +298,12 @@ void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
             break;
         }
 
-        case ShapeKind::Superellipse: {
+        case InkingShapeKind::Superellipse: {
             // 参数化：x = a·sgn(cos t)·|cos t|^(2/n)，y 同理。n = 2 时就是椭圆
             // （|cos|^1），n 大时点会往四个"角"聚，正好是要的形状。
             const float a = std::max(0.0f, halfW + offset);
             const float b = std::max(0.0f, halfH + offset);
-            const float n = inking::detail::ShapeSuperellipseExponent(shape);
+            const float n = inking_detail::ShapeSuperellipseExponent(shape);
             const float power = 2.0f / n;
             const float safeSteps = static_cast<float>(steps > 0 ? steps : 1);
             for (int i = 0; i < steps; ++i) {
@@ -318,14 +318,14 @@ void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
             break;
         }
 
-        case ShapeKind::Ring:
-        case ShapeKind::Arc:
+        case InkingShapeKind::Ring:
+        case InkingShapeKind::Arc:
             // 圆环与圆弧带有孔（圆弧带的圆心落在孔里），走不了"外圈 + 内圈 +
             // 中心扇形"这套——`BuildShapeMesh` 里各自单独建网格。这里留空是兜底：
             // 万一漏进这条分支，下面的点数检查会拦住，宁可不画也别画成一个实心圆。
             break;
 
-        case ShapeKind::PolygonPath: {
+        case InkingShapeKind::PolygonPath: {
             // 任意多边形：按顶点表生成，偏移走**角平分线**（miter）——每条边各
             // 平移 offset，顶点取相邻两条边的交点。尖角处 miter 会被拉得很长，
             // 所以夹到 2×|offset|（超过就退化成"按一条边的法向平移"）。
@@ -382,7 +382,7 @@ void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
             break;
         }
 
-        case ShapeKind::Rect:
+        case InkingShapeKind::Rect:
         default: {
             AppendBox(out, halfW, halfH, halfW + offset, halfH + offset);
             break;
@@ -461,4 +461,4 @@ void AppendEarClipIndices(const std::vector<OutlinePoint>& ring,
     }
 }
 
-}  // namespace inking::detail
+}  // namespace inking_detail

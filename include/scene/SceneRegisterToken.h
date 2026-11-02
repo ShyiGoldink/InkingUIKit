@@ -14,7 +14,7 @@
 // 本项目的令牌被**模板化**了：后端只有 ShineBasicModule 一种被登记类型，
 // 所以它的令牌写死了指针类型；这里的被登记类型将来不止场景一种
 // （控件、面板……），把类型做成模板就能一个令牌管到底，不必每来一种
-// 类型就抄一遍完全相同的 RAII 代码。此处以 SceneLibrary 为库参数。
+// 类型就抄一遍完全相同的 RAII 代码。此处以 InkingSceneLibrary 为库参数。
 //
 // 为什么令牌头文件**包含**库头文件，而不是只做前向声明：
 // 库是静态类，令牌的构造 / 析构要直接调它的方法，光有类型名不够。
@@ -24,8 +24,6 @@
 #include <utility>
 
 #include <scene/SceneLibrary.h>
-
-namespace inking {
 
 /**
  * @brief 基于 RAII 思想的登记令牌：构造时把对象登记进库，析构时自动注销。
@@ -37,13 +35,13 @@ namespace inking {
  * 出现两份令牌抢着注销同一个登记，或者一份令牌提前把登记带走。
  */
 template <typename Registered, typename Library>
-class RegisterToken {
+class InkingRegisterToken {
 public:
-    /** 库的注册结果类型（SceneLibrary::RegisterResult）。 */
+    /** 库的注册结果类型（InkingSceneLibrary::RegisterResult）。 */
     using Result = typename Library::RegisterResult;
 
     /** 构造即登记：传入登记用的名字与被登记的对象的指针。 */
-    RegisterToken(std::string name, Registered* object)
+    InkingRegisterToken(std::string name, Registered* object)
         : _name(std::move(name)), _object(object) {
         // 不需要登记的情况有两类，统一收在这里，省得每个使用者各判一次：
         // 对象为空（没东西可登记），或者名字为空（登记进去也查不到，
@@ -60,7 +58,7 @@ public:
         _active = (_result == Result::Ok);
     }
 
-    ~RegisterToken() noexcept {
+    ~InkingRegisterToken() noexcept {
         if (_active) {
             // 注销要能容忍"库已经先退出"：库内部用的是函数内静态量，
             // 谁先登记就把库先拉起来，所以正常路径下库一定还在。
@@ -69,8 +67,8 @@ public:
     }
 
     // 禁止拷贝：一份登记只能有一个负责人。
-    RegisterToken(const RegisterToken&) = delete;
-    RegisterToken& operator=(const RegisterToken&) = delete;
+    InkingRegisterToken(const InkingRegisterToken&) = delete;
+    InkingRegisterToken& operator=(const InkingRegisterToken&) = delete;
 
     /**
      * 移动构造：把登记的所有权搬走，源对象置空。
@@ -79,7 +77,7 @@ public:
      * 中间那次注销会让库里出现一瞬间的空档，别人可能正好抢走这个名字。
      * 所以只搬状态，登记本身不动。
      */
-    RegisterToken(RegisterToken&& other) noexcept
+    InkingRegisterToken(InkingRegisterToken&& other) noexcept
         : _name(std::move(other._name)),
           _object(other._object),
           _result(other._result),
@@ -89,7 +87,7 @@ public:
         other._result = Result::Invalid;
     }
 
-    RegisterToken& operator=(RegisterToken&& other) noexcept {
+    InkingRegisterToken& operator=(InkingRegisterToken&& other) noexcept {
         if (this != &other) {
             // 先把自己手上那份注销掉，再接别人的——否则这条登记就没人管了。
             if (_active) {
@@ -131,4 +129,3 @@ private:
     bool _active = false;          /** 是否真的登记进了库 */
 };
 
-}  // namespace inking

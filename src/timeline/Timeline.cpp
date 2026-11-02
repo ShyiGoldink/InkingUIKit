@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <cmath>
 
-namespace inking {
-
 namespace {
 
 /** 单帧最多派发多少步逻辑，纯保险（入口已经截断过 delta）。 */
@@ -12,7 +10,7 @@ constexpr int kMaxStepsPerFrame = 1000;
 
 }  // namespace
 
-Timeline::Timeline(double logicIntervalSeconds, double maxCatchUpSeconds)
+InkingTimeline::InkingTimeline(double logicIntervalSeconds, double maxCatchUpSeconds)
     : _logicInterval(logicIntervalSeconds > 0.0 ? logicIntervalSeconds
                                                 : 1.0 / 50.0),
       _maxCatchUp(maxCatchUpSeconds > 0.0 ? maxCatchUpSeconds : 0.25) {}
@@ -21,7 +19,7 @@ Timeline::Timeline(double logicIntervalSeconds, double maxCatchUpSeconds)
 // 驱动
 // ---------------------------------------------------------------------------
 
-void Timeline::Advance(double deltaSeconds) {
+void InkingTimeline::Advance(double deltaSeconds) {
     // 负的 delta（时钟回拨 / 第一帧）按 0 处理，绝不倒着走。
     if (deltaSeconds <= 0.0) {
         deltaSeconds = 0.0;
@@ -122,7 +120,7 @@ void Timeline::Advance(double deltaSeconds) {
 // 订阅
 // ---------------------------------------------------------------------------
 
-Timeline::Handle Timeline::Subscribe(double intervalSeconds,
+InkingTimeline::Handle InkingTimeline::Subscribe(double intervalSeconds,
                                      SampleCallback callback) {
     if (intervalSeconds <= 0.0 || !callback) {
         return 0;
@@ -142,7 +140,7 @@ Timeline::Handle Timeline::Subscribe(double intervalSeconds,
     return _subscribers.back().handle;
 }
 
-bool Timeline::Unsubscribe(Handle handle) {
+bool InkingTimeline::Unsubscribe(Handle handle) {
     if (handle == 0) {
         return false;
     }
@@ -163,7 +161,7 @@ bool Timeline::Unsubscribe(Handle handle) {
     return true;
 }
 
-std::size_t Timeline::SubscriberCount() const noexcept {
+std::size_t InkingTimeline::SubscriberCount() const noexcept {
     return static_cast<std::size_t>(
         std::count_if(_subscribers.begin(), _subscribers.end(),
                       [](const Subscriber& subscriber) {
@@ -175,36 +173,35 @@ std::size_t Timeline::SubscriberCount() const noexcept {
 // 通道注册与自检
 // ---------------------------------------------------------------------------
 
-void Timeline::SetLogicCallback(LogicCallback callback) {
+void InkingTimeline::SetLogicCallback(LogicCallback callback) {
     _logicCallback = std::move(callback);
 }
 
-double Timeline::GetLogicInterval() const noexcept {
+double InkingTimeline::GetLogicInterval() const noexcept {
     return _logicInterval;
 }
 
-void Timeline::SetFrameCallback(FrameCallback callback) {
+void InkingTimeline::SetFrameCallback(FrameCallback callback) {
     _frameCallback = std::move(callback);
 }
 
-std::uint64_t Timeline::GetLogicStepCount() const noexcept {
+std::uint64_t InkingTimeline::GetLogicStepCount() const noexcept {
     return _logicStepCount;
 }
 
-int Timeline::GetLastLogicSteps() const noexcept {
+int InkingTimeline::GetLastLogicSteps() const noexcept {
     return _lastLogicSteps;
 }
 
-double Timeline::GetLastDelta() const noexcept {
+double InkingTimeline::GetLastDelta() const noexcept {
     return _lastDelta;
 }
 
-double Timeline::GetLogicAccumulator() const noexcept {
+double InkingTimeline::GetLogicAccumulator() const noexcept {
     return _logicAccumulator;
 }
 
-std::uint64_t Timeline::GetCatchUpDropCount() const noexcept {
+std::uint64_t InkingTimeline::GetCatchUpDropCount() const noexcept {
     return _catchUpDrops;
 }
 
-}  // namespace inking

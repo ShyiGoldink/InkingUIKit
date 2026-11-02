@@ -41,7 +41,7 @@
 //                     948 条里有一条重复 528 次——噪声的根子是这条，不是
 //                     某一句日志的级别写错了）。
 //                     它仍然必须是 **PUBLIC** 而不是 PRIVATE：本头里
-//                     `kDefaultLogLevel` / `kDebugEnabled` 是 `inline constexpr`，
+//                     `InkingDefaultLogLevel` / `InkingDebugEnabled` 是 `inline constexpr`，
 //                     库与调用方取值不同就是 ODR 违例（见 CMakeLists.txt 里
 //                     那段"一旦公开头出现这种分支，就必须改成 PUBLIC"）。
 //
@@ -55,7 +55,6 @@
 #include <string_view>
 #include <vector>
 
-namespace inking {
 
 /**
  * @brief 日志级别。
@@ -63,7 +62,7 @@ namespace inking {
  * Pass 是前端特有的"成功流水"级别，排在 Info 之后：把阈值调到 warn，
  * 它和 Info 一起被过滤；调到 info，它照常保留。
  */
-enum class LogLevel : std::uint8_t {
+enum class InkingLogLevel : std::uint8_t {
     Debug = 0,
     Info,
     Pass,
@@ -75,9 +74,9 @@ enum class LogLevel : std::uint8_t {
 
 /** 默认阈值：开了 INK_ISDEBUG 记 Debug，否则从 Info 起。 */
 #if defined(INK_ISDEBUG)
-inline constexpr LogLevel kDefaultLogLevel = LogLevel::Debug;
+inline constexpr InkingLogLevel InkingDefaultLogLevel = InkingLogLevel::Debug;
 #else
-inline constexpr LogLevel kDefaultLogLevel = LogLevel::Info;
+inline constexpr InkingLogLevel InkingDefaultLogLevel = InkingLogLevel::Info;
 #endif
 
 class InkLog {
@@ -120,11 +119,11 @@ public:
     static std::filesystem::path logDirectory();
 
     /** 运行时调整阈值。 */
-    static void setLevel(LogLevel level);
+    static void setLevel(InkingLogLevel level);
     /** 读取当前阈值。 */
-    static LogLevel level();
+    static InkingLogLevel level();
     /** 解析级别名字；无法识别时返回 false。 */
-    static bool parseLevel(std::string_view text, LogLevel& result);
+    static bool parseLevel(std::string_view text, InkingLogLevel& result);
 
     /** 读取内存环形缓冲里最近 count 行。 */
     static std::vector<std::string> tail(std::size_t count);
@@ -144,7 +143,7 @@ public:
      * 恰好 1 条 WARN"（零尺寸、全透明兜底、字体打不开）。没有这个观测口，
      * 那些断言只能靠人翻 `LOG/` 目录——而"只能靠眼看"的验收等于没有验收。
      */
-    static std::uint64_t CountOf(LogLevel level);
+    static std::uint64_t CountOf(InkingLogLevel level);
 
     /**
      * @brief 清空分级计数、折叠/去重槽。
@@ -172,7 +171,7 @@ private:
     };
 
     /** 统一的落盘入口：级别过滤、折叠、限流、写文件。 */
-    static void write(LogLevel level, const std::string& moduleName,
+    static void write(InkingLogLevel level, const std::string& moduleName,
                       const std::string& message, Kind kind,
                       const std::source_location& site);
 };
@@ -196,13 +195,13 @@ public:
                      const std::source_location& = std::source_location::current()) noexcept {}
     static std::filesystem::path logFilePath() { return {}; }
     static std::filesystem::path logDirectory() { return {}; }
-    static void setLevel(LogLevel) noexcept {}
-    static LogLevel level() noexcept { return LogLevel::Info; }
-    static bool parseLevel(std::string_view, LogLevel&) noexcept { return false; }
+    static void setLevel(InkingLogLevel) noexcept {}
+    static InkingLogLevel level() noexcept { return InkingLogLevel::Info; }
+    static bool parseLevel(std::string_view, InkingLogLevel&) noexcept { return false; }
     static std::vector<std::string> tail(std::size_t) { return {}; }
     static std::vector<std::string> grep(std::string_view, std::string_view) { return {}; }
     static std::string statistics() { return {}; }
-    static std::uint64_t CountOf(LogLevel) noexcept { return 0; }
+    static std::uint64_t CountOf(InkingLogLevel) noexcept { return 0; }
     static void ResetStats() noexcept {}
     static std::filesystem::path report() { return {}; }
 };
@@ -211,19 +210,18 @@ public:
 
 /** 日志系统是否在编译期启用。 */
 #if defined(INK_ISLOG)
-inline constexpr bool kLogEnabled = true;
+inline constexpr bool InkingLogEnabled = true;
 #else
-inline constexpr bool kLogEnabled = false;
+inline constexpr bool InkingLogEnabled = false;
 #endif
 
 /** 调试输出与调试断言是否在编译期启用。 */
 #if defined(INK_ISDEBUG)
-inline constexpr bool kDebugEnabled = true;
+inline constexpr bool InkingDebugEnabled = true;
 #else
-inline constexpr bool kDebugEnabled = false;
+inline constexpr bool InkingDebugEnabled = false;
 #endif
 
-}  // namespace inking
 
 // ---------------------------------------------------------------------------
 // 调用宏：日志关闭时整条语句消失，参数不会求值。
@@ -232,13 +230,13 @@ inline constexpr bool kDebugEnabled = false;
 // ---------------------------------------------------------------------------
 #if defined(INK_ISLOG)
 #define INK_LOG_INFO(moduleName, message) \
-    ::inking::InkLog::info((moduleName), (message), ::std::source_location::current())
+    ::InkLog::info((moduleName), (message), ::std::source_location::current())
 #define INK_LOG_PASS(moduleName, message) \
-    ::inking::InkLog::pass((moduleName), (message), ::std::source_location::current())
+    ::InkLog::pass((moduleName), (message), ::std::source_location::current())
 #define INK_LOG_WARN(moduleName, message) \
-    ::inking::InkLog::warn((moduleName), (message), ::std::source_location::current())
+    ::InkLog::warn((moduleName), (message), ::std::source_location::current())
 #define INK_LOG_ERROR(moduleName, message) \
-    ::inking::InkLog::error((moduleName), (message), ::std::source_location::current())
+    ::InkLog::error((moduleName), (message), ::std::source_location::current())
 #else
 #define INK_LOG_INFO(moduleName, message)  ((void)0)
 #define INK_LOG_PASS(moduleName, message)  ((void)0)
@@ -249,14 +247,14 @@ inline constexpr bool kDebugEnabled = false;
 /** 调试日志：ISLOG 与 ISDEBUG 同时打开才会真正写入。 */
 #if defined(INK_ISLOG) && defined(INK_ISDEBUG)
 #define INK_LOG_DEBUG(moduleName, message) \
-    ::inking::InkLog::debug((moduleName), (message), ::std::source_location::current())
+    ::InkLog::debug((moduleName), (message), ::std::source_location::current())
 #else
 #define INK_LOG_DEBUG(moduleName, message) ((void)0)
 #endif
 
 /** 人工打点：不受运行期阈值影响，用于标记复现起点。 */
 #if defined(INK_ISLOG)
-#define INK_LOG_MARK(text) ::inking::InkLog::mark((text), ::std::source_location::current())
+#define INK_LOG_MARK(text) ::InkLog::mark((text), ::std::source_location::current())
 #else
 #define INK_LOG_MARK(text) ((void)0)
 #endif

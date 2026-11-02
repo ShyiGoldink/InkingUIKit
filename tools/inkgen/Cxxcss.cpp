@@ -979,7 +979,7 @@ std::string ParseSvgSubset(const std::string& svg, RawSvgShape& out) {
 /// 和运行期那份（`InkingDraw.cpp` 的 `SameShape`）同一个教训：**所有影响几何的
 /// 字段都要比**。运行期那份漏过 B3/B5 加的字段，这份也漏过——一起补上。
 /// 顶点表按内容比（借的是视图，比指针说明不了形状相同）。
-bool SameShape(const inking::ShapeSpec& a, const inking::ShapeSpec& b) {
+bool SameShape(const InkingShapeSpec& a, const InkingShapeSpec& b) {
     if (a.kind != b.kind || a.radius != b.radius
         || a.thickness != b.thickness || a.cap != b.cap
         || a.sides != b.sides || a.rotation != b.rotation
@@ -1005,7 +1005,7 @@ bool SameShape(const inking::ShapeSpec& a, const inking::ShapeSpec& b) {
  * 需要"边框 / 变换"那套词汇，这一轮没有，所以宁可报错也不悄悄挪一下。
  */
 bool SvgToShape(const RawSvgShape& raw, int width, int height,
-                inking::ShapeSpec& out, std::string& error,
+                InkingShapeSpec& out, std::string& error,
                 std::vector<float>* pathOut = nullptr) {
     const double w = static_cast<double>(width);
     const double h = static_cast<double>(height);
@@ -1024,8 +1024,8 @@ bool SvgToShape(const RawSvgShape& raw, int width, int height,
         }
         const double radius = std::max(raw.rx, raw.ry);
         out = radius > 0.0
-                  ? inking::ShapeSpec::RoundedRect(static_cast<float>(radius))
-                  : inking::ShapeSpec::Rect();
+                  ? InkingShapeSpec::RoundedRect(static_cast<float>(radius))
+                  : InkingShapeSpec::Rect();
         return true;
     }
     if (raw.tag == "circle") {
@@ -1037,7 +1037,7 @@ bool SvgToShape(const RawSvgShape& raw, int width, int height,
                   + "、r=" + std::to_string(radius) + "）";
             return false;
         }
-        out = inking::ShapeSpec::Circle();
+        out = InkingShapeSpec::Circle();
         return true;
     }
     if (raw.tag == "ellipse") {
@@ -1049,12 +1049,12 @@ bool SvgToShape(const RawSvgShape& raw, int width, int height,
                   + "、ry=" + std::to_string(h * 0.5) + "）";
             return false;
         }
-        out = inking::ShapeSpec::Ellipse();
+        out = InkingShapeSpec::Ellipse();
         return true;
     }
     if (raw.tag == "path") {
         // `path` 是**任意**形状：它不需要与组件框一致（点列就是设计坐标，
-        // 可以只占框里一小块）。点列交给调用方持有（`ShapeSpec` 里只有视图），
+        // 可以只占框里一小块）。点列交给调用方持有（`InkingShapeSpec` 里只有视图），
         // `Emit` 会把它烘成生成代码里的静态数组。
         if (pathOut == nullptr) {
             error = "path 需要调用方持有顶点表（内部错误：没有传点列存储）";
@@ -1065,7 +1065,7 @@ bool SvgToShape(const RawSvgShape& raw, int width, int height,
             return false;
         }
         *pathOut = raw.points;
-        out = inking::ShapeSpec::PolygonPath(
+        out = InkingShapeSpec::PolygonPath(
             pathOut->data(), static_cast<int>(pathOut->size() / 2));
         return true;
     }
@@ -1099,7 +1099,7 @@ std::string JoinKnownFields(const char* const* table, std::size_t count) {
  * **生成器指令字段**：不参与运行期数据，所有加载器一律跳过（0.2.0 T-10）。
  *
  * 与"未知字段"的区别是**谁处理它**：指令字段在读配置这一层就被消费掉了
- * （`$comment` 是注释、`$extends` 是继承），不会进 `ButtonData` / `PanelData`
+ * （`$comment` 是注释、`$extends` 是继承），不会进 `InkingButtonData` / `InkingPanelData`
  * 那些结构，所以白名单里也不该有它们。
  */
 bool IsDirectiveField(const std::string& key) {
@@ -1338,7 +1338,7 @@ protected:
 
         const float alpha = parts.size() == 4 ? static_cast<float>(parts[3])
                                               : 1.0f;
-        return inking::FromUnitRgba(static_cast<float>(parts[0]),
+        return InkingFromUnitRgba(static_cast<float>(parts[0]),
                                  static_cast<float>(parts[1]),
                                  static_cast<float>(parts[2]), alpha);
     }
@@ -1404,7 +1404,7 @@ protected:
      * 一点作用都没有——这是"跑起来了但没生效"那一类，最容易骗过人。
      */
     void ReadTransition(const JsonValue& value, const std::string& field,
-                        float& seconds, inking::Easing& easing) {
+                        float& seconds, InkingEasing& easing) {
         if (!value.IsObject()) {
             Error(value,
                   field
@@ -1460,13 +1460,13 @@ protected:
         }
         const std::string& name = easingField->text;
         if (name == "linear") {
-            easing = inking::Easing::Linear;
+            easing = InkingEasing::Linear;
         } else if (name == "easeIn") {
-            easing = inking::Easing::EaseIn;
+            easing = InkingEasing::EaseIn;
         } else if (name == "easeOut") {
-            easing = inking::Easing::EaseOut;
+            easing = InkingEasing::EaseOut;
         } else if (name == "easeInOut") {
-            easing = inking::Easing::EaseInOut;
+            easing = InkingEasing::EaseInOut;
         } else {
             Error(*easingField,
                   field + ".transition.easing \"" + name
@@ -1494,7 +1494,7 @@ protected:
      *   - `rotate` 的单位是**度**，顺时针为正。
      */
     void ReadTransform(const JsonValue& value, const std::string& field,
-                       inking::TransformSpec& out) {
+                       InkingTransformSpec& out) {
         if (!value.IsObject()) {
             Error(value,
                   field + ".transform 必须是对象，形如 "
@@ -1534,7 +1534,7 @@ protected:
     }
 
     /// 形状层（`CXXCSS.md` §3）：一个 `type` 分支派生出 SDF / 命中 / AABB。
-    void ReadShape(const JsonValue& value, inking::ShapeSpec& out,
+    void ReadShape(const JsonValue& value, InkingShapeSpec& out,
                    std::vector<float>* pathPoints = nullptr) {
         if (!value.IsObject()) {
             Error(value, "shape 必须是对象，形如 "
@@ -1545,7 +1545,7 @@ protected:
         const JsonValue* type = value.Find("type");
         if (type == nullptr) {
             // shape 写成 {} 等价于直角矩形（CXXCSS.md §3.2）。
-            out = inking::ShapeSpec::Rect();
+            out = InkingShapeSpec::Rect();
             return;
         }
         if (!type->IsString()) {
@@ -1587,7 +1587,7 @@ protected:
 
         const std::string& name = type->text;
         if (name == "rect") {
-            out = inking::ShapeSpec::Rect();
+            out = InkingShapeSpec::Rect();
         } else if (name == "roundedRect") {
             const JsonValue* radius = value.Find("radius");
             if (radius == nullptr) {
@@ -1601,27 +1601,27 @@ protected:
                 return;
             }
             // 上限由形状自己夹（min(w,h)/2），这是数学要求不是配置错误。
-            out = inking::ShapeSpec::RoundedRect(static_cast<float>(number));
+            out = InkingShapeSpec::RoundedRect(static_cast<float>(number));
         } else if (name == "circle") {
-            out = inking::ShapeSpec::Circle();
+            out = InkingShapeSpec::Circle();
         } else if (name == "ellipse") {
-            out = inking::ShapeSpec::Ellipse();
+            out = InkingShapeSpec::Ellipse();
         } else if (name == "capsule") {
             // 胶囊不需要参数：两端半圆的半径由 min(w,h)/2 定。
-            out = inking::ShapeSpec::Capsule();
+            out = InkingShapeSpec::Capsule();
         } else if (name == "ring") {
             float thickness = 0.0f;
             if (!readThickness("ring", thickness)) {
                 return;
             }
-            out = inking::ShapeSpec::Ring(thickness);
+            out = InkingShapeSpec::Ring(thickness);
         } else if (name == "line") {
             float thickness = 0.0f;
             if (!readThickness("line", thickness)) {
                 return;
             }
             // cap 缺省是平头（和 CSS 的 stroke-linecap 默认值一致）。
-            inking::LineCap cap = inking::LineCap::Butt;
+            InkingLineCap cap = InkingLineCap::Butt;
             if (const JsonValue* field = value.Find("cap")) {
                 if (!field->IsString()) {
                     Error(*field,
@@ -1629,11 +1629,11 @@ protected:
                     return;
                 }
                 if (field->text == "butt") {
-                    cap = inking::LineCap::Butt;
+                    cap = InkingLineCap::Butt;
                 } else if (field->text == "round") {
-                    cap = inking::LineCap::Round;
+                    cap = InkingLineCap::Round;
                 } else if (field->text == "square") {
-                    cap = inking::LineCap::Square;
+                    cap = InkingLineCap::Square;
                 } else {
                     Error(*field, "shape.cap \"" + field->text
                                       + "\" 不认识（只支持 butt、round、"
@@ -1641,7 +1641,7 @@ protected:
                     return;
                 }
             }
-            out = inking::ShapeSpec::Line(thickness, cap);
+            out = InkingShapeSpec::Line(thickness, cap);
         } else if (name == "polygon") {
             const JsonValue* field = value.Find("sides");
             if (field == nullptr) {
@@ -1666,7 +1666,7 @@ protected:
                 rotation = static_cast<float>(
                     ReadNumber(*rotationField, "shape.rotation"));
             }
-            out = inking::ShapeSpec::Polygon(static_cast<int>(sides + 0.5),
+            out = InkingShapeSpec::Polygon(static_cast<int>(sides + 0.5),
                                           rotation);
         } else if (name == "chamferRect") {
             const JsonValue* field = value.Find("chamfer");
@@ -1681,7 +1681,7 @@ protected:
                 return;
             }
             // 切角过长会吃掉整条边 —— 上限由形状自己夹（短边的一半）。
-            out = inking::ShapeSpec::ChamferRect(static_cast<float>(chamfer));
+            out = InkingShapeSpec::ChamferRect(static_cast<float>(chamfer));
         } else if (name == "star") {
             const JsonValue* field = value.Find("points");
             if (field == nullptr) {
@@ -1715,7 +1715,7 @@ protected:
                 rotation = static_cast<float>(
                     ReadNumber(*rotationField, "shape.rotation"));
             }
-            out = inking::ShapeSpec::Star(static_cast<int>(points + 0.5),
+            out = InkingShapeSpec::Star(static_cast<int>(points + 0.5),
                                        static_cast<float>(innerRatio), rotation);
         } else if (name == "superellipse") {
             const JsonValue* field = value.Find("exponent");
@@ -1731,7 +1731,7 @@ protected:
                 return;
             }
             // 过大的指数会让 pow 溢出，上限由形状自己夹。
-            out = inking::ShapeSpec::Superellipse(static_cast<float>(exponent));
+            out = InkingShapeSpec::Superellipse(static_cast<float>(exponent));
         } else if (name == "arc") {
             float thickness = 0.0f;
             if (!readThickness("arc", thickness)) {
@@ -1756,7 +1756,7 @@ protected:
                 startAngle = static_cast<float>(
                     ReadNumber(*startField, "shape.startAngle"));
             }
-            out = inking::ShapeSpec::Arc(thickness, startAngle,
+            out = InkingShapeSpec::Arc(thickness, startAngle,
                                       static_cast<float>(sweep));
         } else if (name == "polygonPath") {
             if (pathPoints == nullptr) {
@@ -1783,10 +1783,10 @@ protected:
                 points.push_back(
                     static_cast<float>(ReadNumber(item, "shape.vertices")));
             }
-            // 点列交给调用方持有（`ShapeSpec` 里只有视图），`Emit` 会把这份数据
+            // 点列交给调用方持有（`InkingShapeSpec` 里只有视图），`Emit` 会把这份数据
             // 烘成生成代码里的静态数组。
             *pathPoints = std::move(points);
-            out = inking::ShapeSpec::PolygonPath(
+            out = InkingShapeSpec::PolygonPath(
                 pathPoints->data(), static_cast<int>(pathPoints->size() / 2));
         } else {
             Error(*type, "shape.type \"" + name
@@ -1803,7 +1803,7 @@ protected:
      * 另一笔。所以"描边宽度"不写进 `shape` 的参数里——那会让同一个圆角矩形
      * 出两套半径，而且宽度一变，形状的身份（缓存键、命中包络）就跟着变。
      */
-    void ReadStroke(const JsonValue& value, inking::StrokeSpec& out) {
+    void ReadStroke(const JsonValue& value, InkingStrokeSpec& out) {
         if (!value.IsObject()) {
             Error(value, "stroke 必须是对象，形如 "
                          "{\"width\":3,\"color\":\"0|0|0|0.8\"}");
@@ -1847,7 +1847,7 @@ protected:
      * 那是另一条渲染路径。所以这里**不认 blur 字段**：写它会明确报错，
      * 而不是收下之后悄悄不生效。
      */
-    void ReadShadow(const JsonValue& value, inking::ShadowSpec& out) {
+    void ReadShadow(const JsonValue& value, InkingShadowSpec& out) {
         if (!value.IsObject()) {
             Error(value, "shadow 必须是对象，形如 "
                          "{\"offsetX\":0,\"offsetY\":4,\"color\":\"0|0|0|0.35\"}");
@@ -1884,14 +1884,14 @@ protected:
      * 负间距在布局里没有定义清楚的语义，与其猜不如拒绝。
      */
     void ReadSpacing(const JsonValue& value, const std::string& field,
-                     inking::LayoutSpacing& out) {
+                     InkingLayoutSpacing& out) {
         if (value.IsNumber()) {
             const float all = static_cast<float>(ReadNumber(value, field));
             if (all < 0.0f) {
                 Error(value, field + " 不能是负数");
                 return;
             }
-            out = inking::LayoutSpacing{all, all, all, all};
+            out = InkingLayoutSpacing{all, all, all, all};
             return;
         }
         if (!value.IsObject()) {
@@ -1927,8 +1927,8 @@ protected:
     /**
      * @brief 读字体字段：字符串，或**字符串数组**（0.3.0 T-13）。
      *
-     * 数组 = 回退链：**第一个元素进主字段**（`ButtonTextData::path` /
-     * `TextStyle::fontPath`），其余进链尾。这样"首选"仍然只有一个字段
+     * 数组 = 回退链：**第一个元素进主字段**（`InkingButtonTextData::path` /
+     * `InkingTextStyle::fontPath`），其余进链尾。这样"首选"仍然只有一个字段
      * （构造日志只认主字段），链只是它的尾巴。
      *
      * 两种写法都不会被静默吞掉：
@@ -2022,7 +2022,7 @@ protected:
      * （`wheelStep`，固定设计像素——没有"视口比例"那一档）、**条的显示策略与几何**。
      * 没有缓动开关（滚轮与点轨道都瞬时到位），也没有惯性 / 回弹。
      */
-    void ReadScroll(const JsonValue& value, inking::ScrollSpec& out) {
+    void ReadScroll(const JsonValue& value, InkingScrollSpec& out) {
         if (!value.IsObject()) {
             Error(value, "scroll 必须是对象，形如 "
                          "{\"axes\":\"vertical\",\"wheelStep\":48}");
@@ -2061,18 +2061,18 @@ protected:
             int parsed = 0;
             if (ReadEnum(*bar, "scroll.verticalBar",
                          {{"auto", 0}, {"always", 1}, {"never", 2}}, parsed)) {
-                out.verticalBar = parsed == 0   ? inking::ScrollAxisMode::Auto
-                                  : parsed == 1 ? inking::ScrollAxisMode::Always
-                                                : inking::ScrollAxisMode::Never;
+                out.verticalBar = parsed == 0   ? InkingScrollAxisMode::Auto
+                                  : parsed == 1 ? InkingScrollAxisMode::Always
+                                                : InkingScrollAxisMode::Never;
             }
         }
         if (const JsonValue* bar = value.Find("horizontalBar")) {
             int parsed = 0;
             if (ReadEnum(*bar, "scroll.horizontalBar",
                          {{"auto", 0}, {"always", 1}, {"never", 2}}, parsed)) {
-                out.horizontalBar = parsed == 0   ? inking::ScrollAxisMode::Auto
-                                    : parsed == 1 ? inking::ScrollAxisMode::Always
-                                                  : inking::ScrollAxisMode::Never;
+                out.horizontalBar = parsed == 0   ? InkingScrollAxisMode::Auto
+                                    : parsed == 1 ? InkingScrollAxisMode::Always
+                                                  : InkingScrollAxisMode::Never;
             }
         }
         if (const JsonValue* width = value.Find("barWidth")) {
@@ -2093,7 +2093,7 @@ protected:
         }
     }
 
-    void ReadLayout(const JsonValue& value, inking::LayoutSpec& out) {
+    void ReadLayout(const JsonValue& value, InkingLayoutSpec& out) {
         if (!value.IsObject()) {
             Error(value, "layout 必须是对象，形如 "
                          "{\"kind\":\"stack\",\"gap\":12,\"align\":\"stretch\"}");
@@ -2116,16 +2116,16 @@ protected:
             int parsed = 0;
             if (ReadEnum(*kind, "layout.kind",
                          {{"stack", 1}, {"grid", 2}}, parsed)) {
-                out.kind = parsed == 1 ? inking::LayoutKind::Stack
-                                       : inking::LayoutKind::Grid;
+                out.kind = parsed == 1 ? InkingLayoutKind::Stack
+                                       : InkingLayoutKind::Grid;
             }
         }
         if (const JsonValue* axis = value.Find("axis")) {
             int parsed = 0;
             if (ReadEnum(*axis, "layout.axis",
                          {{"vertical", 0}, {"horizontal", 1}}, parsed)) {
-                out.axis = parsed == 0 ? inking::LayoutAxis::Vertical
-                                       : inking::LayoutAxis::Horizontal;
+                out.axis = parsed == 0 ? InkingLayoutAxis::Vertical
+                                       : InkingLayoutAxis::Horizontal;
             }
         }
         if (const JsonValue* gap = value.Find("gap")) {
@@ -2144,7 +2144,7 @@ protected:
                           {"spaceAround", 4},
                           {"spaceEvenly", 5}},
                          parsed)) {
-                out.justify = static_cast<inking::LayoutJustify>(parsed);
+                out.justify = static_cast<InkingLayoutJustify>(parsed);
             }
         }
         if (const JsonValue* align = value.Find("align")) {
@@ -2153,7 +2153,7 @@ protected:
                          {{"start", 0}, {"center", 1}, {"end", 2},
                           {"stretch", 3}},
                          parsed)) {
-                out.align = static_cast<inking::LayoutAlign>(parsed);
+                out.align = static_cast<InkingLayoutAlign>(parsed);
             }
         }
         if (const JsonValue* columns = value.Find("columns")) {
@@ -2172,14 +2172,14 @@ protected:
                 = static_cast<float>(ReadNumber(*columnGap, "layout.columnGap"));
         }
 
-        if (out.kind == inking::LayoutKind::Grid && out.columns < 1) {
+        if (out.kind == InkingLayoutKind::Grid && out.columns < 1) {
             Error(value, "layout 用 grid 时 columns 至少是 1");
             out.columns = 1;
         }
     }
 
     /// 读"我在父容器布局里的意愿"（A6）：`"layoutItem": {...}`。
-    void ReadLayoutItem(const JsonValue& value, inking::LayoutItem& out) {
+    void ReadLayoutItem(const JsonValue& value, InkingLayoutItem& out) {
         if (!value.IsObject()) {
             Error(value, "layoutItem 必须是对象，形如 "
                          "{\"fillMain\":true,\"margin\":8}");
@@ -2229,7 +2229,7 @@ protected:
                           {"stretch", 3}},
                          parsed)) {
                 out.hasSelfAlign = true;
-                out.selfAlign = static_cast<inking::LayoutAlign>(parsed);
+                out.selfAlign = static_cast<InkingLayoutAlign>(parsed);
             }
         }
         if (out.minWidth > 0.0f && out.maxWidth > 0.0f
@@ -2305,7 +2305,7 @@ protected:
      * 组件配置的收尾检查：上面那三条 + **width / height 必填**。全过返回 true。
      *
      * `requireHeight = false` 是给**标签**留的口子（A7）：标签的高度可以省略
-     * （0 = 完全由内容撑高，`LabelData::height` 与 `MeasureLayout` 就是这么约定的）。
+     * （0 = 完全由内容撑高，`InkingLabelData::height` 与 `MeasureLayout` 就是这么约定的）。
      * 那和"忘了写"不是一回事，不能一刀切要求必填；宽度则仍然必填——它是换行的依据。
      */
     bool CheckNameAndSize(const std::string& name, bool sawNameField,
@@ -2519,7 +2519,7 @@ private:
             return;
         }
 
-        inking::ShapeSpec shape;
+        InkingShapeSpec shape;
         std::string error;
         if (!SvgToShape(_svg[first], _config.data.width, _config.data.height,
                         shape, error, &_config.pathPoints)) {
@@ -2532,7 +2532,7 @@ private:
             }
             // `path` 的几何一致性要**比点列本身**：三个状态的 svg 会先后把点列
             // 写进同一个 `_config.pathPoints`，第二份会覆盖第一份——那时再比
-            // `ShapeSpec` 里的视图，两边指向同一块缓冲，永远"一致"。
+            // `InkingShapeSpec` 里的视图，两边指向同一块缓冲，永远"一致"。
             if (_svg[first].tag == "path") {
                 if (_svg[i].tag != "path"
                     || _svg[i].points != _svg[first].points) {
@@ -2543,7 +2543,7 @@ private:
                 }
                 continue;
             }
-            inking::ShapeSpec other;
+            InkingShapeSpec other;
             std::string otherError;
             if (!SvgToShape(_svg[i], _config.data.width, _config.data.height,
                             other, otherError)) {
@@ -2571,7 +2571,7 @@ private:
     }
 
     void ReadAppearance(const JsonValue& value, const std::string& field,
-                        inking::ButtonAppearance& out, bool* sawNormal,
+                        InkingButtonAppearance& out, bool* sawNormal,
                         std::vector<std::uint8_t>* imageBytesOut) {
         if (!value.IsObject()) {
             Error(value, field + " 必须是对象，形如 "
@@ -2611,7 +2611,7 @@ private:
                        });
 
         if (typeName == "color") {
-            out.type = inking::AppearanceType::Color;
+            out.type = InkingAppearanceType::Color;
             if (source == nullptr) {
                 Error(value, field + " 缺少 source（color 要写 \"r|g|b|a\"）");
                 return;
@@ -2619,7 +2619,7 @@ private:
             out.color = ReadColorSource(*source, field, true, &out.themeColor);
             out.source = source->IsString() ? source->text : std::string();
         } else if (typeName == "img") {
-            out.type = inking::AppearanceType::Image;
+            out.type = InkingAppearanceType::Image;
             if (source == nullptr || !source->IsString()) {
                 Error(value, field + " 的 img 需要 source（图像绝对路径）");
                 return;
@@ -2634,7 +2634,7 @@ private:
                 return;
             }
         } else if (typeName == "svg") {
-            out.type = inking::AppearanceType::Svg;
+            out.type = InkingAppearanceType::Svg;
             if (source == nullptr || !source->IsString()) {
                 Error(value, field + " 的 svg 需要 source（SVG 代码）");
                 return;
@@ -2699,11 +2699,11 @@ private:
                                    return static_cast<char>(std::tolower(ch));
                                });
                 if (fitName == "fill") {
-                    out.imageFit = inking::ImageFit::Fill;
+                    out.imageFit = InkingImageFit::Fill;
                 } else if (fitName == "contain") {
-                    out.imageFit = inking::ImageFit::Contain;
+                    out.imageFit = InkingImageFit::Contain;
                 } else if (fitName == "cover") {
-                    out.imageFit = inking::ImageFit::Cover;
+                    out.imageFit = InkingImageFit::Cover;
                 } else {
                     Error(*fitField, field + ".fit \"" + fitField->text
                                          + "\" 不认识（只支持 fill、contain、cover）");
@@ -2752,11 +2752,11 @@ private:
                 if (!child.IsString()) {
                     Error(child, "text.align 必须是字符串：left / center / right");
                 } else if (child.text == "left") {
-                    _config.data.text.align = inking::TextAlignH::Left;
+                    _config.data.text.align = InkingTextAlignH::Left;
                 } else if (child.text == "center") {
-                    _config.data.text.align = inking::TextAlignH::Center;
+                    _config.data.text.align = InkingTextAlignH::Center;
                 } else if (child.text == "right") {
-                    _config.data.text.align = inking::TextAlignH::Right;
+                    _config.data.text.align = InkingTextAlignH::Right;
                 } else {
                     Error(child, "text.align 只认 left / center / right，给的是 \""
                                      + child.text + "\"");
@@ -2767,11 +2767,11 @@ private:
                     Error(child,
                           "text.alignV 必须是字符串：top / middle / bottom");
                 } else if (child.text == "top") {
-                    _config.data.text.alignV = inking::TextAlignV::Top;
+                    _config.data.text.alignV = InkingTextAlignV::Top;
                 } else if (child.text == "middle") {
-                    _config.data.text.alignV = inking::TextAlignV::Middle;
+                    _config.data.text.alignV = InkingTextAlignV::Middle;
                 } else if (child.text == "bottom") {
-                    _config.data.text.alignV = inking::TextAlignV::Bottom;
+                    _config.data.text.alignV = InkingTextAlignV::Bottom;
                 } else {
                     Error(child,
                           "text.alignV 只认 top / middle / bottom，给的是 \""
@@ -2836,7 +2836,7 @@ private:
         _config.identifier = MakeNameConstant(_config.name);
 
         // 两处都要写：ButtonConfig::name 是"这份文件叫什么"（生成器自己用），
-        // ButtonData::name 是运行时 ButtonLibrary 的查找键。生成器里漏掉后面
+        // InkingButtonData::name 是运行时 InkingButtonLibrary 的查找键。生成器里漏掉后面
         // 这个，运行期按名字就查不到——而且库那边只会报"没登记过"。
         _config.data.name = _config.name;
 
@@ -2863,8 +2863,8 @@ private:
  * @brief 面板的加载器。
  *
  * 面板的配置比按钮少一截：**没有三态**（它是容器，不是控件——三态是指针状态，
- * 而开合是内容状态）、没有文字、没有 `img` / `svg` 外观，也没有"静态还是动态"
- * 的开关（面板只有静态档：开合只改变换，几何构造即定型）。
+ * 而开合是内容状态）、没有文字、没有 `img` / `svg` 外观。`dynamic` 与按钮的同名
+ * 同义（G-08）：不写 = 静态档（开合只改变换，几何构造即定型），true = 动态档。
  *
  * 它有两个**具名状态**：`closed` 与 `open`，各带颜色 / 过渡 / 变换。开合由业务
  * 调 `SetOpen()` 决定，不是指针事件——所以配置里没有 hover / pressed。
@@ -2928,7 +2928,7 @@ public:
                 _hasClosed = true;
             } else if (key == "open") {
                 ReadAppearance(value, "open", _config.data.open);
-                // 显式写了 open 段就不再继承 closed 的颜色——和 ButtonData 的
+                // 显式写了 open 段就不再继承 closed 的颜色——和 InkingButtonData 的
                 // hoverInheritsNormal 同一条规矩（AGENTS §6 第 43 条）。
                 _config.data.openInheritsClosed = false;
             } else if (key == "startOpen") {
@@ -2977,6 +2977,17 @@ public:
                 }
             } else if (key == "shape") {
                 ReadShape(value, _config.data.shape);
+            } else if (key == "dynamic") {
+                // G-08：生成期"选哪个基类"的开关，不进运行期数据结构。
+                // 只认 bool——写成字符串 / 数字是笔误，而"悄悄按 truthy 处理"
+                // 会让配置看着生效、其实生成了静态档。
+                if (value.IsBool()) {
+                    _config.dynamic = value.boolean;
+                } else {
+                    Error(value, "dynamic 必须是 true 或 false（它决定生成的类"
+                                     "继承 InkingStaticPanel 还是 "
+                                     "InkingDynamicPanel）");
+                }
             }
         }
 
@@ -2993,7 +3004,7 @@ private:
     /**
      * 一个开合状态的外观（`closed` / `open`）。
      *
-     * 与按钮的 `ReadAppearance` 同构，但**只认 `color`**：`PanelAppearance` 里
+     * 与按钮的 `ReadAppearance` 同构，但**只认 `color`**：`InkingPanelAppearance` 里
      * 没有"外观类型"这一维（面板不贴图、不开洞——它是容器）。写了 `img` / `svg`
      * 时明确报"面板还不支持这个"，而不是假装没看见。
      *
@@ -3001,7 +3012,7 @@ private:
      * 描边画在**子孙之上**（装饰遍），阴影在填充之下；两者都不参与命中。
      */
     void ReadAppearance(const JsonValue& value, const std::string& field,
-                        inking::PanelAppearance& out) {
+                        InkingPanelAppearance& out) {
         if (!value.IsObject()) {
             Error(value,
                   field
@@ -3055,7 +3066,7 @@ private:
             ReadTransform(*transform, field, out.transform);
         }
         // 描边与阴影（T-07）：与按钮同两个读取器。`open` 省略时由
-        // `PanelData::Normalize` 连同颜色一起继承 `closed` 那份。
+        // `InkingPanelData::Normalize` 连同颜色一起继承 `closed` 那份。
         if (const JsonValue* stroke = value.Find("stroke")) {
             ReadStroke(*stroke, out.stroke);
         }
@@ -3075,7 +3086,7 @@ private:
         }
 
         // 面板的 name **必须**是合法 C++ 标识符：按钮那边名字不合法还能走
-        // "按字符串名字查"（数据进 ButtonLibrary 兜着），而面板没有库——
+        // "按字符串名字查"（数据进 InkingButtonLibrary 兜着），而面板没有库——
         // 没有类就等于没有任何用法。所以这里报错，而不是生成一个用不了的东西。
         if (!_failed && !IsCxxIdentifier(_config.name)) {
             _result.errors.push_back(CxxcssError{
@@ -3108,10 +3119,10 @@ private:
 /**
  * @brief 标签的加载器。
  *
- * 字段各归各的落点（对应 `LabelData` 的三块）：
+ * 字段各归各的落点（对应 `InkingLabelData` 的三块）：
  *   - 尺寸 / 锚点 / 层级 / 布局 → 组件那一块，与别的组件同义；
- *   - `text.content` → **文字内容**（占位符或字面量，运行期由 `ResolveText` 查表）；
- *   - `text` 段其余字段 → **排版样式**（`TextStyle`）+ 换行 / 省略开关。
+ *   - `text.content` → **文字内容**（占位符或字面量，运行期由 `InkingResolveText` 查表）；
+ *   - `text` 段其余字段 → **排版样式**（`InkingTextStyle`）+ 换行 / 省略开关。
  *
  * `width` 必填（换行的依据）、`height` 可省（0 = 完全由内容撑高）。
  * 名字**必须是合法标识符**：标签和面板一样没有"按名字查的库"，名字不合法就
@@ -3202,6 +3213,15 @@ public:
                 } else {
                     Error(value, "visible 必须是 true 或 false");
                 }
+            } else if (key == "dynamic") {
+                // G-08：同 Button——只认 bool，只决定继承谁。
+                if (value.IsBool()) {
+                    _config.dynamic = value.boolean;
+                } else {
+                    Error(value, "dynamic 必须是 true 或 false（它决定生成的类"
+                                     "继承 InkingStaticLabel 还是 "
+                                     "InkingDynamicLabel）");
+                }
             }
         }
 
@@ -3265,7 +3285,7 @@ private:
                              {{"left", 0}, {"center", 1}, {"right", 2}},
                              parsed)) {
                     _config.data.style.align
-                        = static_cast<inking::TextAlignH>(parsed);
+                        = static_cast<InkingTextAlignH>(parsed);
                 }
             } else if (key == "alignV") {
                 int parsed = 0;
@@ -3273,7 +3293,7 @@ private:
                              {{"top", 0}, {"middle", 1}, {"bottom", 2}},
                              parsed)) {
                     _config.data.style.alignV
-                        = static_cast<inking::TextAlignV>(parsed);
+                        = static_cast<InkingTextAlignV>(parsed);
                 }
             } else if (key == "padding") {
                 ReadSpacing(child, "text.padding", _config.data.style.padding);
@@ -3285,14 +3305,14 @@ private:
                 if (ReadEnum(child, "text.wrap",
                              {{"noWrap", 0}, {"word", 1}, {"anywhere", 2}},
                              parsed)) {
-                    _config.data.wrap = static_cast<inking::TextWrap>(parsed);
+                    _config.data.wrap = static_cast<InkingTextWrap>(parsed);
                 }
             } else if (key == "overflow") {
                 int parsed = 0;
                 if (ReadEnum(child, "text.overflow",
                              {{"clip", 0}, {"ellipsis", 1}}, parsed)) {
                     _config.data.overflow
-                        = static_cast<inking::TextOverflow>(parsed);
+                        = static_cast<InkingTextOverflow>(parsed);
                 }
             } else if (key == "maxLines") {
                 const double number = ReadNumber(child, "text.maxLines");
@@ -3315,7 +3335,7 @@ private:
                          /*requireHeight=*/false);
 
         // 标签的 name **必须**是合法标识符：它没有按名字查的库（对比按钮有
-        // `ButtonLibrary`），生成不出类就等于没有任何用法。
+        // `InkingButtonLibrary`），生成不出类就等于没有任何用法。
         if (!_failed && !IsCxxIdentifier(_config.name)) {
             _result.errors.push_back(CxxcssError{
                 _path, 0,
@@ -3352,8 +3372,8 @@ private:
  * 图片配置认的字段（CXXCSS.md §3.10）：**按钮那套减去三态 / 文字 / 过渡**，
  * 加上 `runtime` 那个"图从运行期来"的开关。
  *
- * 没有 `layout`（图片不是容器），也没有 `dynamic`（图片只有静态档：换图只标
- * 重绘脏，几何不动）。
+ * 没有 `layout`（图片不是容器）。`dynamic`（G-08）**认**——它与帧动画正交，
+ * 四个组合各对应一条基类，见 `ImageConfig::dynamic`。
  */
 /**
  * 图片配置里**明确不接受**的字段：写了就报错，而不是静默忽略。
@@ -3363,7 +3383,7 @@ private:
  * 调试半天才发现是没生效——那正是"未知字段一律报错"想避免的事。
  */
 const char* const kRejectedImageFields[] = {
-    "hover", "onclicked", "text", "dynamic", "layout", "transition",
+    "hover", "onclicked", "text", "layout", "transition",
 };
 
 /// 路径看起来是不是绝对路径（Windows 盘符 / UNC / POSIX 三种写法）。
@@ -3380,7 +3400,7 @@ bool LooksAbsolutePath(const std::string& path) {
 /**
  * @brief 静态图片的加载器（A11）。
  *
- * 数据落到 `inking::ImageData`——它是 `inking::ButtonData` 的派生，所以这边**逐字
+ * 数据落到 `InkingImageData`——它是 `InkingButtonData` 的派生，所以这边**逐字
  * 复用**按钮那套读取与校验，只做两件按钮没有的事：
  *
  *   1. **只收 `normal` 一态**（`hover` / `onclicked` / `text` / `transition` 报错）；
@@ -3389,7 +3409,7 @@ bool LooksAbsolutePath(const std::string& path) {
  *        （照旧行为）。读不到文件在生成期就报错；
  *      - `"runtime": true`：**相对资源根**的路径（默认 exe 旁的 `assets/`），
  *        **生成期一个字都不读**——产物里只有那个路径字符串，字节由运行期的
- *        `inking::AssetLoad` 去拿（可带轻量混淆）。这就是"别把所有图烘进 exe"。
+ *        `InkingAssetLoad` 去拿（可带轻量混淆）。这就是"别把所有图烘进 exe"。
  */
 class ImageLoader : public ConfigReader {
 public:
@@ -3551,6 +3571,14 @@ public:
                     ReadNumber(value, "startOffset");
             } else if (key == "events") {
                 ReadSpriteEvents(value);
+            } else if (key == "dynamic") {
+                // G-08：与 `isSprite` 正交——四个组合四条基类，只认 bool。
+                if (value.IsBool()) {
+                    _config.dynamic = value.boolean;
+                } else {
+                    Error(value, "dynamic 必须是 true 或 false（它决定生成的类"
+                                     "继承哪一档：静态 / 动态 × 图片 / 帧动画）");
+                }
             }
         }
 
@@ -3577,7 +3605,7 @@ private:
      * "配置写了却没生效"的坑）。
      *
      * `svg` 从 0.5.1 起支持，但它是**纹理路**：读文件字节（或运行期读），落成
-     * `AppearanceType::Image`，绘制时按目标像素光栅化。它与按钮的 svg 子集
+     * `InkingAppearanceType::Image`，绘制时按目标像素光栅化。它与按钮的 svg 子集
      * （生成期转成形状、只支持单图形）**同名不同义**，别混。
      */
     void ReadImageAppearance(const JsonValue& value) {
@@ -3596,7 +3624,7 @@ private:
      * 读**一个图片外观对象**（`normal` 段与 `frames` 的每一项共用这一份）。
      *
      * 抽出来的理由与"图片复用按钮烘法"同一条：`normal` 与帧是**同一种东西**
-     * （一个 `ButtonAppearance` + 它的字节），各写一遍解析必然分叉——比如
+     * （一个 `InkingButtonAppearance` + 它的字节），各写一遍解析必然分叉——比如
      * "normal 的 fit 认 contain、帧的 fit 忘了认"，那种错只在某个形态下露头。
      *
      * @param label  报错文案里的字段名（"normal" / "frames[2]"）
@@ -3604,7 +3632,7 @@ private:
      * @param bytes  生成期烘的字节落哪儿（运行期那条路不读文件，留着空）
      */
     void ReadAppearanceObject(const JsonValue& value, const char* label,
-                              inking::ButtonAppearance& out,
+                              InkingButtonAppearance& out,
                               std::vector<std::uint8_t>* bytes) {
 
         for (const auto& entry : value.fields) {
@@ -3635,7 +3663,7 @@ private:
                        });
 
         if (typeName == "color") {
-            out.type = inking::AppearanceType::Color;
+            out.type = InkingAppearanceType::Color;
             if (source == nullptr) {
                 Error(value, std::string(label)
                                  + " 缺少 source（color 要写 \"r|g|b|a\"）");
@@ -3644,7 +3672,7 @@ private:
             out.color = ReadColorSource(*source, label);
             out.source = source->IsString() ? source->text : std::string();
         } else if (typeName == "img") {
-            out.type = inking::AppearanceType::Image;
+            out.type = InkingAppearanceType::Image;
             if (source == nullptr || !source->IsString()) {
                 Error(value, std::string(label)
                                  + " 的 img 需要 source（图片路径）");
@@ -3665,13 +3693,13 @@ private:
                 out.imageSize = bytes->size();
             }
             // runtime = true：**一个字都不读**，source 只是个路径字符串
-            // （运行期由 inking::AssetLoad 去拿，见 asset/InkingAsset.h）。
+            // （运行期由 InkingAssetLoad 去拿，见 asset/InkingAsset.h）。
         } else if (typeName == "svg") {
             // 0.5.1：图片的 svg 是**纹理路**——整份稿在运行期按目标像素光栅化，
             // 不做"生成期转成形状"（那是 Button 的 svg 子集，见 CXXCSS.md §4.1
-            // 的对照表）。落成 `AppearanceType::Image` 是为了让绘制 / 缓存 / 命中
+            // 的对照表）。落成 `InkingAppearanceType::Image` 是为了让绘制 / 缓存 / 命中
             // 全部走同一条已有的图片通道。
-            out.type = inking::AppearanceType::Image;
+            out.type = InkingAppearanceType::Image;
             if (source == nullptr || !source->IsString()) {
                 Error(value, std::string(label)
                                  + " 的 svg 需要 source（SVG 文件路径）");
@@ -3699,7 +3727,7 @@ private:
                 out.imageBytes = slot.data();
                 out.imageSize = slot.size();
             }
-            // runtime = true：只留路径，运行期由 AssetLoad 读字节、PaintImage 嗅探。
+            // runtime = true：只留路径，运行期由 InkingAssetLoad 读字节、PaintImage 嗅探。
         } else {
             Error(*type, std::string(label) + ".type \"" + type->text
                              + "\" 不认识（只支持 color、img、svg）");
@@ -3717,11 +3745,11 @@ private:
                                    return static_cast<char>(std::tolower(ch));
                                });
                 if (fitName == "fill") {
-                    out.imageFit = inking::ImageFit::Fill;
+                    out.imageFit = InkingImageFit::Fill;
                 } else if (fitName == "contain") {
-                    out.imageFit = inking::ImageFit::Contain;
+                    out.imageFit = InkingImageFit::Contain;
                 } else if (fitName == "cover") {
-                    out.imageFit = inking::ImageFit::Cover;
+                    out.imageFit = InkingImageFit::Cover;
                 } else {
                     Error(*fitField, std::string(label) + ".fit \""
                                          + fitField->text
@@ -3734,7 +3762,7 @@ private:
     // ---- 帧动画（0.6.1 T-06）--------------------------------------------
     //
     // 两条来源：`frames`（序列帧，每帧一张图）与 `sheet`（图集，一张大图切 N 格）。
-    // **二选一**，由 `SpriteData::Validate()` 判——这里不重复实现那条判据
+    // **二选一**，由 `InkingSpriteData::Validate()` 判——这里不重复实现那条判据
     // （"都填 / 都不填"的文案只该有一份，否则两处迟早说得不一样）。
 
     void ReadSpriteFrames(const JsonValue& value) {
@@ -3773,7 +3801,7 @@ private:
                   "\"columns\":4,\"rows\":1}");
             return;
         }
-        inking::SpriteData::SpriteSheet& sheet = _config.sprite.sheet;
+        InkingSpriteData::SpriteSheet& sheet = _config.sprite.sheet;
         for (const auto& entry : value.fields) {
             const std::string& key = entry.first;
             const JsonValue& field = entry.second;
@@ -3797,7 +3825,7 @@ private:
                 sheet.count = static_cast<int>(ReadNumber(field, "sheet.count"));
             } else if (key == "firstFrame") {
                 // 绝对格号（0.6.4 T-11）。与顶层 `startFrame`（帧号）不是一回事，
-                // 越界判据交给 `SpriteData::Validate()`——与运行期同一份。
+                // 越界判据交给 `InkingSpriteData::Validate()`——与运行期同一份。
                 sheet.firstFrame =
                     static_cast<int>(ReadNumber(field, "sheet.firstFrame"));
             } else if (key == "margin") {
@@ -3823,7 +3851,7 @@ private:
     /**
      * `events`: `[{ "frame": 3, "name": "hit" }, …]`（0.6.3 T-09）。
      *
-     * 越界 / 空名字不在这里判——`FinalizeSprite()` 会调 `SpriteData::Validate()`，
+     * 越界 / 空名字不在这里判——`FinalizeSprite()` 会调 `InkingSpriteData::Validate()`，
      * 那份判据与运行期是**同一份**（"指向第 9 帧但只有 4 帧"这种话只该有一处写法）。
      */
     void ReadSpriteEvents(const JsonValue& value) {
@@ -3841,7 +3869,7 @@ private:
                 Error(item, label + " 必须是对象，这里是" + item.KindName());
                 continue;
             }
-            inking::SpriteData::SpriteEvent event;
+            InkingSpriteData::SpriteEvent event;
             for (const auto& entry : item.fields) {
                 const std::string& key = entry.first;
                 const JsonValue& field = entry.second;
@@ -3877,15 +3905,15 @@ private:
     }
 
     /**
-     * 把 image 那半（`normal` / 形状 / 锚点 / 运行时开关）搬进 `SpriteData`，
+     * 把 image 那半（`normal` / 形状 / 锚点 / 运行时开关）搬进 `InkingSpriteData`，
      * 补齐图集的字节，再用**运行期那份** `Validate()` 判一次合法性。
      *
      * 为什么在 `Finish()` 里做、而不是边读边算：json 的字段顺序是用户随手写的，
      * "`sheet` 写在 `normal` 前面"完全正当。收尾统一判，语义就与顺序无关。
      */
     void FinalizeSprite() {
-        inking::SpriteData::SpriteSheet& sheet = _config.sprite.sheet;
-        inking::ButtonAppearance& normal = _config.button.data.normal;
+        InkingSpriteData::SpriteSheet& sheet = _config.sprite.sheet;
+        InkingButtonAppearance& normal = _config.button.data.normal;
 
         // ① 图集的字节**只有一份**：两条路径写成不同的文件就没有"那张大图"。
         if (sheet.IsConfigured() && !sheet.source.empty() && !normal.source.empty()
@@ -3915,23 +3943,23 @@ private:
                 _failed = true;
                 return;
             }
-            normal.type = inking::AppearanceType::Image;
+            normal.type = InkingAppearanceType::Image;
             normal.imageBytes = bytes.data();
             normal.imageSize = bytes.size();
         }
 
         // ③ 基础字段：解析过程只写 `button.data` 一处（上面两步也是写在那里），
-        //    到这里一次性搬进 `SpriteData`——产物只读 `sprite`，两份 normal
+        //    到这里一次性搬进 `InkingSpriteData`——产物只读 `sprite`，两份 normal
         //    各写一半就等着不一致。
         //
-        //    `button.data` 是 `ButtonData`，`runtimeAsset` / `hitPassThrough` 在
-        //    `ImageData` 这一层（按钮没有它们），所以这两项在这里按 ImageLoader
+        //    `button.data` 是 `InkingButtonData`，`runtimeAsset` / `hitPassThrough` 在
+        //    `InkingImageData` 这一层（按钮没有它们），所以这两项在这里按 ImageLoader
         //    收到的开关补上——与 `Emit` 的 `tail` 两行是同一件事，取值同源。
-        inking::ImageData base;
-        static_cast<inking::ButtonData&>(base) = _config.button.data;
+        InkingImageData base;
+        static_cast<InkingButtonData&>(base) = _config.button.data;
         base.runtimeAsset = _config.runtimeAsset;
         base.hitPassThrough = _config.hitPassThrough;
-        static_cast<inking::ImageData&>(_config.sprite) = base;
+        static_cast<InkingImageData&>(_config.sprite) = base;
 
         // ④ 合法性：**直接用运行期的判据**（都填 / 都不填、fps <= 0、
         //    图集几何自相矛盾、帧是纯色……）。生成器再写一遍就是第二份真相。
@@ -3982,14 +4010,14 @@ private:
         // 生成期烘的字节：把视图指到 vector 的缓冲上。
         // （`std::move` 进 result 是转移所有权，缓冲地址不变，所以先设指针也安全。）
         if (!_config.button.imageBytes[0].empty()) {
-            _config.button.data.normal.type = inking::AppearanceType::Image;
+            _config.button.data.normal.type = InkingAppearanceType::Image;
             _config.button.data.normal.imageBytes
                 = _config.button.imageBytes[0].data();
             _config.button.data.normal.imageSize
                 = _config.button.imageBytes[0].size();
         }
 
-        // 帧动画：配了帧就是 sprite（产 `SpriteData` + `InkingSprite` 类）。
+        // 帧动画：配了帧就是 sprite（产 `InkingSpriteData` + `InkingSprite` 类）。
         // 放在字节视图接好**之后**——`FinalizeSprite` 要搬 `normal` 的那份视图。
         _config.isSprite = _sawSpriteField;
         if (!_failed && _config.isSprite) {
@@ -4013,7 +4041,7 @@ private:
  * @brief 语言表的加载器。
  *
  * 它是四种类型里唯一**不是组件**的那个：一张全局表（语言 + 占位符 → 各语言的
- * 串），运行期由 `inking::InstallTextTable` 装进 `include/text/InkingTextTable.h`
+ * 串），运行期由 `InkingInstallTextTable` 装进 `include/text/InkingTextTable.h`
  * 的那份状态里。所以它没有尺寸 / 锚点 / 形状，也不进命中表与绘制列表。
  *
  * 三条规矩：
@@ -4205,7 +4233,7 @@ private:
 
         // 缺省语言必须是表里的一门（写错了就该报，不能悄悄退回第一门）。
         //
-        // 这里自己走一遍 language 列表，**不调 `TextTable::LanguageIndex`**：
+        // 这里自己走一遍 language 列表，**不调 `InkingTextTable::LanguageIndex`**：
         // 那个成员函数的实现在 `src/text/InkingTextTable.cpp`（属于 ink_core），
         // 而生成器**只依赖标准库、不链接 ink_core**（见 cmake/inkgen.cmake）——
         // 调它就是把"SDF 与 SDL 的世界"拖进构建期工具。
@@ -4226,7 +4254,7 @@ private:
             _failed = true;
         }
 
-        // 只允许一份：`InstallTextTable` 的语义是"替换整张表"。
+        // 只允许一份：`InkingInstallTextTable` 的语义是"替换整张表"。
         if (!_failed && !_result.textTables.empty()) {
             _result.errors.push_back(CxxcssError{
                 _path, 0,
@@ -4245,7 +4273,7 @@ private:
 
         if (!_failed) {
             for (RawEntry& raw : _rawEntries) {
-                inking::TextEntry entry;
+                InkingTextEntry entry;
                 entry.key = std::move(raw.key);
                 entry.translations = std::move(raw.translations);
                 _config.table.entries.push_back(std::move(entry));
@@ -4281,12 +4309,12 @@ private:
 /**
  * @brief `CXXCSS/Atlas/<名字>.json` 的加载器（0.6.5 T-17）。
  *
- * 产物只有一份 `inking::AtlasData`（一个图集里 N 个具名动画），没有类——
+ * 产物只有一份 `InkingAtlasData`（一个图集里 N 个具名动画），没有类——
  * 它不是组件，是"图里的哪块是哪一帧"这张表。运行期由
- * `inking::MakeSpriteData()` 转成某个 `InkingSprite` 的配置。
+ * `InkingMakeSpriteData()` 转成某个 `InkingSprite` 的配置。
  *
- * **判据不在这里重写**：把读到的内容拼成一份临时的 `SpriteData`，交给
- * `SpriteData::Validate()` 判一次（网格越界 / `frames` 与网格同给 / `fps<=0` /
+ * **判据不在这里重写**：把读到的内容拼成一份临时的 `InkingSpriteData`，交给
+ * `InkingSpriteData::Validate()` 判一次（网格越界 / `frames` 与网格同给 / `fps<=0` /
  * 事件帧越界 全在那一处），然后在生成期把网格**展开成逐帧矩形**——于是运行期
  * 只有"帧表"这一条路，网格算术不会在两端各有一份。
  */
@@ -4352,7 +4380,7 @@ private:
 
     /// `"events": [{ "frame": 3, "name": "hit" }]`（与 `Image` 的 sprite 段同形）。
     void ReadEvents(const JsonValue& value,
-                    std::vector<inking::SpriteData::SpriteEvent>& out,
+                    std::vector<InkingSpriteData::SpriteEvent>& out,
                     const std::string& label) {
         if (!value.IsArray()) {
             Error(value, label + " 必须是数组，形如 [{\"frame\":3,\"name\":\"hit\"}]");
@@ -4365,7 +4393,7 @@ private:
                 Error(item, tag + " 必须是对象");
                 continue;
             }
-            inking::SpriteData::SpriteEvent event;
+            InkingSpriteData::SpriteEvent event;
             for (const auto& field : item.fields) {
                 const std::string& key = field.first;
                 const JsonValue& child = field.second;
@@ -4398,7 +4426,7 @@ private:
 
     /// `"frames": [{ "x":0, "y":0, "width":40, "height":40 }]`
     void ReadFrames(const JsonValue& value,
-                    std::vector<inking::ShapeBounds>& out,
+                    std::vector<InkingShapeBounds>& out,
                     const std::string& label) {
         if (!value.IsArray()) {
             Error(value, label + " 必须是数组，每项一个矩形");
@@ -4411,7 +4439,7 @@ private:
                 Error(item, tag + " 必须是对象");
                 continue;
             }
-            inking::ShapeBounds rect;
+            InkingShapeBounds rect;
             for (const auto& field : item.fields) {
                 const std::string& key = field.first;
                 const JsonValue& child = field.second;
@@ -4451,9 +4479,9 @@ private:
                 continue;
             }
 
-            inking::AtlasAnimation animation;
-            inking::SpriteData::SpriteSheet grid;  // 网格切法（与 frames 二选一）
-            std::vector<inking::ShapeBounds> rects;
+            InkingAtlasAnimation animation;
+            InkingSpriteData::SpriteSheet grid;  // 网格切法（与 frames 二选一）
+            std::vector<InkingShapeBounds> rects;
             for (const auto& field : item.fields) {
                 const std::string& key = field.first;
                 const JsonValue& child = field.second;
@@ -4510,10 +4538,10 @@ private:
                 }
             }
 
-            // 拼成临时 `SpriteData` 再判一次：判据只该有一份（0.6.1 的规矩）。
-            inking::SpriteData probe;
+            // 拼成临时 `InkingSpriteData` 再判一次：判据只该有一份（0.6.1 的规矩）。
+            InkingSpriteData probe;
             probe.name = animation.name;
-            probe.normal.type = inking::AppearanceType::Image;
+            probe.normal.type = InkingAppearanceType::Image;
             // `Validate()` 要求"图集有图"；名字留空，报错文案才不会牵扯路径。
             probe.normal.source =
                 animation.source.empty() ? std::string("<未写 source>") : animation.source;
@@ -4552,7 +4580,7 @@ private:
     void Finish() {
         CheckName(_config.name, _sawNameField);
 
-        // 重名动画 / 空动画 / 帧矩形非法：判据在运行期那一份（`AtlasData::Validate`），
+        // 重名动画 / 空动画 / 帧矩形非法：判据在运行期那一份（`InkingAtlasData::Validate`），
         // 生成期只负责把它的结论变成一条带文件名的错误。
         //
         // **只在前面没报过错时判**：单个动画被跳过（帧宽为 0 之类）之后，
@@ -4757,15 +4785,15 @@ private:
  * @brief 全局配置的加载器（`CXXCSS/config.json`）。
  *
  * 两个段：
- *   - `design`（**必填**）：设计画布宽高 → 生成一对常量 + `SetDesignSize`；
- *   - `window`（可选）：窗口启动设置 → 生成常量 + `ApplyWindowConfig`。
+ *   - `design`（**必填**）：设计画布宽高 → 生成一对常量 + `InkingSetDesignSize`；
+ *   - `window`（可选）：窗口启动设置 → 生成常量 + `InkingApplyWindowConfig`。
  *
  * 产物是一个 `ApplyConfig()`（见 `Emit.cpp`），**不是**类、**不是**运行期查表。
  *
  * 五条规矩：
  *   1. `design` **必填**——一份什么都不设的配置没有存在意义（那和"没有配置"
  *      无法区分，而两者想要的效果可能正好相反）；
- *   2. `width` / `height` 都要有，且是 **1..kMaxDesignSize 的整数**：
+ *   2. `width` / `height` 都要有，且是 **1..InkingMaxDesignSize 的整数**：
  *      设计坐标是整数格，写 1280.5 只会让"一眼看出对齐没对齐"这件事失效；
  *   3. `window` 里的每一项**都是可选的**，没写 = 不动库里的默认值（生成器
  *      不抄一份默认值，抄了就是第二份真相）；
@@ -4870,12 +4898,12 @@ private:
         }
     }
 
-    /// 一条边：整数、1..`inking::kMaxDesignSize`。上限与运行期同源，不另立一份。
+    /// 一条边：整数、1..`InkingMaxDesignSize`。上限与运行期同源，不另立一份。
     int ReadSide(const JsonValue& value, const std::string& field) {
         const double number = ReadNumber(value, field);
-        if (number < 1.0 || number > static_cast<double>(inking::kMaxDesignSize)) {
+        if (number < 1.0 || number > static_cast<double>(InkingMaxDesignSize)) {
             Error(value, field + " 必须在 1.."
-                             + std::to_string(inking::kMaxDesignSize)
+                             + std::to_string(InkingMaxDesignSize)
                              + " 之间（现在是 " + NumberText(number) + "）");
             return 0;
         }

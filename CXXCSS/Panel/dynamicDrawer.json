@@ -1,0 +1,20 @@
+{
+    "$comment": [
+        "动态面板（G-08）：\"dynamic\": true ⇒ 生成的类继承 InkingDynamicPanel。",
+        "字段集与静态面板**完全相同**——两态外观 / 开合 / 裁剪 / 滚动都照旧；",
+        "档位只决定几何能不能在运行期改（Resize / ChangeOffset …）与进不进命中表。",
+        "两条动态档特有的边界（TaskGuide-G.md 的 G-07，别当 bug 报）：",
+        "  · 不做**滚轮**：滚轮按渲染帧清零、动态组件只能在固定步长回调里读，",
+        "    一帧 0 次（丢）或 2 次以上（双读）。要滚就拖滚动条（SetScroll 也照常可用）；",
+        "  · SetScroll 只标重绘脏：本类的洞已按滚动范围扩过，滚多少都不必重算包络。"
+    ],
+    "name": "dynamicDrawer",
+    "width": 260,
+    "height": 160,
+    "dynamic": true,
+    "closed": { "type": "color", "source": "$panelSurfaceAlt" },
+    "open": { "type": "color", "source": "$panelSurfaceOpenAlt" },
+    "shape": { "type": "roundedRect", "radius": 12 },
+    "offsetX": 40,
+    "offsetY": 40
+}

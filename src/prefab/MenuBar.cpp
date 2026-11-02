@@ -9,13 +9,13 @@
 #include <cstdint>
 #include <utility>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 namespace {
 
 /// 内容容器 / 弹簧那种"只占位不露面"的东西用的颜色：alpha = 2/255。
 ///
-/// **不能写全透明**：`PanelData::Normalize()`（和 `ButtonData::Normalize()` 同一条
+/// **不能写全透明**：`InkingPanelData::Normalize()`（和 `InkingButtonData::Normalize()` 同一条
 /// 规矩）会把"三态 alpha 全 0"兜底成不透明黑——于是弹簧会变成一块黑方块盖住
 /// 菜单栏背景（`AGENTS.md` §6 第 52 条记的正是这个坑）。
 constexpr std::uint32_t kInvisibleColor = 0x02000000u;
@@ -23,8 +23,8 @@ constexpr std::uint32_t kInvisibleColor = 0x02000000u;
 /**
  * 菜单栏自己那份面板数据：把风格里的排列规则、尺寸、背景搬过来。
  */
-PanelData MakePanelData(const MenuBarStyle& style) {
-    PanelData panel = style.panel;
+InkingPanelData MakePanelData(const MenuBarStyle& style) {
+    InkingPanelData panel = style.panel;
     if (panel.name.empty()) {
         panel.name = "menuBar";
     }
@@ -35,36 +35,36 @@ PanelData MakePanelData(const MenuBarStyle& style) {
                      "菜单栏的 panel.layout 没声明（kind = None）：项会叠在左上角。"
                      "这里兜底成横向 Stack + 偏左 + 交叉轴居中。名字："
                          + panel.name);
-        panel.layout.kind = LayoutKind::Stack;
-        panel.layout.axis = LayoutAxis::Horizontal;
-        panel.layout.justify = LayoutJustify::Start;
-        panel.layout.align = LayoutAlign::Center;
+        panel.layout.kind = InkingLayoutKind::Stack;
+        panel.layout.axis = InkingLayoutAxis::Horizontal;
+        panel.layout.justify = InkingLayoutJustify::Start;
+        panel.layout.align = InkingLayoutAlign::Center;
         panel.layout.gap = 6.0f;
-        panel.layout.padding = LayoutSpacing{6.0f, 2.0f, 6.0f, 2.0f};
+        panel.layout.padding = InkingLayoutSpacing{6.0f, 2.0f, 6.0f, 2.0f};
     }
     return panel;
 }
 
 }  // namespace
 
-ButtonData MakeDefaultCaptionLook() {
-    ButtonData look;
+InkingButtonData MakeDefaultCaptionLook() {
+    InkingButtonData look;
     look.name = "menuBarCaption";
     look.width = 40;
     look.height = 28;
-    look.shape = ShapeSpec::RoundedRect(theme::kRadiusCaption);
+    look.shape = InkingShapeSpec::RoundedRect(theme::kRadiusCaption);
     // **常态是不透明白**（用户点名要的）：标题栏按钮是"白按钮"，悬停 / 按下才铺浅紫。
-    look.normal = ButtonAppearance(AppearanceType::Color, theme::kSurface);
-    look.hover = ButtonAppearance(AppearanceType::Color, theme::kAccentSoft);
-    look.onclicked = ButtonAppearance(AppearanceType::Color,
+    look.normal = InkingButtonAppearance(InkingAppearanceType::Color, theme::kSurface);
+    look.hover = InkingButtonAppearance(InkingAppearanceType::Color, theme::kAccentSoft);
+    look.onclicked = InkingButtonAppearance(InkingAppearanceType::Color,
                                       theme::kAccentSoftPressed);
     look.hoverInheritsNormal = false;
     look.onclickedInheritsNormal = false;
     look.text.fontSize = 15.0f;
     // 标题栏按钮的文字（`—` / `×`）**居中**：以前只能靠 leftSpace 手填估算值，
     // 比例字体下必然歪（这是"按钮文字补上对齐能力"那条的直接受益者）。
-    look.text.align = TextAlignH::Center;
-    look.text.alignV = TextAlignV::Middle;
+    look.text.align = InkingTextAlignH::Center;
+    look.text.alignV = InkingTextAlignV::Middle;
     look.text.leftSpace = 0.0f;  // 居中时不用它
     look.text.topSpace = 0.0f;
     look.text.path = theme::DefaultFontPath();
@@ -86,7 +86,7 @@ MenuBarStyle MenuBarStyle::MakeDefault() {
     // "我这层压住内容"，而下拉是菜单栏的子孙、天然在它之上；200 那档自此只是
     // "在菜单栏内部排最后"，不会再有跨级效果（无害，别再指望它压住别的兄弟）。
     style.panel.zIndex = 100;
-    style.panel.shape = ShapeSpec::Rect();  // 顶部通栏，不做圆角
+    style.panel.shape = InkingShapeSpec::Rect();  // 顶部通栏，不做圆角
     style.panel.closed.color = theme::kSurface;
     style.panel.open.color = theme::kSurface;
     style.panel.openInheritsClosed = false;
@@ -94,12 +94,12 @@ MenuBarStyle MenuBarStyle::MakeDefault() {
     style.panel.selfAnchor = InkingChangeAnchor::LeftTop;
     style.panel.offsetX = 0.0f;
     style.panel.offsetY = 0.0f;
-    style.panel.layout.kind = LayoutKind::Stack;
-    style.panel.layout.axis = LayoutAxis::Horizontal;
-    style.panel.layout.justify = LayoutJustify::Start;  // 偏左（默认）
-    style.panel.layout.align = LayoutAlign::Center;     // 交叉轴居中
+    style.panel.layout.kind = InkingLayoutKind::Stack;
+    style.panel.layout.axis = InkingLayoutAxis::Horizontal;
+    style.panel.layout.justify = InkingLayoutJustify::Start;  // 偏左（默认）
+    style.panel.layout.align = InkingLayoutAlign::Center;     // 交叉轴居中
     style.panel.layout.gap = 6.0f;
-    style.panel.layout.padding = LayoutSpacing{6.0f, 2.0f, 6.0f, 2.0f};
+    style.panel.layout.padding = InkingLayoutSpacing{6.0f, 2.0f, 6.0f, 2.0f};
     style.captionLook = MakeDefaultCaptionLook();
     style.textColor = theme::kTextPrimary;  // 菜单项文字（用自己那份 json 外观时靠它补）
     return style;
@@ -184,10 +184,10 @@ InkingWidget* MenuBar::AddItem(const ItemFactory& factory) {
     return AddItem(factory());
 }
 
-InkingStaticButton* MenuBar::AddButton(const ButtonData& look,
+InkingStaticButton* MenuBar::AddButton(const InkingButtonData& look,
                                        const std::string& text,
                                        ButtonCallback onActivate,
-                                       const Shortcut& shortcut) {
+                                       const InkingShortcut& shortcut) {
     auto node = std::make_unique<InkingStaticButton>(nullptr, look);
     InkingStaticButton* button = node.get();
     button->SetText(text);
@@ -216,7 +216,7 @@ InkingStaticButton* MenuBar::AddButton(const ButtonData& look,
 // 全局快捷键（B 需求）
 // ---------------------------------------------------------------------------
 
-std::uint64_t MenuBar::BindShortcut(const Shortcut& shortcut,
+std::uint64_t MenuBar::BindShortcut(const InkingShortcut& shortcut,
                                     ButtonCallback onActivate,
                                     std::string label) {
     if (shortcut.Empty() || !onActivate) {
@@ -240,12 +240,12 @@ std::size_t MenuBar::GetBoundShortcutCount() const noexcept {
 
 std::size_t MenuBar::GetItemCount() const noexcept { return _items.size(); }
 
-ShapeBounds MenuBar::GetItemRect(std::size_t index) const {
+InkingShapeBounds MenuBar::GetItemRect(std::size_t index) const {
     if (index >= _items.size() || _items[index] == nullptr) {
-        return ShapeBounds{};
+        return InkingShapeBounds{};
     }
     const InkingWidget* node = _items[index];
-    return ShapeBounds{node->GetX(), node->GetY(),
+    return InkingShapeBounds{node->GetX(), node->GetY(),
                        static_cast<float>(node->GetWidth()),
                        static_cast<float>(node->GetHeight())};
 }
@@ -261,7 +261,7 @@ InkingWidget* MenuBar::GetItemNode(std::size_t index) const {
 // 对齐
 // ---------------------------------------------------------------------------
 
-void MenuBar::SetJustify(LayoutJustify justify) {
+void MenuBar::SetJustify(InkingLayoutJustify justify) {
     if (_layout.justify == justify) {
         return;  // 幂等
     }
@@ -272,7 +272,7 @@ void MenuBar::SetJustify(LayoutJustify justify) {
     Relayout();
 }
 
-LayoutJustify MenuBar::GetJustify() const noexcept {
+InkingLayoutJustify MenuBar::GetJustify() const noexcept {
     return _layout.justify;
 }
 
@@ -295,7 +295,7 @@ void MenuBar::RebuildCaptions() {
     _captionButtons.clear();
 
     // 弹簧：宽 0 + fillMain → 主轴剩余空间全归它，后面的按钮自然贴右边。
-    AnchorData spacerData;
+    InkingAnchorData spacerData;
     spacerData.width = 0;
     spacerData.height = 1;
     spacerData.color = kInvisibleColor;
@@ -307,7 +307,7 @@ void MenuBar::RebuildCaptions() {
     }
 
     // 最小化 / 关闭。文字用 "—" / "×"（不引图标：图标列在第一版不做）。
-    ButtonData look = _style.captionLook;
+    InkingButtonData look = _style.captionLook;
     look.width = static_cast<int>(_style.captionWidth + 0.5f);
     look.height = GetHeight() > 0 ? GetHeight() - 4 : look.height;
     look.label = "—";
@@ -351,9 +351,9 @@ std::size_t MenuBar::GetCaptionButtonCount() const noexcept {
 // 拖动（无边框下的自绘标题栏）
 // ---------------------------------------------------------------------------
 
-void MenuBar::onPointerPress(PointerButton button, bool press) {
+void MenuBar::onPointerPress(InkingPointerButton button, bool press) {
     // 无边框拖动只认主键（0.5.0）：右键按下不该让整个窗口跟着动。
-    if (button != PointerButton::Primary) {
+    if (button != InkingPointerButton::Primary) {
         return;
     }
     _dragging = press && _style.draggable;
@@ -419,4 +419,4 @@ void MenuBar::onPointerWheel(float deltaX, float deltaY) {
     InkingStaticPanel::onPointerWheel(deltaX, deltaY);
 }
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

@@ -28,7 +28,7 @@
 
 struct SDL_Surface;
 
-namespace inking::detail {
+namespace inking_detail {
 
 /// 一次光栅化的结果。`surface` 由调用方 `SDL_DestroySurface`。
 struct SvgRasterResult {
@@ -59,4 +59,4 @@ SvgRasterResult RasterizeSvg(const std::uint8_t* data, std::size_t size,
 std::string ScanUnsupportedSvgElements(const std::uint8_t* data,
                                        std::size_t size, int* count);
 
-}  // namespace inking::detail
+}  // namespace inking_detail

@@ -2,3 +2,4 @@
 add_subdirectory(demo)
 add_subdirectory(pet)
 add_subdirectory(sharp)
+add_subdirectory(atlas_frames)

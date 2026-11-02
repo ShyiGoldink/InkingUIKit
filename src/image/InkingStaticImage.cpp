@@ -1,16 +1,18 @@
 #include <image/InkingStaticImage.h>
 
+// G-02（纯重构）：InkingImageLike 的唯一实现与本档的 ABI 薄转发都放在这里。
+
 #include <asset/InkingAsset.h>
 #include <button/ButtonPaint.h>
 #include <detail/InkLog.h>
-// `detail::TransformBounds`（AABB 绕中心过一遍变换）从**源项目那个单体头**
+// `inking_detail::TransformBounds`（AABB 绕中心过一遍变换）从**源项目那个单体头**
 // （`include/ink/basic/InkingAnchor.h`）搬到了 `detail/InkingGeometry.h`。源项目里它是
 // 经 `InkingHit.h` → `InkingAnchor.h` 传递进来的，而本仓库的 `InkingHit.h`
 // **刻意只前向声明 `InkingWidget`**（不为一个引用参数拖整个树层），这条传递链
 // 就断了——所以这里必须显式包含。**拆单体头时第一个现形的就是这类依赖。**
 #include <detail/InkingGeometry.h>
 #include <detail/InkingHit.h>
-// `detail::WarnIfImageUndersampled`（0.7.1 T-04）：素材像素够不够这块屏幕。
+// `inking_detail::WarnIfImageUndersampled`（0.7.1 T-04）：素材像素够不够这块屏幕。
 // 它是 `render/` 的内部头，而本条护栏**只在 DEBUG 下存在**——所以 include 也
 // 只在 DEBUG 下要（Release 里连这个符号都不该出现在本 TU 里）。
 #if defined(INK_ISDEBUG)
@@ -23,8 +25,6 @@
 #include <algorithm>
 #include <cmath>
 
-namespace inking {
-
 #if defined(INK_ISDEBUG)
 namespace {
 
@@ -36,9 +36,9 @@ namespace {
  * 新素材"的三个时刻。Release 下本函数整个消失（`#if` 在调用点与实现里各一次，
  * 于是连参数求值都没有）。
  */
-void NoticeUndersampled(const ButtonAppearance& appearance, int designWidth,
-                        int designHeight, const ShapeBounds& srcRect) {
-    ImageBytes bytes;
+void NoticeUndersampled(const InkingButtonAppearance& appearance, int designWidth,
+                        int designHeight, const InkingShapeBounds& srcRect) {
+    InkingImageBytes bytes;
     bytes.data = appearance.imageBytes;
     bytes.size = appearance.imageSize;
     bytes.name = appearance.source;
@@ -49,23 +49,23 @@ void NoticeUndersampled(const ButtonAppearance& appearance, int designWidth,
     const int frameHeight = srcRect.height > 0.0f
         ? static_cast<int>(std::lround(srcRect.height))
         : 0;
-    detail::WarnIfImageUndersampled(bytes, designWidth, designHeight, frameWidth,
+    inking_detail::WarnIfImageUndersampled(bytes, designWidth, designHeight, frameWidth,
                                     frameHeight);
 }
 
 }  // namespace
 #endif  // INK_ISDEBUG
 
-InkingStaticImage::InkingStaticImage(InkingWidget* parent, const ImageData& data)
-    : InkingStaticWidget(parent, data.name) {
+InkingStaticImage::InkingStaticImage(InkingWidget* parent, const InkingImageData& data)
+    : InkingStaticWidget(parent, data.name),
+      InkingImageLike(static_cast<InkingWidget&>(*this)) {
     applyData(data);
 }
 
-void InkingStaticImage::applyData(const ImageData& data) {
-    // 拷一份再 Normalize：调用方给的可能"三态没补齐"，而本类要求 _data 永远
-    // 处于补齐状态（绘制那边按它取外观）。图片只用 normal，但保持一致不吃亏。
-    _data = data;
-    _data.Normalize();
+void InkingStaticImage::applyData(const InkingImageData& data) {
+    // G-02：Normalize、初始纹理名与绘制外观归 InkingImageLike；几何仍由静态档自己装。
+    resetImageData(data);
+    const InkingImageData& config = GetData();
 
     // -----------------------------------------------------------------------
     // 几何：构造期一次性写进基类
@@ -76,43 +76,40 @@ void InkingStaticImage::applyData(const ImageData& data) {
     // 不是运行期几何变化（静态档没有几何写入口，那条保证由 src/inking.cpp 的
     // 编译期断言钉着）。
     // -----------------------------------------------------------------------
-    _width = _data.width > 0 ? _data.width : 0;
-    _height = _data.height > 0 ? _data.height : 0;
-    _selfAnchor = _data.selfAnchor;
-    _traceAnchor = _data.traceAnchor;
-    _offsetX = _data.offsetX;
-    _offsetY = _data.offsetY;
+    _width = config.width > 0 ? config.width : 0;
+    _height = config.height > 0 ? config.height : 0;
+    _selfAnchor = config.selfAnchor;
+    _traceAnchor = config.traceAnchor;
+    _offsetX = config.offsetX;
+    _offsetY = config.offsetY;
     // 布局**只搬 `_layoutItem`，不搬 `_layout`**——这不是漏搬，别"补"上去：
     //   - `_layoutItem`（我在父容器布局里的意愿）对图片有意义：它决定图片在
     //     父容器里怎么排；
     //   - `_layout`（我这个容器怎么排孩子）对图片没有意义——**图片不当容器**。
     // 搬了 `_layout` 的只有 panel / canvas / button 那三个（能挂子节点并排布
     // 的），`video` 与本类同档。判据是"它能不能当容器"，不是"字段有没有"。
-    _layoutItem = _data.layoutItem;
+    _layoutItem = config.layoutItem;
 
     // 可见性与层级走现成的写入口：它们自己会夹取、自己判"真的变了没有"，
     // 也就不可能和基类的规则分叉（例如 zindex 的下限）。
-    SetVisible(_data.visible);
-    ChangeZIndex(_data.zIndex);
+    SetVisible(config.visible);
+    ChangeZIndex(config.zIndex);
     // 命中策略不是几何：它不标脏、不进命中表（`InkingWidget.h` 那段注释）。
     // 整张设计稿当背景时要靠它把空白点击让给下层。
-    SetHitPassThrough(_data.hitPassThrough);
+    SetHitPassThrough(config.hitPassThrough);
 
     ClearDirty();
     // 几何是构造期写入的，场景列表里的坐标快照要重算一次。
     NotifySceneStructureChanged();
 
-    _imageName = _data.normal.source;
-    refreshRenderAppearance();
-
-    if (_data.runtimeAsset) {
+    if (config.runtimeAsset) {
         // 运行期那条路：字节不进 exe，构造时读一次。
         // 读不到**不中止构造**：给一张"只有底色"的图 + 一条错误日志，
         // 界面照常跑起来（缺一张图不该让整个程序起不来）。
-        if (!LoadAsset(_data.normal.source)) {
-            INK_LOG_ERROR(std::string(kImageModuleName),
-                          "运行期读图失败：" + _data.normal.source
-                              + "（资源根 " + AssetRoot()
+        if (!LoadAsset(config.normal.source)) {
+            INK_LOG_ERROR(std::string(InkingImageModuleName),
+                          "运行期读图失败：" + config.normal.source
+                              + "（资源根 " + InkingAssetRoot()
                               + "）；这张图暂时只有底色");
         }
     }
@@ -120,17 +117,25 @@ void InkingStaticImage::applyData(const ImageData& data) {
     else {
         // 生成期烘进来的字节（来自 `normal.imageBytes`）：这是"字节到手"的
         // 另一个入口，与 `SetImageBytes` / `LoadAsset` 各管一档。
-        NoticeUndersampled(_renderAppearance, _width, _height, _renderSourceRect);
+        noticeUndersampled();
     }
 #endif
 }
 
-void InkingStaticImage::refreshRenderAppearance() {
+void InkingImageLike::resetImageData(const InkingImageData& data) {
+    // 配置与当前显示分开：Normalize 后的配置只读，运行期字节落在另一份存储。
+    _data = data;
+    _data.Normalize();
+    _imageName = _data.normal.source;
+    refreshRenderAppearance();
+}
+
+void InkingImageLike::refreshRenderAppearance() {
     _renderAppearance = _data.normal;
     if (!_assetBytes.empty()) {
         // 运行期读进来的字节：把视图指过去。**不能**改 `_data.normal`——
         // 那份是配置（生成期烘的静态数组），改了就把"配置"和"当前显示"混在一起。
-        _renderAppearance.type = AppearanceType::Image;
+        _renderAppearance.type = InkingAppearanceType::Image;
         _renderAppearance.imageBytes = _assetBytes.data();
         _renderAppearance.imageSize = _assetBytes.size();
         // **纹理缓存键必须跟着当前字节走**（0.6.0 T-03 修）。
@@ -147,14 +152,26 @@ void InkingStaticImage::refreshRenderAppearance() {
     _renderAppearance.srcRect = _renderSourceRect;
 }
 
-void InkingStaticImage::SetRenderSourceRect(const ShapeBounds& srcRect) {
+void InkingStaticImage::refreshRenderAppearance() {
+    InkingImageLike::refreshRenderAppearance();
+}
+
+void InkingImageLike::SetRenderSourceRect(const InkingShapeBounds& srcRect) {
     _renderSourceRect = srcRect;
     _renderAppearance.srcRect = srcRect;
+}
+
+const InkingShapeBounds& InkingImageLike::GetRenderSourceRect() const noexcept {
+    return _renderSourceRect;
+}
+
+void InkingStaticImage::SetRenderSourceRect(const InkingShapeBounds& srcRect) {
+    InkingImageLike::SetRenderSourceRect(srcRect);
     MarkRepaintDirty();  // 画面变了；几何没动，所以不标命中脏
 }
 
-const ShapeBounds& InkingStaticImage::GetRenderSourceRect() const noexcept {
-    return _renderSourceRect;
+const InkingShapeBounds& InkingStaticImage::GetRenderSourceRect() const noexcept {
+    return InkingImageLike::GetRenderSourceRect();
 }
 
 // ---------------------------------------------------------------------------
@@ -165,70 +182,107 @@ bool InkingStaticImage::HitTest(float worldX, float worldY) const {
     // 世界坐标 → 本地 → 形状判定，三步和绘制共用同一套定义。
     // 读的是**生效的显示变换**（A13：可能含外部拖动 / 缩放），不是配置里那一份
     // ——两处各读各的就会"看着在这儿、点的却是那儿"。
-    return detail::HitTestShape(*this, GetShape(), GetDisplayTransform(),
+    return inking_detail::HitTestShape(*this, GetShape(), GetDisplayTransform(),
                                 worldX, worldY);
 }
 
-const ShapeSpec& InkingStaticImage::GetShape() const noexcept {
+const InkingShapeSpec& InkingImageLike::GetShape() const noexcept {
     return _data.shape;
 }
 
-const ButtonAppearance& InkingStaticImage::GetAppearance() const noexcept {
+const InkingButtonAppearance& InkingImageLike::GetAppearance() const noexcept {
     return _renderAppearance;
 }
 
-std::uint32_t InkingStaticImage::GetDisplayColor() const noexcept {
+std::uint32_t InkingImageLike::GetDisplayColor() const noexcept {
     return _data.normal.color;
 }
 
-TransformSpec InkingStaticImage::GetDisplayTransform() const noexcept {
-    // A13：外部显示变换（拖动 / 缩放）**叠在**配置那份之上。
-    // 返回值类型（而不是引用）就是为它改的：合成结果不再是 `_data` 里的字段。
-    return CombineWithExternal(_data.normal.transform);
+const InkingShapeSpec& InkingStaticImage::GetShape() const noexcept {
+    return InkingImageLike::GetShape();
 }
 
-TransformSpec InkingStaticImage::GetSubtreeTransform() const noexcept {
+const InkingButtonAppearance& InkingStaticImage::GetAppearance() const noexcept {
+    return InkingImageLike::GetAppearance();
+}
+
+std::uint32_t InkingStaticImage::GetDisplayColor() const noexcept {
+    return InkingImageLike::GetDisplayColor();
+}
+
+InkingTransformSpec InkingStaticImage::GetDisplayTransform() const noexcept {
+    // A13：外部显示变换（拖动 / 缩放）**叠在**配置那份之上。
+    // 返回值类型（而不是引用）就是为它改的：合成结果不再是 `_data` 里的字段。
+    return CombineWithExternal(GetData().normal.transform);
+}
+
+InkingTransformSpec InkingStaticImage::GetSubtreeTransform() const noexcept {
     // 和按钮 / 面板同一条约定：变换作用于整棵子树（图片自己不动，但可能被
     // 放在一个会动的容器里；这条让"图片里再挂东西"也画得对）。
     // A13：外部显示变换同样作用到整棵子树——否则"拖走图片、里面的东西留在原地"。
-    return CombineWithExternal(_data.normal.transform);
+    return CombineWithExternal(GetData().normal.transform);
 }
 
-ShapeBounds InkingStaticImage::GetHitEnvelope() const {
+InkingShapeBounds InkingImageLike::GetHitEnvelope() const {
     // 复用按钮那份算法：它对图片自然退化成"这一态 + 它的变换"。
-    const ShapeBounds base =
-        detail::ButtonHitEnvelope(_data, GetShape(), GetWidth(), GetHeight());
+    const InkingShapeBounds base = inking_detail::ButtonHitEnvelope(
+        _data, GetShape(), _host->GetWidth(), _host->GetHeight());
     // A13：再套一层**外部变换**——不然图片被拖走之后，表里登记的仍是老位置，
     // 拖过去就点不到（这是"会把表动起来"的那条通道，见 InkingAnchor.h 那段）。
-    // 绕的是组件中心，和 `ApplyTransform` 的语义一致。
-    return detail::TransformBounds(
-        base, GetExternalTransform(), static_cast<float>(GetWidth()) * 0.5f,
-        static_cast<float>(GetHeight()) * 0.5f);
+    // 绕的是组件中心，和 `InkingApplyTransform` 的语义一致。
+    return inking_detail::TransformBounds(
+        base, _host->GetExternalTransform(),
+        static_cast<float>(_host->GetWidth()) * 0.5f,
+        static_cast<float>(_host->GetHeight()) * 0.5f);
 }
 
-const ImageData& InkingStaticImage::GetData() const noexcept { return _data; }
+InkingShapeBounds InkingStaticImage::GetHitEnvelope() const {
+    return InkingImageLike::GetHitEnvelope();
+}
 
-const std::string& InkingStaticImage::ImageName() const noexcept {
+const InkingImageData& InkingImageLike::GetData() const noexcept { return _data; }
+
+const std::string& InkingImageLike::ImageName() const noexcept {
     return _imageName;
 }
 
-std::size_t InkingStaticImage::AssetByteCount() const noexcept {
+std::size_t InkingImageLike::AssetByteCount() const noexcept {
     return _assetBytes.size();
 }
 
-bool InkingStaticImage::UsingAssetBytes() const noexcept {
+bool InkingImageLike::UsingAssetBytes() const noexcept {
     return !_assetBytes.empty();
 }
 
-int InkingStaticImage::AssetLoadCount() const noexcept { return _assetLoadCount; }
+int InkingImageLike::AssetLoadCount() const noexcept { return _assetLoadCount; }
+
+const InkingImageData& InkingStaticImage::GetData() const noexcept {
+    return InkingImageLike::GetData();
+}
+
+const std::string& InkingStaticImage::ImageName() const noexcept {
+    return InkingImageLike::ImageName();
+}
+
+std::size_t InkingStaticImage::AssetByteCount() const noexcept {
+    return InkingImageLike::AssetByteCount();
+}
+
+bool InkingStaticImage::UsingAssetBytes() const noexcept {
+    return InkingImageLike::UsingAssetBytes();
+}
+
+int InkingStaticImage::AssetLoadCount() const noexcept {
+    return InkingImageLike::AssetLoadCount();
+}
 
 // ---------------------------------------------------------------------------
 // 运行期换图
 // ---------------------------------------------------------------------------
 
-bool InkingStaticImage::LoadAsset(const std::string& relative) {
+bool InkingImageLike::LoadAsset(const std::string& relative) {
     ++_assetLoadCount;
-    std::vector<std::uint8_t> bytes = AssetLoad(relative);
+    std::vector<std::uint8_t> bytes = InkingAssetLoad(relative);
     if (bytes.empty()) {
         // 读不到：**保留旧图**。把它清空会让画面变成一个洞，
         // 而"缺一张图"和"这块本来就什么都没有"是两件事。
@@ -237,15 +291,22 @@ bool InkingStaticImage::LoadAsset(const std::string& relative) {
     _assetBytes = std::move(bytes);
     _imageName = relative;
     refreshRenderAppearance();
+    return true;
+}
+
+bool InkingStaticImage::LoadAsset(const std::string& relative) {
+    if (!InkingImageLike::LoadAsset(relative)) {
+        return false;
+    }
     MarkRepaintDirty();  // 画面变了；几何没动，所以不标命中脏
 #if defined(INK_ISDEBUG)
-    NoticeUndersampled(_renderAppearance, _width, _height, _renderSourceRect);
+    noticeUndersampled();
 #endif
     return true;
 }
 
-void InkingStaticImage::SetImageBytes(const std::uint8_t* data, std::size_t size,
-                                      const std::string& name) {
+void InkingImageLike::SetImageBytes(const std::uint8_t* data, std::size_t size,
+                              const std::string& name) {
     if (data == nullptr || size == 0) {
         _assetBytes.clear();
         _imageName.clear();
@@ -255,9 +316,21 @@ void InkingStaticImage::SetImageBytes(const std::uint8_t* data, std::size_t size
         _imageName = name;
     }
     refreshRenderAppearance();
+}
+
+void InkingStaticImage::SetImageBytes(const std::uint8_t* data, std::size_t size,
+                                      const std::string& name) {
+    InkingImageLike::SetImageBytes(data, size, name);
     MarkRepaintDirty();
 #if defined(INK_ISDEBUG)
-    NoticeUndersampled(_renderAppearance, _width, _height, _renderSourceRect);
+    noticeUndersampled();
+#endif
+}
+
+void InkingImageLike::noticeUndersampled() const {
+#if defined(INK_ISDEBUG)
+    NoticeUndersampled(_renderAppearance, _host->GetWidth(), _host->GetHeight(),
+                       _renderSourceRect);
 #endif
 }
 
@@ -271,7 +344,7 @@ namespace {
 constexpr float kImageHandleSize = 20.0f;
 
 /// 缩放的夹取范围：防止拖成 0（看不见了）或者无限大（手感与内存都不好）。
-/// 这是**交互的底线**，不是配置项——真要配再往 `ImageData` 加（会多一处同步）。
+/// 这是**交互的底线**，不是配置项——真要配再往 `InkingImageData` 加（会多一处同步）。
 constexpr float kImageMinScale = 0.2f;
 constexpr float kImageMaxScale = 5.0f;
 
@@ -297,7 +370,7 @@ void InkingStaticImage::resolveDragMode(float worldX, float worldY) noexcept {
     }
     const float width = static_cast<float>(GetWidth());
     const float height = static_cast<float>(GetHeight());
-    const ShapeBounds handle{width - kImageHandleSize,
+    const InkingShapeBounds handle{width - kImageHandleSize,
                              height - kImageHandleSize, kImageHandleSize,
                              kImageHandleSize};
     // 与**命中**同源：`HitTestLocalRect` 会把世界坐标还原成本地坐标再问这个矩形
@@ -305,14 +378,14 @@ void InkingStaticImage::resolveDragMode(float worldX, float worldY) noexcept {
     // 少了最后那一步（只减绝对位置）就会出现"看到的把手"与"算出来的把手"错位：
     // **缩小时抓把手被判成移动**（手感就是"抓不住 / 好像有延迟"），放大时图片中部
     // 又会被误判成缩放。实测踩过。
-    _dragScaling = detail::HitTestLocalRect(*this, handle, GetDisplayTransform(),
+    _dragScaling = inking_detail::HitTestLocalRect(*this, handle, GetDisplayTransform(),
                                             worldX, worldY);
 }
 
-void InkingStaticImage::onPointerPress(PointerButton button, bool press) {
+void InkingStaticImage::onPointerPress(InkingPointerButton button, bool press) {
     // 拖动 / 缩放是主键手势（0.5.0）：右键抬起绝不能把正在进行的拖动收尾，
     // 否则"右键看着什么都不做，图片却不拖了"。
-    if (button != PointerButton::Primary) {
+    if (button != InkingPointerButton::Primary) {
         return;
     }
     if (press) {
@@ -368,12 +441,12 @@ void InkingStaticImage::onPointerDrag(float designX, float designY, float deltaX
         const float centerX = static_cast<float>(GetWidth()) * 0.5f;
         const float centerY = static_cast<float>(GetHeight()) * 0.5f;
         const float radians =
-            _dragStartTransform.rotate * detail::kTransformDegToRad;
+            _dragStartTransform.rotate * inking_detail::kTransformDegToRad;
         const float cosA = std::cos(radians);
         const float sinA = std::sin(radians);
         const float deltaScale = scale - _dragStartTransform.scale;
 
-        TransformSpec next = _dragStartTransform;
+        InkingTransformSpec next = _dragStartTransform;
         next.scale = scale;
         next.translateX = _dragStartTransform.translateX
                         + deltaScale * (centerX * cosA - centerY * sinA);
@@ -385,7 +458,7 @@ void InkingStaticImage::onPointerDrag(float designX, float designY, float deltaX
 
     if (_draggable) {
         // 整块移动：直接把这次位移加到外部变换上（标脏由写入口统一做）。
-        TransformSpec next = GetExternalTransform();
+        InkingTransformSpec next = GetExternalTransform();
         next.translateX += deltaX;
         next.translateY += deltaY;
         SetDisplayTransform(next);
@@ -401,10 +474,9 @@ void InkingStaticImage::onRender(float pixelX, float pixelY) const {
     // 形状填充 / 图片贴图 / 描边阴影三笔的顺序与几何都在那边，这里只是把
     // "这一帧长什么样"喂进去。图片解不出来时它会退回按颜色填（不是个洞）。
     // A13：变换用**生效的那一份**（含外部拖动 / 缩放），和命中读的是同一个。
-    detail::PaintButtonAppearance(*this, GetShape(), _renderAppearance,
-                                  _data.stroke, _data.shadow,
-                                  _data.normal.color, GetDisplayTransform(),
+    inking_detail::PaintButtonAppearance(*this, GetShape(), GetAppearance(),
+                                  GetData().stroke, GetData().shadow,
+                                  GetDisplayColor(), GetDisplayTransform(),
                                   pixelX, pixelY);
 }
 
-}  // namespace inking

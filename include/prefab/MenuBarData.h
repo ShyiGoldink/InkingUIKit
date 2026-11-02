@@ -10,7 +10,7 @@
 #include <dataStruct/InkingLayout.h>
 #include <panel/PanelData.h>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 /// 模块名常量：日志与自检要用。
 inline constexpr const char* kMenuBarModuleName = "MenuBar";
@@ -29,7 +29,7 @@ struct MenuBarStyle {
      * 默认：横向 `Stack` + `justify = Start`（偏左）+ `align = Center`
      * + `padding = {6, 2, 6, 2}`。
      */
-    PanelData panel{};
+    InkingPanelData panel{};
 
     /**
      * 无边框窗口下"自绘标题栏"那三个字（最小化 / 关闭）的外观模板。
@@ -37,7 +37,7 @@ struct MenuBarStyle {
      * 只在 `captionButtons = true` 时用得上。默认是 `MakeDefaultCaptionLook()`
      * ——透明底 + 浅灰字，悬停才亮起来（和真实标题栏按钮的观感同源）。
      */
-    ButtonData captionLook{};
+    InkingButtonData captionLook{};
 
     /**
      * 按住菜单栏的**空白处**能拖动窗口吗（无边框下的标题栏行为）。
@@ -99,6 +99,6 @@ struct MenuBarStyle {
 };
 
 /// 一份"透明底 + 浅灰字、悬停变亮"的标题栏按钮外观。
-ButtonData MakeDefaultCaptionLook();
+InkingButtonData MakeDefaultCaptionLook();
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

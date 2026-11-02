@@ -4,18 +4,16 @@
 // 头内 inline 静态量每个 TU 一份，DLL 与 exe 会各持一份（`AGENTS.md` §2-4），
 // 表现是"切了主题，界面上有一半组件没变"——静默失效那一类。
 
-namespace inking {
-
 namespace {
 
 /**
  * 主题的运行期状态：装了哪几张、当前是哪张、版本、命中统计。
  *
- * 一个结构体装全部状态而不是四个静态量：`ClearThemeTables` 与"装表就清空统计"
+ * 一个结构体装全部状态而不是四个静态量：`InkingClearThemeTables` 与"装表就清空统计"
  * 这类操作要一起成立，分开写迟早漏一个。
  */
 struct ThemeState {
-    std::vector<ThemeTable> tables;
+    std::vector<InkingThemeTable> tables;
     std::string activeName;
     std::uint64_t version = 0;
     std::uint64_t hits = 0;
@@ -28,12 +26,12 @@ ThemeState& themeState() {
 }
 
 /// 当前活跃那张表；没装 / 没切 / 名字失效时返回 `nullptr`。
-const ThemeTable* activeTable() noexcept {
+const InkingThemeTable* activeTable() noexcept {
     const ThemeState& state = themeState();
     if (state.activeName.empty()) {
         return nullptr;
     }
-    for (const ThemeTable& table : state.tables) {
+    for (const InkingThemeTable& table : state.tables) {
         if (table.name == state.activeName) {
             return &table;
         }
@@ -43,11 +41,11 @@ const ThemeTable* activeTable() noexcept {
 
 }  // namespace
 
-const std::uint32_t* ThemeTable::Find(const std::string& token) const noexcept {
+const std::uint32_t* InkingThemeTable::Find(const std::string& token) const noexcept {
     if (token.empty()) {
         return nullptr;
     }
-    for (const ThemeColorEntry& entry : colors) {
+    for (const InkingThemeColorEntry& entry : colors) {
         if (entry.token == token) {
             return &entry.color;
         }
@@ -55,12 +53,12 @@ const std::uint32_t* ThemeTable::Find(const std::string& token) const noexcept {
     return nullptr;
 }
 
-bool InstallThemeTable(ThemeTable table) {
+bool InkingInstallThemeTable(InkingThemeTable table) {
     if (table.name.empty()) {
         return false;
     }
     ThemeState& state = themeState();
-    for (ThemeTable& existing : state.tables) {
+    for (InkingThemeTable& existing : state.tables) {
         if (existing.name == table.name) {
             // 同名整张替换：换一整套才是常态，合并会让"旧表里的 token 还在不在"
             // 变成一件要查的事（和语言表同一条理由）。
@@ -74,13 +72,13 @@ bool InstallThemeTable(ThemeTable table) {
     return true;
 }
 
-bool SetActiveTheme(const std::string& name) {
+bool InkingSetActiveTheme(const std::string& name) {
     ThemeState& state = themeState();
     if (state.activeName == name) {
         return true;  // 幂等：**不**动版本，否则每帧调一次就是"永远在重查"
     }
     bool found = false;
-    for (const ThemeTable& table : state.tables) {
+    for (const InkingThemeTable& table : state.tables) {
         if (table.name == name) {
             found = true;
             break;
@@ -94,10 +92,10 @@ bool SetActiveTheme(const std::string& name) {
     return true;
 }
 
-const std::string& ActiveThemeName() noexcept { return themeState().activeName; }
+const std::string& InkingActiveThemeName() noexcept { return themeState().activeName; }
 
-bool HasThemeTable(const std::string& name) noexcept {
-    for (const ThemeTable& table : themeState().tables) {
+bool InkingHasThemeTable(const std::string& name) noexcept {
+    for (const InkingThemeTable& table : themeState().tables) {
         if (table.name == name) {
             return true;
         }
@@ -105,18 +103,18 @@ bool HasThemeTable(const std::string& name) noexcept {
     return false;
 }
 
-std::size_t ThemeTableCount() noexcept { return themeState().tables.size(); }
+std::size_t InkingThemeTableCount() noexcept { return themeState().tables.size(); }
 
-std::uint64_t ThemeVersion() noexcept { return themeState().version; }
+std::uint64_t InkingThemeVersion() noexcept { return themeState().version; }
 
-std::uint32_t ResolveThemeColor(const char* token,
+std::uint32_t InkingResolveThemeColor(const char* token,
                                 std::uint32_t fallback) noexcept {
     // ① 这个颜色位不是语义色 —— 绝大多数调用走这条。
     if (token == nullptr || token[0] == '\0') {
         return fallback;
     }
     // ② 一张表都没装：生成期烘的是什么就用什么（"不用运行期主题"的零成本路径）。
-    const ThemeTable* table = activeTable();
+    const InkingThemeTable* table = activeTable();
     if (table == nullptr) {
         return fallback;
     }
@@ -134,16 +132,16 @@ std::uint32_t ResolveThemeColor(const char* token,
     return *found;
 }
 
-ThemeStats ThemeStatsSnapshot() noexcept {
+InkingThemeStats InkingThemeStatsSnapshot() noexcept {
     const ThemeState& state = themeState();
-    ThemeStats stats;
+    InkingThemeStats stats;
     stats.hits = state.hits;
     stats.misses = state.misses;
     stats.version = state.version;
     return stats;
 }
 
-void ClearThemeTables() noexcept {
+void InkingClearThemeTables() noexcept {
     ThemeState& state = themeState();
     state.tables.clear();
     state.activeName.clear();
@@ -152,4 +150,3 @@ void ClearThemeTables() noexcept {
     state.misses = 0;
 }
 
-}  // namespace inking

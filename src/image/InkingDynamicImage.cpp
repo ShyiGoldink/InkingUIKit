@@ -1,56 +1,18 @@
 #include <image/InkingDynamicImage.h>
 
-// 动态图片的实现（G-01）：静态版那份逐字复制过来，只把"几何写入"换成动态档的
-// 写入口、把"场景推 onPointerDrag"换成"自己从 onPointerStateChanged 拉"。
+// 动态图片的实现（G-01；G-02 抽取纯重构）：数据、资源与观测转发到 InkingImageLike；
+// 几何写入口与"自己从 onPointerStateChanged 拉输入"仍留在本档。
 // 头文件里写了两条差别的理由，这里不再重复。
 
 #include <asset/InkingAsset.h>
 #include <button/ButtonPaint.h>
 #include <detail/InkLog.h>
-// `detail::TransformBounds`（AABB 绕中心过一遍变换）与 `detail::HitTestShape` /
-// `detail::HitTestLocalRect`：静态版同一个来源、同一套用法（见
-// `src/image/InkingStaticImage.cpp` 顶部那段注释——这两个头必须显式包含，
-// `InkingHit.h` 刻意只前向声明 `InkingWidget`）。
-#include <detail/InkingGeometry.h>
+// 命中与拖动把手共用同一套本地坐标还原；资源与包络的共用实现已归 InkingImageLike（G-02）。
 #include <detail/InkingHit.h>
-// `detail::WarnIfImageUndersampled`（0.7.1 T-04）：素材像素够不够这块屏幕。
-// 只在 DEBUG 下要——Release 里连这个符号都不该出现在本 TU 里。
-#if defined(INK_ISDEBUG)
-#include <render/InkingText.h>
-#endif
 #include <scene/InkingScene.h>  // 指针状态 / 按下点：动态档的输入只有这一条来源
-
-#include <utility>
 
 #include <algorithm>
 #include <cmath>
-
-namespace inking {
-
-#if defined(INK_ISDEBUG)
-namespace {
-
-/// DEBUG-only：素材够不够这块屏幕（与静态版逐字相同，0.7.1 T-04）。
-/// 挂在"字节到手的三个入口"（构造 / `SetImageBytes` / `LoadAsset`）而不是逐帧。
-void NoticeUndersampled(const ButtonAppearance& appearance, int designWidth,
-                        int designHeight, const ShapeBounds& srcRect) {
-    ImageBytes bytes;
-    bytes.data = appearance.imageBytes;
-    bytes.size = appearance.imageSize;
-    bytes.name = appearance.source;
-    // 图集那一帧的像素宽（全零 = 整张图）：比的是**这一段**，不是整张图集。
-    const int frameWidth = srcRect.width > 0.0f
-        ? static_cast<int>(std::lround(srcRect.width))
-        : 0;
-    const int frameHeight = srcRect.height > 0.0f
-        ? static_cast<int>(std::lround(srcRect.height))
-        : 0;
-    detail::WarnIfImageUndersampled(bytes, designWidth, designHeight, frameWidth,
-                                    frameHeight);
-}
-
-}  // namespace
-#endif  // INK_ISDEBUG
 
 // ---------------------------------------------------------------------------
 // 拖拽 / 缩放用到的常量（与静态版同一组数）
@@ -73,15 +35,16 @@ constexpr float kImageMaxScale = 5.0f;
 // ---------------------------------------------------------------------------
 
 InkingDynamicImage::InkingDynamicImage(InkingWidget* parent,
-                                       const ImageData& data)
-    : InkingDynamicWidget(parent, data.name) {
+                                       const InkingImageData& data)
+    : InkingDynamicWidget(parent, data.name),
+      InkingImageLike(static_cast<InkingWidget&>(*this)) {
     applyData(data);
 }
 
-void InkingDynamicImage::applyData(const ImageData& data) {
-    // 拷一份再 Normalize：本类要求 `_data` 永远处于补齐状态（绘制那边按它取外观）。
-    _data = data;
-    _data.Normalize();
+void InkingDynamicImage::applyData(const InkingImageData& data) {
+    // G-02：配置与资源状态归 InkingImageLike；几何仍走动态档的公开写入口。
+    resetImageData(data);
+    const InkingImageData& config = GetData();
 
     // -----------------------------------------------------------------------
     // 几何：走**动态档的写入口**，而不是像静态版那样直接写基类的受保护成员
@@ -91,40 +54,36 @@ void InkingDynamicImage::applyData(const ImageData& data) {
     //
     // 在构造函数体里调它们是安全的：写入口只标脏、只通知场景，不读派生类状态。
     // -----------------------------------------------------------------------
-    Resize(_data.width > 0 ? _data.width : 0,
-           _data.height > 0 ? _data.height : 0);
-    ChangeSelfAnchor(_data.selfAnchor);
-    ChangeTraceAnchor(_data.traceAnchor);
-    ChangeOffset(_data.offsetX, _data.offsetY);
+    Resize(config.width > 0 ? config.width : 0,
+           config.height > 0 ? config.height : 0);
+    ChangeSelfAnchor(config.selfAnchor);
+    ChangeTraceAnchor(config.traceAnchor);
+    ChangeOffset(config.offsetX, config.offsetY);
 
     // 布局**只搬 `_layoutItem`，不搬 `_layout`**——图片不当容器（与静态版同一条，
     // 判据是"它能不能当容器"，不是"字段有没有"）。
-    _layoutItem = _data.layoutItem;
+    _layoutItem = config.layoutItem;
 
     // 可见性与层级走现成的写入口：它们自己会夹取、自己判"真的变了没有"，
     // 也就不可能和基类的规则分叉。
-    SetVisible(_data.visible);
-    ChangeZIndex(_data.zIndex);
+    SetVisible(config.visible);
+    ChangeZIndex(config.zIndex);
     // 命中策略不是几何：它不标脏、不进命中表。
-    SetHitPassThrough(_data.hitPassThrough);
+    SetHitPassThrough(config.hitPassThrough);
 
-    _imageName = _data.normal.source;
-    refreshRenderAppearance();
-
-    if (_data.runtimeAsset) {
+    if (config.runtimeAsset) {
         // 运行期那条路：字节不进 exe，构造时读一次。
         // 读不到**不中止构造**：给一张"只有底色"的图 + 一条错误日志。
-        if (!LoadAsset(_data.normal.source)) {
-            INK_LOG_ERROR(std::string(kImageModuleName),
-                          "动态图运行期读图失败：" + _data.normal.source
-                              + "（资源根 " + AssetRoot()
+        if (!LoadAsset(config.normal.source)) {
+            INK_LOG_ERROR(std::string(InkingImageModuleName),
+                          "动态图运行期读图失败：" + config.normal.source
+                              + "（资源根 " + InkingAssetRoot()
                               + "）；这张图暂时只有底色");
         }
     }
 #if defined(INK_ISDEBUG)
     else {
-        NoticeUndersampled(_renderAppearance, GetWidth(), GetHeight(),
-                           _renderSourceRect);
+        noticeUndersampled();
     }
 #endif
 
@@ -133,113 +92,88 @@ void InkingDynamicImage::applyData(const ImageData& data) {
 }
 
 void InkingDynamicImage::refreshRenderAppearance() {
-    _renderAppearance = _data.normal;
-    if (!_assetBytes.empty()) {
-        // 运行期读进来的字节：把视图指过去。**不能**改 `_data.normal`——
-        // 那份是配置，改了就把"配置"和"当前显示"混在一起。
-        _renderAppearance.type = AppearanceType::Image;
-        _renderAppearance.imageBytes = _assetBytes.data();
-        _renderAppearance.imageSize = _assetBytes.size();
-        // **纹理缓存键必须跟着当前字节走**：不动它的话，同尺寸换图会一直命中
-        // 第一张的纹理（帧动画表现为"每一帧都画第一帧"），而且不报错。
-        _renderAppearance.source = _imageName;
-    }
-    // 切格信息**总是**从这里回填：上面整份拷贝的是 `normal`，而 `srcRect` 是
-    // 运行期状态（换帧），不在配置里。
-    _renderAppearance.srcRect = _renderSourceRect;
+    InkingImageLike::refreshRenderAppearance();
 }
 
-void InkingDynamicImage::SetRenderSourceRect(const ShapeBounds& srcRect) {
-    _renderSourceRect = srcRect;
-    _renderAppearance.srcRect = srcRect;
+void InkingDynamicImage::SetRenderSourceRect(const InkingShapeBounds& srcRect) {
+    InkingImageLike::SetRenderSourceRect(srcRect);
     MarkRepaintDirty();  // 画面变了；几何没动，所以不标命中脏
 }
 
-const ShapeBounds& InkingDynamicImage::GetRenderSourceRect() const noexcept {
-    return _renderSourceRect;
+const InkingShapeBounds& InkingDynamicImage::GetRenderSourceRect() const noexcept {
+    return InkingImageLike::GetRenderSourceRect();
 }
 
 // ---------------------------------------------------------------------------
-// 查询（与静态版逐字相同：同一个形状、同一套变换语义）
+// 查询（G-02：数据与包络转发到 InkingImageLike，变换仍由动态档自己合成）
 // ---------------------------------------------------------------------------
 
 bool InkingDynamicImage::HitTest(float worldX, float worldY) const {
     // 世界坐标 → 本地 → 形状判定，三步和绘制共用同一套定义。
     // 读的是**生效的显示变换**（A13：可能含外部拖动 / 缩放），不是配置里那一份。
-    return detail::HitTestShape(*this, GetShape(), GetDisplayTransform(),
+    return inking_detail::HitTestShape(*this, GetShape(), GetDisplayTransform(),
                                 worldX, worldY);
 }
 
-const ShapeSpec& InkingDynamicImage::GetShape() const noexcept {
-    return _data.shape;
+const InkingShapeSpec& InkingDynamicImage::GetShape() const noexcept {
+    return InkingImageLike::GetShape();
 }
 
-const ButtonAppearance& InkingDynamicImage::GetAppearance() const noexcept {
-    return _renderAppearance;
+const InkingButtonAppearance& InkingDynamicImage::GetAppearance() const noexcept {
+    return InkingImageLike::GetAppearance();
 }
 
 std::uint32_t InkingDynamicImage::GetDisplayColor() const noexcept {
-    return _data.normal.color;
+    return InkingImageLike::GetDisplayColor();
 }
 
-TransformSpec InkingDynamicImage::GetDisplayTransform() const noexcept {
+InkingTransformSpec InkingDynamicImage::GetDisplayTransform() const noexcept {
     // A13：外部显示变换**叠在**配置那份之上。返回值而不是引用——合成结果不再
-    // 指向 `_data` 里的字段。
-    return CombineWithExternal(_data.normal.transform);
+    // 指向配置里的字段。
+    return CombineWithExternal(GetData().normal.transform);
 }
 
-TransformSpec InkingDynamicImage::GetSubtreeTransform() const noexcept {
+InkingTransformSpec InkingDynamicImage::GetSubtreeTransform() const noexcept {
     // 和按钮 / 面板同一条约定：变换作用于整棵子树（图片自己不动，但可能被放在
     // 一个会动的容器里；这条让"图片里再挂东西"也画得对）。
-    return CombineWithExternal(_data.normal.transform);
+    return CombineWithExternal(GetData().normal.transform);
 }
 
-ShapeBounds InkingDynamicImage::GetHitEnvelope() const {
-    // 复用按钮那份算法：它对图片自然退化成"这一态 + 它的变换"。
-    const ShapeBounds base =
-        detail::ButtonHitEnvelope(_data, GetShape(), GetWidth(), GetHeight());
-    // A13：再套一层**外部变换**——不然图片被外部拖走之后，洞还留在老位置，
-    // 拖过去就点不到。绕的是组件中心，和 `ApplyTransform` 的语义一致。
-    return detail::TransformBounds(
-        base, GetExternalTransform(), static_cast<float>(GetWidth()) * 0.5f,
-        static_cast<float>(GetHeight()) * 0.5f);
+InkingShapeBounds InkingDynamicImage::GetHitEnvelope() const {
+    return InkingImageLike::GetHitEnvelope();
 }
 
-const ImageData& InkingDynamicImage::GetData() const noexcept { return _data; }
+const InkingImageData& InkingDynamicImage::GetData() const noexcept {
+    return InkingImageLike::GetData();
+}
 
 const std::string& InkingDynamicImage::ImageName() const noexcept {
-    return _imageName;
+    return InkingImageLike::ImageName();
 }
 
 std::size_t InkingDynamicImage::AssetByteCount() const noexcept {
-    return _assetBytes.size();
+    return InkingImageLike::AssetByteCount();
 }
 
 bool InkingDynamicImage::UsingAssetBytes() const noexcept {
-    return !_assetBytes.empty();
+    return InkingImageLike::UsingAssetBytes();
 }
 
-int InkingDynamicImage::AssetLoadCount() const noexcept { return _assetLoadCount; }
+int InkingDynamicImage::AssetLoadCount() const noexcept {
+    return InkingImageLike::AssetLoadCount();
+}
 
 // ---------------------------------------------------------------------------
-// 运行期换图（与静态版同一条：读不到保留旧图，几何一个字不动）
+// 运行期换图（G-02：共用实现不标脏，动态档在这里补重绘脏）
 // ---------------------------------------------------------------------------
 
 bool InkingDynamicImage::LoadAsset(const std::string& relative) {
-    ++_assetLoadCount;
-    std::vector<std::uint8_t> bytes = AssetLoad(relative);
-    if (bytes.empty()) {
-        // 读不到：**保留旧图**。把它清空会让画面变成一个洞，
-        // 而"缺一张图"和"这块本来就什么都没有"是两件事。
+    if (!InkingImageLike::LoadAsset(relative)) {
         return false;
     }
-    _assetBytes = std::move(bytes);
-    _imageName = relative;
-    refreshRenderAppearance();
     MarkRepaintDirty();  // 画面变了；几何没动，所以不标命中脏
 #if defined(INK_ISDEBUG)
-    NoticeUndersampled(_renderAppearance, GetWidth(), GetHeight(),
-                       _renderSourceRect);
+    noticeUndersampled();
 #endif
     return true;
 }
@@ -247,19 +181,10 @@ bool InkingDynamicImage::LoadAsset(const std::string& relative) {
 void InkingDynamicImage::SetImageBytes(const std::uint8_t* data,
                                        std::size_t size,
                                        const std::string& name) {
-    if (data == nullptr || size == 0) {
-        _assetBytes.clear();
-        _imageName.clear();
-    } else {
-        // 拷一份自己拥有：调用方的缓冲可能是临时的（解码结果、栈上的数组）。
-        _assetBytes.assign(data, data + size);
-        _imageName = name;
-    }
-    refreshRenderAppearance();
+    InkingImageLike::SetImageBytes(data, size, name);
     MarkRepaintDirty();
 #if defined(INK_ISDEBUG)
-    NoticeUndersampled(_renderAppearance, GetWidth(), GetHeight(),
-                       _renderSourceRect);
+    noticeUndersampled();
 #endif
 }
 
@@ -289,13 +214,13 @@ void InkingDynamicImage::resolveDragMode(float worldX, float worldY) noexcept {
     }
     const float width = static_cast<float>(GetWidth());
     const float height = static_cast<float>(GetHeight());
-    const ShapeBounds handle{width - kImageHandleSize,
+    const InkingShapeBounds handle{width - kImageHandleSize,
                              height - kImageHandleSize, kImageHandleSize,
                              kImageHandleSize};
     // 与**命中**同源：`HitTestLocalRect` 把世界坐标还原成本地坐标再问这个矩形
     // （撤祖先变换 → 减绝对位置 → 过**自己变换的逆**）。少最后那一步，
     // 缩放之后"看到的把手"与"算出来的把手"就错位（缩小时抓把手被判成移动）。
-    _dragScaling = detail::HitTestLocalRect(*this, handle, GetDisplayTransform(),
+    _dragScaling = inking_detail::HitTestLocalRect(*this, handle, GetDisplayTransform(),
                                             worldX, worldY);
 }
 
@@ -356,12 +281,12 @@ void InkingDynamicImage::onPointerStateChanged() {
     const bool inside = scene->IsPointerInside();
     // 按下用的是**原始按键状态**，不折进 inside：按着不放把指针拖出窗口仍然是
     // "按着"（`DispatchPointer` 那边也是这么用 `_pointerDown` 的）。
-    const PointerDownState down = scene->GetPointerDown();
+    const InkingPointerDownState down = scene->GetPointerDown();
     // 命中自判：指针不在窗口里时一律算"不在图片上"。
     const bool hit =
         inside && HitTest(scene->GetPointerX(), scene->GetPointerY());
 
-    const detail::PointerProbeResult r = _probe.Update(hit, down);
+    const inking_detail::PointerProbeResult r = _probe.Update(hit, down);
 
     // 按下那一刻定三件事：这次交互归不归我、是移动还是缩放、几何基准是多少。
     // **当场定格**（不等第一次拖动事件）：否则"按在把手上、手先动了一两像素"
@@ -372,8 +297,8 @@ void InkingDynamicImage::onPointerStateChanged() {
         if (_dragArmed) {
             // 按下点用场景记的**按下那一刻**的坐标，不用反推：反推在"按下之后
             // 同一帧里指针已经动了"的情况下会差一截。
-            const MousePoint origin =
-                scene->GetPressOrigin(PointerButton::Primary);
+            const InkingMousePoint origin =
+                scene->GetPressOrigin(InkingPointerButton::Primary);
             _dragPressX = origin.x;
             _dragPressY = origin.y;
             _dragStartOffsetX = GetOffsetX();
@@ -395,7 +320,7 @@ void InkingDynamicImage::onPointerStateChanged() {
 
     // 捕获期间指针每一次变化都写一次几何。用**捕获**而不是"此刻在图上"：
     // 按下去之后滑出去仍然算拖（和静态版的手感一致）。
-    if (_dragArmed && _probe.IsCaptured(PointerButton::Primary)) {
+    if (_dragArmed && _probe.IsCaptured(InkingPointerButton::Primary)) {
         applyDrag(scene->GetPointerX(), scene->GetPointerY());
     }
 }
@@ -407,10 +332,9 @@ void InkingDynamicImage::onPointerStateChanged() {
 void InkingDynamicImage::onRender(float pixelX, float pixelY) const {
     // 画什么由 `include/button/ButtonPaint.h` 提供——**和按钮同一份实现**。
     // A13：变换用**生效的那一份**（含外部拖动 / 缩放），和命中读的是同一个。
-    detail::PaintButtonAppearance(*this, GetShape(), _renderAppearance,
-                                  _data.stroke, _data.shadow,
-                                  _data.normal.color, GetDisplayTransform(),
+    inking_detail::PaintButtonAppearance(*this, GetShape(), GetAppearance(),
+                                  GetData().stroke, GetData().shadow,
+                                  GetDisplayColor(), GetDisplayTransform(),
                                   pixelX, pixelY);
 }
 
-}  // namespace inking

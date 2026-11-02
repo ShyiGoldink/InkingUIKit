@@ -5,8 +5,8 @@
 // 它是渲染层里**唯一不碰 SDL 的那一半**，所以单独成活：
 //   - 轮廓采样与三角化都是纯算术，错了的表现却是"圆角按钮的边是锯齿"或
 //     "画在这儿、点在别处"——这类问题必须能**不起窗口**就断言；
-//   - 它回答的和 `ShapeContains`（`dataStruct/InkingShapeSpec.h`）是**同一个
-//     几何问题**：`AppendContour` 采出来的轮廓与 `ShapeContains` 判的内外必须
+//   - 它回答的和 `InkingShapeContains`（`dataStruct/InkingShapeSpec.h`）是**同一个
+//     几何问题**：`AppendContour` 采出来的轮廓与 `InkingShapeContains` 判的内外必须
 //     同源，否则就是"画的圆角、点的是直角"那种只在角落露头的错。两边同层，
 //     对账才写得出来。
 //
@@ -17,7 +17,7 @@
 
 #include <vector>
 
-namespace inking::detail {
+namespace inking_detail {
 
 /// 轮廓上的一个点，设备像素、相对组件左上角。
 struct OutlinePoint {
@@ -51,7 +51,7 @@ int StepsForLength(float pixels, int minSteps, int maxSteps);
  * （`strokeShape`）。两处必须给出**同一个**段数——描边是"两条轮廓之间的带子"，
  * 外圈与内圈点数不一致就没法按下标配对（自检里的"点数配对不上就不画"兜底）。
  */
-int ContourSteps(const ShapeSpec& scaled, float width, float height);
+int ContourSteps(const InkingShapeSpec& scaled, float width, float height);
 
 /**
  * @brief 生成一个形状的轮廓（一圈闭合的点，顺时针）。
@@ -68,7 +68,7 @@ int ContourSteps(const ShapeSpec& scaled, float width, float height);
  * **点数只由 kind、steps 与 sides 决定，与 offset 无关**：外圈和内圈要按
  * 下标配对。半径退化（0）时弧上的点会重合在一起，那只是零面积三角形，无害。
  */
-void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
+void AppendContour(std::vector<OutlinePoint>& out, const InkingShapeSpec& shape,
                    float width, float height, int steps, float offset);
 
 /**
@@ -79,7 +79,7 @@ void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape,
  * `points` / `innerRatio` / `exponent` / `startAngle` / `sweepAngle` 当时都没比），
  * 靠"静态组件的形状在运行期不变"侥幸没出事；B2 补全的时候一起修掉了。
  */
-bool SameShape(const ShapeSpec& a, const ShapeSpec& b);
+bool SameShape(const InkingShapeSpec& a, const InkingShapeSpec& b);
 
 /**
  * 把一个**简单多边形**（一圈顶点）三角化成三角面片，索引追加到 `indices`
@@ -94,4 +94,4 @@ bool SameShape(const ShapeSpec& a, const ShapeSpec& b);
 void AppendEarClipIndices(const std::vector<OutlinePoint>& ring,
                           std::vector<int>& indices, int base);
 
-}  // namespace inking::detail
+}  // namespace inking_detail

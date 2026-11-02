@@ -2,8 +2,6 @@
 
 #include <algorithm>
 #include <utility>
-
-namespace inking {
 namespace {
 
 /// UTF-8 续字节（`10xxxxxx`）。
@@ -34,14 +32,14 @@ std::string StripNewlines(std::string_view text) {
 // 两份都很小、且关注点不同；哪天要抽公共 util，抽这两处。
 // ---------------------------------------------------------------------------
 
-bool TextEditState::IsBoundary(std::string_view text, std::size_t pos) noexcept {
+bool InkingTextEditState::IsBoundary(std::string_view text, std::size_t pos) noexcept {
     if (pos == 0 || pos >= text.size()) {
         return true;  // 0 与末尾天然是边界（越界也当成边界，调用方自己夹）
     }
     return !IsContinuation(text[pos]);
 }
 
-std::size_t TextEditState::SnapToBoundary(std::string_view text,
+std::size_t InkingTextEditState::SnapToBoundary(std::string_view text,
                                           std::size_t pos) noexcept {
     if (pos >= text.size()) {
         return text.size();
@@ -54,7 +52,7 @@ std::size_t TextEditState::SnapToBoundary(std::string_view text,
     return pos;
 }
 
-std::size_t TextEditState::PrevCodePoint(std::string_view text,
+std::size_t InkingTextEditState::PrevCodePoint(std::string_view text,
                                          std::size_t pos) noexcept {
     pos = SnapToBoundary(text, pos);
     if (pos == 0) {
@@ -67,7 +65,7 @@ std::size_t TextEditState::PrevCodePoint(std::string_view text,
     return pos;
 }
 
-std::size_t TextEditState::NextCodePoint(std::string_view text,
+std::size_t InkingTextEditState::NextCodePoint(std::string_view text,
                                          std::size_t pos) noexcept {
     pos = SnapToBoundary(text, pos);
     if (pos >= text.size()) {
@@ -84,7 +82,7 @@ std::size_t TextEditState::NextCodePoint(std::string_view text,
 // 文本
 // ---------------------------------------------------------------------------
 
-void TextEditState::SetText(std::string text) {
+void InkingTextEditState::SetText(std::string text) {
     const bool changed = text != text_;
     text_ = std::move(text);
     caret_ = 0;
@@ -99,7 +97,7 @@ void TextEditState::SetText(std::string text) {
 // 光标与选区
 // ---------------------------------------------------------------------------
 
-void TextEditState::SetCaret(std::size_t byteOffset) noexcept {
+void InkingTextEditState::SetCaret(std::size_t byteOffset) noexcept {
     const std::size_t next = SnapToBoundary(text_, byteOffset);
     const bool caretMoved = next != caret_;
     // 选区的"变化"要连"从有到无"一起算：只比 `anchor_` 与 `next` 会漏掉
@@ -112,22 +110,22 @@ void TextEditState::SetCaret(std::size_t byteOffset) noexcept {
     lastChange_.selection = hadSelection || caretMoved;
 }
 
-std::size_t TextEditState::SelectionBegin() const noexcept {
+std::size_t InkingTextEditState::SelectionBegin() const noexcept {
     return std::min(caret_, anchor_);
 }
 
-std::size_t TextEditState::SelectionEnd() const noexcept {
+std::size_t InkingTextEditState::SelectionEnd() const noexcept {
     return std::max(caret_, anchor_);
 }
 
-std::string TextEditState::SelectedText() const {
+std::string InkingTextEditState::SelectedText() const {
     if (!HasSelection()) {
         return {};
     }
     return text_.substr(SelectionBegin(), SelectionEnd() - SelectionBegin());
 }
 
-void TextEditState::SelectAll() noexcept {
+void InkingTextEditState::SelectAll() noexcept {
     anchor_ = 0;
     caret_ = text_.size();
     lastChange_ = Change{};
@@ -135,7 +133,7 @@ void TextEditState::SelectAll() noexcept {
     lastChange_.selection = true;
 }
 
-void TextEditState::ClearSelection() noexcept {
+void InkingTextEditState::ClearSelection() noexcept {
     if (!HasSelection()) {
         return;
     }
@@ -148,7 +146,7 @@ void TextEditState::ClearSelection() noexcept {
 // 移动
 // ---------------------------------------------------------------------------
 
-void TextEditState::MoveLeft(bool select) noexcept {
+void InkingTextEditState::MoveLeft(bool select) noexcept {
     const std::size_t next = PrevCodePoint(text_, caret_);
     const bool moved = next != caret_;
     caret_ = next;
@@ -160,7 +158,7 @@ void TextEditState::MoveLeft(bool select) noexcept {
     lastChange_.selection = select ? moved : false;
 }
 
-void TextEditState::MoveRight(bool select) noexcept {
+void InkingTextEditState::MoveRight(bool select) noexcept {
     const std::size_t next = NextCodePoint(text_, caret_);
     const bool moved = next != caret_;
     caret_ = next;
@@ -172,7 +170,7 @@ void TextEditState::MoveRight(bool select) noexcept {
     lastChange_.selection = select ? moved : false;
 }
 
-void TextEditState::MoveHome(bool select) noexcept {
+void InkingTextEditState::MoveHome(bool select) noexcept {
     const bool moved = caret_ != 0;
     caret_ = 0;
     if (!select) {
@@ -183,7 +181,7 @@ void TextEditState::MoveHome(bool select) noexcept {
     lastChange_.selection = select ? moved : false;
 }
 
-void TextEditState::MoveEnd(bool select) noexcept {
+void InkingTextEditState::MoveEnd(bool select) noexcept {
     const bool moved = caret_ != text_.size();
     caret_ = text_.size();
     if (!select) {
@@ -194,7 +192,7 @@ void TextEditState::MoveEnd(bool select) noexcept {
     lastChange_.selection = select ? moved : false;
 }
 
-void TextEditState::MoveTo(std::size_t byteOffset, bool select) noexcept {
+void InkingTextEditState::MoveTo(std::size_t byteOffset, bool select) noexcept {
     const std::size_t next = SnapToBoundary(text_, byteOffset);
     const bool moved = next != caret_;
     caret_ = next;
@@ -210,13 +208,13 @@ void TextEditState::MoveTo(std::size_t byteOffset, bool select) noexcept {
 // 编辑
 // ---------------------------------------------------------------------------
 
-void TextEditState::eraseRange(std::size_t begin, std::size_t end) {
+void InkingTextEditState::eraseRange(std::size_t begin, std::size_t end) {
     text_.erase(begin, end - begin);
     caret_ = begin;
     anchor_ = begin;
 }
 
-void TextEditState::InsertText(std::string_view utf8) {
+void InkingTextEditState::InsertText(std::string_view utf8) {
     if (utf8.empty()) {
         // 空串是空操作：**把 LastChange 清零**——它描述的是"最近一次操作改了什么"，
         // 空操作就该报告"什么都没改"（不然调用方会把上一次的改动当成本次的）。
@@ -236,7 +234,7 @@ void TextEditState::InsertText(std::string_view utf8) {
     lastChange_.selection = true;
 }
 
-void TextEditState::Backspace() {
+void InkingTextEditState::Backspace() {
     if (HasSelection()) {
         eraseRange(SelectionBegin(), SelectionEnd());
         lastChange_ = Change{};
@@ -258,7 +256,7 @@ void TextEditState::Backspace() {
     lastChange_.selection = false;  // 两边本来就相等（没选区）
 }
 
-void TextEditState::DeleteForward() {
+void InkingTextEditState::DeleteForward() {
     if (HasSelection()) {
         eraseRange(SelectionBegin(), SelectionEnd());
         lastChange_ = Change{};
@@ -280,9 +278,9 @@ void TextEditState::DeleteForward() {
     lastChange_.selection = false;
 }
 
-std::string TextEditState::CopySelection() const { return SelectedText(); }
+std::string InkingTextEditState::CopySelection() const { return SelectedText(); }
 
-std::string TextEditState::CutSelection() {
+std::string InkingTextEditState::CutSelection() {
     if (!HasSelection()) {
         return {};
     }
@@ -295,9 +293,8 @@ std::string TextEditState::CutSelection() {
     return cut;
 }
 
-void TextEditState::Paste(std::string_view text) {
+void InkingTextEditState::Paste(std::string_view text) {
     const std::string clean = StripNewlines(text);
     InsertText(clean);  // 空结果（比如剪贴板只有换行）就是空操作
 }
 
-}  // namespace inking

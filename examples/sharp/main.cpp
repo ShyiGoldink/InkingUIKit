@@ -140,19 +140,19 @@ const char* DescribeSigma(float sigma) {
     if (sigma < 1.0f) {
         return "放大，会软";
     }
-    if (inking::ImageScaleSpec::IsCleanRatio(sigma)) {
+    if (InkingImageScaleSpec::IsCleanRatio(sigma)) {
         return "整数倍缩小，干净（信息只剩 1/k²）";
     }
     return "非整数，有纹素被跳过（运动时会游走 / 闪）";
 }
 
-const char* FitName(inking::ImageFit fit) {
+const char* FitName(InkingImageFit fit) {
     switch (fit) {
-        case inking::ImageFit::Fill:
+        case InkingImageFit::Fill:
             return "Fill";
-        case inking::ImageFit::Contain:
+        case InkingImageFit::Contain:
             return "Contain";
-        case inking::ImageFit::Cover:
+        case InkingImageFit::Cover:
             return "Cover";
     }
     return "?";
@@ -163,14 +163,14 @@ const char* FitName(inking::ImageFit fit) {
  *
  * 为什么 fit 切换要**延后到 onTick**：快捷键回调在窗口的事件派发里跑，而
  * `InkingScene` 明令"回调里不许增删节点"（`AddChild` / `RemoveChild` 会动
- * 命中表与绘制列表）。切 fit 的实现是**重建那个节点**（`ImageData` 没有运行期
+ * 命中表与绘制列表）。切 fit 的实现是**重建那个节点**（`InkingImageData` 没有运行期
  * 改 fit 的入口），所以回调里只记一个意图，真正的重建放在这一帧的 tick 里。
  */
-class SharpScene : public inking::InkingScene {
+class SharpScene : public InkingScene {
 public:
     SharpScene(std::vector<std::uint8_t> png, int assetWidth, int assetHeight,
                std::string assetName)
-        : inking::InkingScene("sharp"),
+        : InkingScene("sharp"),
           _png(std::move(png)),
           _assetWidth(assetWidth),
           _assetHeight(assetHeight),
@@ -179,7 +179,7 @@ public:
     }
 
     /// 只记意图（可以在回调里调）；真正的重建与打印发生在下一帧的 `onTick`。
-    void RequestFit(inking::ImageFit fit) noexcept {
+    void RequestFit(InkingImageFit fit) noexcept {
         _pendingFit = fit;
         _hasPending = true;
     }
@@ -197,30 +197,30 @@ protected:
     }
 
 private:
-    /// 按当前 fit 重建图片节点（`ImageData` 没有运行期改 fit 的入口）。
+    /// 按当前 fit 重建图片节点（`InkingImageData` 没有运行期改 fit 的入口）。
     void Rebuild() {
         if (_image != nullptr) {
             RemoveChild(_image);  // 拥有型：返回的 unique_ptr 直接丢掉
             _image = nullptr;
         }
-        inking::ImageData data;
+        InkingImageData data;
         data.name = "sharp_probe";
-        data.width = inking::DesignWidth();
-        data.height = inking::DesignHeight();
-        data.normal.type = inking::AppearanceType::Image;
+        data.width = InkingDesignWidth();
+        data.height = InkingDesignHeight();
+        data.normal.type = InkingAppearanceType::Image;
         data.normal.imageFit = _fit;
         data.normal.source = _assetName;
-        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.selfAnchor = InkingChangeAnchor::LeftTop;
+        data.traceAnchor = InkingChangeAnchor::LeftTop;
         data.offsetX = 0.0f;
         data.offsetY = 0.0f;
         // 铺满整块画布、不参与命中：它只是"被看的那张图"。
         data.hitPassThrough = true;
-        auto node = std::make_unique<inking::InkingStaticImage>(this, data);
+        auto node = std::make_unique<InkingStaticImage>(this, data);
         // 字节直接给（不走 `runtimeAsset`：那条路要求 source 是相对资源根的路径，
         // 会把示例绑死在资产目录约定上；这里字节已经在手上）。
         node->SetImageBytes(_png.data(), _png.size(), _assetName);
-        _image = static_cast<inking::InkingStaticImage*>(AddChild(std::move(node)));
+        _image = static_cast<InkingStaticImage*>(AddChild(std::move(node)));
     }
 
     /**
@@ -230,13 +230,13 @@ private:
      *
      * 三个量都是**算术**，没有一个是"看着像"：
      *   - `R` = min(窗口宽 / 设计宽, 窗口高 / 设计高)（letterbox 倍率）；
-     *   - 绘制矩形来自 `ImageFitSpec::DrawnRect()`（与绘制层同一个纯函数）；
-     *   - σ 来自 `ImageScaleSpec::SamplingRatio()`（与任务书 §3 同一个纯函数）。
+     *   - 绘制矩形来自 `InkingImageFitSpec::DrawnRect()`（与绘制层同一个纯函数）；
+     *   - σ 来自 `InkingImageScaleSpec::SamplingRatio()`（与任务书 §3 同一个纯函数）。
      */
     void Report(bool force) {
-        const inking::InkingWindow& window = inking::InkingWindow::Instance();
-        const int designWidth = inking::DesignWidth();
-        const int designHeight = inking::DesignHeight();
+        const InkingWindow& window = InkingWindow::Instance();
+        const int designWidth = InkingDesignWidth();
+        const int designHeight = InkingDesignHeight();
         const int windowWidth = window.GetWindowWidth();
         const int windowHeight = window.GetWindowHeight();
         if (windowWidth <= 0 || windowHeight <= 0 || designWidth <= 0
@@ -257,17 +257,17 @@ private:
         _lastWindowWidth = windowWidth;
         _lastWindowHeight = windowHeight;
 
-        // 绘制矩形：与绘制层**同一个** `ImageFitSpec`（不是另写一份等比算术）。
-        inking::ImageFitSpec fitSpec;
+        // 绘制矩形：与绘制层**同一个** `InkingImageFitSpec`（不是另写一份等比算术）。
+        InkingImageFitSpec fitSpec;
         fitSpec.fit = _fit;
         fitSpec.frameWidth = static_cast<float>(designWidth);
         fitSpec.frameHeight = static_cast<float>(designHeight);
         fitSpec.imageWidth = static_cast<float>(_assetWidth);
         fitSpec.imageHeight = static_cast<float>(_assetHeight);
-        const inking::ShapeBounds drawn = fitSpec.DrawnRect();
+        const InkingShapeBounds drawn = fitSpec.DrawnRect();
 
         // σ：素材像素 ÷ 它实际占的屏幕像素（= 绘制宽 × R）。
-        inking::ImageScaleSpec scale;
+        InkingImageScaleSpec scale;
         scale.designWidth = static_cast<int>(std::lround(drawn.width));
         scale.depth = 1.0f;
         scale.ratioMax = ratio;
@@ -291,14 +291,14 @@ private:
     int _assetWidth = 0;
     int _assetHeight = 0;
     std::string _assetName;
-    inking::InkingStaticImage* _image = nullptr;
+    InkingStaticImage* _image = nullptr;
 
-    inking::ImageFit _fit = inking::ImageFit::Cover;  ///< 默认 Cover：真实用法
-    inking::ImageFit _pendingFit = inking::ImageFit::Cover;
+    InkingImageFit _fit = InkingImageFit::Cover;  ///< 默认 Cover：真实用法
+    InkingImageFit _pendingFit = InkingImageFit::Cover;
     bool _hasPending = false;
 
     // 上一次打印时的显示状态（只为"变了才打"）。
-    inking::ImageFit _lastFit = inking::ImageFit::Cover;
+    InkingImageFit _lastFit = InkingImageFit::Cover;
     int _lastWindowWidth = -1;
     int _lastWindowHeight = -1;
 };
@@ -308,15 +308,15 @@ private:
 int main(int argc, char** argv) {
     // ---------------------------------------------------------------------
     // 设计尺寸**必须是第一条**：第一个窗口 / 场景一构造就定型，之后
-    // `SetDesignSize` 会被拒绝（那时画面已经按旧尺寸算过一轮几何了）。
+    // `InkingSetDesignSize` 会被拒绝（那时画面已经按旧尺寸算过一轮几何了）。
     // ---------------------------------------------------------------------
-    if (!inking::SetDesignSize(1280, 720)) {
+    if (!InkingSetDesignSize(1280, 720)) {
         std::printf("[sharp] 设定设计尺寸 1280×720 被拒绝（已经定型？）\n");
         return 1;
     }
 
-    std::printf("[sharp] Inking %s-%s / 链接到的 SDL3 %s\n", inking::kVersion,
-                inking::kVersionStage, inking::sdl3_version().c_str());
+    std::printf("[sharp] Inking %s-%s / 链接到的 SDL3 %s\n", InkingVersion,
+                InkingVersionStage, InkingSdl3_version().c_str());
     std::printf("[sharp] 设计尺寸 1280×720；键位：1=Fill 2=Contain 3=Cover"
                 " / F11=全屏 / ESC=退全屏或退出\n");
     std::printf("[sharp] 判读规则：σ=1 最清；整数>1 干净缩小；非整数 脏；<1 放大发软\n");
@@ -355,16 +355,16 @@ int main(int argc, char** argv) {
     }
 
     // 1/2/3 走窗口层的**全局快捷键表**（焦点无关）。回调里只改意图，重建在 tick 里。
-    inking::InkingWindow& window = inking::InkingWindow::Instance();
-    window.GetShortcuts().Bind(inking::Shortcut::Parse("1"),
-                               [&scene] { scene.RequestFit(inking::ImageFit::Fill); },
+    InkingWindow& window = InkingWindow::Instance();
+    window.GetShortcuts().Bind(InkingShortcut::Parse("1"),
+                               [&scene] { scene.RequestFit(InkingImageFit::Fill); },
                                "sharp:fit=fill");
     window.GetShortcuts().Bind(
-        inking::Shortcut::Parse("2"),
-        [&scene] { scene.RequestFit(inking::ImageFit::Contain); }, "sharp:fit=contain");
+        InkingShortcut::Parse("2"),
+        [&scene] { scene.RequestFit(InkingImageFit::Contain); }, "sharp:fit=contain");
     window.GetShortcuts().Bind(
-        inking::Shortcut::Parse("3"),
-        [&scene] { scene.RequestFit(inking::ImageFit::Cover); }, "sharp:fit=cover");
+        InkingShortcut::Parse("3"),
+        [&scene] { scene.RequestFit(InkingImageFit::Cover); }, "sharp:fit=cover");
 
     // 按设计尺寸开窗；`Show()` 是同步的（建窗 + 主循环，直到关窗 / ESC）。
     window.setWindowWidth(1280);

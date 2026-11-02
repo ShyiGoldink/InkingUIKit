@@ -14,7 +14,7 @@
 #include <filesystem>
 #include <string>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 /// `path` → UTF-8 窄串（Windows 上走 `WideCharToMultiByte(CP_UTF8)`）。
 std::string PathToUtf8(const std::filesystem::path& path);
@@ -22,4 +22,4 @@ std::string PathToUtf8(const std::filesystem::path& path);
 /// UTF-8 窄串 → `path`（Windows 上先转宽字符再构造——**绝不**用窄串直接构造）。
 std::filesystem::path Utf8ToPath(const std::string& text);
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

@@ -16,19 +16,18 @@
 #include <render/InkingDraw.h>
 #include <scene/InkingScene.h>
 
-namespace inking {
 namespace {
 
-/// 模块名：日志用（每个模块一个，见 `PanelData.h` 的 `kPanelModuleName`）。
+/// 模块名：日志用（每个模块一个，见 `InkingPanelData.h` 的 `InkingPanelModuleName`）。
 constexpr const char* kFixedPopupModuleName = "InkingFixedPopup";
 
-/// `PanelData` → `AnchorData`：只搬定位 / 层级要读的那几个字段。
+/// `InkingPanelData` → `InkingAnchorData`：只搬定位 / 层级要读的那几个字段。
 ///
 /// `visible` 固定写 false——浮窗是"打开才出现"，而 `visible` 是构造期字段；
 /// 先关着，`OpenAt` 里再 `SetVisible(true)`。这个字段在这里写比"构造完再调一次
 /// `SetVisible(false)`"少标一次脏（后者是一次骨架变化）。
-AnchorData ToAnchorData(const PanelData& data) {
-    AnchorData out;
+InkingAnchorData ToAnchorData(const InkingPanelData& data) {
+    InkingAnchorData out;
     out.selfAnchor = data.selfAnchor;
     out.traceAnchor = data.traceAnchor;
     out.offsetX = data.offsetX;
@@ -45,12 +44,12 @@ AnchorData ToAnchorData(const PanelData& data) {
 
 }  // namespace
 
-InkingFixedPopup::InkingFixedPopup(InkingWidget* parent, const PanelData& data)
+InkingFixedPopup::InkingFixedPopup(InkingWidget* parent, const InkingPanelData& data)
     : InkingDynamicWidget(parent, ToAnchorData(data)) {
-    // 副本再 Normalize：调用方手写 `PanelData` 时常常不调它，而"两态全透明 ⇒
+    // 副本再 Normalize：调用方手写 `InkingPanelData` 时常常不调它，而"两态全透明 ⇒
     // 品红兜底 + 一条 WARN"这条规矩对浮窗同样成立（否则一个看不见的浮窗
     // 会表现为"菜单打不开"）。
-    PanelData normalized = data;
+    InkingPanelData normalized = data;
     normalized.Normalize();
 
     _shape = normalized.shape;
@@ -130,8 +129,8 @@ void InkingFixedPopup::Close() {
 
 void InkingFixedPopup::applyPlacement() {
     // 自锚点固定从 (0,0) 起算（向右下展开），落位算法负责翻到对侧。
-    const AnchorPoint preferred{0.0f, 0.0f};
-    const detail::PopupPlacement placement = detail::SolvePopupPlacement(
+    const InkingAnchorPoint preferred{0.0f, 0.0f};
+    const inking_detail::PopupPlacement placement = inking_detail::SolvePopupPlacement(
         _targetX, _targetY, GetWidth(), GetHeight(), effectiveClampBounds(),
         preferred);
 
@@ -164,20 +163,20 @@ void InkingFixedPopup::applyPlacement() {
     _clampedY = placement.clampedY;
 }
 
-ShapeBounds InkingFixedPopup::effectiveClampBounds() const {
+InkingShapeBounds InkingFixedPopup::effectiveClampBounds() const {
     if (_hasClampBounds) {
         return _clampBounds;
     }
     if (const InkingWidget* parent = GetParent()) {
-        return ShapeBounds{0.0f, 0.0f, static_cast<float>(parent->GetWidth()),
+        return InkingShapeBounds{0.0f, 0.0f, static_cast<float>(parent->GetWidth()),
                            static_cast<float>(parent->GetHeight())};
     }
     // 没有父级（理论上不会：浮窗总得挂在场景下）→ 按设计画布兜底。
-    return ShapeBounds{0.0f, 0.0f, static_cast<float>(DesignWidth()),
-                       static_cast<float>(DesignHeight())};
+    return InkingShapeBounds{0.0f, 0.0f, static_cast<float>(InkingDesignWidth()),
+                       static_cast<float>(InkingDesignHeight())};
 }
 
-void InkingFixedPopup::SetClampBounds(const ShapeBounds& bounds) {
+void InkingFixedPopup::SetClampBounds(const InkingShapeBounds& bounds) {
     _clampBounds = bounds;
     _hasClampBounds = true;
     if (_open) {
@@ -220,31 +219,31 @@ bool InkingFixedPopup::HitTest(float worldX, float worldY) const {
     if (!IsVisibleInTree()) {
         return false;
     }
-    // 和渲染共用同一份形状定义（`ShapeSpec`），所以"画在哪儿"与"点在哪儿"
+    // 和渲染共用同一份形状定义（`InkingShapeSpec`），所以"画在哪儿"与"点在哪儿"
     // 永远是同一个答案。浮窗没有显示变换，传单位变换。
-    return detail::HitTestShape(*this, _shape, TransformSpec{}, worldX, worldY);
+    return inking_detail::HitTestShape(*this, _shape, InkingTransformSpec{}, worldX, worldY);
 }
 
-ShapeBounds InkingFixedPopup::GetHitEnvelope() const {
+InkingShapeBounds InkingFixedPopup::GetHitEnvelope() const {
     // 整棵子树的并集：子孙可能溢出本体（下拉、提示气泡），包络要盖住它们。
-    return detail::PanelHitEnvelope(*this, _shape, GetWidth(), GetHeight(),
+    return inking_detail::PanelHitEnvelope(*this, _shape, GetWidth(), GetHeight(),
                                     _appearance, _appearance);
 }
 
 void InkingFixedPopup::onRender(float pixelX, float pixelY) const {
     if (_appearance.shadow.Visible()) {
-        detail::PaintSurfaceShadow(detail::currentRenderer(), *this, _shape,
-                                   _appearance.shadow, TransformSpec{}, pixelX,
+        inking_detail::PaintSurfaceShadow(inking_detail::currentRenderer(), *this, _shape,
+                                   _appearance.shadow, InkingTransformSpec{}, pixelX,
                                    pixelY);
     }
-    detail::PaintPanelAppearance(*this, _shape, _appearance.color,
-                                 TransformSpec{}, pixelX, pixelY);
+    inking_detail::PaintPanelAppearance(*this, _shape, _appearance.color,
+                                 InkingTransformSpec{}, pixelX, pixelY);
 }
 
 void InkingFixedPopup::onRenderDecoration(float pixelX, float pixelY) const {
     // 描边压得住子孙（装饰遍在"子树画完、上层兄弟未画"时跑）。
-    detail::PaintSurfaceStroke(detail::currentRenderer(), *this, _shape,
-                               _appearance.stroke, TransformSpec{}, pixelX,
+    inking_detail::PaintSurfaceStroke(inking_detail::currentRenderer(), *this, _shape,
+                               _appearance.stroke, InkingTransformSpec{}, pixelX,
                                pixelY);
 }
 
@@ -264,7 +263,7 @@ void InkingFixedPopup::onPointerStateChanged() {
     // 指针不在窗口里一律不算"在身上"（窗口外不该继续悬停）——与动态按钮同一条。
     const bool hit = scene->IsPointerInside()
                   && HitTest(scene->GetPointerX(), scene->GetPointerY());
-    const detail::PointerProbeResult r =
+    const inking_detail::PointerProbeResult r =
         _probe.Update(hit, scene->GetPointerDown());
 
     // 先判"外部按下"：它可能把浮窗关掉，关掉之后就不该再抢焦点。
@@ -310,4 +309,3 @@ bool InkingFixedPopup::IsFocusInsideSubtree() const {
     return false;
 }
 
-}  // namespace inking

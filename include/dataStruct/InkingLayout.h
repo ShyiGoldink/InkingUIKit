@@ -4,37 +4,35 @@
 //
 // 三句话先说清这一层在整个布局里的位置：
 //
-//   1. 规则住在父容器上（`LayoutSpec`）
-//    孩子只在自己身上写"我在这个布局里 的意愿"（`LayoutItem`：margin / 是否吃剩余空间 / min-max）
+//   1. 规则住在父容器上（`InkingLayoutSpec`）
+//    孩子只在自己身上写"我在这个布局里 的意愿"（`InkingLayoutItem`：margin / 是否吃剩余空间 / min-max）
 //    就像 CSS 里 `display:flex` 写在父级、`flex-grow` 写在子级；
-//   2. 这里只有意图，没有结果。算出来的矩形由布局求解器（`detail::layout::ArrangeSubtree`）产出
+//   2. 这里只有意图，没有结果。算出来的矩形由布局求解器（`inking_detail::layout::ArrangeSubtree`）产出
 //      产出写进组件的运行期几何（`_width/_height/_offsetX/_offsetY`），然后标结构脏让命中表重烘。
-//      为什么不把结果也放回数据里：`AnchorData` 是配置、是要被反复读取的输入，
+//      为什么不把结果也放回数据里：`InkingAnchorData` 是配置、是要被反复读取的输入，
 //      一旦被结果覆盖，重排就再也找不到原始意图了；
 //   3. 位置推导一个字都不改：布局只是把锚点公式里的两个量（尺寸、偏移）算出来。
 //      于是绘制 / 命中 / AABB / 子树变换全都不知道"有布局这回事"。
 //
-// 单位全是设计坐标（和 `AnchorData::width` / `offsetX` 同一套）。
+// 单位全是设计坐标（和 `InkingAnchorData::width` / `offsetX` 同一套）。
 
 #include <cstdint>
 
-namespace inking {
-
 // 布局种类。`None` = 不布局（老行为：锚点自己定位）。
-enum class LayoutKind : std::uint8_t {
+enum class InkingLayoutKind : std::uint8_t {
     None = 0,
     Stack,  // 一维排布：竖着或横着，一个接一个
     Grid,   // 网格：定列数，逐行填
 };
 
 // `Stack` 的主轴方向。
-enum class LayoutAxis : std::uint8_t {
+enum class InkingLayoutAxis : std::uint8_t {
     Vertical = 0,  // 竖排（一行一个）
     Horizontal,    // 横排（一列一个）
 };
 
 // 主轴上"多余的空间怎么分"。
-enum class LayoutJustify : std::uint8_t {
+enum class InkingLayoutJustify : std::uint8_t {
     Start = 0,     // 挤在一头（默认）
     Center,        // 居中
     End,           // 挤在另一头
@@ -44,7 +42,7 @@ enum class LayoutJustify : std::uint8_t {
 };
 
 /// 交叉轴上"单个项怎么放"。
-enum class LayoutAlign : std::uint8_t {
+enum class InkingLayoutAlign : std::uint8_t {
     Start = 0,
     Center,
     End,
@@ -52,27 +50,27 @@ enum class LayoutAlign : std::uint8_t {
 };
 
 // 四个方向的间距（padding 与 margin 共用）。设计坐标。
-struct LayoutSpacing {
+struct InkingLayoutSpacing {
     float left = 0.0f;
     float top = 0.0f;
     float right = 0.0f;
     float bottom = 0.0f;
 };
 
-// 一个尺寸（求解器内部的表达；`AnchorData` 那边是 int）。
-struct LayoutSize {
+// 一个尺寸（求解器内部的表达；`InkingAnchorData` 那边是 int）。
+struct InkingLayoutSize {
     float width = 0.0f;
     float height = 0.0f;
 };
 
 // 可用空间（父级给孩子的约束）。`0` 表示那个方向不限。
-struct LayoutConstraints {
+struct InkingLayoutConstraints {
     float maxWidth = 0.0f;
     float maxHeight = 0.0f;
 };
 
 // 一个算好的矩形（相对父级左上角）。
-struct LayoutRect {
+struct InkingLayoutRect {
     float x = 0.0f;
     float y = 0.0f;
     float width = 0.0f;
@@ -85,9 +83,9 @@ struct LayoutRect {
  * 全部有默认值，所以"什么都不写"= 老样子：按自己的尺寸、不吃剩余空间、
  * 没有 min-max、margin 为 0。
  */
-struct LayoutItem {
+struct InkingLayoutItem {
     // 外边距：算在这个孩子的矩形之外（间隙之外再加一圈）。
-    LayoutSpacing margin{};
+    InkingLayoutSpacing margin{};
 
     /**
      * 主轴方向上吃掉剩余空间。
@@ -108,24 +106,24 @@ struct LayoutItem {
 
     // 是否用下面的 `selfAlign` 覆盖容器的 `align`（默认不覆盖）。
     bool hasSelfAlign = false;
-    LayoutAlign selfAlign = LayoutAlign::Start;
+    InkingLayoutAlign selfAlign = InkingLayoutAlign::Start;
 };
 
 /**
- * @brief 一个容器的布局规则（挂在父容器的 `AnchorData::layout` 上）。
+ * @brief 一个容器的布局规则（挂在父容器的 `InkingAnchorData::layout` 上）。
  *
  * `kind == None` 时整份规则都不生效——这是"老配置一行不改"的保证。
  */
-struct LayoutSpec {
-    LayoutKind kind = LayoutKind::None;
+struct InkingLayoutSpec {
+    InkingLayoutKind kind = InkingLayoutKind::None;
 
     // ---- Stack ----
-    LayoutAxis axis = LayoutAxis::Vertical;
+    InkingLayoutAxis axis = InkingLayoutAxis::Vertical;
     // 主轴间距（相邻两项之间；不算 padding，也不算 margin）。
     float gap = 0.0f;
-    LayoutJustify justify = LayoutJustify::Start;
-    // 交叉轴的默认对齐（孩子可以用 `LayoutItem::selfAlign` 覆盖）。
-    LayoutAlign align = LayoutAlign::Stretch;
+    InkingLayoutJustify justify = InkingLayoutJustify::Start;
+    // 交叉轴的默认对齐（孩子可以用 `InkingLayoutItem::selfAlign` 覆盖）。
+    InkingLayoutAlign align = InkingLayoutAlign::Stretch;
 
     // Grid
     int columns = 1;         // 列数（至少 1）
@@ -134,10 +132,9 @@ struct LayoutSpec {
 
     //共用
     // 内容区内缩：所有孩子都在这个范围里排。
-    LayoutSpacing padding{};
+    InkingLayoutSpacing padding{};
 
     // 这份规则要不要生效。
-    bool Valid() const noexcept { return kind != LayoutKind::None; }
+    bool Valid() const noexcept { return kind != InkingLayoutKind::None; }
 };
 
-}  // namespace inking

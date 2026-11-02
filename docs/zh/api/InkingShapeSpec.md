@@ -17,11 +17,11 @@
 
 | 派生量 | 用途 |
 | --- | --- |
-| `SignedDistance` | 渲染（填充 / 描边 / 裁剪，形状层接手后） |
-| `ShapeContains` | 命中（这个点在不在形状里，现在就能用） |
-| `GetShapeBounds` | AABB（将来塞进命中表的哪个格子） |
+| `InkingSignedDistance` | 渲染（填充 / 描边 / 裁剪，形状层接手后） |
+| `InkingShapeContains` | 命中（这个点在不在形状里，现在就能用） |
+| `InkingGetShapeBounds` | AABB（将来塞进命中表的哪个格子） |
 
-`ShapeSpec` 是形状的**说明书**：把全部形状整合到一个结构里，靠 `kind` 分辨当前是哪一种，
+`InkingShapeSpec` 是形状的**说明书**：把全部形状整合到一个结构里，靠 `kind` 分辨当前是哪一种，
 只属于它的那几个参数才生效。它需要显式查 `type` 做参数校验，所以**强调用 key 来写**：
 `{"type":"roundedRect","radius":10}`，生成器在编译期把它展开成本结构。
 
@@ -52,13 +52,13 @@
 
 ## 用到的数据结构
 
->**ShapeKind**
+>**InkingShapeKind**
 
 形状的种类。放一个显式的整数而不是直接塞 `variant`：生成器是按 `type` 查表展开的，
 运行期只需要"这一个是哪一种"。
 
 ```C++
-enum class ShapeKind : std::uint8_t {
+enum class InkingShapeKind : std::uint8_t {
     Rect = 0,        // 矩形
     RoundedRect,     // 圆角矩形
     Circle,          // 圆
@@ -75,31 +75,31 @@ enum class ShapeKind : std::uint8_t {
 };
 ```
 
->**LineCap**
+>**InkingLineCap**
 
 线段的端点形状（**只对 `line` 有意义**）。名字与 CXXCSS 里的字符串一一对应
 （`butt` / `round` / `square`），语义照 CSS 的 `stroke-linecap`：平头、圆头、方头。
 
 ```C++
-enum class LineCap : std::uint8_t {
+enum class InkingLineCap : std::uint8_t {
     Butt = 0,  // 平头：到端点就断（默认）
     Round,     // 圆头：两端各一个半径 thickness/2 的半圆
     Square,    // 方头：两端各外扩 thickness/2
 };
 ```
 
->**ShapeSpec**
+>**InkingShapeSpec**
 
 一个形状的定义：种类 + 只属于它的那几个参数。**用工厂函数造，别手动填字段**——
 夹取和校验都在工厂里做了。
 
 ```C++
-struct ShapeSpec {
-    ShapeKind kind = ShapeKind::Rect;      // 形状种类
+struct InkingShapeSpec {
+    InkingShapeKind kind = InkingShapeKind::Rect;      // 形状种类
 
     float radius = 0.0f;                   // 只对 RoundedRect，已夹到 [0, min(w,h)/2]
     float thickness = 0.0f;                // Ring 的环宽 / Line 的线宽（> 0）
-    LineCap cap = LineCap::Butt;           // 只对 Line
+    InkingLineCap cap = InkingLineCap::Butt;           // 只对 Line
     int sides = 0;                         // 只对 Polygon，边数（>= 3）
     float rotation = 0.0f;                 // 只对 Polygon（Star 也用），起始角（度）
     float chamfer = 0.0f;                  // 只对 ChamferRect，切角长度（> 0）
@@ -118,16 +118,16 @@ struct ShapeSpec {
 **夹取**；纯配置错误（比如负半径、`sides < 3`）走 `assert` **当场拦下**，
 release 下再兜底修正成正数。所以 debug 里写错配置会直接断在工厂函数上。
 
-**生命周期的坑**：`pathPoints` **不拥有**数据，只借一个视图——和 `ButtonAppearance::imageBytes`
+**生命周期的坑**：`pathPoints` **不拥有**数据，只借一个视图——和 `InkingButtonAppearance::imageBytes`
 同一个约定：生成器烘的是**文件作用域的静态数组**，生命周期是整个进程，比任何组件都长。
-手写 `ShapeSpec` 时要自己保证这块内存活得够久（拷了 `ShapeSpec` 的组件会一直拿着这个指针）。
+手写 `InkingShapeSpec` 时要自己保证这块内存活得够久（拷了 `InkingShapeSpec` 的组件会一直拿着这个指针）。
 
->**ShapeBounds**
+>**InkingShapeBounds**
 
 形状的包围盒（AABB），相对组件左上角。
 
 ```C++
-struct ShapeBounds {
+struct InkingShapeBounds {
     float x = 0.0f;
     float y = 0.0f;
     float width = 0.0f;
@@ -139,9 +139,9 @@ struct ShapeBounds {
 
 ### Public
 
->**ShapeKind kind**
+>**InkingShapeKind kind**
 
-形状的种类。默认 `ShapeKind::Rect`，也就是"不写 shape"时的直角矩形。
+形状的种类。默认 `InkingShapeKind::Rect`，也就是"不写 shape"时的直角矩形。
 
 >**float radius**
 
@@ -151,11 +151,11 @@ struct ShapeBounds {
 >**float thickness**
 
 `Ring` 的环宽 / `Line` 的线宽（设计坐标，> 0）。真正生效的环宽还会顶到外半径就停
-（`detail::ShapeRingThickness`），线宽不夹。
+（`inking_detail::ShapeRingThickness`），线宽不夹。
 
->**LineCap cap**
+>**InkingLineCap cap**
 
-线段端点形状，**只对 `Line` 有意义**。默认 `LineCap::Butt`。
+线段端点形状，**只对 `Line` 有意义**。默认 `InkingLineCap::Butt`。
 
 >**int sides**
 
@@ -164,13 +164,13 @@ struct ShapeBounds {
 >**float rotation**
 
 **只对 `Polygon` 有意义**（`Star` 也用它，含义是"第一个外角的方向"）：起始角，单位是**度**，
-跟 `TransformSpec::rotate` 统一（配置里写 15 比写 0.2618 直观）；屏幕坐标 y 向下，
+跟 `InkingTransformSpec::rotate` 统一（配置里写 15 比写 0.2618 直观）；屏幕坐标 y 向下，
 所以**顺时针为正**。`0` 表示第一个顶点落在 +x（正右方），其余顶点按 `360/sides` 顺时针排。
 
 >**float chamfer**
 
 **只对 `ChamferRect` 有意义**：切角沿边的长度（> 0）。真正生效的值上限是短边的一半
-（`detail::ShapeChamferAmount`，再长就没有直边了）。
+（`inking_detail::ShapeChamferAmount`，再长就没有直边了）。
 
 >**int points**
 
@@ -201,7 +201,7 @@ struct ShapeBounds {
 
 **只对 `PolygonPath` 有意义**：顶点**个数**（不是浮点数个数），至少 3。
 
->**float x / float y / float width / float height**（`ShapeBounds`）
+>**float x / float y / float width / float height**（`InkingShapeBounds`）
 
 包围盒的位置与尺寸，相对组件左上角，设计坐标。
 
@@ -213,7 +213,7 @@ struct ShapeBounds {
 原名:
 
 ```C++
-static constexpr ShapeSpec Rect();
+static constexpr InkingShapeSpec Rect();
 ```
 
 直角矩形。就是默认值（= 不写 shape），尺寸完全来自 `width` / `height`。
@@ -222,7 +222,7 @@ static constexpr ShapeSpec Rect();
 原名:
 
 ```C++
-static ShapeSpec RoundedRect(float radius);
+static InkingShapeSpec RoundedRect(float radius);
 ```
 
 圆角矩形。`radius < 0` 是配置错误，断言挡住；过大则**夹取**（但上限要等拿到
@@ -234,7 +234,7 @@ static ShapeSpec RoundedRect(float radius);
 原名:
 
 ```C++
-static constexpr ShapeSpec Circle();
+static constexpr InkingShapeSpec Circle();
 ```
 
 正圆：直径取 `min(width,height)`，**居中**。
@@ -243,7 +243,7 @@ static constexpr ShapeSpec Circle();
 原名:
 
 ```C++
-static constexpr ShapeSpec Ellipse();
+static constexpr InkingShapeSpec Ellipse();
 ```
 
 椭圆：用满 `width × height`。
@@ -252,7 +252,7 @@ static constexpr ShapeSpec Ellipse();
 原名:
 
 ```C++
-static constexpr ShapeSpec Capsule();
+static constexpr InkingShapeSpec Capsule();
 ```
 
 胶囊：用满 `width × height`，两端是半径 `min(w,h)/2` 的半圆（沿长轴）。
@@ -261,18 +261,18 @@ static constexpr ShapeSpec Capsule();
 原名:
 
 ```C++
-static ShapeSpec Ring(float thickness);
+static InkingShapeSpec Ring(float thickness);
 ```
 
 圆环：外径取 `min(w,h)`、居中，环宽 `thickness`（往里长）。环宽没有"负"这种语义，
-所以 `<= 0` 是配置错误，断言挡住。真正生效的环宽用 `detail::ShapeRingThickness` 算
+所以 `<= 0` 是配置错误，断言挡住。真正生效的环宽用 `inking_detail::ShapeRingThickness` 算
 （顶到外半径就停，再厚就没有孔了、退化成实心圆）。
 
->**Line(float thickness, LineCap cap = LineCap::Butt)**
+>**Line(float thickness, InkingLineCap cap = InkingLineCap::Butt)**
 原名:
 
 ```C++
-static ShapeSpec Line(float thickness, LineCap cap = LineCap::Butt);
+static InkingShapeSpec Line(float thickness, InkingLineCap cap = InkingLineCap::Butt);
 ```
 
 水平线段：纵向居中，线宽 `thickness`，端点形状 `cap`（默认平头）。
@@ -281,7 +281,7 @@ static ShapeSpec Line(float thickness, LineCap cap = LineCap::Butt);
 原名:
 
 ```C++
-static ShapeSpec Polygon(int sides, float rotation = 0.0f);
+static InkingShapeSpec Polygon(int sides, float rotation = 0.0f);
 ```
 
 正多边形：外接圆直径取 `min(w,h)`、居中，`sides` 条边，`rotation` 是起始角（度）。
@@ -291,7 +291,7 @@ static ShapeSpec Polygon(int sides, float rotation = 0.0f);
 原名:
 
 ```C++
-static ShapeSpec ChamferRect(float chamfer);
+static InkingShapeSpec ChamferRect(float chamfer);
 ```
 
 切角矩形：用满 `width × height`，四个角各切掉 `chamfer` 长的一条 45° 斜边。
@@ -301,7 +301,7 @@ static ShapeSpec ChamferRect(float chamfer);
 原名:
 
 ```C++
-static ShapeSpec Star(int points, float innerRatio = 0.5f,
+static InkingShapeSpec Star(int points, float innerRatio = 0.5f,
                       float rotation = 0.0f);
 ```
 
@@ -313,7 +313,7 @@ static ShapeSpec Star(int points, float innerRatio = 0.5f,
 原名:
 
 ```C++
-static ShapeSpec Superellipse(float exponent);
+static InkingShapeSpec Superellipse(float exponent);
 ```
 
 超椭圆：用满 `width × height`，指数 `exponent`（> 0）。`2` = 椭圆，越大越方。
@@ -324,7 +324,7 @@ static ShapeSpec Superellipse(float exponent);
 原名:
 
 ```C++
-static ShapeSpec Arc(float thickness, float startAngle, float sweepAngle);
+static InkingShapeSpec Arc(float thickness, float startAngle, float sweepAngle);
 ```
 
 圆弧：外径取 `min(w,h)`、居中，环宽 `thickness`（往里长）；从 `startAngle` 起、
@@ -336,7 +336,7 @@ static ShapeSpec Arc(float thickness, float startAngle, float sweepAngle);
 原名:
 
 ```C++
-static ShapeSpec PolygonPath(const float* points, int count);
+static InkingShapeSpec PolygonPath(const float* points, int count);
 ```
 
 任意多边形：`points` 是 `x0,y0,x1,y1,…` 的设计坐标顶点表，`count` 是**点数**
@@ -365,21 +365,21 @@ float EffectiveRadius(int width, int height) const;
 
 夹取之后**真正生效**的半径（宽或高有一边是 0 时就是 0）。这是 `radius` 的规范读法。
 
->**LineCapName(LineCap cap)**
+>**InkingLineCapName(InkingLineCap cap)**
 原名:
 
 ```C++
-inline const char* LineCapName(LineCap cap);
+inline const char* InkingLineCapName(InkingLineCap cap);
 ```
 
-`LineCap` 的配置写法（`"round"` / `"square"` / `"butt"`）。坏值不该走到这里
+`InkingLineCap` 的配置写法（`"round"` / `"square"` / `"butt"`）。坏值不该走到这里
 （生成期就拦下了），所以 `default` 一并返回 `"butt"`。
 
->**SignedDistance(shape, x, y, width, height)**
+>**InkingSignedDistance(shape, x, y, width, height)**
 原名:
 
 ```C++
-inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
+inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y, int width,
                             int height);
 ```
 
@@ -407,7 +407,7 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
   平面的带符号距离取最大"，精确、不用近似（斜边距离要乘 `1/√2` 才是真的欧氏距离）；
 - **`star` / `polygonPath`** —— 非凸，没有"半平面取最大"那条捷径了，回到最朴素也最不容易错的
   一种：**符号用射线法**（crossing number，绕向无关）、**距离用点到边界的最近距离**。
-  两者共用同一份 `detail::ShapePolygonSdf`（参数是"点数 + 取点函数"），两处各写一遍的话迟早
+  两者共用同一份 `inking_detail::ShapePolygonSdf`（参数是"点数 + 取点函数"），两处各写一遍的话迟早
   有一处忘了处理凹口，而那种错只在特定角度上露头；
 - **`superellipse`** —— `|x/a|^n + |y/b|^n = 1` 也没有初等闭式，做法与 `ellipse` 同一个精神：
   符号精确（归一化后的 `f` 与 1 比），距离按最小半轴缩放回来；
@@ -416,22 +416,22 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
   **端头千万不能写成"到端点的距离 − 半个环宽"**：那是圆头，而渲染侧的两端是切平的——
   两边分家就会出现"画了没点中 / 点中了没画"。扫满一圈时只剩环带、没有端头。
 
->**ShapeContains(shape, x, y, width, height)**
+>**InkingShapeContains(shape, x, y, width, height)**
 原名:
 
 ```C++
-inline bool ShapeContains(const ShapeSpec& shape, float x, float y, int width,
+inline bool InkingShapeContains(const InkingShapeSpec& shape, float x, float y, int width,
                           int height);
 ```
 
-这个点在不在形状里（命中判定）。与 `SignedDistance` **同源**：判据就是 `f <= 0`，
+这个点在不在形状里（命中判定）。与 `InkingSignedDistance` **同源**：判据就是 `f <= 0`，
 和裁剪保留的区域完全一致，所以不会出现"画的是圆角、点到的是直角"。
 
->**GetShapeBounds(shape, width, height)**
+>**InkingGetShapeBounds(shape, width, height)**
 原名:
 
 ```C++
-inline ShapeBounds GetShapeBounds(const ShapeSpec& shape, int width,
+inline InkingShapeBounds InkingGetShapeBounds(const InkingShapeSpec& shape, int width,
                                   int height);
 ```
 

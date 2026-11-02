@@ -1,0 +1,33 @@
+{
+    "$comment": [
+        "动态帧动画（G-08）：同时写了 sheet（帧动画）与 \"dynamic\": true（档位）",
+        "⇒ 生成的类继承 InkingDynamicSprite。两个开关**正交**：",
+        "  配了帧 → 数据与绘制走 InkingSpriteData / 图集切格那条路；",
+        "  档位   → 几何能不能在运行期改、进不进命中表（遮挡记成洞）。",
+        "SetSpriteData 仍然**不改尺寸**（沿 InkingSprite 的既有语义：改尺寸属布局层）：",
+        "要跟着动作换尺寸，自己调 Resize —— 那正是动态档多出来的那个入口。",
+        "这份存在的意义：图片与帧动画共用同一段 emit 代码、只差一个 isSprite 分支，",
+        "只验图片那一侧等于没验帧动画那一侧（inkgen_compile_check 里的 static_assert 对的是它）。"
+    ],
+    "name": "dynamicRunner",
+    "width": 48,
+    "height": 48,
+    "runtime": true,
+    "dynamic": true,
+    "normal": { "type": "img", "source": "walk.png", "fit": "fill" },
+    "sheet": {
+        "frameWidth": 48,
+        "frameHeight": 48,
+        "columns": 4,
+        "rows": 1
+    },
+    "fps": 8,
+    "loop": true,
+    "autoplay": true,
+    "selfAnchorX": 0,
+    "selfAnchorY": 0,
+    "traceAnchorX": 0,
+    "traceAnchorY": 0,
+    "offsetX": 300,
+    "offsetY": 600
+}

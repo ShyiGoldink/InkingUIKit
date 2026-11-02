@@ -5,13 +5,11 @@
 #include <string_view>
 #include <vector>
 
-// SDL 的类型在**全局**命名空间：这个前向声明必须写在 `namespace inking` 外面，
-// 写进去就成了 `inking::SDL_Renderer`——和真类型不是一回事，报的错是
-// "cannot convert inking::SDL_Renderer* to SDL_Renderer*"（一眼看不出是命名空间问题）。
+// SDL 自己没有命名空间，它的类型本来就在全局：这里只做前向声明、
+// 不 include SDL 头——公开头不拖 SDL 进来（AGENTS §3 第 2 条）。
 struct SDL_Renderer;
 struct SDL_Texture;
 
-namespace inking {
 
 /**
  * @brief 字形图集的**打包器**（TaskGuide B4 后半）：把一张张字形位图塞进一张大纹理。
@@ -33,7 +31,7 @@ namespace inking {
  * 放不下时 `Insert` 返回**无效槽**（`valid == false`），调用方自己决定
  * "换一张图集"还是"这次不缓存"——打包器不做淘汰策略（那是缓存层的事）。
  */
-class GlyphAtlas {
+class InkingGlyphAtlas {
 public:
     /// 图集里的一格字形。
     struct Slot {
@@ -47,7 +45,7 @@ public:
     /// 字形之间留的间隔（像素）：抗锯齿边缘互相渗色的最小代价。
     static constexpr int kPadding = 1;
 
-    explicit GlyphAtlas(int size = 1024);
+    explicit InkingGlyphAtlas(int size = 1024);
 
     /// 图集边长（正方形）。
     int Size() const noexcept { return size_; }
@@ -99,7 +97,7 @@ private:
 // ---------------------------------------------------------------------------
 
 /// 一个字形在行内的落点。
-struct GlyphPlacement {
+struct InkingGlyphPlacement {
     std::size_t offset = 0;  ///< 在源串里的**字节**起点（码点边界上）
     std::size_t length = 0;  ///< 这个字形的字节长度（1~4）
     float x = 0.0f;          ///< 左边界（设计坐标）
@@ -112,7 +110,7 @@ struct GlyphPlacement {
  * **注入**测量是这一层的既有套路（A7 的排版同一个思路）：真实路径传"问字体"，
  * 自检传假的（每码点固定宽），于是"推进累加对不对"能纯数字验。
  */
-using GlyphMeasure = std::function<float(std::string_view)>;
+using InkingGlyphMeasure = std::function<float(std::string_view)>;
 
 /**
  * @brief 把**一行**文字排成"一串字形落点"（B4 后半）。
@@ -134,14 +132,14 @@ using GlyphMeasure = std::function<float(std::string_view)>;
  * @param measure 测量回调；为空时按每码点 1 单位退化
  * @return 每个码点一条；空串返回空表
  */
-std::vector<GlyphPlacement> LayOutGlyphs(std::string_view text, float startX,
-                                         const GlyphMeasure& measure);
+std::vector<InkingGlyphPlacement> InkingLayOutGlyphs(std::string_view text, float startX,
+                                         const InkingGlyphMeasure& measure);
 
 // ---------------------------------------------------------------------------
 // 运行时的字形图集（B4 后半：真正的"逐字形"那一层）
 // ---------------------------------------------------------------------------
 
-namespace detail {
+namespace inking_detail {
 
 /// 一个字形在图集里的落点 + 排版需要的度量。
 struct GlyphBitmap {
@@ -217,6 +215,5 @@ SDL_Texture* GlyphAtlasTexture();
 /// 丢掉图集与字形表（由 `ReleaseTextCache` 调，销毁渲染器之前必须）。
 void ReleaseGlyphAtlas();
 
-}  // namespace detail
+}  // namespace inking_detail
 
-}  // namespace inking

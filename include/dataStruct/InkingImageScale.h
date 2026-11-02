@@ -24,20 +24,18 @@
 // ---------------------------------------------------------------------------
 // 为什么是**纯头 + 纯函数**、而不是组件上的 setter
 //
-// 与 `ImageFitSpec`（`InkingImageFit.h`）同一形态：纯几何、可单测、绘制层只消费
+// 与 `InkingImageFitSpec`（`InkingImageFit.h`）同一形态：纯几何、可单测、绘制层只消费
 // 结果。这条先例让"加一条规则"的评审成本接近零。
 //
 // 而"让组件接管纵深"（`SetDepth()` 自动算尺寸）**没有做**：那会把"纵深"这个概念
 // 引进组件层，而纵深是**场景语义**（这个角色离镜头多远），组件只该知道"我占多大"。
 // 真做纵深系统时再评估，不在这一版里预埋。
 //
-// 两者语义正交，所以**不并进 `ImageFitSpec`**：那个结构管"图在框里怎么摆"，
+// 两者语义正交，所以**不并进 `InkingImageFitSpec`**：那个结构管"图在框里怎么摆"，
 // 这个管"素材该多大"。合进去会让一个已经稳定的结构体承担两种职责。
 // ---------------------------------------------------------------------------
 
 #include <cmath>
-
-namespace inking {
 
 /**
  * @brief 一次"这个组件要多大素材"的计算（纯数据 + 纯函数，不碰渲染器）。
@@ -45,7 +43,7 @@ namespace inking {
  * 用法（美术导出前 / 装载期自检 / `INK_ISDEBUG` 告警）：
  *
  * ```cpp
- * inking::ImageScaleSpec spec;
+ * InkingImageScaleSpec spec;
  * spec.designWidth = 320;   // 组件在设计坐标里的宽度
  * spec.depth       = 1.0f;  // 纵深（没有纵深系统就填 1）
  * spec.ratioMax    = 2.0f;  // 最大目标屏 ÷ 设计尺寸；不知道就填 2
@@ -56,7 +54,7 @@ namespace inking {
  * **单位**：`designWidth` 是设计坐标；`textureWidth` 是纹理像素；`ratio`（R）是
  * "1 设计单位 = 多少设备像素"的 letterbox 倍率（`min(屏宽/设计宽, 屏高/设计高)`）。
  */
-struct ImageScaleSpec {
+struct InkingImageScaleSpec {
     int designWidth = 0;    ///< 组件设计宽度（设计坐标；高同理，按宽的算法类推）
     float depth = 1.0f;     ///< 纵深：1 = 贴着镜头那一层；0.5 = 退后一半
     float ratioMax = 0.0f;  ///< 最大目标屏 ÷ 设计尺寸（R_max）
@@ -148,4 +146,3 @@ struct ImageScaleSpec {
     }
 };
 
-}  // namespace inking

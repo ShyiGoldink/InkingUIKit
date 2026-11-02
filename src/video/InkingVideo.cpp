@@ -30,7 +30,6 @@ extern "C" {
 }
 #endif
 
-namespace inking {
 
 namespace {
 
@@ -52,17 +51,17 @@ constexpr double kPresentAheadSeconds = 0.005;
 constexpr int kAudioOutputRate = 48000;
 constexpr int kAudioOutputChannels = 2;
 
-/// `VideoFit` → 图片那套 `ImageFit`（形状层只认后者，语义一一对应）。
-ImageFit ToImageFit(VideoFit fit) {
+/// `InkingVideoFit` → 图片那套 `InkingImageFit`（形状层只认后者，语义一一对应）。
+InkingImageFit ToImageFit(InkingVideoFit fit) {
     switch (fit) {
-        case VideoFit::Contain:
-            return ImageFit::Contain;
-        case VideoFit::Cover:
-            return ImageFit::Cover;
-        case VideoFit::Fill:
+        case InkingVideoFit::Contain:
+            return InkingImageFit::Contain;
+        case InkingVideoFit::Cover:
+            return InkingImageFit::Cover;
+        case InkingVideoFit::Fill:
             break;
     }
-    return ImageFit::Fill;
+    return InkingImageFit::Fill;
 }
 
 #endif  // INK_HAS_FFMPEG
@@ -82,7 +81,7 @@ std::string ResolveVideoPath(const std::string& relative) {
     if (given.is_absolute()) {
         return std::filesystem::exists(given, ec) ? given.string() : std::string{};
     }
-    const std::filesystem::path full = std::filesystem::path(AssetRoot()) / given;
+    const std::filesystem::path full = std::filesystem::path(InkingAssetRoot()) / given;
     return std::filesystem::exists(full, ec) ? full.string() : std::string{};
 }
 
@@ -115,7 +114,7 @@ struct InkingStaticVideo::Impl {
     bool clockStarted = false;
     std::chrono::steady_clock::time_point lastPump{};
 
-    PcmStreamId pcm = kInvalidPcmStream;  ///< 音频层那条外部 PCM 流
+    InkingPcmStreamId pcm = InkingInvalidPcmStream;  ///< 音频层那条外部 PCM 流
     bool pcmPlaying = false;
 
     /// 画面纹理（属于渲染器，见 AGENTS §6 第 46 条）。
@@ -177,12 +176,12 @@ namespace {
 /// 打开文件 + 两个解码器。**同步**做（第一帧之前要知道时长 / 尺寸）。
 bool OpenVideo(InkingStaticVideo::Impl& impl, const std::string& path) {
     if (avformat_open_input(&impl.format, path.c_str(), nullptr, nullptr) < 0) {
-        INK_LOG_ERROR(std::string(kVideoModuleName),
+        INK_LOG_ERROR(std::string(InkingVideoModuleName),
                       "打不开视频：" + path + "（格式不认识 / 文件坏了）");
         return false;
     }
     if (avformat_find_stream_info(impl.format, nullptr) < 0) {
-        INK_LOG_ERROR(std::string(kVideoModuleName), "读不出流信息：" + path);
+        INK_LOG_ERROR(std::string(InkingVideoModuleName), "读不出流信息：" + path);
         return false;
     }
 
@@ -190,14 +189,14 @@ bool OpenVideo(InkingStaticVideo::Impl& impl, const std::string& path) {
     impl.videoStream = av_find_best_stream(impl.format, AVMEDIA_TYPE_VIDEO, -1, -1,
                                            &videoCodec, 0);
     if (impl.videoStream < 0 || videoCodec == nullptr) {
-        INK_LOG_ERROR(std::string(kVideoModuleName), "没有视频流：" + path);
+        INK_LOG_ERROR(std::string(InkingVideoModuleName), "没有视频流：" + path);
         return false;
     }
     impl.videoCodec = avcodec_alloc_context3(videoCodec);
     avcodec_parameters_to_context(
         impl.videoCodec, impl.format->streams[impl.videoStream]->codecpar);
     if (avcodec_open2(impl.videoCodec, videoCodec, nullptr) < 0) {
-        INK_LOG_ERROR(std::string(kVideoModuleName),
+        INK_LOG_ERROR(std::string(InkingVideoModuleName),
                       std::string("视频解码器打不开：") + path);
         return false;
     }
@@ -244,7 +243,7 @@ void SeekTo(InkingStaticVideo::Impl& impl, double seconds) {
     if (seekResult < 0) {
         // seek 失败要**说出来**：不说的话表现成"位置到了、画面还在后面慢慢追"，
         // 很难往 seek 上想（实测踩过：末尾诊断显示"读到末尾 否"）。
-        INK_LOG_WARN(std::string(kVideoModuleName),
+        INK_LOG_WARN(std::string(InkingVideoModuleName),
                      "seek 到 " + std::to_string(seconds) + " 秒失败（"
                          + std::to_string(seekResult) + "）");
     }
@@ -434,10 +433,10 @@ void DecodeLoop(InkingStaticVideo::Impl& impl, bool loop) {
 
 /// 主线程：把队列里的音频推给音频层（**受背压**：推不进去就留着下次）。
 void PushQueuedAudio(InkingStaticVideo::Impl& impl) {
-    if (impl.pcm == kInvalidPcmStream) {
+    if (impl.pcm == InkingInvalidPcmStream) {
         return;
     }
-    while (AudioPcmStreamWantsData(impl.pcm)) {
+    while (InkingAudioPcmStreamWantsData(impl.pcm)) {
         InkingStaticVideo::Impl::AudioChunk chunk;
         {
             std::lock_guard<std::mutex> lock(impl.mutex);
@@ -450,7 +449,7 @@ void PushQueuedAudio(InkingStaticVideo::Impl& impl) {
         }
         impl.audioRoom.notify_all();
 
-        const std::size_t left = AudioPushPcm(impl.pcm, chunk.bytes.data(),
+        const std::size_t left = InkingAudioPushPcm(impl.pcm, chunk.bytes.data(),
                                               chunk.bytes.size());
         if (left > 0) {
             // 没吃下（水位刚好到了）：把没推的那截塞回队首，下次再来。
@@ -512,9 +511,9 @@ void Pump(InkingStaticVideo::Impl& impl) {
 
     // 0. 循环重来了：音频要重新开一条（位置归零），基准也归零。
     if (impl.looped.exchange(false)) {
-        if (impl.pcm != kInvalidPcmStream) {
-            AudioClosePcmStream(impl.pcm);
-            impl.pcm = kInvalidPcmStream;
+        if (impl.pcm != InkingInvalidPcmStream) {
+            InkingAudioClosePcmStream(impl.pcm);
+            impl.pcm = InkingInvalidPcmStream;
             impl.pcmPlaying = false;
         }
         impl.clockBase = 0.0;
@@ -527,17 +526,17 @@ void Pump(InkingStaticVideo::Impl& impl) {
     }
 
     // 1. 音频：先推数据（背压），再拿它当主时钟。
-    if (impl.hasAudio && impl.pcm == kInvalidPcmStream) {
-        impl.pcm = AudioOpenPcmStream(kAudioOutputRate, kAudioOutputChannels);
-        if (impl.pcm != kInvalidPcmStream) {
-            AudioSetPcmStreamVolume(impl.pcm, impl.muted ? 0.0f : impl.volume);
-            AudioSetPcmStreamPlaying(impl.pcm, true);
+    if (impl.hasAudio && impl.pcm == InkingInvalidPcmStream) {
+        impl.pcm = InkingAudioOpenPcmStream(kAudioOutputRate, kAudioOutputChannels);
+        if (impl.pcm != InkingInvalidPcmStream) {
+            InkingAudioSetPcmStreamVolume(impl.pcm, impl.muted ? 0.0f : impl.volume);
+            InkingAudioSetPcmStreamPlaying(impl.pcm, true);
             impl.pcmPlaying = true;
         }
     }
-    if (impl.pcm != kInvalidPcmStream) {
+    if (impl.pcm != InkingInvalidPcmStream) {
         PushQueuedAudio(impl);
-        const float position = AudioPcmStreamPositionSeconds(impl.pcm);
+        const float position = InkingAudioPcmStreamPositionSeconds(impl.pcm);
         if (impl.pcmPlaying && position > 0.0f) {
             impl.clock = impl.clockBase + position;  // 音频位置 = 主时钟
         } else {
@@ -574,7 +573,7 @@ void Pump(InkingStaticVideo::Impl& impl) {
     }
     if (haveFrame) {
         impl.frameRoom.notify_all();
-        SDL_Renderer* renderer = detail::currentRenderer();
+        SDL_Renderer* renderer = inking_detail::currentRenderer();
         // 纹理按**视频尺寸**建（不是缩放器那个尺寸——两者是两回事）。
         SDL_Texture* texture =
             EnsureTexture(impl, renderer, impl.videoWidth, impl.videoHeight);
@@ -597,8 +596,8 @@ void Pump(InkingStaticVideo::Impl& impl) {
     if (atEnd && queueEmpty && !impl.finished) {
         impl.finished = true;
         impl.playing = false;
-        if (impl.pcm != kInvalidPcmStream) {
-            AudioSetPcmStreamPlaying(impl.pcm, false);
+        if (impl.pcm != InkingInvalidPcmStream) {
+            InkingAudioSetPcmStreamPlaying(impl.pcm, false);
             impl.pcmPlaying = false;
         }
         // 事件在 `onRender` 里发（那里是唯一的每帧入口）；这里只落状态。
@@ -613,7 +612,7 @@ void Pump(InkingStaticVideo::Impl& impl) {
 // 构造 / 析构
 // ---------------------------------------------------------------------------
 
-InkingStaticVideo::InkingStaticVideo(InkingWidget* parent, const VideoData& data)
+InkingStaticVideo::InkingStaticVideo(InkingWidget* parent, const InkingVideoData& data)
     : InkingStaticWidget(parent, data.name), _impl(new Impl()) {
     applyData(data);
 }
@@ -629,15 +628,15 @@ InkingStaticVideo::~InkingStaticVideo() {
         impl.worker.join();
     }
     // 2. 音频流（属于音频层，要显式关）。
-    if (impl.pcm != kInvalidPcmStream) {
-        AudioSetPcmStreamPlaying(impl.pcm, false);
-        AudioClosePcmStream(impl.pcm);
-        impl.pcm = kInvalidPcmStream;
+    if (impl.pcm != InkingInvalidPcmStream) {
+        InkingAudioSetPcmStreamPlaying(impl.pcm, false);
+        InkingAudioClosePcmStream(impl.pcm);
+        impl.pcm = InkingInvalidPcmStream;
     }
     // 3. 纹理：**只在还是当前渲染器的时候销毁**（渲染器可能已经被销毁了，
     //    那时这个句柄已经无效，destroy 它就是踩 §6 第 46 条那个坑）。
     if (impl.texture != nullptr
-        && impl.textureRenderer == detail::currentRenderer()) {
+        && impl.textureRenderer == inking_detail::currentRenderer()) {
         SDL_DestroyTexture(impl.texture);
     }
     impl.texture = nullptr;
@@ -661,7 +660,7 @@ InkingStaticVideo::~InkingStaticVideo() {
     _impl.reset();
 }
 
-void InkingStaticVideo::applyData(const VideoData& data) {
+void InkingStaticVideo::applyData(const InkingVideoData& data) {
     // 拷一份再 Normalize（和图片一样的理由：本类要求 `_data` 永远补齐）。
     _data = data;
     _data.Normalize();
@@ -689,13 +688,13 @@ void InkingStaticVideo::applyData(const VideoData& data) {
     impl.path = ResolveVideoPath(_data.source);
 
     if (_data.source.empty()) {
-        INK_LOG_ERROR(std::string(kVideoModuleName),
+        INK_LOG_ERROR(std::string(InkingVideoModuleName),
                       "没给 source（视频路径）：这个组件只会画兜底色");
         return;
     }
     if (impl.path.empty()) {
-        INK_LOG_ERROR(std::string(kVideoModuleName),
-                      "素材不在：" + _data.source + "（资源根 " + AssetRoot()
+        INK_LOG_ERROR(std::string(InkingVideoModuleName),
+                      "素材不在：" + _data.source + "（资源根 " + InkingAssetRoot()
                           + "）——这个组件只会画兜底色");
         return;
     }
@@ -710,14 +709,14 @@ void InkingStaticVideo::applyData(const VideoData& data) {
         Play();
     }
     opened.Emit();
-    INK_LOG_PASS(std::string(kVideoModuleName),
+    INK_LOG_PASS(std::string(InkingVideoModuleName),
                  "视频打开了：" + _data.source + "，时长 "
                      + std::to_string(impl.duration) + " 秒，画面 "
                      + std::to_string(impl.videoWidth) + "x"
                      + std::to_string(impl.videoHeight)
                      + (impl.hasAudio ? "（带音轨）" : "（无音轨）"));
 #else
-    INK_LOG_WARN(std::string(kVideoModuleName),
+    INK_LOG_WARN(std::string(InkingVideoModuleName),
                  "构建时没接 FFmpeg：视频组件是**空转档**（能编、能跑、画面不动，"
                  "画兜底色）。启用方式见 docs/SETUP.md 的「FFmpeg（视频）」一节。"
                  "素材：" + _data.source);
@@ -729,30 +728,30 @@ void InkingStaticVideo::applyData(const VideoData& data) {
 // ---------------------------------------------------------------------------
 
 bool InkingStaticVideo::HitTest(float worldX, float worldY) const {
-    return detail::HitTestShape(*this, GetShape(), GetDisplayTransform(), worldX,
+    return inking_detail::HitTestShape(*this, GetShape(), GetDisplayTransform(), worldX,
                                 worldY);
 }
 
-const ShapeSpec& InkingStaticVideo::GetShape() const noexcept { return _data.shape; }
+const InkingShapeSpec& InkingStaticVideo::GetShape() const noexcept { return _data.shape; }
 
 std::uint32_t InkingStaticVideo::GetDisplayColor() const noexcept {
     return _data.normal.color;
 }
 
-TransformSpec InkingStaticVideo::GetDisplayTransform() const noexcept {
+InkingTransformSpec InkingStaticVideo::GetDisplayTransform() const noexcept {
     // 第一版**不认**外部显示变换（见类注释第 4 条）。
     return _data.normal.transform;
 }
 
-TransformSpec InkingStaticVideo::GetSubtreeTransform() const noexcept {
+InkingTransformSpec InkingStaticVideo::GetSubtreeTransform() const noexcept {
     return _data.normal.transform;
 }
 
-ShapeBounds InkingStaticVideo::GetHitEnvelope() const {
-    return detail::ButtonHitEnvelope(_data, GetShape(), GetWidth(), GetHeight());
+InkingShapeBounds InkingStaticVideo::GetHitEnvelope() const {
+    return inking_detail::ButtonHitEnvelope(_data, GetShape(), GetWidth(), GetHeight());
 }
 
-const VideoData& InkingStaticVideo::GetData() const noexcept { return _data; }
+const InkingVideoData& InkingStaticVideo::GetData() const noexcept { return _data; }
 
 // ---------------------------------------------------------------------------
 // 播控（没打开时全是**安全空操作**，而且不假装在播）
@@ -771,8 +770,8 @@ void InkingStaticVideo::Play() {
     impl.playing = true;
     impl.lastPump = std::chrono::steady_clock::now();
     impl.clockStarted = true;
-    if (impl.pcm != kInvalidPcmStream) {
-        AudioSetPcmStreamPlaying(impl.pcm, true);
+    if (impl.pcm != InkingInvalidPcmStream) {
+        InkingAudioSetPcmStreamPlaying(impl.pcm, true);
         impl.pcmPlaying = true;
     }
 }
@@ -780,8 +779,8 @@ void InkingStaticVideo::Play() {
 void InkingStaticVideo::Pause() {
     Impl& impl = *_impl;
     impl.playing = false;
-    if (impl.pcm != kInvalidPcmStream) {
-        AudioSetPcmStreamPlaying(impl.pcm, false);
+    if (impl.pcm != InkingInvalidPcmStream) {
+        InkingAudioSetPcmStreamPlaying(impl.pcm, false);
         impl.pcmPlaying = false;
     }
 }
@@ -790,8 +789,8 @@ void InkingStaticVideo::Stop() {
     Impl& impl = *_impl;
     impl.playing = false;
     impl.finished = false;
-    if (impl.pcm != kInvalidPcmStream) {
-        AudioSetPcmStreamPlaying(impl.pcm, false);
+    if (impl.pcm != InkingInvalidPcmStream) {
+        InkingAudioSetPcmStreamPlaying(impl.pcm, false);
         impl.pcmPlaying = false;
     }
     Seek(0.0f);
@@ -816,10 +815,10 @@ void InkingStaticVideo::Seek(float seconds) {
     // seek 之后音频要**重新开一条流**：主时钟 = 基准 + 音频位置，而音频位置是
     // "这条流播了多久"。不重开的话位置会带着 seek 之前那一段继续涨——实测症状是
     // "位置冲到 4.45 秒，而时长才 3 秒"。
-    if (impl.pcm != kInvalidPcmStream) {
-        AudioSetPcmStreamPlaying(impl.pcm, false);
-        AudioClosePcmStream(impl.pcm);
-        impl.pcm = kInvalidPcmStream;
+    if (impl.pcm != InkingInvalidPcmStream) {
+        InkingAudioSetPcmStreamPlaying(impl.pcm, false);
+        InkingAudioClosePcmStream(impl.pcm);
+        impl.pcm = InkingInvalidPcmStream;
         impl.pcmPlaying = false;
     }
     impl.clockBase = clamped;
@@ -834,16 +833,16 @@ void InkingStaticVideo::SetLoop(bool loop) noexcept { _impl->loop = loop; }
 void InkingStaticVideo::SetVolume(float volume) noexcept {
     Impl& impl = *_impl;
     impl.volume = std::clamp(volume, 0.0f, 1.0f);
-    if (impl.pcm != kInvalidPcmStream) {
-        AudioSetPcmStreamVolume(impl.pcm, impl.muted ? 0.0f : impl.volume);
+    if (impl.pcm != InkingInvalidPcmStream) {
+        InkingAudioSetPcmStreamVolume(impl.pcm, impl.muted ? 0.0f : impl.volume);
     }
 }
 
 void InkingStaticVideo::SetMuted(bool muted) noexcept {
     Impl& impl = *_impl;
     impl.muted = muted;
-    if (impl.pcm != kInvalidPcmStream) {
-        AudioSetPcmStreamVolume(impl.pcm, impl.muted ? 0.0f : impl.volume);
+    if (impl.pcm != InkingInvalidPcmStream) {
+        InkingAudioSetPcmStreamVolume(impl.pcm, impl.muted ? 0.0f : impl.volume);
     }
 }
 
@@ -914,14 +913,14 @@ void InkingStaticVideo::onRender(float pixelX, float pixelY) const {
     }
     if (impl.textureHasFrame && impl.texture != nullptr) {
         const float mag = GetMagnification() > 0.0f ? GetMagnification() : 1.0f;
-        ImageFitSpec spec;
+        InkingImageFitSpec spec;
         spec.fit = ToImageFit(_data.fit);
         spec.frameWidth = static_cast<float>(GetWidth()) * mag;
         spec.frameHeight = static_cast<float>(GetHeight()) * mag;
         spec.imageWidth = static_cast<float>(impl.textureWidth);
         spec.imageHeight = static_cast<float>(impl.textureHeight);
         // 画面走**形状层**：形状裁剪 / UV / 跟随变换 / 圆角羽化全复用 B1 那份实现。
-        detail::fillShapeTextured(detail::currentRenderer(), GetShape(), GetWidth(),
+        inking_detail::fillShapeTextured(inking_detail::currentRenderer(), GetShape(), GetWidth(),
                                   GetHeight(), mag, pixelX, pixelY,
                                   GetDisplayTransform(), impl.texture, spec,
                                   _data.normal.color);
@@ -940,9 +939,8 @@ void InkingStaticVideo::onRender(float pixelX, float pixelY) const {
 #endif
     // 没有画面（没后端 / 素材没打开 / 还没解出第一帧）：退回**兜底色**。
     // 把画面变成一个洞比"缺视频"更难查——形状 / 描边阴影照常画。
-    detail::PaintButtonAppearance(*this, GetShape(), _renderAppearance,
+    inking_detail::PaintButtonAppearance(*this, GetShape(), _renderAppearance,
                                   _data.stroke, _data.shadow, _data.normal.color,
                                   GetDisplayTransform(), pixelX, pixelY);
 }
 
-}  // namespace inking

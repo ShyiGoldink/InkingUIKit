@@ -8,17 +8,15 @@
 
 namespace {
 
-constexpr const char* kModuleName = "ThreadPool";
+constexpr const char* kModuleName = "InkingThreadPool";
 
 }  // namespace
 
-namespace inking {
-
-ThreadPool::~ThreadPool() {
+InkingThreadPool::~InkingThreadPool() {
     release();
 }
 
-void ThreadPool::init(std::function<bool()> predicate,
+void InkingThreadPool::init(std::function<bool()> predicate,
                       std::function<void()> execute,
                       std::function<std::chrono::milliseconds()> waitHint,
                       std::size_t threadCount) {
@@ -30,7 +28,7 @@ void ThreadPool::init(std::function<bool()> predicate,
     }
 
     if (threadCount == 0) {
-        threadCount = kDefaultThreadCount;
+        threadCount = InkingDefaultThreadCount;
     }
 
     if (predicate) {
@@ -46,14 +44,14 @@ void ThreadPool::init(std::function<bool()> predicate,
     _isQuit = false;
     _threads.reserve(threadCount);
     for (std::size_t i = 0; i < threadCount; ++i) {
-        _threads.push_back(std::make_unique<std::thread>(&ThreadPool::butler, this));
+        _threads.push_back(std::make_unique<std::thread>(&InkingThreadPool::butler, this));
     }
     _isRunning = true;
 
     INK_LOG_PASS(kModuleName, "线程池创建完成，管家线程数=" + std::to_string(threadCount));
 }
 
-void ThreadPool::butler() {
+void InkingThreadPool::butler() {
     if (!_predicateCallback || !_executeCallback) {
         INK_LOG_ERROR(kModuleName, "未成功传入谓词函数或执行函数，管家线程退出");
         return;
@@ -111,7 +109,7 @@ void ThreadPool::butler() {
     }
 }
 
-void ThreadPool::quit() {
+void InkingThreadPool::quit() {
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _isQuit = true;
@@ -120,10 +118,10 @@ void ThreadPool::quit() {
     _cv.notify_all();  // 唤醒所有等待的线程
 }
 
-void ThreadPool::wake() {
+void InkingThreadPool::wake() {
     // 这里先空取一次 _mutex 再通知，不是多余的。
-    // 条件变量用的是这把 _mutex，但谓词读的状态（任务队列）在 TaskQueue 手里，
-    // 由 TaskQueue 自己的锁保护。如果通知方完全不碰 _mutex，就可能出现
+    // 条件变量用的是这把 _mutex，但谓词读的状态（任务队列）在 InkingTaskQueue 手里，
+    // 由 InkingTaskQueue 自己的锁保护。如果通知方完全不碰 _mutex，就可能出现
     // "任务已经入队、通知却落在等待方判断完谓词到真正阻塞之间"的丢唤醒，
     // 管家线程会一直睡下去。取一次锁能把通知和阻塞排好序。
     {
@@ -132,18 +130,18 @@ void ThreadPool::wake() {
     _cv.notify_one();  // 一条任务就叫一个人，不做全员唤醒
 }
 
-void ThreadPool::wakeAll() {
+void InkingThreadPool::wakeAll() {
     {
         std::lock_guard<std::mutex> lock(_mutex);
     }
     _cv.notify_all();
 }
 
-bool ThreadPool::isRunning() const noexcept {
+bool InkingThreadPool::isRunning() const noexcept {
     return _isRunning.load();
 }
 
-void ThreadPool::executeGuarded() {
+void InkingThreadPool::executeGuarded() {
     try {
         _executeCallback();
     } catch (const std::exception& exception) {
@@ -156,7 +154,7 @@ void ThreadPool::executeGuarded() {
     }
 }
 
-void ThreadPool::release() {
+void InkingThreadPool::release() {
     quit();
     for (auto& thread : _threads) {
         if (thread && thread->joinable()) {
@@ -166,5 +164,4 @@ void ThreadPool::release() {
     _threads.clear();
 }
 
-}  // namespace inking
 

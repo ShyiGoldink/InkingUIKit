@@ -21,17 +21,17 @@
 // ---------------------------------------------------------------------------
 // 按钮维度（0.5.0）：两种输入状态，组件层看不见设备
 // ---------------------------------------------------------------------------
-// 0.5.0 起 `onPointerPress` / `onPointerClick` 带 `PointerButton` 参数。上层
+// 0.5.0 起 `onPointerPress` / `onPointerClick` 带 `InkingPointerButton` 参数。上层
 // **永远只看到 Primary / Secondary**，不需要知道这是鼠标左键、右键，还是触摸的
-// 轻点、长按——设备差异在窗口层与场景层就被吸收干净了（见 PointerButton.h 的
+// 轻点、长按——设备差异在窗口层与场景层就被吸收干净了（见 InkingPointerButton.h 的
 // 文件头）。所以这里没有"触摸分支"，也不该出现。
 //
 // 三个钩子的参数形状是**故意不同**的：
 //
 //     onPointerHover(bool)                  只有主键有 hover：hover 是"我指着谁"，
 //                                           不是"我按着谁"，右键不该改变它
-//     onPointerPress(PointerButton, bool)   按下不关心位置：要位置问场景即可
-//     onPointerClick(PointerButton, x, y)   **必须**带坐标
+//     onPointerPress(InkingPointerButton, bool)   按下不关心位置：要位置问场景即可
+//     onPointerClick(InkingPointerButton, x, y)   **必须**带坐标
 //
 // 为什么 click 带坐标而 press 不带，这两者不是同一类东西：
 //
@@ -47,7 +47,6 @@
 
 #include <input/PointerButton.h>
 
-namespace inking {
 
 /**
  * @brief 指针目标：能收指针（鼠标 / 触摸）事件的组件。
@@ -83,7 +82,7 @@ public:
      * `button` 是**语义位**（Primary = 左键 / 轻点，Secondary = 右键 / 长按），
      * 不是设备位——组件不需要、也拿不到"这是鼠标还是手指"。
      */
-    void PushPointerPress(PointerButton button, bool press) noexcept {
+    void PushPointerPress(InkingPointerButton button, bool press) noexcept {
         onPointerPress(button, press);
     }
 
@@ -94,7 +93,7 @@ public:
      * 理由见文件头"按钮维度"那段：click 是事件，坐标不带走就永久丢失；
      * 而锚点取按下点，长按后手指微动才不会让右键菜单跟着挪。
      */
-    void PushPointerClick(PointerButton button, float designX,
+    void PushPointerClick(InkingPointerButton button, float designX,
                           float designY) noexcept {
         onPointerClick(button, designX, designY);
     }
@@ -143,7 +142,7 @@ protected:
     // 这五个必须在这里给空实现，不能只留声明：
     // 它们都是虚函数，而"没有重写它们"是正常情况
     // 绝大多数组件不关心指针。
-    // 只声明不定义的话，基类 vtable 会引用一个不存在的符号，会造成任何派生类（哪怕一个钩子都不重写）在链接期拿到undefined reference to inking::InkingPointerHandler::onPointerWheel
+    // 只声明不定义的话，基类 vtable 会引用一个不存在的符号，会造成任何派生类（哪怕一个钩子都不重写）在链接期拿到undefined reference to InkingPointerHandler::onPointerWheel
 
     /**
      * 指针进出（由 PushPointerHover 转来）。默认什么都不做。
@@ -161,23 +160,23 @@ protected:
      * 按下 / 抬起（由 PushPointerPress 转来）。抬起也是这条（press = false）。
      *
      * `button` 决定这次按下属于哪个键。**重写了就必须判它**：
-     * 按钮只在 `PointerButton::Primary` 时进 Pressed 态，否则右键按下会让按钮
+     * 按钮只在 `InkingPointerButton::Primary` 时进 Pressed 态，否则右键按下会让按钮
      * 亮起，用户会以为左键生效了。
      *
      * 不关心右键的组件写一行守卫即可：
-     * `if (button != PointerButton::Primary) { return; }`
+     * `if (button != InkingPointerButton::Primary) { return; }`
      */
-    virtual void onPointerPress(PointerButton /*button*/, bool /*press*/) {}
+    virtual void onPointerPress(InkingPointerButton /*button*/, bool /*press*/) {}
 
     /**
      * 一次完整点击（由 PushPointerClick 转来）。默认什么都不做。
      *
      * `(designX, designY)` 是按下点（设计坐标）。最典型的用法是右键菜单：
-     * 业务在 `PointerButton::Secondary` 那一支里直接 `OpenAt(designX, designY)`。
+     * 业务在 `InkingPointerButton::Secondary` 那一支里直接 `OpenAt(designX, designY)`。
      *
      * 坐标不必取整、也不必再换算——它就是 `QueryHit` 用的那一套设计坐标。
      */
-    virtual void onPointerClick(PointerButton /*button*/, float /*designX*/,
+    virtual void onPointerClick(InkingPointerButton /*button*/, float /*designX*/,
                                 float /*designY*/) {}
 
     /**
@@ -222,4 +221,3 @@ protected:
     virtual void onPointerStateChanged() {}
 };
 
-}  // namespace inking

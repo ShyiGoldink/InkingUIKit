@@ -4,11 +4,9 @@
 
 #include <algorithm>
 
-namespace inking {
+InkingGlyphAtlas::InkingGlyphAtlas(int size) : size_(size > 0 ? size : 1) {}
 
-GlyphAtlas::GlyphAtlas(int size) : size_(size > 0 ? size : 1) {}
-
-GlyphAtlas::Slot GlyphAtlas::Insert(int width, int height) {
+InkingGlyphAtlas::Slot InkingGlyphAtlas::Insert(int width, int height) {
     Slot slot;
     if (width <= 0 || height <= 0 || width > size_ || height > size_) {
         return slot;  // 尺寸非法 / 比整张图集还大：直接说放不下
@@ -58,7 +56,7 @@ GlyphAtlas::Slot GlyphAtlas::Insert(int width, int height) {
     return slot;
 }
 
-int GlyphAtlas::UsedHeight() const noexcept {
+int InkingGlyphAtlas::UsedHeight() const noexcept {
     if (shelves_.empty()) {
         return 0;
     }
@@ -66,7 +64,7 @@ int GlyphAtlas::UsedHeight() const noexcept {
     return last.y + last.height;
 }
 
-double GlyphAtlas::Occupancy() const noexcept {
+double InkingGlyphAtlas::Occupancy() const noexcept {
     if (size_ <= 0) {
         return 0.0;
     }
@@ -78,7 +76,7 @@ double GlyphAtlas::Occupancy() const noexcept {
     return static_cast<double>(used) / total;
 }
 
-bool GlyphAtlas::OverlapsAny(const Slot& slot) const noexcept {
+bool InkingGlyphAtlas::OverlapsAny(const Slot& slot) const noexcept {
     if (!slot.valid) {
         return false;
     }
@@ -100,7 +98,7 @@ bool GlyphAtlas::OverlapsAny(const Slot& slot) const noexcept {
     return false;
 }
 
-void GlyphAtlas::Reset() {
+void InkingGlyphAtlas::Reset() {
     shelves_.clear();
     slots_.clear();
 }
@@ -109,9 +107,9 @@ void GlyphAtlas::Reset() {
 // 逐字形排版
 // ---------------------------------------------------------------------------
 
-std::vector<GlyphPlacement> LayOutGlyphs(std::string_view text, float startX,
-                                         const GlyphMeasure& measure) {
-    std::vector<GlyphPlacement> placements;
+std::vector<InkingGlyphPlacement> InkingLayOutGlyphs(std::string_view text, float startX,
+                                         const InkingGlyphMeasure& measure) {
+    std::vector<InkingGlyphPlacement> placements;
     if (text.empty()) {
         return placements;
     }
@@ -121,10 +119,10 @@ std::vector<GlyphPlacement> LayOutGlyphs(std::string_view text, float startX,
     std::size_t pos = 0;
     while (pos < text.size()) {
         // 码点边界：**按码点切**，不按字节（中文一个字三字节，按字节切会劈开）。
-        const std::size_t next = TextEditState::NextCodePoint(text, pos);
+        const std::size_t next = InkingTextEditState::NextCodePoint(text, pos);
         const std::string_view glyph = text.substr(pos, next - pos);
 
-        GlyphPlacement placement;
+        InkingGlyphPlacement placement;
         placement.offset = pos;
         placement.length = next - pos;
         placement.x = pen;
@@ -139,4 +137,3 @@ std::vector<GlyphPlacement> LayOutGlyphs(std::string_view text, float startX,
     return placements;
 }
 
-}  // namespace inking

@@ -1,6 +1,6 @@
 #pragma once
 
-// 形状命中判定：**世界坐标 → 本地坐标 → `ShapeContains`**。
+// 形状命中判定：**世界坐标 → 本地坐标 → `InkingShapeContains`**。
 //
 // 它原来叫 `HitTestButton`、住在 `src/button/ButtonPaint.h` 里，只有按钮用。
 // Panel 要判命中时它就成了第二个调用者——"抄第二遍就抽出来"（`InkingDraw.h`
@@ -16,7 +16,7 @@
 //   1. 撤掉**祖先子树变换**（容器动了 / 转了，子树里的点在世界上也跟着动）；
 //   2. 减去自己的绝对布局位置（`GetAbsX/Y`，与提交给渲染器的左上角同源）；
 //   3. 过一次自己**变换的逆**（绘制那边过的是正变换，两者严格互逆、
-//      绕同一个中心）；最后问形状层（`ShapeContains`）。
+//      绕同一个中心）；最后问形状层（`InkingShapeContains`）。
 //
 // 参数为什么是 `InkingWidget` 而不是 `InkingAnchor`：第 2 步的 `GetAbsX/Y`
 // 与第 3 步之前那一次 `AncestorAffine` 都在 **Widget 层**——前者要问"当前显示
@@ -29,12 +29,10 @@
 #include <dataStruct/InkingShapeSpec.h>
 #include <dataStruct/InkingTransform.h>
 
-namespace inking {
-
 /// 本头只按引用用它，不需要完整定义（见上面那段）。
 class InkingWidget;
 
-namespace detail {
+namespace inking_detail {
 
 /**
  * 这个点在不在这个形状里（世界坐标 = 设计坐标）。
@@ -44,10 +42,10 @@ namespace detail {
  *
  * @param node      被测的节点（读它的绝对位置与宽高）。
  * @param shape     它的形状定义（渲染、命中、AABB 都从这一份派生）。
- * @param transform 它**当前**的变换；没有变换时传 `TransformSpec{}`。
+ * @param transform 它**当前**的变换；没有变换时传 `InkingTransformSpec{}`。
  */
-bool HitTestShape(const InkingWidget& node, const ShapeSpec& shape,
-                  const TransformSpec& transform, float worldX, float worldY);
+bool HitTestShape(const InkingWidget& node, const InkingShapeSpec& shape,
+                  const InkingTransformSpec& transform, float worldX, float worldY);
 
 /**
  * 这个点在不在一个**布局矩形**里（世界坐标，A5）。
@@ -59,9 +57,8 @@ bool HitTestShape(const InkingWidget& node, const ShapeSpec& shape,
  * 边界算**在内**（和 SDF 的 `f <= 0` 一致）。渲染侧那个矩形会按包含式取整成
  * 整数像素，所以"边界那一像素"两边可能差一格——自检别贴着边界写断言。
  */
-bool HitTestLocalRect(const InkingWidget& node, const ShapeBounds& bounds,
-                      const TransformSpec& transform, float worldX,
+bool HitTestLocalRect(const InkingWidget& node, const InkingShapeBounds& bounds,
+                      const InkingTransformSpec& transform, float worldX,
                       float worldY);
 
-}  // namespace detail
-}  // namespace inking
+}  // namespace inking_detail

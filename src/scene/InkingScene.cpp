@@ -4,7 +4,7 @@
 #include <detail/InkLog.h>
 #include <render/InkingBatch.h>
 
-// `detail::AncestorClipInDevice`（裁剪链换算）与动态档那个 `Tick` 入口：
+// `inking_detail::AncestorClipInDevice`（裁剪链换算）与动态档那个 `Tick` 入口：
 // 前者是跨类几何工具，后者只有"几何会自己变"的那一档才有。
 #include <detail/InkingGeometry.h>
 #include <widget/InkingDynamicWidget.h>
@@ -19,7 +19,6 @@
 #include <cmath>
 #include <vector>
 
-namespace inking {
 
 namespace {
 
@@ -28,9 +27,9 @@ constexpr const char* kModuleName = "InkingScene";
 /**
  * 单帧最多给**一个**动画订阅补发多少步。
  *
- * 纯保险：入口的时间已被 `Timeline` 截断到 `kMaxCatchUpSeconds`（0.25s），
+ * 纯保险：入口的时间已被 `InkingTimeline` 截断到 `kMaxCatchUpSeconds`（0.25s），
  * 12fps 也就是 3 步。真到 64 步说明间隔被配成了 4ms 以下，那本身是配置错误，
- * 与其在一帧里空转，不如丢掉欠账并计数——同 `Timeline` 的 catch-up 处理。
+ * 与其在一帧里空转，不如丢掉欠账并计数——同 `InkingTimeline` 的 catch-up 处理。
  */
 constexpr int kMaxAnimationCatchUpPerFrame = 64;
 
@@ -71,7 +70,7 @@ InkingScene::InkingScene(const std::string& sceneName)
 }
 
 InkingScene::InkingScene(const std::string& sceneName,
-                         const AnchorData& anchorData)
+                         const InkingAnchorData& anchorData)
     : InkingStaticWidget(nullptr, anchorData), _sceneName(sceneName) {
     finishConstruction();
 }
@@ -157,16 +156,16 @@ void InkingScene::registerToSceneLibrary() {
     _sceneRegisterToken.emplace(_sceneName, this);
 
     switch (_sceneRegisterToken->GetResult()) {
-        case SceneLibrary::RegisterResult::Ok:
+        case InkingSceneLibrary::RegisterResult::Ok:
             break;
-        case SceneLibrary::RegisterResult::NameTaken:
+        case InkingSceneLibrary::RegisterResult::NameTaken:
             _rejected = true;
             INK_LOG_WARN(kModuleName,
                          "场景名已被占用，注册被驳回：" + _sceneName
                              + "（此场景不会渲染；要复用这个名字请先 "
-                               "SceneLibrary::CloseScene）");
+                               "InkingSceneLibrary::CloseScene）");
             break;
-        case SceneLibrary::RegisterResult::Invalid:
+        case InkingSceneLibrary::RegisterResult::Invalid:
             INK_LOG_DEBUG(kModuleName, "场景未登记（名字为空）");
             break;
     }
@@ -181,7 +180,7 @@ const std::string& InkingScene::GetSceneName() const noexcept {
 }
 
 bool InkingScene::IsRegistered() const noexcept {
-    // "有令牌"不算数：令牌可能是被驳回后空转的那个（见 RegisterToken）。
+    // "有令牌"不算数：令牌可能是被驳回后空转的那个（见 InkingRegisterToken）。
     // 要问令牌自己真的进库了没有——这个 bug 以前被自检抓到过。
     return _sceneRegisterToken.has_value() && _sceneRegisterToken->IsRegistered();
 }
@@ -220,14 +219,14 @@ void InkingScene::TickLogic(double fixedStepSeconds) {
     // 三个条件缺一不可：来源是触摸、主键按着、本次按下还没有结论。
     // 手指一抬就整体复位（`_pointerDown.primary` 为假那条），所以下一次按下
     // 从 0 秒开始——不需要额外的"正在计时"标志。
-    if (_pointerSource != PointerSource::Touch || !_pointerDown.primary) {
+    if (_pointerSource != InkingPointerSource::Touch || !_pointerDown.primary) {
         _longPress = LongPressState{};
     } else if (!_longPress.resolved) {
         _longPress.seconds += static_cast<float>(fixedStepSeconds);
 
         // slop 的基准是**按下点**（与 click 坐标、拖动基准同一份）。
         // 这里再记一个 origin 就会出现"slop 按 A 点算、菜单弹在 B 点"。
-        const MousePoint origin = _pressOrigin[ToIndex(PointerButton::Primary)];
+        const InkingMousePoint origin = _pressOrigin[InkingToIndex(InkingPointerButton::Primary)];
         const float dx = _pointerX - origin.x;
         const float dy = _pointerY - origin.y;
 
@@ -290,7 +289,7 @@ void InkingScene::TickFrame(double deltaSeconds) {
     // `AnimationSeconds()`，必须读到**本帧**的值；倒过来就是永远慢一帧
     // （12fps 上等于半帧相位错，而且只表现为"动画有点飘"，最难查）。
     //
-    // 负 delta（时钟回拨 / 第一帧）不倒着走，和 `Timeline::Advance` 同一条规矩。
+    // 负 delta（时钟回拨 / 第一帧）不倒着走，和 `InkingTimeline::Advance` 同一条规矩。
     // 夹一次、只夹一次：时钟与订阅必须看到**同一个** delta，否则两者会慢慢错开。
     const double animationDelta = deltaSeconds > 0.0 ? deltaSeconds : 0.0;
     _animationSeconds += animationDelta;
@@ -348,7 +347,7 @@ std::uint64_t InkingScene::GetAnimationCatchUpDropCount() const noexcept {
 
 InkingScene::AnimationHandle InkingScene::SubscribeAnimation(
     double intervalSeconds, AnimationCallback callback) {
-    // 间隔非正 / 回调为空：返回无效句柄，不抛不报——与 `Timeline::Subscribe`
+    // 间隔非正 / 回调为空：返回无效句柄，不抛不报——与 `InkingTimeline::Subscribe`
     // 同一条规矩。调用方要么把 0 当"没订上"，要么自己保证参数合法。
     if (!(intervalSeconds > 0.0) || !callback) {
         return 0;
@@ -424,7 +423,7 @@ void InkingScene::dispatchAnimations(double deltaSeconds) {
             }
 
             // 回调**先拷出来再调**：`operator()` 执行期间表可能重分配，
-            // 而那正是 std::function 对象自己所在的内存（Timeline 那边靠
+            // 而那正是 std::function 对象自己所在的内存（InkingTimeline 那边靠
             // "调用完立刻回查索引"绕开，这里连这一层都不留）。
             const AnimationCallback callback = _animationSubscribers[i].callback;
             _animationSubscribers[i].accumulator -= interval;
@@ -512,12 +511,12 @@ bool InkingScene::RequestPreload() {
     }
 
     // ⚠️ 任务里捕的是**裸 this**，所以场景在被销毁之前必须等这次预加载落地。
-    // `SceneLibrary::DestroyScene` 带着这条守卫（拒绝销毁 `Queued` 的场景）。
-    // 这不是疏忽，是这套设计的前提——`TaskQueue` 没有取消机制。
-    // 用"先建再赋 action"而不是聚合初始化 `Task<std::any>{lambda}`：后者只填了
+    // `InkingSceneLibrary::DestroyScene` 带着这条守卫（拒绝销毁 `Queued` 的场景）。
+    // 这不是疏忽，是这套设计的前提——`InkingTaskQueue` 没有取消机制。
+    // 用"先建再赋 action"而不是聚合初始化 `InkingTask<std::any>{lambda}`：后者只填了
     // 第一个字段，`-Wmissing-field-initializers`（`-Wextra` 带的）会当成漏填报。
     // 两者语义完全一样（`deps` / `next` 本来就该是空的），差别只在可读性与门禁。
-    Task<std::any> preloadTask;
+    InkingTask<std::any> preloadTask;
     preloadTask.action =
         [this](const std::vector<std::any>&) -> std::any {
             const bool ok = onPreload();
@@ -526,7 +525,7 @@ bool InkingScene::RequestPreload() {
                                 std::memory_order_release);
             return std::any{};
         };
-    TaskQueue::instance().addTask(std::move(preloadTask));
+    InkingTaskQueue::instance().addTask(std::move(preloadTask));
     return true;
 }
 
@@ -570,7 +569,7 @@ bool InkingScene::ConsumePreloadFinish() {
 }
 
 // ---------------------------------------------------------------------------
-// 只给 SceneLibrary 调
+// 只给 InkingSceneLibrary 调
 // ---------------------------------------------------------------------------
 
 void InkingScene::MarkClosed() noexcept {
@@ -590,7 +589,7 @@ void InkingScene::SetActiveFromLibrary(bool active) noexcept {
 // 绘制列表的维护
 // ---------------------------------------------------------------------------
 
-AnchorData InkingScene::sceneRootAnchorData() {
+InkingAnchorData InkingScene::sceneRootAnchorData() {
     // 场景不做布局变化，但第一次渲染总要有对齐的锚点：按设计画布定型
     // （自身左上角对上窗口左上角）。
     //
@@ -600,11 +599,11 @@ AnchorData InkingScene::sceneRootAnchorData() {
     // 没有可配的东西。
     //
     // 顺手把"设计尺寸已定型"记一笔：场景构造是第二个按它对几何的地方，
-    // 从这一刻起 `SetDesignSize` 就该拒绝改动。
-    AnchorData data;
-    data.width  = inking::DesignWidth();
-    data.height = inking::DesignHeight();
-    inking::detail::NoteDesignSizeTaken();
+    // 从这一刻起 `InkingSetDesignSize` 就该拒绝改动。
+    InkingAnchorData data;
+    data.width  = InkingDesignWidth();
+    data.height = InkingDesignHeight();
+    inking_detail::NoteDesignSizeTaken();
     return data;
 }
 
@@ -879,8 +878,8 @@ bool InkingScene::Activate(const std::string& name) noexcept {
 // ---------------------------------------------------------------------------
 
 void InkingScene::SetPointerState(float designX, float designY,
-                                  const PointerDownState& down, bool inside,
-                                  PointerSource source) noexcept {
+                                  const InkingPointerDownState& down, bool inside,
+                                  InkingPointerSource source) noexcept {
     // ---- 按下那一刻才记的两件事（顺序不能颠倒：都要用**旧的** _pointerDown）----
     //
     // 1) 来源：只在按下瞬间读一次。每帧照抄的话，触摸屏上同时动鼠标就会把
@@ -891,10 +890,10 @@ void InkingScene::SetPointerState(float designX, float designY,
     // 2) 按下点：与 `_pointerDown` 同步写，这是**唯一写点**。
     //    放 `DispatchPointer` 里就会漏掉"只调 SetPointerState + TickLogic"的
     //    自检路径——那时读到的是上一次交互的残留坐标，slop 越判越大。
-    for (std::size_t i = 0; i < kPointerButtonCount; ++i) {
-        const auto button = static_cast<PointerButton>(i);
+    for (std::size_t i = 0; i < InkingPointerButtonCount; ++i) {
+        const auto button = static_cast<InkingPointerButton>(i);
         if (down.IsDown(button) && !_pointerDown.IsDown(button)) {
-            _pressOrigin[i] = MousePoint{designX, designY};
+            _pressOrigin[i] = InkingMousePoint{designX, designY};
         }
     }
 
@@ -927,20 +926,20 @@ void InkingScene::SetPointerState(float designX, float designY,
 }
 
 InkingWidget* InkingScene::GetPressedNode() const noexcept {
-    return _pressedNode[ToIndex(PointerButton::Primary)];
+    return _pressedNode[InkingToIndex(InkingPointerButton::Primary)];
 }
 
 InkingWidget* InkingScene::GetSecondaryPressedNode() const noexcept {
-    return _pressedNode[ToIndex(PointerButton::Secondary)];
+    return _pressedNode[InkingToIndex(InkingPointerButton::Secondary)];
 }
 
-MousePoint InkingScene::GetPressOrigin(PointerButton button) const noexcept {
-    return _pressOrigin[ToIndex(button)];
+InkingMousePoint InkingScene::GetPressOrigin(InkingPointerButton button) const noexcept {
+    return _pressOrigin[InkingToIndex(button)];
 }
 
 InkingWidget* InkingScene::GetDraggingNode() const noexcept {
     // 拖动只认主键（不变量 3）：右键按下不产生拖动，也不改归属。
-    return _pressedNode[ToIndex(PointerButton::Primary)];
+    return _pressedNode[InkingToIndex(InkingPointerButton::Primary)];
 }
 
 void InkingScene::SetPointerWheel(float deltaX, float deltaY) noexcept {
@@ -978,7 +977,7 @@ bool InkingScene::IsSecondaryPointerDown() const noexcept {
     return _effectiveDown.secondary;
 }
 
-const PointerDownState& InkingScene::GetPointerDown() const noexcept {
+const InkingPointerDownState& InkingScene::GetPointerDown() const noexcept {
     return _effectiveDown;
 }
 
@@ -994,15 +993,15 @@ InkingWidget* InkingScene::GetHoveredNode() const noexcept {
 // 键盘（A3）：焦点归属 + 事件派发
 // ---------------------------------------------------------------------------
 
-void InkingScene::SetKeyboardInput(const KeyboardInput& input) noexcept {
-    // 拷一份状态与事件：场景要能在"组件问状态"时随问随答，而 `KeyboardInput`
+void InkingScene::SetKeyboardInput(const InkingKeyboardInput& input) noexcept {
+    // 拷一份状态与事件：场景要能在"组件问状态"时随问随答，而 `InkingKeyboardInput`
     // 属于窗口层、下一帧就会被覆写。拷贝的是小 vector（按下的键通常个位数），
     // 每帧一次可以忽略。
     _keyboardState = input.GetState();
     _keyboardEvents = input.GetFrameEvents();
 }
 
-const KeyboardState& InkingScene::GetKeyboardState() const noexcept {
+const InkingKeyboardState& InkingScene::GetKeyboardState() const noexcept {
     return _keyboardState;
 }
 
@@ -1068,15 +1067,15 @@ void InkingScene::DispatchKeyboard() {
     // 控件"）——那没关系：本帧剩下的按键仍按原定焦点派发，下一帧的 `topmost`
     // 与焦点会在 `DispatchPointer` 之后重新算。这种情况很罕见（一帧里多个按键
     // 事件），不值得为它把事件缓存起来重放。
-    for (const KeyInputEvent& event : _keyboardEvents) {
+    for (const InkingKeyInputEvent& event : _keyboardEvents) {
         switch (event.kind) {
-            case KeyInputEvent::Kind::Down:
+            case InkingKeyInputEvent::Kind::Down:
                 _keyboardFocus->PushKeyDown(event.key);
                 break;
-            case KeyInputEvent::Kind::Up:
+            case InkingKeyInputEvent::Kind::Up:
                 _keyboardFocus->PushKeyUp(event.key);
                 break;
-            case KeyInputEvent::Kind::Text:
+            case InkingKeyInputEvent::Kind::Text:
                 _keyboardFocus->PushTextInput(event.text);
                 break;
         }
@@ -1153,7 +1152,7 @@ void InkingScene::rebuildHitTable() {
             // 判据（动态 / 可见 / 不在容器内）与"只刷洞"那条路**共用一份**
             // （`ResolveDynamicHole`）：抄第二份就会出现"重建时留洞、刷洞时不留"，
             // 症状是同一个组件在两条路径下一个点得到、一个点不到。
-            ShapeBounds hole{};
+            InkingShapeBounds hole{};
             if (ResolveDynamicHole(node, hole)) {
                 _hitTable.AddHole(hole);
             }
@@ -1163,7 +1162,7 @@ void InkingScene::rebuildHitTable() {
         // 包络是组件按"自己的形状 + 所有可能的变换"上报的（本地坐标），
         // 这里补上绝对位置。静态节点用列表里的快照——**快照过期正是"有静态子孙
         // 就不能走快路"那条判据的全部理由**（T-19）。
-        ShapeBounds envelope = node->GetHitEnvelope();
+        InkingShapeBounds envelope = node->GetHitEnvelope();
         envelope.x += item.absX;
         envelope.y += item.absY;
 
@@ -1183,7 +1182,7 @@ void InkingScene::NotifyDynamicMoved() noexcept {
 }
 
 bool InkingScene::ResolveDynamicHole(InkingWidget* node,
-                                     ShapeBounds& out) const noexcept {
+                                     InkingShapeBounds& out) const noexcept {
     if (node == nullptr || !node->IsDynamic()) {
         return false;
     }
@@ -1201,7 +1200,7 @@ bool InkingScene::ResolveDynamicHole(InkingWidget* node,
     }
 
     // 动态节点每帧都在动，绝对位置只能现算（`DrawItem::absX` 是建表时的快照）。
-    ShapeBounds envelope = node->GetHitEnvelope();
+    InkingShapeBounds envelope = node->GetHitEnvelope();
     envelope.x += node->GetAbsX();
     envelope.y += node->GetAbsY();
     out = envelope;
@@ -1225,7 +1224,7 @@ void InkingScene::RefreshHoles() noexcept {
     // 对比全量重建 798 µs）。
     _hitTable.ClearHoles();
     for (const DrawItem& item : _drawList) {
-        ShapeBounds hole{};
+        InkingShapeBounds hole{};
         if (ResolveDynamicHole(item.node, hole)) {
             _hitTable.AddHole(hole);
         }
@@ -1237,7 +1236,7 @@ std::uint64_t InkingScene::GetHoleRefreshCount() const noexcept {
 }
 
 InkingWidget* InkingScene::topmostDynamicHit(float designX, float designY,
-                                             HitKind& kind) noexcept {
+                                             InkingHitKind& kind) noexcept {
     // 从列表尾部往前（z 由高到低），和渲染顺序同源。动态组件通常只有几个，
     // 而且只有"点落在洞里"时才会走到这里。
     InkingWidget* passTarget = nullptr;
@@ -1259,25 +1258,25 @@ InkingWidget* InkingScene::topmostDynamicHit(float designX, float designY,
             }
             continue;
         }
-        kind = HitKind::Block;
+        kind = InkingHitKind::Block;
         return node;
     }
 
     if (passTarget != nullptr) {
-        kind = HitKind::PassThrough;
+        kind = InkingHitKind::PassThrough;
         return passTarget;
     }
-    kind = HitKind::Miss;
+    kind = InkingHitKind::Miss;
     return nullptr;
 }
 
-HitResult InkingScene::QueryHit(float designX, float designY) noexcept {
+InkingHitResult InkingScene::QueryHit(float designX, float designY) noexcept {
     // 用之前保证表是新的。表跟着绘制列表一起重建（`sortDrawList` 里），
     // 所以这里只推一次列表的脏。
     sortDrawList();
 
     bool inHole = false;
-    HitResult staticResult = _hitTable.Query(designX, designY, &inHole);
+    InkingHitResult staticResult = _hitTable.Query(designX, designY, &inHole);
 
     // **深挖一层**（A8a）：容器（`OwnsSubtreeHit()`）的子孙**不进命中表**，
     // 所以表只能答"容器"。把点再交给容器，让它说"我子树里最上面那个该收事件的
@@ -1293,8 +1292,8 @@ HitResult InkingScene::QueryHit(float designX, float designY) noexcept {
     // 子孙等于把它变相变成了 Block。容器返回 nullptr 时保留原答案（子树里只有
     // 标签那类 PassThrough 命中）。**全局三态没有变**——容器在表里仍然只是一条
     // Block 条目，"容器里的东西盖住容器外的兄弟"是局部层级（A8b，暂缓）。
-    const auto normalize = [designX, designY](HitKind kind, InkingWidget* node) {
-        if (kind != HitKind::Block || node == nullptr
+    const auto normalize = [designX, designY](InkingHitKind kind, InkingWidget* node) {
+        if (kind != InkingHitKind::Block || node == nullptr
             || !node->OwnsSubtreeHit()) {
             return node;
         }
@@ -1311,7 +1310,7 @@ HitResult InkingScene::QueryHit(float designX, float designY) noexcept {
         return staticResult;
     }
 
-    HitKind dynamicKind = HitKind::Miss;
+    InkingHitKind dynamicKind = InkingHitKind::Miss;
     InkingWidget* dynamicHit = topmostDynamicHit(designX, designY, dynamicKind);
     if (dynamicHit == nullptr) {
         return staticResult;
@@ -1325,7 +1324,7 @@ HitResult InkingScene::QueryHit(float designX, float designY) noexcept {
     // 静态表仍会算出它自己那一份答案，所以这一步不能省。
     if (staticResult.target == nullptr
         || InkingWidget::IsAbove(*dynamicHit, *staticResult.target)) {
-        return HitResult{dynamicKind, dynamicHit};
+        return InkingHitResult{dynamicKind, dynamicHit};
     }
     return staticResult;
 }
@@ -1425,7 +1424,7 @@ void InkingScene::DispatchPointer() {
     // 长按不是"另一个事件"，是一次语义改判：这次按下从主键变成次键。所以做法
     // 是"作废主键捕获 + 让次键在下游照常按下"，而不是发一条 `onLongPress`
     // 让业务自己再解释一遍——那样每个组件都要写两套输入逻辑，正好违背
-    // "统一输入"（见 `PointerButton.h` 的文件头）。
+    // "统一输入"（见 `InkingPointerButton.h` 的文件头）。
     //
     // **必须排在第 0b 步（通知动态节点）之前**：定点浮窗要在同一帧看到次键的
     // `downEdge` 才能判"长按点在浮窗外面 → 关掉"。排在后面的话，动态组件读到
@@ -1441,24 +1440,24 @@ void InkingScene::DispatchPointer() {
 
         // 命中按**按下点**重算：slop 内微动几像素不该改判目标——"按在按钮
         // 边缘却被判成邻居"就是这么来的。
-        const MousePoint origin =
-            _pressOrigin[ToIndex(PointerButton::Primary)];
+        const InkingMousePoint origin =
+            _pressOrigin[InkingToIndex(InkingPointerButton::Primary)];
         if (_pointerInside) {
-            const HitResult atPress = QueryHit(origin.x, origin.y);
+            const InkingHitResult atPress = QueryHit(origin.x, origin.y);
             longPressTarget = atPress.IsHit() ? atPress.target : nullptr;
         }
 
         // 次键的按下点 = 手指按下的那一点。真实右键由 `SetPointerState` 写，
         // 长按这条是合成路径、不走那儿——不补这一行，click 带出去的坐标就是
         // 上一次右键的残留值（菜单弹在别处的经典成因）。
-        _pressOrigin[ToIndex(PointerButton::Secondary)] = origin;
+        _pressOrigin[InkingToIndex(InkingPointerButton::Secondary)] = origin;
 
         // 主键捕获当场作废：发 press(false)、**不发 click**。
         // 漏了这一步，手指抬起时主键槽还在，会额外派发一次左键 click——
         // 表现是"长按弹菜单，同时按钮也被点了一下"。
-        const std::size_t primaryIndex = ToIndex(PointerButton::Primary);
+        const std::size_t primaryIndex = InkingToIndex(InkingPointerButton::Primary);
         if (InkingWidget* primary = dispatchTarget(_pressedNode[primaryIndex])) {
-            primary->PushPointerPress(PointerButton::Primary, false);
+            primary->PushPointerPress(InkingPointerButton::Primary, false);
         }
         _pressedNode[primaryIndex] = nullptr;
 
@@ -1527,8 +1526,8 @@ void InkingScene::DispatchPointer() {
     // 命中走**烘焙好的表**（T-4）：静态层查表，动态层自判，
     // 两者按同一套层级规则合并（`QueryHit` 里做的事）。
     // 这一步的**语义与之前完全一样**——换的是实现，不是规则。
-    const HitResult hit =
-        _pointerInside ? QueryHit(_pointerX, _pointerY) : HitResult{};
+    const InkingHitResult hit =
+        _pointerInside ? QueryHit(_pointerX, _pointerY) : InkingHitResult{};
     InkingWidget* topmost = hit.IsHit() ? hit.target : nullptr;
 
     // 长按成立那一帧的命中按**按下点**算（上面 0a 已经查过），不用当前位置。
@@ -1543,7 +1542,7 @@ void InkingScene::DispatchPointer() {
     //
     // 用 `_effectiveDown` 而不是 `_pointerDown`：长按合成的那一份才是下游该看
     // 的"事实"（见 0b）。
-    const PointerDownState& effective = _effectiveDown;
+    const InkingPointerDownState& effective = _effectiveDown;
 
     // 指针离开窗口（移出去 / 窗口失焦）→ **这次捕获作废**。
     //
@@ -1552,8 +1551,8 @@ void InkingScene::DispatchPointer() {
     // 再也不收 hover、状态也回不到 Normal——不报错，只是行为诡异。
     //
     // 分槽之后这条要**逐槽判**：左右键各自的捕获独立作废。
-    for (std::size_t i = 0; i < kPointerButtonCount; ++i) {
-        const auto button = static_cast<PointerButton>(i);
+    for (std::size_t i = 0; i < InkingPointerButtonCount; ++i) {
+        const auto button = static_cast<InkingPointerButton>(i);
         const bool isDown = effective.IsDown(button);
         const bool wasDown = _pointerWasDown.IsDown(button);
         const bool justPressed = isDown && !wasDown;
@@ -1565,7 +1564,7 @@ void InkingScene::DispatchPointer() {
             slot = topmost;
 
             // 拖动基准与键盘焦点**只属于主键**（不变量 2、3）。
-            if (button == PointerButton::Primary) {
+            if (button == InkingPointerButton::Primary) {
                 // 拖动增量从**按下点**起算：不在这里重置的话，按下后的第一帧
                 // 会把"上一个位置到按下点"的位移当成拖动增量，滑块会先跳一下。
                 _lastDragX = _pointerX;
@@ -1599,7 +1598,7 @@ void InkingScene::DispatchPointer() {
             const bool stillOnIt = justReleased && slot != nullptr
                                 && slot == topmost && _pointerInside;
             // 先存坐标再清槽：下面可能派发 click，而槽一清就再也问不到"按在哪"。
-            const MousePoint origin = _pressOrigin[i];
+            const InkingMousePoint origin = _pressOrigin[i];
             slot = nullptr;
             if (pressed != nullptr) {
                 pressed->PushPointerPress(button, false);
@@ -1610,7 +1609,7 @@ void InkingScene::DispatchPointer() {
             }
             // 虚拟次键的账在这里结清：手指抬起（或指针离开窗口）之后，
             // 合成的"按着"必须一起结束，否则下次长按会带着旧账。
-            if (button == PointerButton::Secondary) {
+            if (button == InkingPointerButton::Secondary) {
                 _longPress.held = false;
             }
         }
@@ -1654,7 +1653,7 @@ void InkingScene::DispatchPointer() {
     // 只看**主键**槽（0.5.0）：右键按下不该改变"我指着谁"，否则右键按住期间
     // 悬停会莫名其妙消失，而用户什么都没动。
     InkingWidget* const primaryCapture =
-        _pressedNode[ToIndex(PointerButton::Primary)];
+        _pressedNode[InkingToIndex(InkingPointerButton::Primary)];
 
     InkingWidget* hoverTarget = topmost;
     if (primaryCapture != nullptr && topmost != primaryCapture) {
@@ -1757,12 +1756,12 @@ void InkingScene::Render(SDL_Renderer* renderer) {
 
     // T-6 的提交层：本帧的几何先缓冲、连续同类合成一次提交；纹理绘制与帧末
     // 会把缓冲刷出去。顺序完全按绘制列表走——**只合并连续同类，绝不重排**。
-    detail::BeginFrame(renderer);
+    inking_detail::BeginFrame(renderer);
 
     // A5：裁剪状态跟着遍历走。切换裁剪（设置 / 清除）时提交层会先刷缓冲，
     // 所以"缓冲里的顶点永远在它自己那一份裁剪下画出去"这条纪律由提交层保证。
     bool clipActive = false;
-    ShapeBounds activeClip{};
+    InkingShapeBounds activeClip{};
 
     // ------------------------------------------------------------------
     // 装饰笔的待落栈（0.2.0 T-07）
@@ -1796,9 +1795,9 @@ void InkingScene::Render(SDL_Renderer* renderer) {
             }
             // 落笔用的是**装饰者自己的祖先裁剪**（裁剪只剪子孙，装饰笔是
             // 装饰者自己的一笔，不被它自己的裁剪区剪）。
-            ShapeBounds decorationClip{};
+            InkingShapeBounds decorationClip{};
             const bool wantClip =
-                detail::AncestorClipInDevice(*back.node, decorationClip);
+                inking_detail::AncestorClipInDevice(*back.node, decorationClip);
             const bool clipChanged =
                 wantClip != clipActive
                 || (wantClip
@@ -1808,9 +1807,9 @@ void InkingScene::Render(SDL_Renderer* renderer) {
                         || decorationClip.height != activeClip.height));
             if (clipChanged) {
                 if (wantClip) {
-                    detail::SetClipRect(renderer, decorationClip);
+                    inking_detail::SetClipRect(renderer, decorationClip);
                 } else {
-                    detail::ClearClipRect(renderer);
+                    inking_detail::ClearClipRect(renderer);
                 }
                 clipActive = wantClip;
                 activeClip = decorationClip;
@@ -1850,8 +1849,8 @@ void InkingScene::Render(SDL_Renderer* renderer) {
         // 祖先裁剪（A5）：容器声明的裁剪区只剪**子孙**，所以这里问的是
         // "这个节点的祖先们剪不剪它"。没有裁剪祖先时一次都不设置，
         // 于是常规场景的提交路径与以前完全一样。
-        ShapeBounds wantedClip{};
-        const bool wantClip = detail::AncestorClipInDevice(*node, wantedClip);
+        InkingShapeBounds wantedClip{};
+        const bool wantClip = inking_detail::AncestorClipInDevice(*node, wantedClip);
         const bool clipChanged =
             wantClip != clipActive
             || (wantClip
@@ -1861,9 +1860,9 @@ void InkingScene::Render(SDL_Renderer* renderer) {
                     || wantedClip.height != activeClip.height));
         if (clipChanged) {
             if (wantClip) {
-                detail::SetClipRect(renderer, wantedClip);
+                inking_detail::SetClipRect(renderer, wantedClip);
             } else {
-                detail::ClearClipRect(renderer);
+                inking_detail::ClearClipRect(renderer);
             }
             clipActive = wantClip;
             activeClip = wantedClip;
@@ -1882,12 +1881,11 @@ void InkingScene::Render(SDL_Renderer* renderer) {
 
     // 帧末把裁剪恢复：下一个渲染目标（或下一帧）不该继承别人的裁剪区。
     if (clipActive) {
-        detail::ClearClipRect(renderer);
+        inking_detail::ClearClipRect(renderer);
     }
 
     // 场景自己那一笔（如果有）也在这一帧的批次里；刷完再收尾。
     onRenderScene(renderer);
-    detail::EndFrame();
+    inking_detail::EndFrame();
 }
 
-}  // namespace inking

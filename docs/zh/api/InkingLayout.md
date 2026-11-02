@@ -4,24 +4,24 @@
 [API index](../API.md)
 
 这是布局的**数据层**：规则怎么写、意图怎么表达。**只有意图，没有结果**——
-本文件里一个计算函数都没有（唯一的方法 `LayoutSpec::Valid()` 只是问"这份规则要不要生效"），
+本文件里一个计算函数都没有（唯一的方法 `InkingLayoutSpec::Valid()` 只是问"这份规则要不要生效"），
 它是布局的"词汇表"。全部内容在 `namespace inking` 下，header-only，没有对应的 `.cpp`。
 
 三句话先说清这一层在整个布局里的位置：
 
-1. **规则住在父容器上**（`LayoutSpec`）：孩子只在自己身上写"我在这个布局里的**意愿**"
-   （`LayoutItem`：margin / 是否吃剩余空间 / min-max）。就像 CSS 里 `display:flex` 写在父级、
+1. **规则住在父容器上**（`InkingLayoutSpec`）：孩子只在自己身上写"我在这个布局里的**意愿**"
+   （`InkingLayoutItem`：margin / 是否吃剩余空间 / min-max）。就像 CSS 里 `display:flex` 写在父级、
    `flex-grow` 写在子级。
 2. **这里只有意图，没有结果**：算出来的矩形由布局求解器产出，产出写进组件的**运行期几何**
    （`_width` / `_height` / `_offsetX` / `_offsetY`），然后标结构脏让命中表重烘。
-   为什么不把结果也放回数据里：`AnchorData` 是配置、是要被**反复读取的输入**，
+   为什么不把结果也放回数据里：`InkingAnchorData` 是配置、是要被**反复读取的输入**，
    一旦被结果覆盖，重排就再也找不到原始意图了。
 3. **位置推导一个字都不改**：布局只是把锚点公式里的两个量（尺寸、偏移）算出来。
    于是绘制 / 命中 / AABB / 子树变换全都不知道"有布局这回事"。
 
-单位全是**设计坐标**（和 `AnchorData::width` / `offsetX` 同一套）。
+单位全是**设计坐标**（和 `InkingAnchorData::width` / `offsetX` 同一套）。
 
-> **求解器不在本文件里**：真正算矩形的是 `detail::layout::ArrangeSubtree`
+> **求解器不在本文件里**：真正算矩形的是 `inking_detail::layout::ArrangeSubtree`
 > （声明在 `include/widget/InkingWidget.h`、实现在 `src/widget/InkingWidget.cpp`）。
 > 依赖方向是"**Widget 层 → 本数据层**"，所以本文件**故意不知道**组件、树、命中的存在——
 > 它单独用不起来是**设计目标，不是缺口**。
@@ -30,7 +30,7 @@
 
 ## 挂在哪
 
-`AnchorData`（`InkingAnchorData.h`）上挂了两个字段管两件事，**别混**：
+`InkingAnchorData`（`InkingAnchorData.h`）上挂了两个字段管两件事，**别混**：
 
 | 字段 | 站在谁的角度 | 含义 |
 | --- | --- | --- |
@@ -46,10 +46,10 @@
 
 ```
         ┌──────────────────── 读 ────────────────────┐
-容器 LayoutSpec ──┐                                  │
-（gap / justify / ├──► detail::layout::ArrangeSubtree(InkingWidget& container)
+容器 InkingLayoutSpec ──┐                                  │
+（gap / justify / ├──► inking_detail::layout::ArrangeSubtree(InkingWidget& container)
  align / padding）│            │
-孩子 MeasureLayout ┘            │ 解出每个孩子的 LayoutRect
+孩子 MeasureLayout ┘            │ 解出每个孩子的 InkingLayoutRect
 （我在这份约束下想要多大）      ▼
                     InkingWidget::ApplyLayoutRect(rect)
                     （protected，只有 ArrangeSubtree 是 friend）
@@ -65,7 +65,7 @@
   不许标脏、不许有副作用"——布局可能要问好几遍。默认实现返回"我当前的尺寸"；
   内容驱动的组件重写它才有意义（label 去问文字层要高度、图片去要原始尺寸）。
 - **写入口开得极窄**：`ApplyLayoutRect` 是 `protected`，且**只有
-  `detail::layout::ArrangeSubtree` 是它的 friend**——业务代码想调它是**编译错误**，
+  `inking_detail::layout::ArrangeSubtree` 是它的 friend**——业务代码想调它是**编译错误**，
   不是靠文档约定。静态档本来没有几何写入口（`Resize` / `ChangeOffset` 只挂在动态档上，
   那是"静态几何定死"这条铁律的实现方式），这条口子是为"排一列**按钮**"开的。
 - **重排是显式的**：`Relayout()`（从我这棵子树开始排）/ `RelayoutParent()`
@@ -75,35 +75,35 @@
 
 ## 用到的数据结构
 
->**LayoutKind**
+>**InkingLayoutKind**
 
 布局种类。`None` = 不布局（老行为：锚点自己定位）。
 
 ```C++
-enum class LayoutKind : std::uint8_t {
+enum class InkingLayoutKind : std::uint8_t {
     None = 0,
     Stack,  // 一维排布：竖着或横着，一个接一个
     Grid,   // 网格：定列数，逐行填
 };
 ```
 
->**LayoutAxis**
+>**InkingLayoutAxis**
 
 `Stack` 的主轴方向。
 
 ```C++
-enum class LayoutAxis : std::uint8_t {
+enum class InkingLayoutAxis : std::uint8_t {
     Vertical = 0,  // 竖排（一行一个）
     Horizontal,    // 横排（一列一个）
 };
 ```
 
->**LayoutJustify**
+>**InkingLayoutJustify**
 
 主轴上"多余的空间怎么分"。
 
 ```C++
-enum class LayoutJustify : std::uint8_t {
+enum class InkingLayoutJustify : std::uint8_t {
     Start = 0,     // 挤在一头（默认）
     Center,        // 居中
     End,           // 挤在另一头
@@ -113,13 +113,13 @@ enum class LayoutJustify : std::uint8_t {
 };
 ```
 
->**LayoutAlign**
+>**InkingLayoutAlign**
 
-交叉轴上"单个项怎么放"。容器写在 `LayoutSpec::align` 上，
-孩子可以用 `LayoutItem::selfAlign` 覆盖。
+交叉轴上"单个项怎么放"。容器写在 `InkingLayoutSpec::align` 上，
+孩子可以用 `InkingLayoutItem::selfAlign` 覆盖。
 
 ```C++
-enum class LayoutAlign : std::uint8_t {
+enum class InkingLayoutAlign : std::uint8_t {
     Start = 0,
     Center,
     End,
@@ -127,12 +127,12 @@ enum class LayoutAlign : std::uint8_t {
 };
 ```
 
->**LayoutSpacing**
+>**InkingLayoutSpacing**
 
 四个方向的间距（**padding 与 margin 共用**）。设计坐标。
 
 ```C++
-struct LayoutSpacing {
+struct InkingLayoutSpacing {
     float left = 0.0f;
     float top = 0.0f;
     float right = 0.0f;
@@ -140,35 +140,35 @@ struct LayoutSpacing {
 };
 ```
 
->**LayoutSize**
+>**InkingLayoutSize**
 
-一个尺寸（求解器内部的表达；`AnchorData` 那边是 `int`）。
+一个尺寸（求解器内部的表达；`InkingAnchorData` 那边是 `int`）。
 
 ```C++
-struct LayoutSize {
+struct InkingLayoutSize {
     float width = 0.0f;
     float height = 0.0f;
 };
 ```
 
->**LayoutConstraints**
+>**InkingLayoutConstraints**
 
 可用空间（**父级给孩子的约束**）。`0` 表示那个方向**不限**。
 
 ```C++
-struct LayoutConstraints {
+struct InkingLayoutConstraints {
     float maxWidth = 0.0f;
     float maxHeight = 0.0f;
 };
 ```
 
->**LayoutRect**
+>**InkingLayoutRect**
 
 一个**算好的**矩形（相对父级左上角）。它是 `ApplyLayoutRect` 的入参，
-也是"结果"这个概念的载体——它**不回到** `AnchorData` 里。
+也是"结果"这个概念的载体——它**不回到** `InkingAnchorData` 里。
 
 ```C++
-struct LayoutRect {
+struct InkingLayoutRect {
     float x = 0.0f;
     float y = 0.0f;
     float width = 0.0f;
@@ -176,39 +176,39 @@ struct LayoutRect {
 };
 ```
 
->**LayoutItem**
+>**InkingLayoutItem**
 
 一个孩子在父容器布局里的**意愿**（挂在孩子自己的数据上）。
 全部有默认值，所以"什么都不写"= 老样子：按自己的尺寸、不吃剩余空间、
 没有 min-max、margin 为 0。
 
 ```C++
-struct LayoutItem {
-    LayoutSpacing margin{};       // 外边距：算在这个孩子的矩形之外
+struct InkingLayoutItem {
+    InkingLayoutSpacing margin{};       // 外边距：算在这个孩子的矩形之外
     bool fillMain = false;        // 主轴方向上吃掉剩余空间
     float minWidth = 0.0f;        // 尺寸下限（0 = 不限）
     float minHeight = 0.0f;
     float maxWidth = 0.0f;        // 尺寸上限（0 = 不限）
     float maxHeight = 0.0f;
     bool hasSelfAlign = false;    // 是否用 selfAlign 覆盖容器的 align
-    LayoutAlign selfAlign = LayoutAlign::Start;
+    InkingLayoutAlign selfAlign = InkingLayoutAlign::Start;
 };
 ```
 
->**LayoutSpec**
+>**InkingLayoutSpec**
 
-一个容器的布局**规则**（挂在父容器的 `AnchorData::layout` 上）。
+一个容器的布局**规则**（挂在父容器的 `InkingAnchorData::layout` 上）。
 `kind == None` 时整份规则都不生效——这是"老配置一行不改"的保证。
 
 ```C++
-struct LayoutSpec {
-    LayoutKind kind = LayoutKind::None;
+struct InkingLayoutSpec {
+    InkingLayoutKind kind = InkingLayoutKind::None;
 
     // ---- Stack ----
-    LayoutAxis axis = LayoutAxis::Vertical;
+    InkingLayoutAxis axis = InkingLayoutAxis::Vertical;
     float gap = 0.0f;                    // 主轴间距（相邻两项之间）
-    LayoutJustify justify = LayoutJustify::Start;
-    LayoutAlign align = LayoutAlign::Stretch;  // 交叉轴默认对齐
+    InkingLayoutJustify justify = InkingLayoutJustify::Start;
+    InkingLayoutAlign align = InkingLayoutAlign::Stretch;  // 交叉轴默认对齐
 
     // ---- Grid ----
     int columns = 1;                     // 列数（至少 1）
@@ -216,7 +216,7 @@ struct LayoutSpec {
     float columnGap = 0.0f;
 
     // ---- 共用 ----
-    LayoutSpacing padding{};             // 内容区内缩
+    InkingLayoutSpacing padding{};             // 内容区内缩
 
     bool Valid() const noexcept;
 };
@@ -226,9 +226,9 @@ struct LayoutSpec {
 
 ### Public
 
-#### LayoutItem
+#### InkingLayoutItem
 
->**LayoutSpacing margin**
+>**InkingLayoutSpacing margin**
 
 **外边距**：算在这个孩子的矩形**之外**（间隙之外再加一圈）。
 与容器的 `padding`（内容区内缩）是两回事，两者互不替代。
@@ -251,20 +251,20 @@ struct LayoutSpec {
 
 是否用下面的 `selfAlign` **覆盖容器的 `align`**（默认不覆盖，即听容器的）。
 
->**LayoutAlign selfAlign**
+>**InkingLayoutAlign selfAlign**
 
 被 `hasSelfAlign` 启用时，这个孩子在**交叉轴**上的对齐方式。
-默认 `Start`——注意它和 `LayoutSpec::align` 的默认值（`Stretch`）**不一样**：
+默认 `Start`——注意它和 `InkingLayoutSpec::align` 的默认值（`Stretch`）**不一样**：
 覆盖是"显式动作"，所以默认值取的是最朴素的那一个。
 
-#### LayoutSpec
+#### InkingLayoutSpec
 
->**LayoutKind kind**
+>**InkingLayoutKind kind**
 
-布局种类。默认 `LayoutKind::None`，也就是"不布局"（老行为：孩子的锚点自己定位）。
+布局种类。默认 `InkingLayoutKind::None`，也就是"不布局"（老行为：孩子的锚点自己定位）。
 它同时是 `Valid()` 的判据。
 
->**LayoutAxis axis**
+>**InkingLayoutAxis axis**
 
 `Stack` 的**主轴**方向（竖排 / 横排）。默认竖排。
 
@@ -272,13 +272,13 @@ struct LayoutSpec {
 
 `Stack` 的**主轴间距**（相邻两项之间）。**不算 `padding`，也不算 `margin`**。
 
->**LayoutJustify justify**
+>**InkingLayoutJustify justify**
 
 主轴上"多余的空间怎么分"。默认 `Start`（挤在一头）。
 
->**LayoutAlign align**
+>**InkingLayoutAlign align**
 
-**交叉轴的默认对齐**（孩子可以用 `LayoutItem::selfAlign` 覆盖）。
+**交叉轴的默认对齐**（孩子可以用 `InkingLayoutItem::selfAlign` 覆盖）。
 默认 `Stretch`——一列按钮左右撑满是常态。
 
 >**int columns**
@@ -293,7 +293,7 @@ struct LayoutSpec {
 
 `Grid` 的**列**间距。
 
->**LayoutSpacing padding**
+>**InkingLayoutSpacing padding**
 
 **内容区内缩**：所有孩子都在这个范围里排。与孩子的 `margin` 叠加。
 
@@ -308,9 +308,9 @@ struct LayoutSpec {
 bool Valid() const noexcept;
 ```
 
-这份规则**要不要生效**。判据就一条：`kind != LayoutKind::None`。
+这份规则**要不要生效**。判据就一条：`kind != InkingLayoutKind::None`。
 `None` 时整份规则（包括 `padding` / `gap`）都不参与排布，
-这是"老配置一行不改"的实现方式——不用给老的 `AnchorData` 补任何字段。
+这是"老配置一行不改"的实现方式——不用给老的 `InkingAnchorData` 补任何字段。
 
 ---
 

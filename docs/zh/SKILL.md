@@ -59,19 +59,19 @@
 
 ### 3.2 单例
 
-需要单例时（前端 `TaskQueue`）**必须**用**函数内静态量**，不用类的静态数据成员
+需要单例时（前端 `InkingTaskQueue`）**必须**用**函数内静态量**，不用类的静态数据成员
 （静态初始化 / 析构顺序问题：会出现"场景活了库还没起来"甚至"对象在库已析构之后才注销"，
 `AGENTS.md` §6 第 12 条）。拷贝 / 移动四个全禁：
 
 ```cpp
-static TaskQueue &instance() { static TaskQueue inst; return inst; }   // ← 函数内静态量
-TaskQueue(const TaskQueue &) = delete;        TaskQueue &operator=(const TaskQueue &) = delete;
-TaskQueue(TaskQueue &&) = delete;             TaskQueue &operator=(TaskQueue &&) = delete;
+static InkingTaskQueue &instance() { static InkingTaskQueue inst; return inst; }   // ← 函数内静态量
+InkingTaskQueue(const InkingTaskQueue &) = delete;        InkingTaskQueue &operator=(const InkingTaskQueue &) = delete;
+InkingTaskQueue(InkingTaskQueue &&) = delete;             InkingTaskQueue &operator=(InkingTaskQueue &&) = delete;
 ```
 
 ### 3.3 静态工具类
 
-纯功能型（前端 `MessageQueue`）用**静态类**：全 `static` 方法 + 私有构造 / 析构
+纯功能型（前端 `InkingMessageQueue`）用**静态类**：全 `static` 方法 + 私有构造 / 析构
 （私有构造 = 禁止实例化）。有状态、有生命周期的按 §3.2 走。
 
 ### 3.4 接口 + 实现分离
@@ -87,7 +87,7 @@ public:
 };
 ```
 
-前端的对应：`SceneLibrary` 是接口层，具体场景由调用方派生——**框架层不该认识任何具体业务类型**。
+前端的对应：`InkingSceneLibrary` 是接口层，具体场景由调用方派生——**框架层不该认识任何具体业务类型**。
 
 ### 3.5 CMake 里的可选依赖
 
@@ -110,14 +110,14 @@ message(FATAL_ERROR
 ### 4.1 反向注册（谁想知道谁去查）
 
 **不要**让底层认识上层：上层把自己登记到一张表，底层只认表、不认类型——底层不必为后来者改动。
-前端已移植成 `SceneLibrary` + `RegisterToken`：
+前端已移植成 `InkingSceneLibrary` + `InkingRegisterToken`：
 
 ```cpp
 _sceneRegisterToken.emplace(_sceneName, this);      // 上层登记自己
 std::optional<SceneToken> _sceneRegisterToken;      // 延迟构造（InkingScene.h）
 ```
 
-**关键点**（前端 `RegisterToken` 已经踩过并修正）：
+**关键点**（前端 `InkingRegisterToken` 已经踩过并修正）：
 
 - **令牌必须记住"我到底进没进库"**（`_active`）：注册可能被驳回，驳回的令牌是空转的，
   析构时**绝不能**去注销——那会把正主从库里摘掉（`AGENTS.md` §6 第 15 / 22 条）。
@@ -184,7 +184,7 @@ std::optional<SceneToken> _sceneRegisterToken;      // 延迟构造（InkingScen
 | 消息队列 | 生产者任意线程，消费者 UI 线程，**加锁** |
 
 **必须**：跨线程的状态才加锁，并在头文件里说明"为什么加锁 / 为什么不加锁"。
-前端 `SceneLibrary` 写了"有意不加锁，因为场景只在 UI 线程构造与析构"——
+前端 `InkingSceneLibrary` 写了"有意不加锁，因为场景只在 UI 线程构造与析构"——
 它比锁本身更有价值，因为标出了前提；前提变了就该加锁。
 
 **必须**记住：**任务队列的回调跑在管家线程上**，碰 UI 状态的逻辑不能放进去；

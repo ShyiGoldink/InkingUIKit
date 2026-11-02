@@ -16,10 +16,8 @@
 #include <detail/MessageQueue.h>
 #include <thread/TaskQueue.h>
 
-namespace inking {
-
-inline constexpr const char* kProjectName = "InkingFrontendDeveloper";
-inline constexpr const char* kVersion     = "0.8.5";
+inline constexpr const char* InkingProjectName = "InkingFrontendDeveloper";
+inline constexpr const char* InkingVersion     = "0.8.5";
 
 /**
  * 版本阶段（**当前为发布版**）。
@@ -29,17 +27,16 @@ inline constexpr const char* kVersion     = "0.8.5";
  * 不承诺跨版本兼容；1.0.0 之后才冻结。要"稳"请对照 `docs/zh/CHANGELOG.md`
  * 逐版升级，而不是假定二进制兼容。
  *
- * 它单独成一个常量而不是拼进 `kVersion`，是为了让日志 / 关于框 / 自检
+ * 它单独成一个常量而不是拼进 `InkingVersion`，是为了让日志 / 关于框 / 自检
  * 既能报"0.5.2"（版本号），又能在同一行标出"release"（阶段）——
  * 拼起来之后想再拆开就得解析字符串。
  *
  * 打包脚本按"`release` 阶段省略后缀"生成目录名（`inking-0.5.2-win64`），
  * 其它阶段照旧拼进去（如 `inking-0.1.0-test-win64`）。
  */
-inline constexpr const char* kVersionStage = "release";
+inline constexpr const char* InkingVersionStage = "release";
 
 /// 返回当前构建链接到的 SDL3 版本字符串，例如 "3.4.16"。
-std::string sdl3_version();
+std::string InkingSdl3_version();
 
-}  // namespace inking
 

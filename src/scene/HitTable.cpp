@@ -4,8 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-
-namespace inking {
 namespace {
 
 /// 粗块边长（设计坐标）。一个粗块 = 一个簇。256 是按"1280×720 的界面大约
@@ -34,8 +32,8 @@ int BlockIndex(float value, float size) noexcept {
     return static_cast<int>(std::floor(value / size));
 }
 
-ShapeBounds Padded(const ShapeBounds& bounds) noexcept {
-    ShapeBounds padded;
+InkingShapeBounds Padded(const InkingShapeBounds& bounds) noexcept {
+    InkingShapeBounds padded;
     padded.x = bounds.x - kEnvelopePadding;
     padded.y = bounds.y - kEnvelopePadding;
     padded.width = bounds.width + 2.0f * kEnvelopePadding;
@@ -58,7 +56,7 @@ float ClampCellSize(float value) noexcept {
     return std::round(clamped / kCellQuantize) * kCellQuantize;
 }
 
-bool EnvelopeContains(const ShapeBounds& bounds, float x, float y) noexcept {
+bool EnvelopeContains(const InkingShapeBounds& bounds, float x, float y) noexcept {
     return x >= bounds.x && x < bounds.x + bounds.width && y >= bounds.y
         && y < bounds.y + bounds.height;
 }
@@ -72,7 +70,7 @@ struct BlockBucket {
 
 }  // namespace
 
-void HitTable::Clear() noexcept {
+void InkingHitTable::Clear() noexcept {
     _entries.clear();
     _holes.clear();
     _clusters.clear();
@@ -81,7 +79,7 @@ void HitTable::Clear() noexcept {
     _maxCellCandidates = 0;
 }
 
-void HitTable::AddEntry(InkingWidget* node, const ShapeBounds& envelope,
+void InkingHitTable::AddEntry(InkingWidget* node, const InkingShapeBounds& envelope,
                         bool passThrough) noexcept {
     if (node == nullptr) {
         return;
@@ -93,21 +91,21 @@ void HitTable::AddEntry(InkingWidget* node, const ShapeBounds& envelope,
     _entries.push_back(entry);
 }
 
-void HitTable::AddHole(const ShapeBounds& envelope) noexcept {
+void InkingHitTable::AddHole(const InkingShapeBounds& envelope) noexcept {
     _holes.push_back(Padded(envelope));
 }
 
-void HitTable::ClearHoles() noexcept {
+void InkingHitTable::ClearHoles() noexcept {
     // 洞是**独立线性扫**的一份 vector（`IsInDynamicHole`），所以清它一个字节都
     // 不碰 `_entries` / `_clusters` / `_cells` / `_candidates`——`Build()` 也只
     // 处理后面那四样（见 `Build()` 开头）。这就是"只刷洞"能成立的全部依据。
     _holes.clear();
 }
 
-bool HitTable::IsInDynamicHole(float x, float y) const noexcept {
+bool InkingHitTable::IsInDynamicHole(float x, float y) const noexcept {
     // 线性扫：动态组件通常只有几个。真到了几百个再给它建索引也不迟
     // （那时该先问一句"是不是该把它们收进一个动态容器"）。
-    for (const ShapeBounds& hole : _holes) {
+    for (const InkingShapeBounds& hole : _holes) {
         if (EnvelopeContains(hole, x, y)) {
             return true;
         }
@@ -115,7 +113,7 @@ bool HitTable::IsInDynamicHole(float x, float y) const noexcept {
     return false;
 }
 
-void HitTable::Build() noexcept {
+void InkingHitTable::Build() noexcept {
     _clusters.clear();
     _cells.clear();
     _candidates.clear();
@@ -152,7 +150,7 @@ void HitTable::Build() noexcept {
     };
 
     for (std::uint32_t i = 0; i < _entries.size(); ++i) {
-        const ShapeBounds& env = _entries[i].envelope;
+        const InkingShapeBounds& env = _entries[i].envelope;
 
         // 包络为空（宽或高为 0）时也登记：它仍可能被点到（一个 1px 的线）。
         const float right = env.x + (env.width > 0.0f ? env.width : 0.0f);
@@ -176,7 +174,7 @@ void HitTable::Build() noexcept {
         // 每个条目大约覆盖常数个格子——这正是 §10.3 想要的"按 UI 分布聚类"。
         float sum = 0.0f;
         for (const std::uint32_t index : bucket.items) {
-            const ShapeBounds& env = _entries[index].envelope;
+            const InkingShapeBounds& env = _entries[index].envelope;
             const float shorter = env.width < env.height ? env.width : env.height;
             sum += shorter > 0.0f ? shorter : kMinCellSize;
         }
@@ -208,7 +206,7 @@ void HitTable::Build() noexcept {
         std::vector<std::vector<std::uint32_t>> perCell(cellCount);
 
         for (const std::uint32_t index : bucket.items) {
-            const ShapeBounds& env = _entries[index].envelope;
+            const InkingShapeBounds& env = _entries[index].envelope;
             const int firstX =
                 LocalCellIndex(env.x, cluster.originX, cluster.cellSize);
             const int firstY =
@@ -261,13 +259,13 @@ void HitTable::Build() noexcept {
               });
 }
 
-HitResult HitTable::Query(float x, float y, bool* holeHit) const noexcept {
+InkingHitResult InkingHitTable::Query(float x, float y, bool* holeHit) const noexcept {
     if (holeHit != nullptr) {
         *holeHit = IsInDynamicHole(x, y);
     }
 
     if (_clusters.empty()) {
-        return HitResult{};
+        return InkingHitResult{};
     }
 
     // ① 定位簇：二分（簇数量少，但二分不比线性麻烦）。
@@ -284,7 +282,7 @@ HitResult HitTable::Query(float x, float y, bool* holeHit) const noexcept {
         });
 
     if (it == _clusters.end() || it->blockY != blockY || it->blockX != blockX) {
-        return HitResult{};  // 这个粗块里没有 UI
+        return InkingHitResult{};  // 这个粗块里没有 UI
     }
 
     const Cluster& cluster = *it;
@@ -294,13 +292,13 @@ HitResult HitTable::Query(float x, float y, bool* holeHit) const noexcept {
     const int cellY = LocalCellIndex(y, cluster.originY, cluster.cellSize);
     if (cellX < 0 || cellX >= cluster.columns || cellY < 0
         || cellY >= cluster.rows) {
-        return HitResult{};
+        return InkingHitResult{};
     }
 
     const std::size_t cellIndex = static_cast<std::size_t>(cluster.cellBegin)
         + static_cast<std::size_t>(cellY) * cluster.columns + cellX;
     if (cellIndex >= _cells.size()) {
-        return HitResult{};
+        return InkingHitResult{};
     }
 
     // ③ 扫候选。顺序**已经是 z 降序**，所以第一个真正命中的就是答案；
@@ -318,7 +316,7 @@ HitResult HitTable::Query(float x, float y, bool* holeHit) const noexcept {
         if (!EnvelopeContains(entry.envelope, x, y)) {
             continue;
         }
-        // 精判交给节点自己：形状是唯一真相（SDF / ShapeContains）。
+        // 精判交给节点自己：形状是唯一真相（SDF / InkingShapeContains）。
         if (!entry.node->HitTest(x, y)) {
             continue;
         }
@@ -329,13 +327,12 @@ HitResult HitTable::Query(float x, float y, bool* holeHit) const noexcept {
             }
             continue;
         }
-        return HitResult{HitKind::Block, entry.node};
+        return InkingHitResult{InkingHitKind::Block, entry.node};
     }
 
     if (passTarget != nullptr) {
-        return HitResult{HitKind::PassThrough, passTarget};
+        return InkingHitResult{InkingHitKind::PassThrough, passTarget};
     }
-    return HitResult{};
+    return InkingHitResult{};
 }
 
-}  // namespace inking

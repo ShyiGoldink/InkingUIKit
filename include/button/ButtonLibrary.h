@@ -1,18 +1,18 @@
 #pragma once
 
-// 按钮库：**名字 → ButtonData** 的登记表。
+// 按钮库：**名字 → InkingButtonData** 的登记表。
 //
 // 它存在的理由只有一个：`InkingStaticButton(parent, "name")` 这条路要有东西可查。
 // 代码生成器将来把 CXXCSS/Button/*.json 展开成"往这张表里登记"的代码，
-// 于是"按名字构造按钮"和"按 ButtonData 构造按钮"就落在同一个实现上
+// 于是"按名字构造按钮"和"按 InkingButtonData 构造按钮"就落在同一个实现上
 // （见 InkingStaticButton.cpp），不用写两遍。
 //
-// 与 SceneLibrary 的**刻意不同**：
+// 与 InkingSceneLibrary 的**刻意不同**：
 //   - 场景是**对象**登记（同名只能有一个活的场景），这里登记的是**配置数据**，
 //     谁都不拥有它、也没有生命周期要管；
 //   - 因此没有 RAII 令牌，也不需要 Close：登记是一次性的，表建起来就是只读的。
 //
-// 与 SceneLibrary 的**刻意相同**：
+// 与 InkingSceneLibrary 的**刻意相同**：
 //   - 存储用**函数内静态量**，不用类的静态数据成员。类的静态数据成员在 main
 //     之前按翻译单元顺序初始化，而生成器登记的代码可能由某个静态对象的构造
 //     触发——那就是静态初始化 / 析构顺序问题（AGENTS §6 第 12 条）。
@@ -28,15 +28,13 @@
 #include <string>
 #include <vector>
 
-namespace inking {
-
 /**
- * @brief 按钮配置的登记表：名字 → ButtonData。
+ * @brief 按钮配置的登记表：名字 → InkingButtonData。
  *
- * 表里的 ButtonData 建好之后**不再变动**，所以 `Find` 返回的裸指针可以长期持有，
+ * 表里的 InkingButtonData 建好之后**不再变动**，所以 `Find` 返回的裸指针可以长期持有，
  * 直到进程退出——不需要每帧去查表。
  */
-class ButtonLibrary {
+class InkingButtonLibrary {
 public:
     /** 登记结果。失败原因分得清，才能给出有用的日志。 */
     enum class RegisterResult {
@@ -51,14 +49,14 @@ public:
      * @param data 配置；它的 `name` 就是查找键，必须非空。
      * @return 只有 Ok 表示真的进表了。
      */
-    static RegisterResult Register(const ButtonData& data);
+    static RegisterResult Register(const InkingButtonData& data);
 
     /**
      * 按名字查配置；没登记过返回 nullptr。
      *
      * 返回的指针由库持有、内容只读，可以长期保存——不要试图改它。
      */
-    static const ButtonData* Find(const std::string& name);
+    static const InkingButtonData* Find(const std::string& name);
 
     /** 这个名字登记过吗。 */
     static bool IsNameTaken(const std::string& name);
@@ -95,8 +93,7 @@ public:
     static void ClearForTest();
 
 private:
-    ButtonLibrary() = delete;
-    ~ButtonLibrary() = delete;
+    InkingButtonLibrary() = delete;
+    ~InkingButtonLibrary() = delete;
 };
 
-}  // namespace inking

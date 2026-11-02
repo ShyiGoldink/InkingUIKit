@@ -13,9 +13,9 @@
 //
 // 各写一遍就会出"画的是圆角、点到的是直角"——两边单独看都对，合起来才错，
 // 而且极难排查（CXXCSS.md §3）。所以本文件只提供三个派生量，且都从这里算：
-//   SignedDistance   → 渲染（填充 / 描边 / 裁剪，形状层接手后）
-//   ShapeContains    → 命中（这个点在不在形状里，现在就能用）
-//   GetShapeBounds   → AABB（将来塞进命中表的哪个格子）
+//   InkingSignedDistance   → 渲染（填充 / 描边 / 裁剪，形状层接手后）
+//   InkingShapeContains    → 命中（这个点在不在形状里，现在就能用）
+//   InkingGetShapeBounds   → AABB（将来塞进命中表的哪个格子）
 //
 // ---------------------------------------------------------------------------
 // 坐标系与形状语义（都以组件左上角为原点、单位是设计坐标）
@@ -39,11 +39,9 @@
 #include <cmath>
 #include <limits>
 
-namespace inking {
-
 // 形状的种类。放一个显式的整数而不是直接塞 variant：
 // 生成器是按 `type` 查表展开的，运行期只需要"这一个是哪一种"。
-enum class ShapeKind : std::uint8_t {
+enum class InkingShapeKind : std::uint8_t {
     Rect = 0,//矩形
     RoundedRect,//圆角矩形
     Circle,//圆
@@ -65,20 +63,20 @@ enum class ShapeKind : std::uint8_t {
  * 名字与 CXXCSS 里的字符串一一对应（`butt` / `round` / `square`），
  * 语义照 CSS 的 `stroke-linecap`：平头、圆头、方头。
  */
-enum class LineCap : std::uint8_t {
+enum class InkingLineCap : std::uint8_t {
     Butt = 0,  // 平头：到端点就断（默认）
     Round,     // 圆头：两端各一个半径 thickness/2 的半圆
     Square,    // 方头：两端各外扩 thickness/2
 };
 
-//`LineCap` 的配置写法；坏值不该走到这里（生成期就拦下了）。
-inline const char* LineCapName(LineCap cap) {
+//`InkingLineCap` 的配置写法；坏值不该走到这里（生成期就拦下了）。
+inline const char* InkingLineCapName(InkingLineCap cap) {
     switch (cap) {
-        case LineCap::Round:
+        case InkingLineCap::Round:
             return "round";
-        case LineCap::Square:
+        case InkingLineCap::Square:
             return "square";
-        case LineCap::Butt:
+        case InkingLineCap::Butt:
         default:
             return "butt";
     }
@@ -93,8 +91,8 @@ inline const char* LineCapName(LineCap cap) {
  *
  * 用工厂函数造，别手动填字段：夹取和校验都在工厂里做了。
  */
-struct ShapeSpec {
-    ShapeKind kind = ShapeKind::Rect;
+struct InkingShapeSpec {
+    InkingShapeKind kind = InkingShapeKind::Rect;
 
     // 只对 RoundedRect 有意义；一律已夹到 [0, min(w,h)/2]。
     float radius = 0.0f;
@@ -103,7 +101,7 @@ struct ShapeSpec {
     float thickness = 0.0f;
 
     // 只对 Line 有意义。
-    LineCap cap = LineCap::Butt;
+    InkingLineCap cap = InkingLineCap::Butt;
 
     // 只对 Polygon 有意义：边数（>= 3）。
     int sides = 0;
@@ -111,7 +109,7 @@ struct ShapeSpec {
     /**
      * 只对 Polygon 有意义
      * 起始角
-     * 单位是度，跟 `TransformSpec::rotate` 统一（`InkingTransform.h` 定过
+     * 单位是度，跟 `InkingTransformSpec::rotate` 统一（`InkingTransform.h` 定过
      * 这条：配置里写 15 比写 0.2618 直观）；屏幕坐标 y 向下，所以顺时针为正。
      * `0` 表示第一个顶点落在 +x（正右方），其余顶点按 360/sides 顺时针排。
      *
@@ -141,21 +139,21 @@ struct ShapeSpec {
      * 只对 `PolygonPath` 有意义：**顶点表**（`x0,y0,x1,y1,…`，设计坐标，
      * 相对组件左上角）。
      *
-     * 这里**不拥有**数据，只借一个视图——和 `ButtonAppearance::imageBytes`
+     * 这里**不拥有**数据，只借一个视图——和 `InkingButtonAppearance::imageBytes`
      * 同一个约定：生成器烘的是**文件作用域的静态数组**，生命周期是整个进程，
-     * 比任何组件都长。手写 `ShapeSpec` 时要自己保证这块内存活得够久
-     * （拷了 `ShapeSpec` 的组件会一直拿着这个指针）。
+     * 比任何组件都长。手写 `InkingShapeSpec` 时要自己保证这块内存活得够久
+     * （拷了 `InkingShapeSpec` 的组件会一直拿着这个指针）。
      */
     const float* pathPoints = nullptr;
     int pathPointCount = 0;
 
     // 直角矩形（= 不写 shape），尺寸完全来自 width / height。
-    static constexpr ShapeSpec Rect() { return ShapeSpec{}; }
+    static constexpr InkingShapeSpec Rect() { return InkingShapeSpec{}; }
 
     // 圆角矩形。radius < 0 是配置错误，这里断言挡住；过大则夹到上限。
-    static ShapeSpec RoundedRect(float radius) {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::RoundedRect;
+    static InkingShapeSpec RoundedRect(float radius) {
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::RoundedRect;
         // 负半径没有意义，而且会让四个角"翻出去"长成另一个形状——
         // 为了保证形状的准确性，必须在编译期将报错截下来
         assert(radius >= 0.0f && "shape:radius 不能为负");
@@ -164,30 +162,30 @@ struct ShapeSpec {
     }
 
     // 正圆：直径取 min(width,height)，居中。
-    static constexpr ShapeSpec Circle() {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::Circle;
+    static constexpr InkingShapeSpec Circle() {
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::Circle;
         return spec;
     }
 
     // 椭圆：用满 width × height。
-    static constexpr ShapeSpec Ellipse() {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::Ellipse;
+    static constexpr InkingShapeSpec Ellipse() {
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::Ellipse;
         return spec;
     }
 
     // 胶囊：用满 width × height，两端是半径 min(w,h)/2 的半圆（沿长轴）。
-    static constexpr ShapeSpec Capsule() {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::Capsule;
+    static constexpr InkingShapeSpec Capsule() {
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::Capsule;
         return spec;
     }
 
     // 圆环：外径取 min(w,h)、居中，环宽 thickness（往里长）。
-    static ShapeSpec Ring(float thickness) {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::Ring;
+    static InkingShapeSpec Ring(float thickness) {
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::Ring;
         // 环宽没有"负"这种语义
         assert(thickness > 0.0f && "shape:thickness 必须大于 0");
         spec.thickness = thickness > 0.0f ? thickness : 0.0f;
@@ -195,9 +193,9 @@ struct ShapeSpec {
     }
 
     // 水平线段：纵向居中，线宽 thickness，端点形状 cap。
-    static ShapeSpec Line(float thickness, LineCap cap = LineCap::Butt) {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::Line;
+    static InkingShapeSpec Line(float thickness, InkingLineCap cap = InkingLineCap::Butt) {
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::Line;
         assert(thickness > 0.0f && "shape:thickness 必须大于 0");
         spec.thickness = thickness > 0.0f ? thickness : 0.0f;
         spec.cap = cap;
@@ -205,9 +203,9 @@ struct ShapeSpec {
     }
 
     // 正多边形：外接圆直径取 min(w,h)、居中，sides 条边，rotation 是起始角（度）。
-    static ShapeSpec Polygon(int sides, float rotation = 0.0f) {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::Polygon;
+    static InkingShapeSpec Polygon(int sides, float rotation = 0.0f) {
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::Polygon;
         // 少于三条边没有"内"可言
         assert(sides >= 3 && "shape:sides 必须 >= 3");
         spec.sides = sides >= 3 ? sides : 3;
@@ -216,19 +214,19 @@ struct ShapeSpec {
     }
 
     // 切角矩形：用满 width × height，四个角各切掉 chamfer 长的一条 45° 斜边。
-    static ShapeSpec ChamferRect(float chamfer) {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::ChamferRect;
+    static InkingShapeSpec ChamferRect(float chamfer) {
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::ChamferRect;
         assert(chamfer >= 0.0f && "shape:chamfer 不能为负");
         spec.chamfer = chamfer < 0.0f ? 0.0f : chamfer;
         return spec;
     }
 
     // 星形：外接圆直径取 min(w,h)、居中，points 个角，innerRatio 是内/外半径之比。
-    static ShapeSpec Star(int points, float innerRatio = 0.5f,
+    static InkingShapeSpec Star(int points, float innerRatio = 0.5f,
                           float rotation = 0.0f) {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::Star;
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::Star;
         assert(points >= 3 && "shape:points 必须 >= 3");
         spec.points = points >= 3 ? points : 3;
         // 比例夹到 [0, 1]：0 是内半径为零的尖角（合法，画出来是放射线），
@@ -240,9 +238,9 @@ struct ShapeSpec {
     }
 
     // 超椭圆：用满 width × height，指数 exponent（> 0）。2 = 椭圆，越大越方。
-    static ShapeSpec Superellipse(float exponent) {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::Superellipse;
+    static InkingShapeSpec Superellipse(float exponent) {
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::Superellipse;
         assert(exponent > 0.0f && "shape:exponent 必须大于 0");
         spec.exponent = std::clamp(exponent, 0.05f, 16.0f);
         return spec;
@@ -255,9 +253,9 @@ struct ShapeSpec {
      * `sweepAngle` 到 360（或更多）就退化成整圈的 `ring`——这是形状本身的
      * 数学要求，夹住而不是报错。
      */
-    static ShapeSpec Arc(float thickness, float startAngle, float sweepAngle) {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::Arc;
+    static InkingShapeSpec Arc(float thickness, float startAngle, float sweepAngle) {
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::Arc;
         assert(thickness > 0.0f && "shape:thickness 必须大于 0");
         spec.thickness = thickness > 0.0f ? thickness : 0.0f;
         spec.startAngle = startAngle;
@@ -275,9 +273,9 @@ struct ShapeSpec {
      *
      * @param points 顶点表；不拷贝，生命周期要覆盖用它的组件。
      */
-    static ShapeSpec PolygonPath(const float* points, int count) {
-        ShapeSpec spec;
-        spec.kind = ShapeKind::PolygonPath;
+    static InkingShapeSpec PolygonPath(const float* points, int count) {
+        InkingShapeSpec spec;
+        spec.kind = InkingShapeKind::PolygonPath;
         assert(points != nullptr && count >= 3 && "polygonPath 至少要 3 个点");
         spec.pathPoints = points;
         spec.pathPointCount = (points != nullptr && count >= 3) ? count : 0;
@@ -309,7 +307,7 @@ struct ShapeSpec {
 // 内部小工具
 //
 // 名字统一带 `Shape` / `shape` 前缀
-namespace detail {
+namespace inking_detail {
 
 constexpr float shapePi = 3.14159265358979323846f;
 constexpr float shapeDegToRad = shapePi / 180.0f;
@@ -364,7 +362,7 @@ inline float ShapeRingThickness(float thickness, int width, int height) {
 }
 
 /// 正多边形的边数（< 3 的值不该漏到这里，工厂已经挡过；这里只做兜底）。
-inline int ShapePolygonSides(const ShapeSpec& shape) {
+inline int ShapePolygonSides(const InkingShapeSpec& shape) {
     return shape.sides >= 3 ? shape.sides : 3;
 }
 
@@ -375,7 +373,7 @@ inline float ShapePolygonCircumradius(int width, int height) {
 }
 
 /// 正多边形的第 k 个顶点（k 会对边数取模），相对组件左上角。
-inline ShapePoint ShapePolygonVertex(const ShapeSpec& shape, int width,
+inline ShapePoint ShapePolygonVertex(const InkingShapeSpec& shape, int width,
                                      int height, int k) {
     const int sides = ShapePolygonSides(shape);
     const float radius = ShapePolygonCircumradius(width, height);
@@ -389,7 +387,7 @@ inline ShapePoint ShapePolygonVertex(const ShapeSpec& shape, int width,
 }
 
 /// 星形的角数（< 3 的值不该漏到这里，工厂已经挡过；这里只做兜底）。
-inline int ShapeStarPoints(const ShapeSpec& shape) {
+inline int ShapeStarPoints(const InkingShapeSpec& shape) {
     return shape.points >= 3 ? shape.points : 3;
 }
 
@@ -400,7 +398,7 @@ inline float ShapeStarOuterRadius(int width, int height) {
 }
 
 /// 星形的**内**半径：外半径 × innerRatio（比例已夹到 [0,1]）。
-inline float ShapeStarInnerRadius(const ShapeSpec& shape, int width, int height) {
+inline float ShapeStarInnerRadius(const InkingShapeSpec& shape, int width, int height) {
     const float ratio = std::clamp(shape.innerRatio, 0.0f, 1.0f);
     return ShapeStarOuterRadius(width, height) * ratio;
 }
@@ -409,7 +407,7 @@ inline float ShapeStarInnerRadius(const ShapeSpec& shape, int width, int height)
  * 星形的第 k 个顶点（对 2×points 取模）：**偶数下标在外半径、奇数在内半径**，
  * 一圈走完正好 points 个角。`rotation` 是第一个外角的方向（度，顺时针为正）。
  */
-inline ShapePoint ShapeStarVertex(const ShapeSpec& shape, int width, int height,
+inline ShapePoint ShapeStarVertex(const InkingShapeSpec& shape, int width, int height,
                                   int k) {
     const int points = ShapeStarPoints(shape);
     const int count = points * 2;
@@ -442,7 +440,7 @@ inline float ShapeChamferAmount(float chamfer, float w, float h) {
  * 超椭圆的指数，夹在一个浮点安全的范围里：太小会退化成十字线，
  * 太大 `pow` 会在远离中心的点上溢出（`u^n` 直接冲上 inf）。
  */
-inline float ShapeSuperellipseExponent(const ShapeSpec& shape) {
+inline float ShapeSuperellipseExponent(const InkingShapeSpec& shape) {
     return std::clamp(shape.exponent, 0.05f, 16.0f);
 }
 
@@ -455,18 +453,18 @@ inline float ShapeArcThickness(float thickness, float outerRadius) {
 }
 
 // 圆弧真正生效的扫角（弧度，> 0，≤ 2π）：`|sweepAngle|` 夹到 (0, 360] 度。
-inline float ShapeArcSweepRadians(const ShapeSpec& shape) {
+inline float ShapeArcSweepRadians(const InkingShapeSpec& shape) {
     const float degrees = std::clamp(std::fabs(shape.sweepAngle), 0.0f, 360.0f);
     return degrees * shapeDegToRad;
 }
 
 // 圆弧的扫向：屏幕 y 向下，角度增大就是顺时针——正扫角 = +1、负 = -1。
-inline float ShapeArcDirection(const ShapeSpec& shape) {
+inline float ShapeArcDirection(const InkingShapeSpec& shape) {
     return shape.sweepAngle < 0.0f ? -1.0f : 1.0f;
 }
 
 // `PolygonPath` 的第 k 个顶点（对点数取模），相对组件左上角。
-inline ShapePoint ShapePathVertex(const ShapeSpec& shape, int k) {
+inline ShapePoint ShapePathVertex(const InkingShapeSpec& shape, int k) {
     const int count = shape.pathPointCount;
     if (count <= 0 || shape.pathPoints == nullptr) {
         return ShapePoint{};
@@ -512,20 +510,20 @@ inline float ShapePolygonSdf(int count, VertexAt vertexAt, float x, float y) {
     return inside ? -nearest : nearest;
 }
 
-}  // namespace detail
+}  // namespace inking_detail
 
 /**
  * @brief 点的带符号距离，单位是设计坐标。
  * @param x,y 相对组件左上角的坐标
  * @return f < 0 在内部、f = 0 在边界、f > 0 在外部
  */
-inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
+inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y, int width,
                             int height) {
     const float w = static_cast<float>(width);
     const float h = static_cast<float>(height);
 
     switch (shape.kind) {
-        case ShapeKind::RoundedRect: {
+        case InkingShapeKind::RoundedRect: {
             // 半径先夹取（形状自己的数学要求），再按"内缩矩形 + 到角心的距离"算。
             //
             // 关键在最后减的那一项：
@@ -558,7 +556,7 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
             return outside + inside - (nearer < 0.0f ? 0.0f : r);
         }
 
-        case ShapeKind::Circle: {
+        case InkingShapeKind::Circle: {
             // 居中、直径取 min(w,h)：所以半径是 min(w,h)/2，圆心是 (w/2, h/2)。
             const float r = (w < h ? w : h) * 0.5f;
             const float dx = x - w * 0.5f;
@@ -566,13 +564,13 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
             return std::sqrt(dx * dx + dy * dy) - r;
         }
 
-        case ShapeKind::Ellipse: {
+        case InkingShapeKind::Ellipse: {
             // 椭圆的 SDF 没有精确闭式（真值要解数值最近点），
             // 但这里要的是符号正确的近似：内外判定精确，
             // 距离在边缘附近也够准。
             //
             // 写法：在归一化空间算到单位圆的距离，再乘回最小半径——
-            // 于是内部为负、外部为正、边界为 0，`ShapeContains` 永远正确。
+            // 于是内部为负、外部为正、边界为 0，`InkingShapeContains` 永远正确。
             const float rx = w * 0.5f;
             const float ry = h * 0.5f;
             if (rx <= 0.0f || ry <= 0.0f) {
@@ -590,7 +588,7 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
             return (k0 * (k0 - 1.0f) / k1) * scale;
         }
 
-        case ShapeKind::Capsule: {
+        case InkingShapeKind::Capsule: {
             // 胶囊 = 脊椎线段 + 半径 r 的圆（r 取短边的一半，沿长轴放）。
             // 到形态的距离就是这个圆盘的距离：到线段距离 − r。
             const float radius = (w < h ? w : h) * 0.5f;
@@ -609,15 +607,15 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
                 bx = w * 0.5f;
                 by = h - radius;
             }
-            return detail::ShapeSegmentDistance(x, y, ax, ay, bx, by) - radius;
+            return inking_detail::ShapeSegmentDistance(x, y, ax, ay, bx, by) - radius;
         }
 
-        case ShapeKind::Ring: {
+        case InkingShapeKind::Ring: {
             // 圆环：到"中径圆"的距离再减去半个环宽——内外两侧合起来正好
             // 就是到环带边界的距离（|d − rMid| − t/2）。
             const float outerRadius = (w < h ? w : h) * 0.5f;
             const float thickness =
-                detail::ShapeRingThickness(shape.thickness, width, height);
+                inking_detail::ShapeRingThickness(shape.thickness, width, height);
             const float midRadius = outerRadius - thickness * 0.5f;
             const float dx = x - w * 0.5f;
             const float dy = y - h * 0.5f;
@@ -626,43 +624,43 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
             return std::fabs(distance - midRadius) - thickness * 0.5f;
         }
 
-        case ShapeKind::Line: {
+        case InkingShapeKind::Line: {
             // 水平线段、纵向居中：起点 (0, h/2)、终点 (w, h/2)。
             const float centerY = h * 0.5f;
             const float half = shape.thickness * 0.5f;
-            if (shape.cap == LineCap::Round) {
+            if (shape.cap == InkingLineCap::Round) {
                 // 圆头 = 到线段距离 − 半径（两端自然长出半圆）。
-                return detail::ShapeSegmentDistance(x, y, 0.0f, centerY, w,
+                return inking_detail::ShapeSegmentDistance(x, y, 0.0f, centerY, w,
                                                     centerY)
                      - half;
             }
             // 平头 / 方头都是矩形：方头只是两端各外扩 half。
-            const float extra = shape.cap == LineCap::Square ? half : 0.0f;
-            return detail::ShapeBoxDistance(x, y, w * 0.5f, centerY,
+            const float extra = shape.cap == InkingLineCap::Square ? half : 0.0f;
+            return inking_detail::ShapeBoxDistance(x, y, w * 0.5f, centerY,
                                             w * 0.5f + extra, half);
         }
 
-        case ShapeKind::Polygon: {
+        case InkingShapeKind::Polygon: {
             // 正多边形（凸）：先取"到各边所在直线"的最大带符号距离当符号与内部
             // 距离（f <= 0 恰好等价于"在每条边的内侧"），外部再用"到边界折线
             // 的距离"取精确值——两条一起就是精确 SDF。
-            const float radius = detail::ShapePolygonCircumradius(width, height);
+            const float radius = inking_detail::ShapePolygonCircumradius(width, height);
             if (radius <= 0.0f) {
                 const float dx = x - w * 0.5f;
                 const float dy = y - h * 0.5f;
                 return std::sqrt(dx * dx + dy * dy);  // 退化成中心一个点
             }
-            const int sides = detail::ShapePolygonSides(shape);
+            const int sides = inking_detail::ShapePolygonSides(shape);
             const float centerX = w * 0.5f;
             const float centerY = h * 0.5f;
 
             float maxPlaneDistance = -std::numeric_limits<float>::max();
             float minEdgeDistance = std::numeric_limits<float>::max();
             for (int i = 0; i < sides; ++i) {
-                const detail::ShapePoint a =
-                    detail::ShapePolygonVertex(shape, width, height, i);
-                const detail::ShapePoint b =
-                    detail::ShapePolygonVertex(shape, width, height, i + 1);
+                const inking_detail::ShapePoint a =
+                    inking_detail::ShapePolygonVertex(shape, width, height, i);
+                const inking_detail::ShapePoint b =
+                    inking_detail::ShapePolygonVertex(shape, width, height, i + 1);
 
                 // 外法向：垂直于这条边、指向远离中心的那一侧。判定用的是
                 // "顶点相对中心的方向"，与顶点绕向无关，正多边形怎么转都对。
@@ -684,7 +682,7 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
                 }
 
                 const float edge =
-                    detail::ShapeSegmentDistance(x, y, a.x, a.y, b.x, b.y);
+                    inking_detail::ShapeSegmentDistance(x, y, a.x, a.y, b.x, b.y);
                 if (edge < minEdgeDistance) {
                     minEdgeDistance = edge;
                 }
@@ -692,11 +690,11 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
             return maxPlaneDistance <= 0.0f ? maxPlaneDistance : minEdgeDistance;
         }
 
-        case ShapeKind::ChamferRect: {
+        case InkingShapeKind::ChamferRect: {
             // 切角矩形 = 八个半平面的交（四条边 + 四条 45° 斜边）。
             // 凸集的 SDF 就是"到各面所在平面的带符号距离取最大"——精确，不用近似。
             const float chamfer =
-                detail::ShapeChamferAmount(shape.chamfer, w, h);
+                inking_detail::ShapeChamferAmount(shape.chamfer, w, h);
             const float dx = std::fabs(x - w * 0.5f);
             const float dy = std::fabs(y - h * 0.5f);
 
@@ -712,20 +710,20 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
             return std::max(box, diagonal);
         }
 
-        case ShapeKind::Star: {
+        case InkingShapeKind::Star: {
             // 星形非凸，没有"半平面取最大"那条捷径了。做法回到最朴素、
             // 也最不容易错的一种：符号用射线法、距离用点到边界的最近距离
             // （和 `PolygonPath` 共用一份实现）。
-            const int count = detail::ShapeStarPoints(shape) * 2;
-            return detail::ShapePolygonSdf(
+            const int count = inking_detail::ShapeStarPoints(shape) * 2;
+            return inking_detail::ShapePolygonSdf(
                 count,
                 [&](int k) {
-                    return detail::ShapeStarVertex(shape, width, height, k);
+                    return inking_detail::ShapeStarVertex(shape, width, height, k);
                 },
                 x, y);
         }
 
-        case ShapeKind::PolygonPath: {
+        case InkingShapeKind::PolygonPath: {
             // 任意多边形：同一份"射线法 + 最近边"的实现。它可以非凸，
             // 甚至可以不是星形域（U 形那种，中心落在凹口里）——命中与填充
             // 都得照样对。
@@ -733,12 +731,12 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
             if (count < 3 || shape.pathPoints == nullptr) {
                 return 0.0f;  // 顶点表不成立：退化成"整个框都算在内"
             }
-            return detail::ShapePolygonSdf(
-                count, [&](int k) { return detail::ShapePathVertex(shape, k); },
+            return inking_detail::ShapePolygonSdf(
+                count, [&](int k) { return inking_detail::ShapePathVertex(shape, k); },
                 x, y);
         }
 
-        case ShapeKind::Superellipse: {
+        case InkingShapeKind::Superellipse: {
             // 超椭圆 |x/a|^n + |y/b|^n = 1 没有初等闭式的距离，做法与 ellipse
             // 那条同一个精神：符号精确（归一化后的 f 与 1 比），距离在边缘
             // 附近够准（按最小半轴缩放回来）。
@@ -749,7 +747,7 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
                 const float dy = b <= 0.0f ? std::fabs(y) : 0.0f;
                 return dx + dy;  // 退化成一条线 / 一个点
             }
-            const float n = detail::ShapeSuperellipseExponent(shape);
+            const float n = inking_detail::ShapeSuperellipseExponent(shape);
             const float u = std::fabs(x - a) / a;
             const float v = std::fabs(y - b) / b;
             const float f = std::pow(std::pow(u, n) + std::pow(v, n), 1.0f / n);
@@ -757,7 +755,7 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
             return (f - 1.0f) * scale;
         }
 
-        case ShapeKind::Arc: {
+        case InkingShapeKind::Arc: {
             // 圆弧带 = 环带 ∩ 两个端头半平面。两样各是一个简单距离场，
             // 取最大就得到交的 SDF（符号精确；在交角附近是近似，够用）：
             //    环带：`|半径 − 中径| − 半个环宽`；
@@ -768,7 +766,7 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
             // 是圆头，而渲染侧的两端是切平的——两边分家就会出现"画了没点中 /点中了没画"。
             const float outerRadius = (w < h ? w : h) * 0.5f;
             const float thickness =
-                detail::ShapeArcThickness(shape.thickness, outerRadius);
+                inking_detail::ShapeArcThickness(shape.thickness, outerRadius);
             const float midRadius = outerRadius - thickness * 0.5f;
             const float cx = w * 0.5f;
             const float cy = h * 0.5f;
@@ -777,18 +775,18 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
             const float radius = std::sqrt(dx * dx + dy * dy);
             const float half = thickness * 0.5f;
             const float radial = std::fabs(radius - midRadius) - half;
-            const float sweep = detail::ShapeArcSweepRadians(shape);
+            const float sweep = inking_detail::ShapeArcSweepRadians(shape);
 
             // 扫满一圈就只剩环带了（没有端头）。
-            if (sweep >= 2.0f * detail::shapePi - 1e-4f) {
+            if (sweep >= 2.0f * inking_detail::shapePi - 1e-4f) {
                 return radial;
             }
             if (thickness <= 0.0f) {
                 // 退化成一条弧线：只有径向距离，端头照样要切平。
             }
 
-            const float direction = detail::ShapeArcDirection(shape);
-            const float start = shape.startAngle * detail::shapeDegToRad;
+            const float direction = inking_detail::ShapeArcDirection(shape);
+            const float start = shape.startAngle * inking_detail::shapeDegToRad;
             const float end = start + direction * sweep;
             // 端头半平面的内法向：角度增大的切向是 (−sin, cos)；
             // 起点朝扫向那一侧、终点朝扫向的来向那一侧。
@@ -810,10 +808,10 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
             return radial > nearest ? radial : nearest;
         }
 
-        case ShapeKind::Rect:
+        case InkingShapeKind::Rect:
         default: {
             // 直角矩形：把点按两条中轴线折叠到右下象限再算（见 ShapeBoxDistance）。
-            return detail::ShapeBoxDistance(x, y, w * 0.5f, h * 0.5f, w * 0.5f,
+            return inking_detail::ShapeBoxDistance(x, y, w * 0.5f, h * 0.5f, w * 0.5f,
                                             h * 0.5f);
         }
     }
@@ -822,12 +820,12 @@ inline float SignedDistance(const ShapeSpec& shape, float x, float y, int width,
 /**
  * @brief 这个点在不在形状里（命中判定）。
  *
- * 与 `SignedDistance` 同源：判据就是 `f <= 0`，和裁剪保留的区域完全一致，
+ * 与 `InkingSignedDistance` 同源：判据就是 `f <= 0`，和裁剪保留的区域完全一致，
  * 不会出现"画的是圆角、点到的是直角"。
  */
-inline bool ShapeContains(const ShapeSpec& shape, float x, float y, int width,
+inline bool InkingShapeContains(const InkingShapeSpec& shape, float x, float y, int width,
                           int height) {
-    return SignedDistance(shape, x, y, width, height) <= 0.0f;
+    return InkingSignedDistance(shape, x, y, width, height) <= 0.0f;
 }
 
 /**
@@ -836,84 +834,84 @@ inline bool ShapeContains(const ShapeSpec& shape, float x, float y, int width,
  * 将来命中表按格子索引时就问这个：半径不同、形状不同，包围盒也可能不同
  * （circle 只占中间一块），所以不能一律拿 width × height 顶上。
  */
-struct ShapeBounds {
+struct InkingShapeBounds {
     float x = 0.0f;
     float y = 0.0f;
     float width = 0.0f;
     float height = 0.0f;
 };
 
-inline ShapeBounds GetShapeBounds(const ShapeSpec& shape, int width,
+inline InkingShapeBounds InkingGetShapeBounds(const InkingShapeSpec& shape, int width,
                                   int height) {
     const float w = static_cast<float>(width);
     const float h = static_cast<float>(height);
 
     switch (shape.kind) {
-        case ShapeKind::Circle: {
+        case InkingShapeKind::Circle: {
             // 居中 + 直径 min(w,h)：宽高不等时两侧会留白，包围盒也跟着小。
             const float diameter = w < h ? w : h;
-            return ShapeBounds{(w - diameter) * 0.5f, (h - diameter) * 0.5f,
+            return InkingShapeBounds{(w - diameter) * 0.5f, (h - diameter) * 0.5f,
                                diameter, diameter};
         }
-        case ShapeKind::Ring: {
+        case InkingShapeKind::Ring: {
             // 环带是从外径往里长的，所以包围盒就是外径那个圆（和 circle 一样）。
             const float diameter = w < h ? w : h;
-            return ShapeBounds{(w - diameter) * 0.5f, (h - diameter) * 0.5f,
+            return InkingShapeBounds{(w - diameter) * 0.5f, (h - diameter) * 0.5f,
                                diameter, diameter};
         }
-        case ShapeKind::Line: {
+        case InkingShapeKind::Line: {
             // 线是水平的：纵向是 thickness 那一条，横向按端点形状外扩。
             // 别让包围盒只用"线段本身"（高度是 0）——命中表按它登记格子，
             // 登记不全就是漏命中（TaskGuide T-1 的坑）。
             const float thickness = shape.thickness > 0.0f ? shape.thickness : 0.0f;
-            const float extra = shape.cap == LineCap::Butt ? 0.0f
+            const float extra = shape.cap == InkingLineCap::Butt ? 0.0f
                                                         : thickness * 0.5f;
-            return ShapeBounds{-extra, (h - thickness) * 0.5f, w + 2.0f * extra,
+            return InkingShapeBounds{-extra, (h - thickness) * 0.5f, w + 2.0f * extra,
                                thickness};
         }
-        case ShapeKind::Polygon: {
+        case InkingShapeKind::Polygon: {
             // 正多边形的包围盒随边数与起始角变，按顶点实算（sides 很小，不亏）。
-            const float radius = detail::ShapePolygonCircumradius(width, height);
+            const float radius = inking_detail::ShapePolygonCircumradius(width, height);
             if (radius <= 0.0f) {
-                return ShapeBounds{w * 0.5f, h * 0.5f, 0.0f, 0.0f};
+                return InkingShapeBounds{w * 0.5f, h * 0.5f, 0.0f, 0.0f};
             }
-            const int sides = detail::ShapePolygonSides(shape);
-            const detail::ShapePoint first =
-                detail::ShapePolygonVertex(shape, width, height, 0);
+            const int sides = inking_detail::ShapePolygonSides(shape);
+            const inking_detail::ShapePoint first =
+                inking_detail::ShapePolygonVertex(shape, width, height, 0);
             float minX = first.x;
             float minY = first.y;
             float maxX = first.x;
             float maxY = first.y;
             for (int i = 1; i < sides; ++i) {
-                const detail::ShapePoint point =
-                    detail::ShapePolygonVertex(shape, width, height, i);
+                const inking_detail::ShapePoint point =
+                    inking_detail::ShapePolygonVertex(shape, width, height, i);
                 minX = point.x < minX ? point.x : minX;
                 minY = point.y < minY ? point.y : minY;
                 maxX = point.x > maxX ? point.x : maxX;
                 maxY = point.y > maxY ? point.y : maxY;
             }
-            return ShapeBounds{minX, minY, maxX - minX, maxY - minY};
+            return InkingShapeBounds{minX, minY, maxX - minX, maxY - minY};
         }
-        case ShapeKind::Star: {
+        case InkingShapeKind::Star: {
             // 星形的顶点都在外接圆上 → 包围盒就是那个外接正方形的内切圆框
             // （和 circle 同一个约定：居中、直径 min(w,h)）。
             const float diameter = w < h ? w : h;
-            return ShapeBounds{(w - diameter) * 0.5f, (h - diameter) * 0.5f,
+            return InkingShapeBounds{(w - diameter) * 0.5f, (h - diameter) * 0.5f,
                                diameter, diameter};
         }
-        case ShapeKind::Arc: {
+        case InkingShapeKind::Arc: {
             // 圆弧带整个落在外径圆里 —— 保守但一定装得下（命中表还按它登记格子）。
             // 按实际角度范围算更紧，但那段代码只为了省几个格子，不值当。
             const float diameter = w < h ? w : h;
-            return ShapeBounds{(w - diameter) * 0.5f, (h - diameter) * 0.5f,
+            return InkingShapeBounds{(w - diameter) * 0.5f, (h - diameter) * 0.5f,
                                diameter, diameter};
         }
-        case ShapeKind::PolygonPath: {
+        case InkingShapeKind::PolygonPath: {
             // 任意多边形的包围盒按顶点表实算（点数不多，不亏）。它可能只占
             // 框里的一小块，甚至是偏的——登记时用整框会白白多占格子。
             const int count = shape.pathPointCount;
             if (count < 3 || shape.pathPoints == nullptr) {
-                return ShapeBounds{0.0f, 0.0f, w, h};
+                return InkingShapeBounds{0.0f, 0.0f, w, h};
             }
             float minX = shape.pathPoints[0];
             float minY = shape.pathPoints[1];
@@ -927,20 +925,19 @@ inline ShapeBounds GetShapeBounds(const ShapeSpec& shape, int width,
                 maxX = px > maxX ? px : maxX;
                 maxY = py > maxY ? py : maxY;
             }
-            return ShapeBounds{minX, minY, maxX - minX, maxY - minY};
+            return InkingShapeBounds{minX, minY, maxX - minX, maxY - minY};
         }
-        case ShapeKind::Capsule:
-        case ShapeKind::ChamferRect:
-        case ShapeKind::Superellipse:
-        case ShapeKind::RoundedRect:
-        case ShapeKind::Ellipse:
-        case ShapeKind::Rect:
+        case InkingShapeKind::Capsule:
+        case InkingShapeKind::ChamferRect:
+        case InkingShapeKind::Superellipse:
+        case InkingShapeKind::RoundedRect:
+        case InkingShapeKind::Ellipse:
+        case InkingShapeKind::Rect:
         default: {
             // 这几种都用满整个矩形：圆角只是把四角磨掉、切角只是把角切掉、
             // 胶囊两端就是矩形边界、超椭圆在 (±a,0)/(0,±b) 处顶到边——都不影响包围盒。
-            return ShapeBounds{0.0f, 0.0f, w, h};
+            return InkingShapeBounds{0.0f, 0.0f, w, h};
         }
     }
 }
 
-}  // namespace inking

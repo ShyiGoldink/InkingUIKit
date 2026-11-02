@@ -10,7 +10,6 @@
 #include <cstdlib>
 #include <vector>
 
-namespace inking {
 
 namespace {
 
@@ -165,7 +164,7 @@ std::string NameFromKey(std::int32_t key) {
 
 }  // namespace
 
-bool Shortcut::Matches(const KeyEvent& event) const noexcept {
+bool InkingShortcut::Matches(const InkingKeyEvent& event) const noexcept {
     if (key == 0 || event.key != key) {
         return false;
     }
@@ -179,7 +178,7 @@ bool Shortcut::Matches(const KeyEvent& event) const noexcept {
     return got == modifiers;
 }
 
-Shortcut Shortcut::Parse(std::string_view text, bool* ok) {
+InkingShortcut InkingShortcut::Parse(std::string_view text, bool* ok) {
     if (ok != nullptr) {
         *ok = false;
     }
@@ -234,10 +233,10 @@ Shortcut Shortcut::Parse(std::string_view text, bool* ok) {
     if (ok != nullptr) {
         *ok = true;
     }
-    return Shortcut{parsedKey, parsedModifiers};
+    return InkingShortcut{parsedKey, parsedModifiers};
 }
 
-std::string Shortcut::ToString() const {
+std::string InkingShortcut::ToString() const {
     if (key == 0) {
         return {};
     }
@@ -265,4 +264,3 @@ std::string Shortcut::ToString() const {
     return out;
 }
 
-}  // namespace inking

@@ -5,6 +5,33 @@
 
 ---
 
+## 0.9.0（未发布：几何分档收口 + 命名空间收口）
+
+> 本节在发版时随 `InkingVersion` 一起定稿；明细见 `docs/zh/TaskGuide-G.md`（G-00…G-08）
+> 与 `docs/zh/TaskGuide-N.md`（N-01…N-04）。
+
+### 新增
+
+- **四个组件的动态档**（G 系列）：`InkingDynamicImage` / `InkingDynamicSprite` /
+  `InkingDynamicLabel` / `InkingDynamicPanel` 补齐，`ButtonLike` 三件套与滚动、占位
+  等能力随档落地；生成器四种组件都认 `"dynamic": true`（判据是
+  `inkgen_compile_check` 里的 `static_assert(is_base_of_v<…>)` 八条）。
+
+### 变更（**破坏性**：所有消费方必须整包重编）
+
+- **去掉 `namespace inking` 外壳，全部公开符号改为全局命名空间 + `Inking` 前缀**
+  （N 系列）：类型 126 个、自由函数 119 个、常量 33 个统一改名
+  （`inking::ButtonData` → `InkingButtonData`、`inking::SetDesignSize` →
+  `InkingSetDesignSize`、`inking::kVersion` → `InkingVersion`）；
+  子命名空间 `inking::detail` / `inking::prefab` / `inking::json` 改为
+  `inking_detail` / `inking_prefab` / `inking_json`；
+  生成代码命名空间默认 `inking::cxxcss` → `cxxcss`（`--namespace` 可改）。
+  **头文件路径与 CMake 目标名不变**（`#include <button/ButtonData.h>`、
+  `inking::inking` 照旧）。升级方法：把 `inking::X` 换成 `X`，再按编译报错把
+  没带前缀的类型 / 函数 / 常量补上 `Inking`。
+
+---
+
 ## 0.8.5（`0.8.3` / `0.8.4` **未单独发版**：文字层的上限与静默）
 
 > 来源：任务书 [`plans/2026-10-30-text-layer-caps.md`](plans/2026-10-30-text-layer-caps.md)

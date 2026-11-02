@@ -26,7 +26,7 @@
 | 5 | `include/widget/InkingWidget.h` | 核心：树、标脏、命中、布局、输入派发 |
 | 6 | `include/detail/InkingGeometry.h` | 跨层几何工具（裁剪链、子树包络） |
 | 7 | `include/render/InkingMesh.h` → `InkingBatch.h` | 绘制：形状 → 三角化 → 批次 |
-| 8 | `include/scene/InkingScene.h` → `SceneLibrary.h` | 场景、命中表、生命周期 |
+| 8 | `include/scene/InkingScene.h` → `InkingSceneLibrary.h` | 场景、命中表、生命周期 |
 | 9 | `src/window/InkingWindow.cpp` 的 `runLoop` | 一帧到底按什么顺序做什么 |
 
 **先知道三件事**：① 这是**分层重构版**，"为什么不直接……"的答案常常是"源项目就那么写的"；
@@ -65,7 +65,7 @@ cd build && PATH=.:$PATH ./bin/inking_demo_selftest.exe     # 读 stdout 末行"
 
 - 只前向声明：`struct SDL_Renderer;`、`union SDL_Event;`（**连 `union` 关键字都不能省**）；
 - **SDL 类型的声明必须写在 `namespace inking` 之外**——写在里面会声明出一个
-  `inking::SDL_Renderer`，与全局 `::SDL_Renderer` 不同，于是 SDL 调用"参数类型不匹配"；
+  `SDL_Renderer`，与全局 `::SDL_Renderer` 不同，于是 SDL 调用"参数类型不匹配"；
 - 同理，**可选依赖不许变成硬依赖**：`SDL_image` / `SDL_ttf` / `SDL_mixer` / FFmpeg
   用编译开关（`INK_HAS_SDL3_TTF` 等）隔离，"没装这个库就整包编译不过"是不可接受的。
 
@@ -105,7 +105,7 @@ Windows 下 exe 按"自身所在目录 → PATH"找 DLL，分开放会变成"程
 一一对称），只放自己的逻辑；静态组件以 `InkingStatic` 开头、动态组件以 `InkingDynamic` 开头
 （通常两样都要）；通用工具以**名词**结尾（`InkingJson`）。
 **判据：按"归属哪个子系统"定，不按"含不含 SDL"定**（`InkingMesh` 刻意不碰 SDL；
-`HitTable` 住在 `scene/`）。
+`InkingHitTable` 住在 `scene/`）。
 
 **`util/`**（0.6.5 T-15 起）：跨子系统的**纯标准库**工具，现在只有一个 `InkingJson`。
 它认得的最低层就是标准库——**不 include SDL、不 include `widget/` 及以上**。判据是
@@ -170,7 +170,7 @@ Windows 下 exe 按"自身所在目录 → PATH"找 DLL，分开放会变成"程
    （`InkingBatch.h` 要 `SDL_Vertex`、`InkingDraw.h`、`InkingText.h`），它们属"框架内部头"。
 9. † 头文件依赖最小化：能前向声明就前向声明，能放 `.cpp` 就放 `.cpp`。
 10. † 别在头里定义非 inline 函数（ODR 违例：能编过、链接期炸或随机选一份）。
-11. † 模板与纯头值类型（`InkingEvent<…>` / `Task<T>` / `Affine` / `TransformSpec`）不进导出表。
+11. † 模板与纯头值类型（`InkingEvent<…>` / `InkingTask<T>` / `InkingAffine` / `InkingTransformSpec`）不进导出表。
 12. ● **注册表 / 单例 / 全局槽位一律用函数内静态量**，不用类的静态数据成员。
     类的静态数据成员在 `main` 之前按翻译单元顺序初始化，而"生成器登记的代码由某个静态
     对象的构造触发"完全可能——那就是静态初始化 / 析构顺序问题。
@@ -242,7 +242,7 @@ Windows 下 exe 按"自身所在目录 → PATH"找 DLL，分开放会变成"程
 47. ● **"文字不参与命中"是条"半对"的规矩。** 标签默认不吃点击，所以改文字**不标命中脏**；
     但它**要占位**（尺寸、布局、包络全对），所以"不参与命中"不等于"可以不管几何"。
 48. † 一处规则如果只能"半对"，就把另一半写进注释，不要留给下一个人猜。
-49. ● **绕开批次的直接绘制，必须先登记批次边界**（`detail::NoteImmediateDraw()`）。
+49. ● **绕开批次的直接绘制，必须先登记批次边界**（`inking_detail::NoteImmediateDraw()`）。
     否则你这一笔会被后刷出去的几何批盖掉，症状是"画了但一会儿就没了"、
     还与叠放顺序有关。纹理绘制本身就是批次边界。
 50. † 提交顺序唯一：先批（无纹理）→ 再纹理 → 再"立即绘制"，每处切档都要显式登记。
@@ -356,7 +356,7 @@ Windows 下 exe 按"自身所在目录 → PATH"找 DLL，分开放会变成"程
     指向 `InkingWidget::Activate` 被派生类隐藏，改名属公开面变更）必须在 CMake 里
     写 `-Wno-` + 注释，不能靠"没人看得到"糊过去。
 115. ● **删"没人读的参数"之前先想它是不是历史遗留的决定。** `fillShapeTextured` 的
-    `hasAlpha`、`HitsThumb` 的 `vertical`、`AudioLoadFromMemory` 的 `mode` 都是这样
+    `hasAlpha`、`InkingHitsThumb` 的 `vertical`、`InkingAudioLoadFromMemory` 的 `mode` 都是这样
     变死的：原先控制一条分支，分支被证明等价（0.6.2 的矩形图片并批）或压根不存在
     （内存加载没有 Streaming）之后就没人读了。**留一个没人读的参数比没有更容易骗人**
     ——调用方会继续维护一份没人用的状态。删掉，把"为什么曾经需要它"写进注释。

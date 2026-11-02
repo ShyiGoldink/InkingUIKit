@@ -7,15 +7,13 @@
 
 #include <detail/InkingGeometry.h>
 
-namespace inking {
-
 // ---------------------------------------------------------------------------
 // 构造
 // ---------------------------------------------------------------------------
 
 // 动态档：几何会自己变，所以 dynamic 传 true。
 InkingDynamicWidget::InkingDynamicWidget(InkingWidget* parent,
-                                         const AnchorData& data)
+                                         const InkingAnchorData& data)
     : InkingWidget(parent, data, true) {}
 
 InkingDynamicWidget::InkingDynamicWidget(InkingWidget* parent,
@@ -69,7 +67,7 @@ bool InkingDynamicWidget::Resize(int width, int height) noexcept {
     return true;
 }
 
-bool InkingDynamicWidget::ChangeSelfAnchor(const AnchorPoint& anchor) noexcept {
+bool InkingDynamicWidget::ChangeSelfAnchor(const InkingAnchorPoint& anchor) noexcept {
     if (_selfAnchor.x == anchor.x && _selfAnchor.y == anchor.y) {
         return false;
     }
@@ -79,7 +77,7 @@ bool InkingDynamicWidget::ChangeSelfAnchor(const AnchorPoint& anchor) noexcept {
     return true;
 }
 
-bool InkingDynamicWidget::ChangeTraceAnchor(const AnchorPoint& anchor) noexcept {
+bool InkingDynamicWidget::ChangeTraceAnchor(const InkingAnchorPoint& anchor) noexcept {
     if (_traceAnchor.x == anchor.x && _traceAnchor.y == anchor.y) {
         return false;
     }
@@ -110,7 +108,6 @@ void InkingDynamicWidget::onRender(float pixelX, float pixelY) const {
     // 和静态版一样：默认一块实心矩形。动态档默认差的只是"位置每帧变"。
     // 这里不能调 InkingStaticWidget::onRender——两者是**兄弟**（都直接继承
     // InkingWidget），静态版不是动态版的基类，没有对象可借用。
-    detail::FillDefaultRect(*this, pixelX, pixelY);
+    inking_detail::FillDefaultRect(*this, pixelX, pixelY);
 }
 
-}  // namespace inking

@@ -25,16 +25,14 @@
 #include <cmath>
 #include <cstdint>
 
-namespace inking {
-
 // 设计坐标系里的一个点。
-struct Point2 {
+struct InkingPoint2 {
     float x = 0.0f;
     float y = 0.0f;
 };
 
 // 一个状态的目标变换。缺省（全零 + scale 1）是单位变换。
-struct TransformSpec {
+struct InkingTransformSpec {
     float translateX = 0.0f;  // 设计坐标
     float translateY = 0.0f;  // 设计坐标
     float rotate = 0.0f;      // 度，顺时针为正
@@ -47,19 +45,19 @@ struct TransformSpec {
 };
 
 // 两个变换按位相等。用来判断"这次切换其实什么都没变"（那就连过渡都不用起）。
-constexpr bool SameTransform(const TransformSpec& a,
-                             const TransformSpec& b) noexcept {
+constexpr bool InkingSameTransform(const InkingTransformSpec& a,
+                             const InkingTransformSpec& b) noexcept {
     return a.translateX == b.translateX && a.translateY == b.translateY
         && a.rotate == b.rotate && a.scale == b.scale;
 }
 
-namespace detail {
-// 名字带 transform 前缀是必须的：`inking::detail::kPi` 这种通用名字
+namespace inking_detail {
+// 名字带 transform 前缀是必须的：`inking_detail::kPi` 这种通用名字
 // 框架里已经有别的实现在用（例如 InkingDraw.cpp 的形状填充），
 // 重名不会报"重复定义"，只会在使用处报"引用不明确"，更难查。
 constexpr float kTransformPi = 3.14159265358979323846f;
 constexpr float kTransformDegToRad = kTransformPi / 180.0f;
-}  // namespace detail
+}  // namespace inking_detail
 
 /**
  * @brief 正向：本地坐标 → 变换后的坐标（绕 `(cx, cy)`）。
@@ -67,29 +65,29 @@ constexpr float kTransformDegToRad = kTransformPi / 180.0f;
  * 顺序是 CSS 的 `translate(...) rotate(...) scale(...)`：
  * 先绕中心缩放、再旋转、最后平移。绘制用。
  */
-inline Point2 ApplyTransform(const TransformSpec& transform, float x, float y,
+inline InkingPoint2 InkingApplyTransform(const InkingTransformSpec& transform, float x, float y,
                              float cx, float cy) {
-    const float radians = transform.rotate * detail::kTransformDegToRad;
+    const float radians = transform.rotate * inking_detail::kTransformDegToRad;
     const float cosA = std::cos(radians);
     const float sinA = std::sin(radians);
 
     const float dx = (x - cx) * transform.scale;
     const float dy = (y - cy) * transform.scale;
 
-    return Point2{cx + dx * cosA - dy * sinA + transform.translateX,
+    return InkingPoint2{cx + dx * cosA - dy * sinA + transform.translateX,
                   cy + dx * sinA + dy * cosA + transform.translateY};
 }
 
 /**
  * @brief 反向：变换后的坐标 → 本地坐标。命中用。
  *
- * 它必须与 `ApplyTransform` 严格互逆（顺序反过来、角度取负、缩放取倒数）。
+ * 它必须与 `InkingApplyTransform` 严格互逆（顺序反过来、角度取负、缩放取倒数）。
  * `scale == 0` 时没有逆（形状被压成一个点），这里退回按 1 处理——
  * 那是配置错误（生成期就会拦），但宁可不命中，也不要除零得到 inf 之后到处乱命中。
  */
-inline Point2 InverseTransform(const TransformSpec& transform, float x, float y,
+inline InkingPoint2 InkingInverseTransform(const InkingTransformSpec& transform, float x, float y,
                                float cx, float cy) {
-    const float radians = transform.rotate * detail::kTransformDegToRad;
+    const float radians = transform.rotate * inking_detail::kTransformDegToRad;
     const float cosA = std::cos(radians);
     const float sinA = std::sin(radians);
 
@@ -102,7 +100,7 @@ inline Point2 InverseTransform(const TransformSpec& transform, float x, float y,
     const float ry = -dx * sinA + dy * cosA;
     const float scale = transform.scale != 0.0f ? transform.scale : 1.0f;
 
-    return Point2{cx + rx / scale, cy + ry / scale};
+    return InkingPoint2{cx + rx / scale, cy + ry / scale};
 }
 
 /**
@@ -111,13 +109,12 @@ inline Point2 InverseTransform(const TransformSpec& transform, float x, float y,
  * 角度也是直接线性插
  * 一方面是相对方便差值，一方面是为了尊重用户意图
  */
-inline TransformSpec LerpTransform(const TransformSpec& from,
-                                   const TransformSpec& to, float t) {
-    return TransformSpec{
+inline InkingTransformSpec InkingLerpTransform(const InkingTransformSpec& from,
+                                   const InkingTransformSpec& to, float t) {
+    return InkingTransformSpec{
         from.translateX + (to.translateX - from.translateX) * t,
         from.translateY + (to.translateY - from.translateY) * t,
         from.rotate + (to.rotate - from.rotate) * t,
         from.scale + (to.scale - from.scale) * t};
 }
 
-}  // namespace inking

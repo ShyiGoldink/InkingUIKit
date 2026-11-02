@@ -27,9 +27,7 @@
 #include <cstdint>
 #include <string>
 
-namespace inking {
-
-// `TextRequest` / `TextMetrics` 已经搬到公开的**纯数据**头
+// `InkingTextRequest` / `InkingTextMetrics` 已经搬到公开的**纯数据**头
 // `dataStruct/InkingTextRequest.h`（A12：画布的公开绘制词汇要用它，而本文件
 // 是内部头、不能进公开头）。本文件照旧把它们带出来，调用方一处 include 都不用改。
 
@@ -44,16 +42,16 @@ namespace inking {
  * （按字号的方块：宽 = 字号 × 码点数，高 = 字号），与绘制那边的退化画法一致。
  * 不依赖渲染器，可以单独调。
  */
-TextMetrics MeasureText(const TextRequest& request);
+InkingTextMetrics InkingMeasureText(const InkingTextRequest& request);
 
 /**
  * @brief 一张图片外观的**字节视图**（T-4）。
  *
- * 不拥有数据：指向生成代码里那个静态数组（见 `ButtonAppearance::imageBytes`）。
+ * 不拥有数据：指向生成代码里那个静态数组（见 `InkingButtonAppearance::imageBytes`）。
  * `name` 是配置里写的那个路径，只用来做**缓存键**与日志——同一个文件被多个
  * 按钮引用时共用一张纹理。
  */
-struct ImageBytes {
+struct InkingImageBytes {
     const std::uint8_t* data = nullptr;
     std::size_t size = 0;
     std::string name;
@@ -61,9 +59,8 @@ struct ImageBytes {
     bool Empty() const noexcept { return data == nullptr || size == 0; }
 };
 
-}  // namespace inking
 
-namespace inking::detail {
+namespace inking_detail {
 
 /**
  * @brief 纹理层的自检观测口。
@@ -170,7 +167,7 @@ TextCacheStats TextCacheStatsSnapshot() noexcept;
  * **1220 张 / 43.7 MB / 1603 ms**。全库唯一的回收口是 `ReleaseTextCache()`
  * （全清），没有任何自动路径。
  *
- * 做法：每帧开头（`BeginTextFrame`，由 `SceneLibrary::RenderScene` 调用）比较
+ * 做法：每帧开头（`BeginTextFrame`，由 `InkingSceneLibrary::RenderScene` 调用）比较
  * `textureBytes` 与预算，超了就从**最久没用过**的条目丢起，直到回到预算内。
  *
  * 四条边界：
@@ -190,7 +187,7 @@ std::uint64_t GetTextureBudget() noexcept;
 /**
  * @brief 一帧的开始：推进帧号，必要时按预算做一次 LRU 淘汰（0.8.4 T-04）。
  *
- * 由 `SceneLibrary::RenderScene` 在 `scene->Render(renderer)` **之前**调用
+ * 由 `InkingSceneLibrary::RenderScene` 在 `scene->Render(renderer)` **之前**调用
  * （scene 依赖 render，方向正确；直接调 `RenderScene` 的自检也照样生效）。
  * 不调它 = 淘汰完全惰性（预算形同虚设），但除此之外没有副作用。
  *
@@ -218,9 +215,9 @@ void BeginTextFrame(SDL_Renderer* renderer) noexcept;
  *
  * 调用线程：绘制全程在 UI 线程，与 `fillShape` 一样不加锁。
  */
-void PaintText(SDL_Renderer* renderer, const TextRequest& request, int width,
+void PaintText(SDL_Renderer* renderer, const InkingTextRequest& request, int width,
                int height, float magnification, float pixelX, float pixelY,
-               const TransformSpec& transform);
+               const InkingTransformSpec& transform);
 
 /**
  * @brief 画一张图片（`img` 外观）：**按形状裁剪**、跟着变换走。
@@ -233,7 +230,7 @@ void PaintText(SDL_Renderer* renderer, const TextRequest& request, int width,
  *     边缘那一圈也是同一条抗锯齿过渡；
  *   - **适配模式**：`fit` 决定图在框里怎么摆——`fill`（拉伸铺满，默认）、
  *     `contain`（完整放进框、居中，留白处不画）、`cover`（铺满框、超出的一边被
- *     框裁掉）。三种模式的几何计算在 `ImageFitSpec`（纯函数，可单测）；
+ *     框裁掉）。三种模式的几何计算在 `InkingImageFitSpec`（纯函数，可单测）；
  *   - **变换**：与形状同一套语义（绕组件中心），所以文字 / 形状 / 图片三笔
  *     跟着容器一起动。
  *
@@ -247,11 +244,11 @@ void PaintText(SDL_Renderer* renderer, const TextRequest& request, int width,
  *                  注意它只改"取哪块"，不改绘制矩形（那是 `fit` 的事）。
  * @return 真的画出了图片返回 true。
  */
-bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
-                const ShapeSpec& shape, int width, int height,
+bool PaintImage(SDL_Renderer* renderer, const InkingImageBytes& image,
+                const InkingShapeSpec& shape, int width, int height,
                 float magnification, float pixelX, float pixelY,
-                const TransformSpec& transform, ImageFit fit,
-                std::uint32_t tintColor, const ShapeBounds& srcRect = {});
+                const InkingTransformSpec& transform, InkingImageFit fit,
+                std::uint32_t tintColor, const InkingShapeBounds& srcRect = {});
 
 /**
  * @brief 图片纹理的采样模式（0.6.4 T-12）。
@@ -304,7 +301,7 @@ ImageSampling GetImageSampling() noexcept;
  *
  * @param cap 新的上限；非有限值或 ≤0 会被拒绝（返回 false，当前值不变）。
  * @return 参数合法就返回 true（夹到 `[1, 8]` 之后可能与旧值相同——那是"请求被
- *         接受"，不是"值变了"，与 `SetDesignSize` 的语义不同）。
+ *         接受"，不是"值变了"，与 `InkingSetDesignSize` 的语义不同）。
  *
  * **每次调用都会重新武装"触顶告警"**（哪怕设的是同一个值）：调用本身是一次决策，
  * 而"同值不重新武装"会让自检没法确定性地复现那条 WARN。
@@ -321,7 +318,7 @@ float GetTextRasterCap() noexcept;
  * 是"画面有点软"——没人会顺着"有点软"去查美术导出的像素数。所以这条告警是
  * §3.2 那条规则（素材按屏幕像素出）**唯一**的落地手段。
  *
- * 判据（与 `ImageScaleSpec` 同一套算术）：
+ * 判据（与 `InkingImageScaleSpec` 同一套算术）：
  * 需要宽 = 组件设计宽 × 1.0（纵深）× R_max，R_max = 主显示器桌面 ÷ 设计画布；
  * 素材宽 = `srcWidth`（>0，图集这一帧）或整张图的像素宽。宽高各算一个 σ，
  * 取较小的那个；`σ < 0.75` 判为"不够"（留 25% 余量：刚好卡线的素材不值得报）。
@@ -336,7 +333,7 @@ float GetTextRasterCap() noexcept;
  * @param designWidth,designHeight 组件在设计坐标里的尺寸（不是素材像素）
  * @param srcWidth,srcHeight       这一帧的像素矩形；全零 = 整张图
  */
-void WarnIfImageUndersampled(const ImageBytes& image, int designWidth,
+void WarnIfImageUndersampled(const InkingImageBytes& image, int designWidth,
                              int designHeight, int srcWidth = 0,
                              int srcHeight = 0) noexcept;
 
@@ -346,7 +343,7 @@ void WarnIfImageUndersampled(const ImageBytes& image, int designWidth,
  * @brief 量一张图片的**固有像素尺寸**（不需要渲染器、不建纹理）。
  *
  * 用途只有一个：构造期校验图集的切格几何（`InkingSprite`，0.6.1 T-05）。
- * "格数与图宽不符"是图集最常见的配错，而它能通过 `SpriteData::Validate()`
+ * "格数与图宽不符"是图集最常见的配错，而它能通过 `InkingSpriteData::Validate()`
  * ——数据层看不到图片有多大。所以这里必须真的解一次图。
  *
  * 为什么值得多解一次：图集模式下这张图本来就要解码建纹理，这一遍是**额外的**
@@ -356,7 +353,7 @@ void WarnIfImageUndersampled(const ImageBytes& image, int designWidth,
  * @return 解出来了才 true（没接 SDL3_image / 字节坏了 / SVG 都返回 false——
  *         SVG 会按组件框光栅化，"切格"对它没有意义）。
  */
-bool ProbeImageSize(const ImageBytes& image, int* width, int* height);
+bool ProbeImageSize(const InkingImageBytes& image, int* width, int* height);
 
 /**
  * @brief 放掉这一层持有的全部纹理与字体。**渲染器销毁之前必须调**。
@@ -371,7 +368,7 @@ bool ProbeImageSize(const ImageBytes& image, int* width, int* height);
  */
 void ReleaseTextCache() noexcept;
 
-}  // namespace inking::detail
+}  // namespace inking_detail
 
 // ---------------------------------------------------------------------------
 // `TextBox` 组件的**预留接口**（这一轮只留形状，不接实现）
@@ -383,9 +380,9 @@ void ReleaseTextCache() noexcept;
 // 所以这里**故意不给出组件类**——空的类比没写更糟（会被当成能用的）。
 // 留给那一轮的东西是这份契约：
 //
-//   1. 它拿 `TextRequest` 当数据面（文本 / 字号 / 字体 / 颜色），
-//      用 `MeasureText` 量尺寸、用 `detail::PaintText` 画自己；
-//   2. 多语言**换的是上游**：`TextRequest::text` 从"配置里烘死的串"变成
+//   1. 它拿 `InkingTextRequest` 当数据面（文本 / 字号 / 字体 / 颜色），
+//      用 `InkingMeasureText` 量尺寸、用 `inking_detail::PaintText` 画自己；
+//   2. 多语言**换的是上游**：`InkingTextRequest::text` 从"配置里烘死的串"变成
 //      "按当前语言查出来的串"。这一层不关心它从哪来，只认最后那个串——
 //      所以纹理层不会被多语言的设计推翻（这也是它现在就能落地的原因）；
 //   3. 语言切换 = 换一串 `text` → 缓存自然未命中（键里有文本）→ 重烘一次。

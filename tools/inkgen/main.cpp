@@ -1,7 +1,7 @@
 // inkgen：CXXCSS 配置 → C++ 代码的生成器。
 //
 // 用法：
-//   inkgen --out-dir <目录> [--namespace inking::cxxcss] [--header button_service.h] <file.json>...
+//   inkgen --out-dir <目录> [--namespace cxxcss] [--header button_service.h] <file.json>...
 //   inkgen --validate <file.json>...
 //
 // 它是**构建期工具**：只依赖标准库（连 SDL 都不碰），所以在任何环境下都能编。
@@ -122,7 +122,7 @@ void PrintUsage() {
         "\n"
         "选项：\n"
         "  --out-dir <目录>   产物目录（约定指向 build/，不存在会创建）\n"
-        "  --namespace <ns>   生成代码的命名空间，默认 inking::cxxcss\n"
+        "  --namespace <ns>   生成代码的命名空间，默认 cxxcss\n"
         "  --header <名>      生成的头文件名，默认 button_service.h\n"
         "  --dir <根>         扫 <根>/<组件目录>/*.json（+ 根下 config.json），\n"
         "                     与显式文件列表**互斥**。19 份配置只占 1 个参数，\n"
@@ -277,8 +277,11 @@ int main(int argc, char** argv) {
         }
     }
     for (const inkgen::PanelConfig& panel : loaded.panels) {
-        std::printf("[配置] %s  %dx%d  静态面板  startOpen=%d  clipChildren=%d\n",
+        // 档位是**生成物**的属性（G-08）：日志里说错档，等于让人去查一个
+        // 根本不存在的"为什么改不动几何"。
+        std::printf("[配置] %s  %dx%d  %s面板  startOpen=%d  clipChildren=%d\n",
                     panel.name.c_str(), panel.data.width, panel.data.height,
+                    panel.dynamic ? "动态" : "静态",
                     panel.data.startOpen ? 1 : 0,
                     panel.data.clipChildren ? 1 : 0);
         for (const std::string& warning : panel.warnings) {
@@ -287,9 +290,10 @@ int main(int argc, char** argv) {
         }
     }
     for (const inkgen::LabelConfig& label : loaded.labels) {
-        std::printf("[配置] %s  %dx%d  静态标签  text=\"%s\"  "
+        std::printf("[配置] %s  %dx%d  %s标签  text=\"%s\"  "
                     "align=%d  wrap=%d  overflow=%d  maxLines=%d\n",
                     label.name.c_str(), label.data.width, label.data.height,
+                    label.dynamic ? "动态" : "静态",
                     label.data.text.c_str(),
                     static_cast<int>(label.data.style.align),
                     static_cast<int>(label.data.wrap),
@@ -303,7 +307,7 @@ int main(int argc, char** argv) {
     for (const inkgen::AtlasConfig& atlas : loaded.atlases) {
         std::printf("[配置] %s  图集 %zu 个动画  %s\n", atlas.name.c_str(),
                     atlas.data.animations.size(), atlas.identifier.c_str());
-        for (const inking::AtlasAnimation& animation : atlas.data.animations) {
+        for (const InkingAtlasAnimation& animation : atlas.data.animations) {
             std::printf("         · %-8s %zu 帧  %.0ffps  loop=%d  source=%s\n",
                         animation.name.c_str(), animation.frames.size(),
                         animation.fps, animation.loop ? 1 : 0,

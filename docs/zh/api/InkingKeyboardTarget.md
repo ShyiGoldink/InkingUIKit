@@ -26,23 +26,23 @@
   `GetKeyboardState()`（`IsKeyDown` / `IsTyping`）。
 
 键盘状态是**跨帧**的（按下的键留着），事件才是一次性的——所以"按住方向键连续移动"
-靠的是状态，不是重复的 `onKeyDown`（长按重复只保证 `KeyEvent::repeat` 为 `true`）。
+靠的是状态，不是重复的 `onKeyDown`（长按重复只保证 `InkingKeyEvent::repeat` 为 `true`）。
 
 你可以使用 `#include <input/InkingKeyboardTarget.h>` 来引入该头文件。
 
 ## 用到的数据结构
 
->**KeyEvent**
+>**InkingKeyEvent**
 
 本头里**只做前向声明**：
 
 ```C++
-struct KeyEvent;
+struct InkingKeyEvent;
 ```
 
 `PushKeyDown` / `PushKeyUp` / 两个钩子都**只按引用传它**，不需要完整类型，
-所以不必把 `<input/KeyboardInput.h>` 拖进这个头（公开头不拖依赖那条硬约定）。
-它的字段说明在 `include/input/KeyboardInput.h`，不在本文件。
+所以不必把 `<input/InkingKeyboardInput.h>` 拖进这个头（公开头不拖依赖那条硬约定）。
+它的字段说明在 `include/input/InkingKeyboardInput.h`，不在本文件。
 
 注意它是 `struct`（不是 union）——前向声明必须与定义同形，
 这一点与 `SDL_Event`（union）正好相反。
@@ -78,7 +78,7 @@ virtual bool WantsKeyboardFocus() const noexcept;
 原名:
 
 ```C++
-void PushKeyDown(const KeyEvent& key) noexcept;
+void PushKeyDown(const InkingKeyEvent& key) noexcept;
 ```
 
 按键**按下**（转给 `onKeyDown`）。**只由场景推给焦点节点**。
@@ -87,7 +87,7 @@ void PushKeyDown(const KeyEvent& key) noexcept;
 原名:
 
 ```C++
-void PushKeyUp(const KeyEvent& key) noexcept;
+void PushKeyUp(const InkingKeyEvent& key) noexcept;
 ```
 
 按键**抬起**（转给 `onKeyUp`）。只由场景推给焦点节点。
@@ -132,17 +132,17 @@ virtual ~InkingKeyboardTarget() = default;
 原名:
 
 ```C++
-virtual void onKeyDown(const KeyEvent& key);
+virtual void onKeyDown(const InkingKeyEvent& key);
 ```
 
-按下某个键。**长按重复也会来**（`KeyEvent::repeat` 为 `true`）。
+按下某个键。**长按重复也会来**（`InkingKeyEvent::repeat` 为 `true`）。
 默认什么都不做——"什么都不做"是正确的默认值：绝大多数组件本来就不关心键盘。
 
 >**onKeyUp(key)**
 原名:
 
 ```C++
-virtual void onKeyUp(const KeyEvent& key);
+virtual void onKeyUp(const InkingKeyEvent& key);
 ```
 
 抬起某个键。

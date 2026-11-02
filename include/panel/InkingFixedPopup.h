@@ -16,7 +16,7 @@
 // 定点与"不出窗口"
 //
 // `OpenAt(x, y)` 的 `(x, y)` 是**父级坐标里的一个定点**（通常就是点击位置）。
-// 落位由 `detail::SolvePopupPlacement` 算（纯算术，可单测）：
+// 落位由 `inking_detail::SolvePopupPlacement` 算（纯算术，可单测）：
 //
 //   1. 先按自锚点 `(0,0)` 摆 ⇒ 向右下展开；
 //   2. 该方向放不下就**翻到对侧**（自锚点变 `(1,1)`）；
@@ -48,19 +48,17 @@
 
 #include <memory>
 
-namespace inking {
-
 /**
  * @brief 定点浮窗：固定几何、自己定位、点击吃掉的面板。
  *
  * ```cpp
- * inking::PanelData data;
+ * InkingPanelData data;
  * data.name = "context_menu";
  * data.width = 200; data.height = 120;
  * data.closed.color = 0xFFFFFFFFu;
- * data.shape = inking::ShapeSpec::RoundedRect(16.0f);
+ * data.shape = InkingShapeSpec::RoundedRect(16.0f);
  *
- * inking::InkingFixedPopup popup(&scene, data);
+ * InkingFixedPopup popup(&scene, data);
  * popup.AddItem(std::make_unique<...>(nullptr));   // 内容自己决定
  * popup.OpenAt(clickX, clickY);                    // 定点打开（父级坐标）
  * ```
@@ -73,7 +71,7 @@ public:
      *               尺寸 / 布局 / z）：浮窗是"开 / 关"而不是"两态过渡"，`open`、
      *               `startOpen`、`scroll` 在这里被忽略（写进注释而不是静默丢弃）。
      */
-    InkingFixedPopup(InkingWidget* parent, const PanelData& data);
+    InkingFixedPopup(InkingWidget* parent, const InkingPanelData& data);
 
     // ---------------- 定点（调用点就这五个） ----------------
 
@@ -117,7 +115,7 @@ public:
     bool IsTakeFocusOnOpen() const noexcept { return _takeFocusOnOpen; }
 
     /// 收窄落位范围（父级坐标）。默认 = 父级矩形。
-    void SetClampBounds(const ShapeBounds& bounds);
+    void SetClampBounds(const InkingShapeBounds& bounds);
     /// 恢复默认范围（父级矩形）。
     void ClearClampBounds() noexcept;
 
@@ -128,7 +126,7 @@ public:
     bool IsClampedX() const noexcept { return _clampedX; }
     bool IsClampedY() const noexcept { return _clampedY; }
 
-    const ShapeSpec& GetShape() const noexcept { return _shape; }
+    const InkingShapeSpec& GetShape() const noexcept { return _shape; }
 
     /// 打开了（已经落位、已经可见）。参数为空。
     InkingEvent<> opened;
@@ -142,7 +140,7 @@ protected:
     bool OwnsSubtreeHit() const noexcept override { return true; }
 
     /// 整棵子树的并集（子孙溢出本体时，包络也要盖住）。
-    ShapeBounds GetHitEnvelope() const override;
+    InkingShapeBounds GetHitEnvelope() const override;
 
     /// 填充 + 阴影（阴影在形状之下，和面板同一条）。
     void onRender(float pixelX, float pixelY) const override;
@@ -180,14 +178,14 @@ private:
     void applyPlacement();
 
     /// 实际生效的落位范围（显式设置 > 父级矩形 > 设计画布）。
-    ShapeBounds effectiveClampBounds() const;
+    InkingShapeBounds effectiveClampBounds() const;
 
     /// 键盘焦点是否在本子树内（含自己）。
     bool IsFocusInsideSubtree() const;
 
-    ShapeSpec _shape{};
-    PanelAppearance _appearance{};  ///< 只用 `closed` 那份
-    ShapeBounds _clampBounds{};
+    InkingShapeSpec _shape{};
+    InkingPanelAppearance _appearance{};  ///< 只用 `closed` 那份
+    InkingShapeBounds _clampBounds{};
     bool _hasClampBounds = false;
 
     float _targetX = 0.0f;
@@ -201,7 +199,6 @@ private:
     bool _closeOnOutside = true;
     bool _takeFocusOnOpen = true;
 
-    detail::PointerProbe _probe;
+    inking_detail::PointerProbe _probe;
 };
 
-}  // namespace inking

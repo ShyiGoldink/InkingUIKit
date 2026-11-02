@@ -25,7 +25,7 @@
 
 | # | 段落 | 样板里的落点 | 一句话判据 |
 | --- | --- | --- | --- |
-| 1 | **数据面** | `PanelData` / `PanelAppearance` | 纯数据、可 `Normalize`、不碰 SDL |
+| 1 | **数据面** | `InkingPanelData` / `InkingPanelAppearance` | 纯数据、可 `Normalize`、不碰 SDL |
 | 2 | **构造搬字段** | `InkingStaticPanel::applyData` | 每个字段显式搬一次，漏一处就"配置不生效" |
 | 3 | **观测口** | `GetState` / `GetDisplayColor` / `GetData` | 只读、`const noexcept`、不推脏 |
 | 4 | **写入口** | `SetOpen` / `Toggle` | `[final]`、幂等、内部标脏 |
@@ -43,19 +43,19 @@
 
 ### 1.1 数据面：纯数据 + 一次 `Normalize`
 
-`PanelData` 只有两个具名状态 `closed` / `open`，不是数组：
+`InkingPanelData` 只有两个具名状态 `closed` / `open`，不是数组：
 
 ```cpp
-struct PanelData {
+struct InkingPanelData {
     std::string name;
     int width = 0, height = 0;
-    PanelAppearance closed{}, open{};   // 两态平铺成具名字段，不是数组
-    ShapeSpec shape; AnchorPoint selfAnchor, traceAnchor;
+    InkingPanelAppearance closed{}, open{};   // 两态平铺成具名字段，不是数组
+    InkingShapeSpec shape; InkingAnchorPoint selfAnchor, traceAnchor;
     float offsetX = 0.0f, offsetY = 0.0f;
-    LayoutSpec layout; LayoutItem layoutItem;
+    InkingLayoutSpec layout; InkingLayoutItem layoutItem;
     int zIndex = 0; bool visible = true;
     bool startOpen = false; bool clipChildren = false;
-    ScrollSpec scroll;
+    InkingScrollSpec scroll;
     void Normalize();                   // 补齐"省略即继承"，幂等
 };
 ```
@@ -67,12 +67,12 @@ struct PanelData {
 ### 1.2 构造：每个字段显式搬一次
 
 ```cpp
-InkingStaticPanel::InkingStaticPanel(InkingWidget* parent, const PanelData& data)
+InkingStaticPanel::InkingStaticPanel(InkingWidget* parent, const InkingPanelData& data)
     : InkingStaticWidget(parent, data.name) {   // 基类只拿到名字
     applyData(data);
 }
 
-void InkingStaticPanel::applyData(const PanelData& data) {
+void InkingStaticPanel::applyData(const InkingPanelData& data) {
     _data = data;
     _data.Normalize();
     _look.Reset(_data);              // 两态外观 / 状态机 / 过渡一起复位
@@ -92,7 +92,7 @@ void InkingStaticPanel::applyData(const PanelData& data) {
 ```
 
 **为什么必须逐字段搬**：基类不存整份 `XxxData`。`InkingWidget` 的构造函数只收
-`AnchorData` 或一个名字，它不认识 `PanelData`、`ButtonData`——这是分层纪律。
+`InkingAnchorData` 或一个名字，它不认识 `InkingPanelData`、`InkingButtonData`——这是分层纪律。
 代价很具体：**漏搬一处，就是"配置里写了、运行期不生效"，而且不报错**。
 新增会影响几何 / 布局 / 可见性的字段时，必须在这里补一行。
 
@@ -189,7 +189,7 @@ MarkDirty();          // 命中可能变了（同一块搬走了）
 过渡推进的返回值把两件事分开：
 
 ```cpp
-const PanelLook::AdvanceResult advanced = _look.Advance(deltaSeconds);
+const InkingPanelLook::AdvanceResult advanced = _look.Advance(deltaSeconds);
 if (advanced.repaint) { syncBaseColor(); MarkRepaintDirty(); }
 if (advanced.hit)     { MarkDirty(); }
 ```
@@ -200,7 +200,7 @@ if (advanced.hit)     { MarkDirty(); }
   子孙不进表）。
 
 还有一个容易漏的角落：**显示值在 `Advance` 之外被当场换掉**（例如没配过渡的
-状态切换）。`ButtonLook` / `PanelLook` 会先记一笔 `_pendingRepaint` /
+状态切换）。`InkingButtonLook` / `InkingPanelLook` 会先记一笔 `_pendingRepaint` /
 `_pendingHit`，下一次 `Advance` 再报出来。漏了这笔账，"没配过渡的开关"就永远
 标不上重绘脏——画面看着没问题（每帧全量重画），协议上却漏了一条"画面变了"。
 
@@ -225,7 +225,7 @@ if (advanced.hit)     { MarkDirty(); }
 2. **`HitTest` 与 `HitTestNode` 的遍历顺序相反**：前者本体重命中就短路，后者必须
    子树优先（子节点画在容器之上）。规则只有一份 `IsAbove`，渲染与命中共用。
 3. **包络要覆盖所有可能的状态**。抽屉开着和关着差一个身位；只按当前状态登记，
-   拉出来之后表里就找不到它了。面板用 `detail::PanelHitEnvelope` 把两态取并集。
+   拉出来之后表里就找不到它了。面板用 `inking_detail::PanelHitEnvelope` 把两态取并集。
 
 容器还要声明 `OwnsSubtreeHit() == true`：子孙**不进全局命中表**，改由容器递归
 解答。好处是命中表条目数一条都不变（抽屉来回拉也不重烘表）；代价是容器内的
@@ -237,7 +237,7 @@ if (advanced.hit)     { MarkDirty(); }
 ### 1.8 布局：测量是纯函数，重排是显式动作
 
 ```cpp
-virtual LayoutSize MeasureLayout(const LayoutConstraints&) const;  // [√] 纯函数
+virtual InkingLayoutSize MeasureLayout(const InkingLayoutConstraints&) const;  // [√] 纯函数
 void Relayout() noexcept;                                          // [final] 从我这棵子树排
 void RelayoutParent() noexcept;                                    // [final] 让上游容器排
 ```
@@ -251,7 +251,7 @@ void RelayoutParent() noexcept;                                    // [final] �
 - 内容驱动尺寸的组件（标签换长文字）调 `RelayoutParent()`：自己变高、兄弟要让位，
   那是父容器的活。
 - `ApplyLayoutRect()` 是布局层唯一的几何写入口，**只有
-  `detail::layout::ArrangeSubtree` 是 friend**；业务代码调它是编译错误。
+  `inking_detail::layout::ArrangeSubtree` 是 friend**；业务代码调它是编译错误。
 
 面板的 `UpdateScrollRange()` 遵循同一条纪律：显式、幂等，不靠框架每帧扫描子节点。
 "内容变大了"要自己喊一声，和 `Relayout()` 一样。
@@ -288,13 +288,13 @@ void RelayoutParent() noexcept;                                    // [final] �
 
 | 段 | 落点 |
 | - | - |
-| 数据面 | 复用 `PanelData`，只取 `closed` 那份（`open` / `startOpen` / `scroll` 忽略） |
+| 数据面 | 复用 `InkingPanelData`，只取 `closed` 那份（`open` / `startOpen` / `scroll` 忽略） |
 | 构造搬字段 | `ToAnchorData()` 搬定位字段；`OpenAt` 里再落位 |
 | 观测口 | `IsOpen` / `GetResolvedSideX/Y` / `IsClampedX/Y` / `GetShape` |
 | 写入口 | `OpenAt` / `SetTarget` / `Close`（内部走 `ChangeSelfAnchor` + `ChangeOffset`） |
 | 钩子 | `onRender`（填充 + 阴影）/ `onRenderDecoration`（描边）/ `onPointerStateChanged` |
 | 命中 | `HitTest` + `OwnsSubtreeHit() = true` + `PanelHitEnvelope`（整棵子树并集） |
-| 输入 | `onPointerStateChanged`（指针变化通知）+ `detail::PointerProbe` |
+| 输入 | `onPointerStateChanged`（指针变化通知）+ `inking_detail::PointerProbe` |
 
 与静态面板**唯一的结构差别**是档位：几何会变 ⇒ 不进命中表、命中靠 `QueryHit` 对容器深挖。
 除此之外的每一段都值得照抄——尤其是"填充与阴影在绘制趟、描边在装饰趟"那条（§1.7 的同一条理由）。
@@ -310,14 +310,14 @@ class MyButton : public InkingStaticWidget,
                  public InkingButtonLike { /* ... */ };
 ```
 
-它持有 `ButtonLook _look`（三态外观、过渡计时、`clicked` 事件槽），并给出
+它持有 `InkingButtonLook _look`（三态外观、过渡计时、`clicked` 事件槽），并给出
 `GetState` / `GetAppearance` / `GetDisplayColor` / `GetDisplayTransform` /
 `GetDisplayWidth/Height` / `TriggerClick` / `MouseHover` / `MousePress` /
 `MouseRelease` 等公开面。组件继承即得，一个都不用转发。
 
 ### 3.1 为什么不做成纯接口
 
-它**必须带状态**：`ButtonLook` 那十几个字段、过渡的起点与计时、`clicked` 槽，
+它**必须带状态**：`InkingButtonLook` 那十几个字段、过渡的起点与计时、`clicked` 槽，
 全是实现而不是契约。抽成纯接口之后，每个使用者都要把状态机与二十来行转发
 再写一遍——正是这个文件要消除的东西。而且本仓库不做类型查询（"钩子即能力
 发现"），`IInkingButtonLike*` 这个多态手柄没有消费者；继承来的
@@ -361,11 +361,11 @@ void MyButton::onPointerClick()           { TriggerClick();  }
 
 ---
 
-## 4. 为什么 `ButtonLook` 与 `PanelLook` 没抽成 `TransitionTrack`
+## 4. 为什么 `InkingButtonLook` 与 `InkingPanelLook` 没抽成 `TransitionTrack`
 
 现状是**已知的重复**：两者的"起一段过渡、按缓动插值、收尾落目标值、把当场改值
 记成待报告账"逻辑上是同一件事，各写了一份。A1 没有抽，理由有两条，原文在
-`include/panel/PanelLook.h:14-24`：
+`include/panel/InkingPanelLook.h:14-24`：
 
 1. **抽它要动唯一一个已验证的组件**（Button），而回归测试在 A1 之前被整块移除
    ——没有回归网时，动它是拿"已经对的东西"换"更整齐的东西"。

@@ -4,7 +4,7 @@
 // 的符号**，而头文件里的 `inline` 函数（尤其是"函数内静态量"那种写法）每个 TU
 // 各有一份——DLL 与 exe 会各持一个自己的副本，于是"外面设了、里面读不到"，
 // 且**不报任何错**。本仓库已经有三个同族槽位踩过这个坑
-// （`currentRendererSlot` / `currentAncestorAffineSlot` / `TaskQueue::instance`），
+// （`currentRendererSlot` / `currentAncestorAffineSlot` / `InkingTaskQueue::instance`），
 // 这里是第四个：状态与读写它的三个函数全部落在本文件里，跨 DLL 边界只有函数。
 
 #include <config/window_config.h>
@@ -12,8 +12,6 @@
 #include <detail/InkLog.h>
 
 #include <string>
-
-namespace inking {
 
 namespace {
 
@@ -26,8 +24,8 @@ constexpr const char* kModuleName = "Config";
  * 而这个 TU 只编进 libinking.dll，所以全进程（含 exe 侧调用）也就这一份。
  */
 struct DesignState {
-    int width  = kDefaultDesignWidth;
-    int height = kDefaultDesignHeight;
+    int width  = InkingDefaultDesignWidth;
+    int height = InkingDefaultDesignHeight;
 
     /// 已经有人按当前这对值算过几何（窗口 / 场景构造）。之后不许再改。
     bool taken = false;
@@ -40,29 +38,29 @@ DesignState& state() {
 
 }  // namespace
 
-int DesignWidth() noexcept {
+int InkingDesignWidth() noexcept {
     return state().width;
 }
 
-int DesignHeight() noexcept {
+int InkingDesignHeight() noexcept {
     return state().height;
 }
 
-void GetDesignSize(int& width, int& height) noexcept {
+void InkingGetDesignSize(int& width, int& height) noexcept {
     const DesignState& s = state();
     width  = s.width;
     height = s.height;
 }
 
-bool SetDesignSize(int width, int height) {
+bool InkingSetDesignSize(int width, int height) {
     DesignState& s = state();
 
-    if (width < 1 || height < 1 || width > kMaxDesignSize
-        || height > kMaxDesignSize) {
+    if (width < 1 || height < 1 || width > InkingMaxDesignSize
+        || height > InkingMaxDesignSize) {
         INK_LOG_ERROR(kModuleName,
                       "设计尺寸 " + std::to_string(width) + "x"
                           + std::to_string(height) + " 不合法（允许 1.."
-                          + std::to_string(kMaxDesignSize) + "）");
+                          + std::to_string(InkingMaxDesignSize) + "）");
         return false;
     }
 
@@ -91,7 +89,7 @@ bool SetDesignSize(int width, int height) {
     return true;
 }
 
-namespace detail {
+namespace inking_detail {
 
 void NoteDesignSizeTaken() noexcept {
     state().taken = true;
@@ -101,6 +99,5 @@ bool DesignSizeTaken() noexcept {
     return state().taken;
 }
 
-}  // namespace detail
+}  // namespace inking_detail
 
-}  // namespace inking

@@ -1,5 +1,13 @@
 #include <image/InkingSprite.h>
 
+// 静态精灵的实现（G-04 起帧机在 `InkingSpriteLike`，本文件同时承载那份共用实现）。
+//
+// 本文件有两段，别混：
+//   1. **`InkingSpriteLike` 的实现**——时间 → 帧号、落帧、事件区间扫描、图集切格、
+//      状态机、全部观测口。与 G-03 之前写在 `InkingSprite` 里的那份逐字相同。
+//   2. **`InkingSprite` 的接线**——构造时绑回调、每渲染帧转调一次 `advanceFrame`，
+//      以及一批**只有符号意义**的一行转发（它们的存在理由写在头文件私有段）。
+
 #include <asset/InkingAsset.h>
 #include <detail/InkLog.h>
 #include <render/InkingText.h>
@@ -9,7 +17,6 @@
 #include <cmath>
 #include <utility>
 
-namespace inking {
 
 namespace {
 
@@ -72,8 +79,14 @@ FrameResolution resolveFrame(double seconds, std::size_t count, double fps,
     return FrameResolution{index, false};
 }
 
+}  // namespace
+
 /**
- * 给基类的那份 `ImageData`：**序列帧模式下 `normal` 换成第 `startFrame` 帧**。
+ * 给基类的那份 `InkingImageData`：**序列帧模式下 `normal` 换成第 `startFrame` 帧**。
+ *
+ * 从 G-03 的匿名命名空间搬进 `InkingSpriteLike`（G-04）：两个类的 `applyData` 都要它，
+ * 而静态档在**基类构造之前**就要（`InkingStaticImage` 的 ctor 参数），所以它是
+ * `InkingSpriteLike` 的静态成员而不是普通函数——这样两档共用同一份，不必各抄一份。
  *
  * 为什么不能直接把 `data` 切一刀传上去：
  *   - 基类构造里 `runtimeAsset == true` 会去读 `normal.source`——序列帧的
@@ -81,8 +94,8 @@ FrameResolution resolveFrame(double seconds, std::size_t count, double fps,
  *     ERROR，看着像"配置错了"，其实只是"这张图没有单独的 normal"；
  *   - 换掉之后"构造完但还没收到第一次 tick"的第一帧也是对的画面，不是一块色块。
  */
-ImageData baseImageData(const SpriteData& data) {
-    ImageData base = static_cast<const ImageData&>(data);
+InkingImageData InkingSpriteLike::baseImageData(const InkingSpriteData& data) {
+    InkingImageData base = static_cast<const InkingImageData&>(data);
     base.Normalize();
 
     if (data.UsesSheet()) {
@@ -98,7 +111,7 @@ ImageData baseImageData(const SpriteData& data) {
     }
 
     // 夹取要在这里重算一次：基类构造早于本类的 `Normalize()`。
-    SpriteData copy = data;
+    InkingSpriteData copy = data;
     copy.Normalize();
     const std::size_t index =
         std::min(copy.startFrame, copy.frames.size() - 1);
@@ -106,10 +119,15 @@ ImageData baseImageData(const SpriteData& data) {
     return base;
 }
 
-}  // namespace
+// ===========================================================================
+// InkingSpriteLike：两档共用的帧机（G-04 从 InkingSprite 原样搬来）
+// ===========================================================================
 
-InkingSprite::InkingSprite(InkingWidget* parent, const SpriteData& data)
-    : InkingStaticImage(parent, baseImageData(data)) {
+InkingSpriteLike::InkingSpriteLike(InkingWidget& host, InkingImageLike& image, Hooks hooks) noexcept
+    : _host(&host), _image(&image), _hooks(std::move(hooks)) {}
+
+void InkingSpriteLike::resetSpriteData(const InkingSpriteData& data) {
+    // 与 G-04 之前 `InkingSprite` 构造函数体里那三行逐字等价。
     _sprite = data;
 
     // 起始帧先落位（事件与计数都不计：`fromPlayback == false`）。
@@ -117,21 +135,20 @@ InkingSprite::InkingSprite(InkingWidget* parent, const SpriteData& data)
     // 时间基准**不在这里对**：构造函数可能早于"进场景"（先 new 后 AddChild 是
     // 常见写法），那时 `nowSeconds()` 还是兜底的 0，拿它对出来的 `_pauseOffset`
     // 会在第一次 tick（场景时钟可能已经是 30 秒）时把帧号甩飞。
-    // 所以基准是**惰性**的：第一次 tick / Play / Seek 时才对齐（见 `ensureTimeBase`）。
     rebuildFromData(_sprite.startFrame);
 
     // 播不播由配置定；`rebuildFromData()` 不碰它（换配置时"保持原播放状态"）。
     _playing = _sprite.autoplay;
 }
 
-void InkingSprite::rebuildFromData(std::size_t frame) {
+void InkingSpriteLike::rebuildFromData(std::size_t frame) {
     _sprite.Normalize();
 
     _configError.clear();
     _mode = FrameMode::Sequence;
     _configError = _sprite.Validate();
     if (!_configError.empty()) {
-        INK_LOG_ERROR(kSpriteModuleName,
+        INK_LOG_ERROR(InkingSpriteModuleName,
                       "帧动画配置不合法（" + _sprite.name + "）：" + _configError);
     } else if (_sprite.UsesSheet()) {
         // 图集：换帧只改源矩形（0.6.1 T-05）。几何对不对在**构造期**就要知道——
@@ -148,22 +165,22 @@ void InkingSprite::rebuildFromData(std::size_t frame) {
     }
 }
 
-void InkingSprite::syncSheetBytes() {
+void InkingSpriteLike::syncSheetBytes() {
     // 图集只有一份字节：`sheet.source` 写了就是它，否则沿用 `normal.source`
     // （与 `baseImageData()` 里那条"两处只该写一处"的约定同源）。
     const std::string& source = _sprite.sheet.source.empty()
                                     ? _sprite.normal.source
                                     : _sprite.sheet.source;
     if (_sprite.runtimeAsset) {
-        // 失败时保留旧图（基类那条规矩）：`LoadAsset` 自己会记 ERROR。
-        LoadAsset(source);
+        // 失败时保留旧图（组件那条规矩）：组件自己的 `LoadAsset` 会记 ERROR。
+        _hooks.loadAsset(source);
         return;
     }
-    SetImageBytes(_sprite.normal.imageBytes, _sprite.normal.imageSize,
-                  _sprite.normal.source);
+    _hooks.setBytes(_sprite.normal.imageBytes, _sprite.normal.imageSize,
+                    _sprite.normal.source);
 }
 
-void InkingSprite::SetSpriteData(const SpriteData& data, bool keepPhase) {
+void InkingSpriteLike::SetSpriteData(const InkingSpriteData& data, bool keepPhase) {
     const std::size_t previousFrame = _frameIndex;
     const bool wasPlaying = _playing;
 
@@ -198,8 +215,7 @@ void InkingSprite::SetSpriteData(const SpriteData& data, bool keepPhase) {
     }
 }
 
-
-void InkingSprite::ensureTimeBase(double alreadyElapsedSeconds) {
+void InkingSpriteLike::ensureTimeBase(double alreadyElapsedSeconds) {
     if (_offsetReady) {
         return;
     }
@@ -221,8 +237,8 @@ void InkingSprite::ensureTimeBase(double alreadyElapsedSeconds) {
 // 构造期的字节预热 / 几何校验
 // ---------------------------------------------------------------------------
 
-void InkingSprite::validateSheetGeometry() {
-    const SpriteData::SpriteSheet& sheet = _sprite.sheet;
+void InkingSpriteLike::validateSheetGeometry() {
+    const InkingSpriteData::SpriteSheet& sheet = _sprite.sheet;
     const bool byRects = !sheet.frameRects.empty();
     const int expectedWidth = sheet.SheetWidth();
     const int expectedHeight = sheet.SheetHeight();
@@ -234,7 +250,7 @@ void InkingSprite::validateSheetGeometry() {
 
     // 借绘制层"当前生效的那份字节"：运行期读进来的在 `_assetBytes` 里，
     // 生成期烘的直接指向静态数组——两种都由 `GetAppearance()` 统一视图给出。
-    const ButtonAppearance& appearance = GetAppearance();
+    const InkingButtonAppearance& appearance = _image->GetAppearance();
     if (!_sprite.runtimeAsset
         && (appearance.imageBytes == nullptr || appearance.imageSize == 0)) {
         // 生成期那条路：图集必须把 `sheet.source` 那份文件烘进 `normal.imageBytes`。
@@ -243,19 +259,19 @@ void InkingSprite::validateSheetGeometry() {
         // 运行期那条路不重复报：基类构造里 `LoadAsset` 失败已经报过一条。
         _configError =
             "图集没有字节：请把整张图集烘进 normal.imageBytes（sheet.source 只是路径）";
-        INK_LOG_ERROR(std::string(kSpriteModuleName),
+        INK_LOG_ERROR(std::string(InkingSpriteModuleName),
                       "图集没有可切的字节（" + _sprite.name + "）："
                           + _configError);
         return;
     }
-    const ImageBytes image{appearance.imageBytes, appearance.imageSize,
+    const InkingImageBytes image{appearance.imageBytes, appearance.imageSize,
                            appearance.source};
     int imageWidth = 0;
     int imageHeight = 0;
-    if (!detail::ProbeImageSize(image, &imageWidth, &imageHeight)) {
+    if (!inking_detail::ProbeImageSize(image, &imageWidth, &imageHeight)) {
         // 解不出来（没接 SDL3_image / 字节坏了 / 是 SVG）：**不假装通过**，
         // 但也别拦着播——这台机器上整条图片路都画不出来，报两条错只是噪音。
-        INK_LOG_WARN(std::string(kSpriteModuleName),
+        INK_LOG_WARN(std::string(InkingSpriteModuleName),
                      "量不到图集尺寸，切格几何未校验：" + _sprite.name);
         return;
     }
@@ -265,7 +281,7 @@ void InkingSprite::validateSheetGeometry() {
         // 越界帧在画面上表现为"取到图外 → 一整块拉伸的边"或者干脆不画，很难归因到
         // 某一帧，所以文案把帧号与矩形都写出来。
         for (std::size_t i = 0; i < sheet.frameRects.size(); ++i) {
-            const ShapeBounds& rect = sheet.frameRects[i];
+            const InkingShapeBounds& rect = sheet.frameRects[i];
             if (rect.x + rect.width <= static_cast<float>(imageWidth)
                 && rect.y + rect.height <= static_cast<float>(imageHeight)) {
                 continue;
@@ -276,7 +292,7 @@ void InkingSprite::validateSheetGeometry() {
                 + std::to_string(rect.width) + " h=" + std::to_string(rect.height)
                 + " 超出图片 " + std::to_string(imageWidth) + "×"
                 + std::to_string(imageHeight);
-            INK_LOG_ERROR(std::string(kSpriteModuleName),
+            INK_LOG_ERROR(std::string(InkingSpriteModuleName),
                           "图集帧表越界（" + _sprite.name + "）：" + _configError);
             return;
         }
@@ -296,18 +312,18 @@ void InkingSprite::validateSheetGeometry() {
                    + std::to_string(sheet.margin) + " 算出来应是 "
                    + std::to_string(expectedWidth) + "×"
                    + std::to_string(expectedHeight);
-    INK_LOG_ERROR(std::string(kSpriteModuleName),
+    INK_LOG_ERROR(std::string(InkingSpriteModuleName),
                   "图集切格不成立（" + _sprite.name + "）：" + _configError);
 }
 
-void InkingSprite::loadFrameBytes() {
+void InkingSpriteLike::loadFrameBytes() {
     _frames.clear();
     _frameBytes.clear();
     _loadedFrameCount = 0;
 
     if (_mode == FrameMode::Sheet) {
         // 图集：所有帧共用同一份字节（`normal` 那张大图），差别只在源矩形。
-        // `data` 留空 ⇒ `applyFrame` 不会调 `SetImageBytes`（那会把整张图集
+        // `data` 留空 ⇒ `applyFrame` 不会调 `setBytes`（那会把整张图集
         // 每帧拷一遍），只改源矩形。
         const std::size_t count = _sprite.FrameCount();
         // "帧号 → 格号"的换算**只在这里**做一次（0.6.4 T-11）：`CellRect` 的语义
@@ -328,7 +344,7 @@ void InkingSprite::loadFrameBytes() {
                 || _frames[i].sourceRect.height <= 0.0f) {
                 // 越界格（`count > rows×columns` 已被拦，但 count 与几何不一致时
                 // 仍可能算不出矩形）：跳过这一格，画面停在上一帧。
-                INK_LOG_ERROR(std::string(kSpriteModuleName),
+                INK_LOG_ERROR(std::string(InkingSpriteModuleName),
                               "第 " + std::to_string(i) + " 帧切不出矩形（"
                                   + _sprite.name + "）：检查 columns / rows");
                 continue;
@@ -351,7 +367,7 @@ void InkingSprite::loadFrameBytes() {
     _frames.resize(count);
 
     for (std::size_t i = 0; i < count; ++i) {
-        const ButtonAppearance& source = _sprite.frames[i];
+        const InkingButtonAppearance& source = _sprite.frames[i];
         LoadedFrame& frame = _frames[i];
 
         frame.name = source.source.empty()
@@ -360,13 +376,13 @@ void InkingSprite::loadFrameBytes() {
 
         if (_sprite.runtimeAsset) {
             // 运行期读：一次性全读进来（构造期一次 I/O，换帧零 I/O）。
-            _frameBytes[i] = AssetLoad(source.source);
+            _frameBytes[i] = InkingAssetLoad(source.source);
             if (_frameBytes[i].empty()) {
                 // 单帧失败**不中止**：其余帧照播，这一帧停在上一帧的画面上。
                 // 中止会让整个组件不画——"一块空白"比"少一帧"难查得多。
-                INK_LOG_ERROR(std::string(kSpriteModuleName),
+                INK_LOG_ERROR(std::string(InkingSpriteModuleName),
                               "第 " + std::to_string(i) + " 帧读不到："
-                                  + source.source + "（资源根 " + AssetRoot()
+                                  + source.source + "（资源根 " + InkingAssetRoot()
                                   + "）");
                 continue;
             }
@@ -380,7 +396,7 @@ void InkingSprite::loadFrameBytes() {
         frame.data = source.imageBytes;
         frame.size = source.imageSize;
         if (frame.data == nullptr || frame.size == 0) {
-            INK_LOG_ERROR(std::string(kSpriteModuleName),
+            INK_LOG_ERROR(std::string(InkingSpriteModuleName),
                           "第 " + std::to_string(i) + " 帧没有字节（"
                               + _sprite.name + "）");
             continue;
@@ -393,28 +409,28 @@ void InkingSprite::loadFrameBytes() {
 // 播放
 // ---------------------------------------------------------------------------
 
-bool InkingSprite::IsPlaying() const noexcept { return _playing; }
-bool InkingSprite::IsFinished() const noexcept { return _finished; }
+bool InkingSpriteLike::IsPlaying() const noexcept { return _playing; }
+bool InkingSpriteLike::IsFinished() const noexcept { return _finished; }
 
-std::size_t InkingSprite::GetFrameIndex() const noexcept { return _frameIndex; }
+std::size_t InkingSpriteLike::GetFrameIndex() const noexcept { return _frameIndex; }
 
-std::size_t InkingSprite::GetFrameCount() const noexcept {
+std::size_t InkingSpriteLike::GetFrameCount() const noexcept {
     return _frames.size();
 }
 
-std::size_t InkingSprite::GetLoadedFrameCount() const noexcept {
+std::size_t InkingSpriteLike::GetLoadedFrameCount() const noexcept {
     return _loadedFrameCount;
 }
 
-std::uint64_t InkingSprite::GetFrameAdvanceCount() const noexcept {
+std::uint64_t InkingSpriteLike::GetFrameAdvanceCount() const noexcept {
     return _frameAdvanceCount;
 }
 
-std::uint64_t InkingSprite::GetSkippedFrameCount() const noexcept {
+std::uint64_t InkingSpriteLike::GetSkippedFrameCount() const noexcept {
     return _skippedFrameCount;
 }
 
-double InkingSprite::GetAnimationTime() const noexcept {
+double InkingSpriteLike::GetAnimationTime() const noexcept {
     // 暂停中就把"这一段还没结算的暂停"先扣掉（`Play()` 时才并进 `_pauseOffset`）。
     // 于是这个口的语义是"**已经播了多久**"，不是"时钟走了多久"——两者在暂停期间
     // 正好差一段，而使用者（进度条 / 自检）要的显然是前者。
@@ -428,19 +444,19 @@ double InkingSprite::GetAnimationTime() const noexcept {
     return nowSeconds() - _pauseOffset - pending + _sprite.startOffsetSeconds;
 }
 
-const SpriteData& InkingSprite::GetSpriteData() const noexcept { return _sprite; }
+const InkingSpriteData& InkingSpriteLike::GetSpriteData() const noexcept { return _sprite; }
 
-const std::string& InkingSprite::GetConfigError() const noexcept {
+const std::string& InkingSpriteLike::GetConfigError() const noexcept {
     return _configError;
 }
 
-bool InkingSprite::IsValid() const noexcept { return _configError.empty(); }
+bool InkingSpriteLike::IsValid() const noexcept { return _configError.empty(); }
 
-bool InkingSprite::IsSheetMode() const noexcept {
+bool InkingSpriteLike::IsSheetMode() const noexcept {
     return _mode == FrameMode::Sheet;
 }
 
-void InkingSprite::Play() {
+void InkingSpriteLike::Play() {
     ensureTimeBase();
     if (_playing || _frames.empty()) {
         return;
@@ -459,7 +475,7 @@ void InkingSprite::Play() {
     _playing = true;
 }
 
-void InkingSprite::Pause() {
+void InkingSpriteLike::Pause() {
     ensureTimeBase();
     if (!_playing) {
         return;
@@ -468,7 +484,7 @@ void InkingSprite::Pause() {
     _pauseStartSeconds = nowSeconds();
 }
 
-void InkingSprite::Stop() {
+void InkingSpriteLike::Stop() {
     ensureTimeBase();
     _playing = false;
     _finished = false;
@@ -478,7 +494,7 @@ void InkingSprite::Stop() {
     }
 }
 
-bool InkingSprite::SeekToFrame(std::size_t frame) {
+bool InkingSpriteLike::SeekToFrame(std::size_t frame) {
     if (_frames.empty()) {
         return false;
     }
@@ -505,7 +521,7 @@ bool InkingSprite::SeekToFrame(std::size_t frame) {
 // 每帧推进
 // ---------------------------------------------------------------------------
 
-void InkingSprite::onAnimationTick(float deltaSeconds) {
+void InkingSpriteLike::advanceFrame(float deltaSeconds) {
     // 兜底时间：组件被摘出场景（`GetScene()` 为空）时仍能自己走。
     // 有场景时**不用它**——同一场景里的所有 sprite 必须读同一个时钟，
     // 各累加各的会慢慢错开（那正是 T-01 要解决的问题）。
@@ -535,21 +551,21 @@ void InkingSprite::onAnimationTick(float deltaSeconds) {
         _pauseStartSeconds = nowSeconds();
         // 状态先落定再发：回调里问 `IsFinished()` / `IsPlaying()` 拿到的是
         // "已经播完了"，不是"正在播最后一下"。
-        finished.Emit();
+        _hooks.finished();
     }
 }
 
-void InkingSprite::fireEventsBetween(std::size_t previous,
-                                     std::size_t current) {
+void InkingSpriteLike::fireEventsBetween(std::size_t previous,
+                                   std::size_t current) {
     // 没配事件就是**零开销**（每个换帧都会走到这里）。
     if (_sprite.events.empty() || _frames.empty()) {
         return;
     }
     const std::size_t count = _frames.size();
     const auto fire = [this](std::size_t frame) {
-        for (const SpriteData::SpriteEvent& event : _sprite.events) {
+        for (const InkingSpriteData::SpriteEvent& event : _sprite.events) {
             if (event.frame == frame) {
-                frameEvent.Emit(event.name, event.frame);
+                _hooks.frameEvent(event.name, event.frame);
             }
         }
     };
@@ -570,7 +586,7 @@ void InkingSprite::fireEventsBetween(std::size_t previous,
     }
 }
 
-void InkingSprite::applyFrame(std::size_t index, bool fromPlayback) {
+void InkingSpriteLike::applyFrame(std::size_t index, bool fromPlayback) {
     if (index >= _frames.size()) {
         return;
     }
@@ -584,16 +600,16 @@ void InkingSprite::applyFrame(std::size_t index, bool fromPlayback) {
 
     // 换画面：序列帧换字节视图，图集换源矩形。**两者只在这里分一次**。
     //
-    // 序列帧：`SetImageBytes` 会拷一份（KB 级）并标重绘脏——这是"不改基类
-    // 访问控制"换来的代价，任务书里认过这一笔。读失败的帧 `data` 为空，
-    // 这里跳过设置：画面停在上一张成功的图上（不是一块空白）。
+    // 序列帧：`setBytes` 会拷一份（KB 级）并标重绘脏——这是"不改访问控制"换来的
+    // 代价，任务书里认过这一笔。读失败的帧 `data` 为空，这里跳过设置：画面停在
+    // 上一张成功的图上（不是一块空白）。
     if (frame.data != nullptr && frame.size > 0) {
-        SetImageBytes(frame.data, frame.size, frame.name);
+        _hooks.setBytes(frame.data, frame.size, frame.name);
     }
     if (_mode == FrameMode::Sheet) {
         // 切不出矩形的帧（几何不一致）不动源矩形：停在上一帧的画面上。
         if (frame.sourceRect.width > 0.0f && frame.sourceRect.height > 0.0f) {
-            SetRenderSourceRect(frame.sourceRect);
+            _hooks.setSourceRect(frame.sourceRect);
         }
     }
 
@@ -616,16 +632,148 @@ void InkingSprite::applyFrame(std::size_t index, bool fromPlayback) {
         // 已经处理完了（顺序反过来，回调里读到的状态就和事件对不上）。
         fireEventsBetween(previous, index);
     }
-    frameChanged.Emit(index, previous);
+    _hooks.frameChanged(index, previous);
 }
 
-double InkingSprite::nowSeconds() const noexcept {
-    const InkingScene* scene = GetScene();
+double InkingSpriteLike::nowSeconds() const noexcept {
+    const InkingScene* scene = _host->GetScene();
     return scene != nullptr ? scene->AnimationSeconds() : _fallbackSeconds;
 }
 
-double InkingSprite::fps() const noexcept {
+double InkingSpriteLike::fps() const noexcept {
     return _sprite.fps > 0.0 ? _sprite.fps : 12.0;
 }
 
-}  // namespace inking
+// ===========================================================================
+// InkingSprite：静态档的接线（帧机全部委托给 InkingSpriteLike）
+// ===========================================================================
+
+InkingSpriteLike::Hooks InkingSprite::hooksFor(InkingSprite& self) {
+    // 六件事各自绑到本类的成员上。顺序与"什么时候被调"无关——调用时机由
+    // `InkingSpriteLike` 决定，绑定时只决定"落到哪个函数"。
+    InkingSpriteLike::Hooks hooks;
+    // 静态档的 `SetImageBytes` / `SetRenderSourceRect` 来自 `InkingStaticImage`：
+    // 两者都会标重绘脏（后者只标重绘、不标命中）。
+    hooks.setBytes = [&self](const std::uint8_t* data, std::size_t size,
+                             const std::string& name) {
+        self.SetImageBytes(data, size, name);
+    };
+    hooks.loadAsset = [&self](const std::string& relative) {
+        return self.LoadAsset(relative);
+    };
+    hooks.setSourceRect = [&self](const InkingShapeBounds& srcRect) {
+        self.SetRenderSourceRect(srcRect);
+    };
+    hooks.frameChanged = [&self](std::size_t now, std::size_t before) {
+        self.frameChanged.Emit(now, before);
+    };
+    hooks.frameEvent = [&self](const std::string& name, std::size_t frame) {
+        self.frameEvent.Emit(name, frame);
+    };
+    hooks.finished = [&self] { self.finished.Emit(); };
+    return hooks;
+}
+
+InkingSprite::InkingSprite(InkingWidget* parent, const InkingSpriteData& data)
+    : InkingStaticImage(parent, InkingSpriteLike::baseImageData(data)),
+      InkingSpriteLike(static_cast<InkingWidget&>(*this),
+                 static_cast<InkingImageLike&>(*this), hooksFor(*this)) {
+    // 起始帧落位、播放状态由配置定——与 G-04 之前构造函数体那三行完全等价。
+    resetSpriteData(data);
+}
+
+void InkingSprite::onAnimationTick(float deltaSeconds) {
+    // 帧机在 `InkingSpriteLike`；这里只是"渲染帧"那条通道的入口。
+    advanceFrame(deltaSeconds);
+}
+
+// ---------------------------------------------------------------------------
+// ABI 转发：这些符号在 G-03 之前就导出过，纯重构不许少（见头文件私有段）
+// ---------------------------------------------------------------------------
+//
+// 每个都是一行 `InkingSpriteLike::` 限定调用——**不要再往里加逻辑**，加进 `InkingSpriteLike`。
+
+bool InkingSprite::IsPlaying() const noexcept { return InkingSpriteLike::IsPlaying(); }
+bool InkingSprite::IsFinished() const noexcept { return InkingSpriteLike::IsFinished(); }
+
+std::size_t InkingSprite::GetFrameIndex() const noexcept {
+    return InkingSpriteLike::GetFrameIndex();
+}
+
+std::size_t InkingSprite::GetFrameCount() const noexcept {
+    return InkingSpriteLike::GetFrameCount();
+}
+
+std::size_t InkingSprite::GetLoadedFrameCount() const noexcept {
+    return InkingSpriteLike::GetLoadedFrameCount();
+}
+
+std::uint64_t InkingSprite::GetFrameAdvanceCount() const noexcept {
+    return InkingSpriteLike::GetFrameAdvanceCount();
+}
+
+std::uint64_t InkingSprite::GetSkippedFrameCount() const noexcept {
+    return InkingSpriteLike::GetSkippedFrameCount();
+}
+
+double InkingSprite::GetAnimationTime() const noexcept {
+    return InkingSpriteLike::GetAnimationTime();
+}
+
+const InkingSpriteData& InkingSprite::GetSpriteData() const noexcept {
+    return InkingSpriteLike::GetSpriteData();
+}
+
+const std::string& InkingSprite::GetConfigError() const noexcept {
+    return InkingSpriteLike::GetConfigError();
+}
+
+bool InkingSprite::IsValid() const noexcept { return InkingSpriteLike::IsValid(); }
+
+bool InkingSprite::IsSheetMode() const noexcept {
+    return InkingSpriteLike::IsSheetMode();
+}
+
+void InkingSprite::Play() { InkingSpriteLike::Play(); }
+void InkingSprite::Pause() { InkingSpriteLike::Pause(); }
+void InkingSprite::Stop() { InkingSpriteLike::Stop(); }
+
+bool InkingSprite::SeekToFrame(std::size_t frame) {
+    return InkingSpriteLike::SeekToFrame(frame);
+}
+
+void InkingSprite::SetSpriteData(const InkingSpriteData& data, bool keepPhase) {
+    InkingSpriteLike::SetSpriteData(data, keepPhase);
+}
+
+void InkingSprite::loadFrameBytes() { InkingSpriteLike::loadFrameBytes(); }
+
+void InkingSprite::rebuildFromData(std::size_t frame) {
+    InkingSpriteLike::rebuildFromData(frame);
+}
+
+void InkingSprite::syncSheetBytes() { InkingSpriteLike::syncSheetBytes(); }
+
+void InkingSprite::validateSheetGeometry() {
+    InkingSpriteLike::validateSheetGeometry();
+}
+
+void InkingSprite::applyFrame(std::size_t index, bool fromPlayback) {
+    InkingSpriteLike::applyFrame(index, fromPlayback);
+}
+
+void InkingSprite::fireEventsBetween(std::size_t previous,
+                                     std::size_t current) {
+    InkingSpriteLike::fireEventsBetween(previous, current);
+}
+
+double InkingSprite::nowSeconds() const noexcept {
+    return InkingSpriteLike::nowSeconds();
+}
+
+void InkingSprite::ensureTimeBase(double alreadyElapsedSeconds) {
+    InkingSpriteLike::ensureTimeBase(alreadyElapsedSeconds);
+}
+
+double InkingSprite::fps() const noexcept { return InkingSpriteLike::fps(); }
+

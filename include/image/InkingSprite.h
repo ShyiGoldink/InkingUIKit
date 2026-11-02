@@ -22,7 +22,7 @@
 // 字节 vs 纹理：两件事别混
 //
 //   - **字节在构造期备齐**（`loadFrameBytes()`）：运行期换帧**零 I/O**。
-//     这一条是有代价换来的——`LoadAsset` 每次都会 `AssetLoad` 读盘，
+//     这一条是有代价换来的——`LoadAsset` 每次都会 `InkingAssetLoad` 读盘，
 //     每 1/12 秒读一次文件不可接受。
 //   - **纹理在第一次画到那一帧时由渲染层解码**，之后进纹理表（键 = 帧名）。
 //     构造期**烘不出纹理**：组件构造时窗口 / 渲染器还不存在（`Show()` 之后才有），
@@ -36,29 +36,33 @@
 #include <event/InkingEvent.h>
 #include <image/InkingStaticImage.h>
 #include <image/SpriteData.h>
+#include <image/SpriteLike.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
 
-namespace inking {
-
 /**
  * @brief 帧动画：序列帧 / 图集两种素材 + 播放 / 暂停 / 定位。
  *
- * 数据面见 `SpriteData`（序列帧与图集二选一，`Validate()` 会拦"都填/都不填"）。
+ * 数据面见 `InkingSpriteData`（序列帧与图集二选一，`Validate()` 会拦"都填/都不填"）。
  * 两种素材**共用同一套帧号计算**（`frame = floor(t × fps)`），只在"怎么把这一帧
  * 搬到画面上"分两路：
  *   - **序列帧**：每帧一份独立字节，换帧 = 换字节视图（`SetImageBytes`）；
  *   - **图集**：字节是同一张，换帧 = 换**源矩形**（`SetRenderSourceRect`），
  *     纹理一次建好、之后一个字节都不动（0.6.1 T-05）。
  *
- * 分叉点收在 `LoadedFrame`（每帧带一个 `sourceRect`）与 `applyFrame()` 一处，
- * 不写成两个 `if` 分支各走一遍——否则"序列帧的暂停语义"和"图集的暂停语义"
- * 迟早会不一致，而这种不一致只会表现为"某个模式有点怪"。
+ * 分叉点收在 `InkingSpriteLike::LoadedFrame`（每帧带一个 `sourceRect`）与
+ * `InkingSpriteLike::applyFrame()` 一处，不写成两个 `if` 分支各走一遍——否则"序列帧的
+ * 暂停语义"和"图集的暂停语义"迟早会不一致，而这种不一致只会表现为"某个模式有点怪"。
+ *
+ * **G-04 起帧机在 `InkingSpriteLike`**（两档共用，纯重构）：本类只剩"静态档的接线"——
+ * 构造时把 `SetImageBytes` / `SetRenderSourceRect` 与三个事件槽绑给帧机，
+ * 每渲染帧转调一次 `advanceFrame()`。下面每个 API 的语义与 G-04 之前
+ * **完全一致**；逐条理由（时间源、字节 vs 纹理、暂停语义）记在 `InkingSpriteLike.h`。
  */
-class InkingSprite : public InkingStaticImage {
+class InkingSprite : public InkingStaticImage, public InkingSpriteLike {
 public:
     /**
      * @param parent 上级锚点；非拥有。
@@ -66,7 +70,7 @@ public:
      *               ERROR 且 `IsValid()` 为 false——**照常构造**，因为"少一个动画"
      *               不该让整个界面起不来）。
      */
-    InkingSprite(InkingWidget* parent, const SpriteData& data);
+    InkingSprite(InkingWidget* parent, const InkingSpriteData& data);
 
     /**
      * 帧变了（新帧号, 旧帧号）。
@@ -149,7 +153,7 @@ public:
      * 校验不过时**照常换**（`IsValid()` 变 false、记 ERROR、帧数可能为 0）：和构造
      * 那条路一个口径——"一个动画坏了"不该让整个界面停摆。
      */
-    void SetSpriteData(const SpriteData& data, bool keepPhase = false);
+    void SetSpriteData(const InkingSpriteData& data, bool keepPhase = false);
 
     // ---------------- 观测 ----------------
 
@@ -177,7 +181,7 @@ public:
     double GetAnimationTime() const noexcept;
 
     /// 构造时那份配置（已 `Normalize`）。
-    const SpriteData& GetSpriteData() const noexcept;
+    const InkingSpriteData& GetSpriteData() const noexcept;
 
     /// 配置校验的错误说明；空串 = 合法。
     const std::string& GetConfigError() const noexcept;
@@ -193,116 +197,31 @@ protected:
     void onAnimationTick(float deltaSeconds) override;
 
 private:
-    /// 一帧的字节视图 + 纹理缓存键。
-    struct LoadedFrame {
-        const std::uint8_t* data = nullptr;
-        std::size_t size = 0;
-        /// 纹理缓存键：`source` 非空就用它（同源两帧共用纹理是**正确**的），
-        /// 为空时退化成 `<组件名>#<帧号>`。
-        std::string name;
-        /// 这一帧在纹理里的像素矩形（图集切格）。全零 = 整张纹理（序列帧）。
-        ShapeBounds sourceRect{};
-    };
+    // -----------------------------------------------------------------------
+    // ABI 保留：下面这些私有函数的**实现**已经移到 `InkingSpriteLike`（G-04）。
+    //
+    // 为什么还要在这里声明、在 .cpp 里写一行转发：它们在 G-03 之前就是
+    // `InkingSprite` 的成员函数，因此被 `WINDOWS_EXPORT_ALL_SYMBOLS` 导出；
+    // 而纯重构的硬判据是"`nm -g` 里 `InkingSprite` 的符号一个都不能少"
+    // （`TaskGuide-G.md` G-04 验收 2）。**它们不再有内部调用者**——这是为保住
+    // 旧符号付的账，不是忘了删的死代码。
+    //
+    // 以后要加帧机逻辑：写进 `InkingSpriteLike`，别在这里加函数。
+    // -----------------------------------------------------------------------
 
-    /// 构造期把每帧的**字节**（序列帧）或**源矩形**（图集）备齐。
     void loadFrameBytes();
-
-    /**
-     * 把"配置怎么落地"整段走一遍：`Normalize` → `Validate` → 定 `_mode` →
-     * 图集量一次图 → 备帧 → 落起始帧（0.6.5 T-13 从构造函数抽出来的）。
-     *
-     * 构造函数与 `SetSpriteData` **共用这一段**，于是"构造时的配置"和"换来的配置"
-     * 不会走出两条略有差别的路——那种差别只会在"换过去之后有点怪"时露头。
-     * @param frame 落哪一帧（越界由它夹到末帧）。构造传 `startFrame`，换配置传
-     *        0 或 `keepPhase` 保留的那个帧号——**由调用方定**，因为"从哪一帧开始"
-     *        正是两条路唯一的差别（各落一次会多发一个 `frameChanged`）。
-     *
-     * 它**不碰** `_playing` / 时间基准（那是两条调用方各自的事）。
-     */
     void rebuildFromData(std::size_t frame);
-
-    /**
-     * 图集模式：把"那张大图"的字节同步到绘制层（0.6.5 T-13）。
-     *
-     * 为什么换配置时必须补这一笔：基类的字节视图是**构造时**那份（序列帧的第一帧），
-     * 换成图集后如果不换，`applyFrame` 只改源矩形不动字节 ⇒ 画面仍是旧图，而
-     * `IsSheetMode()` / 帧数全是对的——一个"看起来换成功了"的静默错。
-     * 生成期烘的走 `SetImageBytes`（拷一份），运行期读的走 `LoadAsset`。
-     */
     void syncSheetBytes();
-
-    /// 图集模式的构造期几何校验（量图 vs `SheetWidth/SheetHeight`）。
     void validateSheetGeometry();
-
-    /// 落到某一帧：换字节视图（序列帧）/ 换源矩形（图集）、累加计数、发事件。
-    /// @param fromPlayback true = 播放推进导致（要计 skipped），false = 定位 / 初始。
     void applyFrame(std::size_t index, bool fromPlayback);
-
-    /**
-     * 发 `(previous, current]` 这一段里所有帧事件（回绕时拆两段）。
-     *
-     * 为什么按**区间**而不是"只看落点"：慢帧一次跨 3 帧时，只判落点会把中间那几帧
-     * 的事件吞掉——而"吞事件"在业务上是静默的（少播一次脚步声，谁也看不出来）。
-     */
     void fireEventsBetween(std::size_t previous, std::size_t current);
-
-    /// 场景动画时钟（无场景时退化成自己累加的 delta）。
     double nowSeconds() const noexcept;
-
-    /**
-     * 惰性对齐时间基准：让"现在"正好落在 `_frameIndex` 这一帧上。
-     *
-     * 为什么不能放在构造函数里：构造可能早于"进场景"（先 `new` 后 `AddChild`
-     * 是常见写法），那时时钟还是兜底的 0，对出来的基准会在第一次 tick（场景时钟
-     * 可能已经是 30 秒）把帧号甩飞。第一次 tick / `Play` / `SeekToFrame` 时才对齐，
-     * 于是"构造 → 进场景 → 开始播"和"运行期新建一个 sprite"是同一套语义。
-     *
-     * @param alreadyElapsedSeconds 第一次 tick 传**这一帧的 delta**：基准要退回到
-     *        "上一帧的时钟读数"，否则第一帧白丢（表现为"每次播放第一帧多显示
-     *        一个渲染帧"）。`Play` / `Seek` 没有"上一帧"，传 0。
-     */
     void ensureTimeBase(double alreadyElapsedSeconds = 0.0);
-
-    /// 有效帧率（`<= 0` 时退 12，和 `SpriteData` 的默认值一致）。
     double fps() const noexcept;
 
-    SpriteData _sprite{};
-
-    /// 素材形态（构造时按 `SpriteData::UsesSheet()` 定，之后不变）。
-    enum class FrameMode { Sequence, Sheet };
-    FrameMode _mode = FrameMode::Sequence;
-
-    /// 每帧的字节视图。指向 `_frameBytes[i]`（运行期读）或生成期烘的静态数组。
-    std::vector<LoadedFrame> _frames;
-
-    /// 运行期读进来的字节（本类拥有）。`runtimeAsset == false` 时全空。
-    std::vector<std::vector<std::uint8_t>> _frameBytes;
-
-    std::string _configError;
-    std::size_t _loadedFrameCount = 0;
-
-    std::size_t _frameIndex = 0;
-
-    /// 已经落过至少一帧了吗（没落过就没有"旧帧"，`frameChanged` 不发）。
-    bool _applied = false;
-
-    bool _playing = false;
-    bool _finished = false;
-
-    /// 暂停累计时长：`t = 时钟 − _pauseOffset + startOffset`。
-    double _pauseOffset = 0.0;
-
-    /// 时间基准对齐过了吗（见 `ensureTimeBase`）。
-    bool _offsetReady = false;
-
-    /// 本次暂停开始时的时钟读数（只在 `!_playing` 时有意义）。
-    double _pauseStartSeconds = 0.0;
-
-    /// 没有场景时的兜底时间（组件被摘出树之后仍能自己走，自检用）。
-    double _fallbackSeconds = 0.0;
-
-    std::uint64_t _frameAdvanceCount = 0;
-    std::uint64_t _skippedFrameCount = 0;
+    /// 构造期把"帧机要组件替它做的五件事"绑成本类的成员（见 `InkingSpriteLike::Hooks`）。
+    /// 静态档绑的是从 `InkingStaticImage` 继承来的 `SetImageBytes` /
+    /// `SetRenderSourceRect`（两者都会标重绘脏）。
+    static InkingSpriteLike::Hooks hooksFor(InkingSprite& self);
 };
 
-}  // namespace inking

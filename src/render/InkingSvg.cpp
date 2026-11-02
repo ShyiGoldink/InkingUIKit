@@ -9,7 +9,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace inking::detail {
+namespace inking_detail {
 
 namespace {
 
@@ -244,4 +244,4 @@ SvgRasterResult RasterizeSvg(const std::uint8_t* data, std::size_t size,
 #endif
 }
 
-}  // namespace inking::detail
+}  // namespace inking_detail

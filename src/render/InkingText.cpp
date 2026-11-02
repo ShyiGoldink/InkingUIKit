@@ -4,7 +4,7 @@
 #include <dataStruct/InkingImageScale.h>
 #include <render/InkingBatch.h>
 #include <render/InkingDraw.h>
-#include <config/window_config.h>  // DesignWidth/Height：触顶告警里要报"设计多少"
+#include <config/window_config.h>  // InkingDesignWidth/Height：触顶告警里要报"设计多少"
 #include <detail/InkLog.h>
 
 #include <render/InkingSvg.h>
@@ -36,7 +36,6 @@
 // 渲染器换人（自检里反复建 / 销毁）时**只丢记账、不去销毁**那些句柄——
 // 它们已经随渲染器死掉了，再 Destroy 就是 use-after-free。
 
-namespace inking {
 
 namespace {
 
@@ -183,7 +182,7 @@ struct TextLayer {
     /// CPU 侧图集：字形先 `SDL_BlitSurface` 进这里，再按矩形上传到纹理。
     SDL_Surface* glyphAtlasSurface = nullptr;
     /// 打包器：只算坐标（见 `InkingGlyphAtlas.h`）。
-    GlyphAtlas glyphPacker{1024};
+    InkingGlyphAtlas glyphPacker{1024};
     /**
      * 图集**已经满了**（0.8.3 T-02）。
      *
@@ -197,8 +196,8 @@ struct TextLayer {
      */
     bool glyphAtlasFull = false;
     /// 键 = 字体路径 + 字号 + 字形 → 它在图集里的落点与前进量。
-    std::unordered_map<std::string, detail::GlyphBitmap> glyphs;
-    detail::GlyphAtlasStats glyphStats{};
+    std::unordered_map<std::string, inking_detail::GlyphBitmap> glyphs;
+    inking_detail::GlyphAtlasStats glyphStats{};
 };
 
 TextLayer& layer() {
@@ -252,14 +251,14 @@ std::uint64_t TextureBytesOf(const SDL_Surface* surface) {
  * 静态量时 DLL 与 exe 各持一份 ⇒ "库侧切换、宿主侧读"会静默不一致，
  * 而画面上只表现为"开关时灵时不灵"。
  */
-detail::ImageSampling& SamplingSlot() {
-    static detail::ImageSampling mode = detail::ImageSampling::Linear;
+inking_detail::ImageSampling& SamplingSlot() {
+    static inking_detail::ImageSampling mode = inking_detail::ImageSampling::Linear;
     return mode;
 }
 
 /// 采样模式 → SDL 的枚举（只有两档，别在别处再写一份三元表达式）。
-SDL_ScaleMode ScaleModeOf(detail::ImageSampling mode) {
-    return mode == detail::ImageSampling::Nearest ? SDL_SCALEMODE_NEAREST
+SDL_ScaleMode ScaleModeOf(inking_detail::ImageSampling mode) {
+    return mode == inking_detail::ImageSampling::Nearest ? SDL_SCALEMODE_NEAREST
                                                   : SDL_SCALEMODE_LINEAR;
 }
 
@@ -351,10 +350,10 @@ float currentRasterRatio(SDL_Renderer* renderer) {
             std::snprintf(
                 detail, sizeof(detail),
                 "文字按 %.2f× 烘，但屏幕要 %.2f×（设计 %d×%d）——超出上限后会被"
-                "放大，字会偏糊。要更清就调 detail::SetTextRasterCap(%.1f)，"
+                "放大，字会偏糊。要更清就调 inking_detail::SetTextRasterCap(%.1f)，"
                 "代价是字形纹理面积按比例² 涨",
                 static_cast<double>(cap), static_cast<double>(raw),
-                DesignWidth(), DesignHeight(), static_cast<double>(raw));
+                InkingDesignWidth(), InkingDesignHeight(), static_cast<double>(raw));
             INK_LOG_WARN("InkingText", detail);
         }
     }
@@ -362,7 +361,7 @@ float currentRasterRatio(SDL_Renderer* renderer) {
         // 只丢图集，**不**丢纹理表：那张表里还有图片纹理（`PaintImage`），
         // 它们与比例无关，重解码一遍纯属浪费。整段文字的纹理按设备字号
         // 自己分档，多留几档的内存可以接受。
-        detail::ReleaseGlyphAtlas();
+        inking_detail::ReleaseGlyphAtlas();
         state.rasterRatio = ratio;
     }
     return ratio;
@@ -529,7 +528,7 @@ std::string ChainSignature(const std::vector<std::string>& chain) {
  *   3. `TTF_Init` 失败**不缓存**：它每次调用都会重试，缓存成"这条链没戏"
  *      会让后来 init 成功的进程永远画方块。
  */
-std::string ResolveFontChain(const TextRequest& request, float pixelSize) {
+std::string ResolveFontChain(const InkingTextRequest& request, float pixelSize) {
     TextLayer& state = layer();
     const bool explicitFont =
         !request.fontPath.empty() || !request.fontPaths.empty();
@@ -638,7 +637,7 @@ void EnsureRenderer(SDL_Renderer* renderer) {
     // 没变"的那一次发生——比例一变就会走 `currentRasterRatio` 里的重建，
     // 看起来反而没事，所以这个 bug 很难靠肉眼归因。
     // 自检里踩到的正是这一条：A 渲染器上复用了前一组测试留下的图集。
-    detail::ReleaseGlyphAtlas();
+    inking_detail::ReleaseGlyphAtlas();
     state.renderer = renderer;
 }
 
@@ -654,7 +653,7 @@ void DrawTextureTransformed(SDL_Renderer* renderer, SDL_Texture* texture,
                             float offsetX, float offsetY, float drawWidth,
                             float drawHeight, int width, int height, float mag,
                             float pixelX, float pixelY,
-                            const TransformSpec& transform,
+                            const InkingTransformSpec& transform,
                             const SDL_FRect* source = nullptr) {
     const float deviceW = static_cast<float>(width) * mag;
     const float deviceH = static_cast<float>(height) * mag;
@@ -679,11 +678,11 @@ void DrawTextureTransformed(SDL_Renderer* renderer, SDL_Texture* texture,
     float angle = transform.rotate;
     float pivotX = -localLeft * scale;
     float pivotY = -localTop * scale;
-    const Affine ancestor = detail::currentAncestorAffine();
+    const InkingAffine ancestor = inking_detail::currentAncestorAffine();
     if (!ancestor.IsIdentity()) {
         const float factor =
             std::sqrt(ancestor.a * ancestor.a + ancestor.b * ancestor.b);
-        const Point2 moved = ApplyAffine(
+        const InkingPoint2 moved = InkingApplyAffine(
             ancestor, destination.x + destination.w * 0.5f,
             destination.y + destination.h * 0.5f);
         destination.w *= factor;
@@ -691,7 +690,7 @@ void DrawTextureTransformed(SDL_Renderer* renderer, SDL_Texture* texture,
         destination.x = moved.x - destination.w * 0.5f;
         destination.y = moved.y - destination.h * 0.5f;
         angle += std::atan2(ancestor.b, ancestor.a)
-               / detail::kTransformDegToRad;
+               / inking_detail::kTransformDegToRad;
         pivotX *= factor;
         pivotY *= factor;
     }
@@ -743,7 +742,7 @@ TextureEntry* InsertTexture(SDL_Renderer* renderer, const std::string& key,
  * 键 = 字体路径 + 设备像素字号 + 文本。**颜色不在键里**：纹理烘成白字，
  * 画的时候用颜色调制上色。返回 nullptr 表示"这台机器没有可用字体"。
  */
-TextureEntry* AcquireTexture(SDL_Renderer* renderer, const TextRequest& request,
+TextureEntry* AcquireTexture(SDL_Renderer* renderer, const InkingTextRequest& request,
                              const std::string& fontPath, float deviceSize) {
     void* font = AcquireFont(fontPath, deviceSize);
     if (font == nullptr) {
@@ -772,7 +771,7 @@ TextureEntry* AcquireTexture(SDL_Renderer* renderer, const TextRequest& request,
 }
 
 #if defined(INK_HAS_SDL3_IMAGE)
-SDL_Surface* DecodeImageRaw(const ImageBytes& image) {
+SDL_Surface* DecodeImageRaw(const InkingImageBytes& image) {
     // 只读：SDL 不会改这块内存，const_cast 只是为了对上 SDL_IOFromMem 的签名。
     SDL_IOStream* stream =
         SDL_IOFromMem(const_cast<std::uint8_t*>(image.data), image.size);
@@ -883,7 +882,7 @@ SDL_Surface* BleedTransparentEdges(SDL_Surface* source) {
     return copy;
 }
 #else
-SDL_Surface* DecodeImageRaw(const ImageBytes&) { return nullptr; }
+SDL_Surface* DecodeImageRaw(const InkingImageBytes&) { return nullptr; }
 
 SDL_Surface* BleedTransparentEdges(SDL_Surface*) { return nullptr; }
 #endif
@@ -891,7 +890,7 @@ SDL_Surface* BleedTransparentEdges(SDL_Surface*) { return nullptr; }
 /// 取（或解码）一张图片的纹理。返回 nullptr 表示"这台机器解不出来"；
 /// SVG 那条路的失败原因写进 `error`（调用方要发 WARN）。
 TextureEntry* AcquireImageTexture(SDL_Renderer* renderer,
-                                  const ImageBytes& image, int boxWidth,
+                                  const InkingImageBytes& image, int boxWidth,
                                   int boxHeight, bool svg, std::string* error) {
     if (error != nullptr) {
         error->clear();
@@ -912,7 +911,7 @@ TextureEntry* AcquireImageTexture(SDL_Renderer* renderer,
             return &found->second;
         }
 
-        detail::SvgRasterResult raster = detail::RasterizeSvg(
+        inking_detail::SvgRasterResult raster = inking_detail::RasterizeSvg(
             image.data, image.size, boxWidth, boxHeight, kMaxSvgRasterPixels);
         if (raster.surface == nullptr) {
             if (error != nullptr) {
@@ -999,7 +998,7 @@ TextureEntry* AcquireImageTexture(SDL_Renderer* renderer,
 
 /// 退化画法：一块"字号 × 码点数"的实心方块（改动之前的占位块）。
 /// 注意它**不跟变换走**——这条路只在没接 TTF / 没字体时出现，和以前一样。
-void PaintPlaceholder(SDL_Renderer* renderer, const TextRequest& request,
+void PaintPlaceholder(SDL_Renderer* renderer, const InkingTextRequest& request,
                       float deviceSize, float pixelX, float pixelY,
                       float magnification) {
     const float width =
@@ -1010,17 +1009,17 @@ void PaintPlaceholder(SDL_Renderer* renderer, const TextRequest& request,
                          height};
     // 这是**直接绘制**（走 SDL_RenderFillRect，绕开几何批）：必须先刷批，
     // 否则这一笔会被后面刷出去的批次盖住（实测踩过一次）。
-    detail::NoteImmediateDraw();
-    detail::setDrawColor(
+    inking_detail::NoteImmediateDraw();
+    inking_detail::setDrawColor(
         renderer,
-        ColorAlpha(request.color) == 0u ? 0xFFFFFFFFu : request.color);
+        InkingColorAlpha(request.color) == 0u ? 0xFFFFFFFFu : request.color);
     SDL_RenderFillRect(renderer, &rect);
 }
 
 }  // namespace
 
-TextMetrics MeasureText(const TextRequest& request) {
-    TextMetrics metrics;
+InkingTextMetrics InkingMeasureText(const InkingTextRequest& request) {
+    InkingTextMetrics metrics;
     if (request.Empty() || request.fontSize <= 0.0f) {
         return metrics;
     }
@@ -1043,7 +1042,7 @@ TextMetrics MeasureText(const TextRequest& request) {
     return metrics;
 }
 
-namespace detail {
+namespace inking_detail {
 
 void SetImageSampling(ImageSampling mode) noexcept {
     SamplingSlot() = mode;
@@ -1122,7 +1121,7 @@ void BeginTextFrame(SDL_Renderer* renderer) noexcept {
     }
 
     // 批里可能还引用着等一下要丢的纹理：先刷出去，**顺序不能反**。
-    detail::FlushGeometry();
+    inking_detail::FlushGeometry();
 
     // 候选 = 本帧没碰过的条目。`lastUsedFrame` 相同时（同一帧里建的一批）按
     // 键名排一下，纯粹为了**确定性**：淘汰顺序会进日志与自检，不能依赖哈希序。
@@ -1279,7 +1278,7 @@ GlyphBitmap AcquireGlyph(SDL_Renderer* renderer, const std::string& fontPath,
     // 那是一次 use-after-free）。
     const int glyphWidth = surface->w;
     const int glyphHeight = surface->h;
-    const GlyphAtlas::Slot slot = state.glyphPacker.Insert(glyphWidth, glyphHeight);
+    const InkingGlyphAtlas::Slot slot = state.glyphPacker.Insert(glyphWidth, glyphHeight);
     if (!slot.valid) {
         // 图集满了：**不硬塞**，让调用方退回整段渲染——字不能消失。
         //
@@ -1295,7 +1294,7 @@ GlyphBitmap AcquireGlyph(SDL_Renderer* renderer, const std::string& fontPath,
                 detail, sizeof(detail),
                 "字形图集满了（已用 %d 格 / 上限 %d×%d，本格需要 %d×%d）：之后"
                 "文字改走「整段一张纹理」，内存与首帧耗时都会涨，字号越多越明显。"
-                "要腾地方就调 detail::ReleaseTextCache()（会重新烘全部字形）",
+                "要腾地方就调 inking_detail::ReleaseTextCache()（会重新烘全部字形）",
                 state.glyphPacker.SlotCount(), state.glyphPacker.Size(),
                 state.glyphPacker.Size(), glyphWidth, glyphHeight);
             INK_LOG_WARN("InkingText", detail);
@@ -1416,11 +1415,11 @@ std::vector<std::string> SplitLines(const std::string& text) {
  * 这里是"每个字形一份位图、跨字符串复用"（图集）。**取不到任何一个字形就返回
  * false**，由调用方落回整段渲染——半张脸比慢一点糟得多。
  */
-bool PaintTextGlyphByGlyph(SDL_Renderer* renderer, const TextRequest& request,
+bool PaintTextGlyphByGlyph(SDL_Renderer* renderer, const InkingTextRequest& request,
                            const std::string& fontPath, float deviceSize,
                            float rasterScale, float ratio, int width,
                            int height, float mag, float pixelX, float pixelY,
-                           const TransformSpec& transform) {
+                           const InkingTransformSpec& transform) {
     // 图集已经满了就**不必再试**（T-02）：这条路最终也就是"取不到字形 → 退回
     // 整段渲染"，而每次尝试都要把整段文字逐字形烘一遍（实测 19 次/帧）。
     // 短路之后行为与今天**完全一致**，只是不再白烧 CPU。
@@ -1441,7 +1440,7 @@ bool PaintTextGlyphByGlyph(SDL_Renderer* renderer, const TextRequest& request,
         return false;
     }
 
-    const GlyphMeasure measure = [font](std::string_view glyph) {
+    const InkingGlyphMeasure measure = [font](std::string_view glyph) {
         int w = 0;
         int h = 0;
         if (!MeasureWithFontRaw(font, std::string(glyph), &w, &h)) {
@@ -1464,9 +1463,9 @@ bool PaintTextGlyphByGlyph(SDL_Renderer* renderer, const TextRequest& request,
     for (std::size_t index = 0; index < lines.size(); ++index) {
         const float lineTop =
             static_cast<float>(index) * static_cast<float>(lineHeight);
-        const std::vector<GlyphPlacement> placements =
-            LayOutGlyphs(lines[index], 0.0f, measure);
-        for (const GlyphPlacement& placement : placements) {
+        const std::vector<InkingGlyphPlacement> placements =
+            InkingLayOutGlyphs(lines[index], 0.0f, measure);
+        for (const InkingGlyphPlacement& placement : placements) {
             const GlyphBitmap bitmap = AcquireGlyph(
                 renderer, fontPath, deviceSize,
                 std::string_view(lines[index])
@@ -1486,9 +1485,9 @@ bool PaintTextGlyphByGlyph(SDL_Renderer* renderer, const TextRequest& request,
     if (atlas == nullptr) {
         return false;
     }
-    SDL_SetTextureColorMod(atlas, ColorRed(request.color),
-                           ColorGreen(request.color), ColorBlue(request.color));
-    SDL_SetTextureAlphaMod(atlas, ColorAlpha(request.color));
+    SDL_SetTextureColorMod(atlas, InkingColorRed(request.color),
+                           InkingColorGreen(request.color), InkingColorBlue(request.color));
+    SDL_SetTextureAlphaMod(atlas, InkingColorAlpha(request.color));
 
     // 纹理绘制是**批次边界**（T-6 / B4 前半）：和整段那条路一样先刷几何。
     NoteImmediateDraw();
@@ -1514,9 +1513,9 @@ bool PaintTextGlyphByGlyph(SDL_Renderer* renderer, const TextRequest& request,
     return true;
 }
 
-void PaintText(SDL_Renderer* renderer, const TextRequest& request, int width,
+void PaintText(SDL_Renderer* renderer, const InkingTextRequest& request, int width,
                int height, float magnification, float pixelX, float pixelY,
-               const TransformSpec& transform) {
+               const InkingTransformSpec& transform) {
     if (renderer == nullptr || request.Empty() || width <= 0 || height <= 0) {
         return;
     }
@@ -1563,9 +1562,9 @@ void PaintText(SDL_Renderer* renderer, const TextRequest& request, int width,
     }
 
     // 颜色调制：纹理是白字，这里上色。alpha 也走调制（过渡期间文字跟着淡）。
-    SDL_SetTextureColorMod(entry->texture, ColorRed(request.color),
-                           ColorGreen(request.color), ColorBlue(request.color));
-    SDL_SetTextureAlphaMod(entry->texture, ColorAlpha(request.color));
+    SDL_SetTextureColorMod(entry->texture, InkingColorRed(request.color),
+                           InkingColorGreen(request.color), InkingColorBlue(request.color));
+    SDL_SetTextureAlphaMod(entry->texture, InkingColorAlpha(request.color));
 
     // 纹理绘制是**批次边界**：先把待提交的几何刷出去，顺序才不会乱（T-6）。
     NoteImmediateDraw();
@@ -1577,11 +1576,11 @@ void PaintText(SDL_Renderer* renderer, const TextRequest& request, int width,
                            pixelY, transform);
 }
 
-bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
-                const ShapeSpec& shape, int width, int height,
+bool PaintImage(SDL_Renderer* renderer, const InkingImageBytes& image,
+                const InkingShapeSpec& shape, int width, int height,
                 float magnification, float pixelX, float pixelY,
-                const TransformSpec& transform, ImageFit fit,
-                std::uint32_t tintColor, const ShapeBounds& srcRect) {
+                const InkingTransformSpec& transform, InkingImageFit fit,
+                std::uint32_t tintColor, const InkingShapeBounds& srcRect) {
     if (renderer == nullptr || image.Empty() || width <= 0 || height <= 0) {
         return false;
     }
@@ -1617,9 +1616,9 @@ bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
         return false;
     }
 
-    // 适配模式那点几何是**纯计算**（`ImageFitSpec`）：框、图、模式 → 绘制区域与 UV。
+    // 适配模式那点几何是**纯计算**（`InkingImageFitSpec`）：框、图、模式 → 绘制区域与 UV。
     // 这里只负责把三样尺寸凑齐（都换算到设备像素）。
-    ImageFitSpec spec;
+    InkingImageFitSpec spec;
     spec.fit = fit;
     spec.frameWidth = static_cast<float>(width) * mag;
     spec.frameHeight = static_cast<float>(height) * mag;
@@ -1636,7 +1635,7 @@ bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
     return true;
 }
 
-bool ProbeImageSize(const ImageBytes& image, int* width, int* height) {
+bool ProbeImageSize(const InkingImageBytes& image, int* width, int* height) {
     if (width != nullptr) {
         *width = 0;
     }
@@ -1686,7 +1685,7 @@ bool ProbeImageSize(const ImageBytes& image, int* width, int* height) {
 // ---------------------------------------------------------------------------
 // 素材够不够这块屏幕（0.7.1 T-04）——**只在 DEBUG 下真的检查**
 //
-// 判据与 `ImageScaleSpec` 同一套算术，只是 R 的来源换了：这里没有组件实例、
+// 判据与 `InkingImageScaleSpec` 同一套算术，只是 R 的来源换了：这里没有组件实例、
 // 也没有渲染器，用"主显示器桌面 ÷ 设计画布"近似 R_max（任务书 §3.1 的 R_max
 // 本来就是这个意思：**最大目标屏**，不是当前窗口）。
 //
@@ -1701,8 +1700,8 @@ namespace {
 
 /// 主显示器桌面对设计画布的倍率（R_max 的近似）。拿不到时按 1（保守：少报）。
 float MaxScreenRatio() {
-    const int designWidth = DesignWidth();
-    const int designHeight = DesignHeight();
+    const int designWidth = InkingDesignWidth();
+    const int designHeight = InkingDesignHeight();
     if (designWidth <= 0 || designHeight <= 0) {
         return 1.0f;
     }
@@ -1723,7 +1722,7 @@ float MaxScreenRatio() {
 
 }  // namespace
 
-void WarnIfImageUndersampled(const ImageBytes& image, int designWidth,
+void WarnIfImageUndersampled(const InkingImageBytes& image, int designWidth,
                              int designHeight, int srcWidth,
                              int srcHeight) noexcept {
     if (image.Empty() || designWidth <= 0 || designHeight <= 0) {
@@ -1748,7 +1747,7 @@ void WarnIfImageUndersampled(const ImageBytes& image, int designWidth,
     const int availableHeight = srcHeight > 0 ? srcHeight : imageHeight;
     const float ratioMax = MaxScreenRatio();
 
-    ImageScaleSpec spec;
+    InkingImageScaleSpec spec;
     spec.designWidth = designWidth;
     spec.depth = 1.0f;
     spec.ratioMax = ratioMax;
@@ -1756,7 +1755,7 @@ void WarnIfImageUndersampled(const ImageBytes& image, int designWidth,
     const float sigmaWidth =
         availableWidth > 0 ? availableWidth / needWidth : 0.0f;
 
-    ImageScaleSpec specHeight;
+    InkingImageScaleSpec specHeight;
     specHeight.designWidth = designHeight;
     specHeight.depth = 1.0f;
     specHeight.ratioMax = ratioMax;
@@ -1779,7 +1778,7 @@ void WarnIfImageUndersampled(const ImageBytes& image, int designWidth,
     std::snprintf(
         detail, sizeof(detail),
         "素材偏小：%s 是 %d×%d 像素，但这个 %d×%d（设计尺寸）的组件在 %.2f× 的"
-        "屏幕上要 %d×%d 才够（σ=%.2f）；放大会发软。按 ImageScaleSpec 的规则出图"
+        "屏幕上要 %d×%d 才够（σ=%.2f）；放大会发软。按 InkingImageScaleSpec 的规则出图"
         "（素材像素 = 设计尺寸 × 纵深 × R_max）",
         image.name.c_str(), availableWidth, availableHeight, designWidth,
         designHeight, static_cast<double>(ratioMax),
@@ -1790,7 +1789,7 @@ void WarnIfImageUndersampled(const ImageBytes& image, int designWidth,
 
 #else
 
-void WarnIfImageUndersampled(const ImageBytes&, int, int, int, int) noexcept {
+void WarnIfImageUndersampled(const InkingImageBytes&, int, int, int, int) noexcept {
     // Release：整段被编译掉。`TextCacheStats::imageUndersampled` 因此恒为 0
     //（自检两边都断言：不是"素材都够"，是"这段代码没编进来"）。
 }
@@ -1833,6 +1832,5 @@ void ReleaseTextCache() noexcept {
 #endif
 }
 
-}  // namespace detail
+}  // namespace inking_detail
 
-}  // namespace inking

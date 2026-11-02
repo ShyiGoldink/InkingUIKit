@@ -4,7 +4,7 @@
 //
 // 与其它组件最不同的一条：**内容不由配置描述**。
 // 按钮 / 面板 / 标签的外观都在数据里（颜色、形状、文字），而"这块布上画什么"
-// 来自一个**注入的绘制器**（见 `InkingCanvasPainter.h` / `CanvasContext.h`）。
+// 来自一个**注入的绘制器**（见 `InkingCanvasPainter.h` / `InkingCanvasContext.h`）。
 // 所以这份数据只回答四件事：多大、什么形状、什么底色、摆在哪儿。
 //
 // 为什么这样切：画布存在的意义就是"**框架不认识你要画什么**"。把内容塞进数据
@@ -18,10 +18,8 @@
 #include <cstdint>
 #include <string>
 
-namespace inking {
-
 /// 模块名常量：日志与自检要用（`SKILL.md` §10）。
-inline constexpr const char* kCanvasModuleName = "InkingStaticCanvas";
+inline constexpr const char* InkingCanvasModuleName = "InkingStaticCanvas";
 
 /**
  * @brief 一块画布的静态配置。
@@ -30,35 +28,35 @@ inline constexpr const char* kCanvasModuleName = "InkingStaticCanvas";
  * 因为构造时会**逐字段搬进基类**——漏一处的症状是"配置里写了、运行期没生效"，
  * 而且不报错（`AGENTS.md` §6 第 83 条）。
  */
-struct CanvasData {
+struct InkingCanvasData {
     std::string name;  ///< 与代码里用的名字一致（画布不走生成器，手写构造）
 
     int width = 0;   ///< 设计坐标
     int height = 0;
 
-    ShapeSpec shape = ShapeSpec::Rect();  ///< 本体形状：底色与命中都从它派生
+    InkingShapeSpec shape = InkingShapeSpec::Rect();  ///< 本体形状：底色与命中都从它派生
 
     /**
      * 本体底色，0xAARRGGBB。**默认 0 = 不画**。
      *
-     * 与按钮 / 面板不同，这里**不做"全透明兜底成黑"那一步**（`ButtonData::Normalize`
+     * 与按钮 / 面板不同，这里**不做"全透明兜底成黑"那一步**（`InkingButtonData::Normalize`
      * 那条）：画布透明是完全合法的常见形态——它就是一块"只画内容"的透明层。
      * 命中不受影响（命中判的是形状本体，和底色无关）。
      */
     std::uint32_t color = 0u;
 
     /// 本体描边（B3 那一套：一半在外一半在内、不参与命中）。`width <= 0` 不画。
-    StrokeSpec stroke{};
+    InkingStrokeSpec stroke{};
 
-    AnchorPoint selfAnchor{};   ///< 自身锚点
-    AnchorPoint traceAnchor{};  ///< 上级锚点
+    InkingAnchorPoint selfAnchor{};   ///< 自身锚点
+    InkingAnchorPoint traceAnchor{};  ///< 上级锚点
     float offsetX = 0.0f;  ///< 对齐之后再挪一点，设计坐标
     float offsetY = 0.0f;
 
     /// 布局（A6）：`layout` = 我是容器时怎么排孩子，`layoutItem` = 我在父容器里的
-    /// 意愿。与 `AnchorData` 里同名的那两个是同一份语义（构造时逐字段搬）。
-    LayoutSpec layout;
-    LayoutItem layoutItem;
+    /// 意愿。与 `InkingAnchorData` 里同名的那两个是同一份语义（构造时逐字段搬）。
+    InkingLayoutSpec layout;
+    InkingLayoutItem layoutItem;
 
     int zIndex = 0;       ///< 越大越靠上
     bool visible = true;  ///< 自己这一层的可见性
@@ -73,4 +71,3 @@ struct CanvasData {
     bool clipContent = true;
 };
 
-}  // namespace inking

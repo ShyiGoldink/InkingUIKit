@@ -10,23 +10,21 @@
 #include <dataStruct/InkingLayout.h>
 
 #include <vector>
-
-namespace inking {
-namespace detail {
+namespace inking_detail {
 namespace layout {
 
 /// 一个孩子交给求解器的输入。
 struct LayoutInput {
     /// `Measure` 出来的期望尺寸（内容驱动：文字多高、图片多大）。
-    LayoutSize desired{};
+    InkingLayoutSize desired{};
     /// 这个孩子在布局里的意愿（margin / fillMain / min-max / selfAlign）。
-    LayoutItem item{};
+    InkingLayoutItem item{};
 };
 
 /// 求解器给一个孩子算出的结果（相对**父级左上角**）。
 struct LayoutOutput {
-    LayoutRect rect{};  ///< 最终位置与尺寸
-    LayoutSize size{};  ///< 最终尺寸（与 rect 的 width/height 一致，方便取用）
+    InkingLayoutRect rect{};  ///< 最终位置与尺寸
+    InkingLayoutSize size{};  ///< 最终尺寸（与 rect 的 width/height 一致，方便取用）
 };
 
 /**
@@ -55,10 +53,9 @@ struct LayoutOutput {
  *   6. `Grid`：按 `columns` 等分列宽（`columnGap` 分隔），行高 = 该行里最高的
  *      那一项（含其 margin），单元格内按 `align` 摆放。
  */
-std::vector<LayoutOutput> Solve(const LayoutSpec& spec,
-                                const LayoutSize& containerSize,
+std::vector<LayoutOutput> Solve(const InkingLayoutSpec& spec,
+                                const InkingLayoutSize& containerSize,
                                 const std::vector<LayoutInput>& items);
 
 }  // namespace layout
-}  // namespace detail
-}  // namespace inking
+}  // namespace inking_detail

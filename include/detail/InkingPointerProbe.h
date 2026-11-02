@@ -26,11 +26,11 @@
 // ---------------------------------------------------------------------------
 // 双键（0.5.0）：状态按按钮分槽，判定体只有一份
 // ---------------------------------------------------------------------------
-// 0.5.0 起指针有两种语义状态（`PointerButton::Primary` / `Secondary`），本类因此
+// 0.5.0 起指针有两种语义状态（`InkingPointerButton::Primary` / `Secondary`），本类因此
 // 按**按钮分槽**：每个键各存一份 `{wasDown, captured}`，各出各的边沿。这样：
 //
 //   - 左右同按互不覆盖（共用一份 `wasDown` 会丢 `released`，按钮永久停在 Pressed）；
-//   - 加第三个键（中键 / 笔侧键）只是 `kPointerButtonCount` 变 3，循环自动跟上；
+//   - 加第三个键（中键 / 笔侧键）只是 `InkingPointerButtonCount` 变 3，循环自动跟上；
 //   - `hover` **不按槽分**——它只有一个，因为 hover 是"我指着谁"，与按哪个键无关。
 //
 // 本类**不产坐标**：`onPointerClick` 要的按下点由场景持有
@@ -42,8 +42,7 @@
 
 #include <input/PointerButton.h>
 
-namespace inking {
-namespace detail {
+namespace inking_detail {
 
 /// 单个按钮的一次判定结果。全 false 表示"这个键没变、也没发生边沿"。
 struct PointerButtonResult {
@@ -66,8 +65,8 @@ struct PointerProbeResult {
     PointerButtonResult secondary;
 
     /// 按按钮取那一槽的结果（`primary` / `secondary` 的只读视图）。
-    const PointerButtonResult& For(PointerButton button) const noexcept {
-        return button == PointerButton::Primary ? primary : secondary;
+    const PointerButtonResult& For(InkingPointerButton button) const noexcept {
+        return button == InkingPointerButton::Primary ? primary : secondary;
     }
 };
 
@@ -93,7 +92,7 @@ public:
      * 这类"边沿"上什么都不报（这正是它取代"每帧无条件判"的前提）。
      */
     PointerProbeResult Update(bool hit,
-                              const PointerDownState& downState) noexcept {
+                              const InkingPointerDownState& downState) noexcept {
         PointerProbeResult result;
 
         result.hovered = hit;
@@ -102,13 +101,13 @@ public:
 
         // 每键各算各的边沿。**先算 clicked 再清 captured**：反过来的话点击
         // 永远不成立（0.4.1 踩过）。
-        const auto slotOf = [&result](PointerButton button) -> PointerButtonResult& {
-            return button == PointerButton::Primary ? result.primary
+        const auto slotOf = [&result](InkingPointerButton button) -> PointerButtonResult& {
+            return button == InkingPointerButton::Primary ? result.primary
                                                     : result.secondary;
         };
 
-        for (std::size_t i = 0; i < kPointerButtonCount; ++i) {
-            const auto button = static_cast<PointerButton>(i);
+        for (std::size_t i = 0; i < InkingPointerButtonCount; ++i) {
+            const auto button = static_cast<InkingPointerButton>(i);
             Button& state = _buttons[i];
             PointerButtonResult& out = slotOf(button);
 
@@ -148,7 +147,7 @@ public:
      */
     void Reset() noexcept {
         _hovered = false;
-        for (std::size_t i = 0; i < kPointerButtonCount; ++i) {
+        for (std::size_t i = 0; i < InkingPointerButtonCount; ++i) {
             _buttons[i] = Button{};
         }
     }
@@ -157,8 +156,8 @@ public:
     bool IsHovered() const noexcept { return _hovered; }
 
     /// 上次判定里"这次按下算在本节点上"吗（按下之后滑出去仍为 true）。
-    bool IsCaptured(PointerButton button) const noexcept {
-        return _buttons[ToIndex(button)].captured;
+    bool IsCaptured(InkingPointerButton button) const noexcept {
+        return _buttons[InkingToIndex(button)].captured;
     }
 
 private:
@@ -169,8 +168,7 @@ private:
     };
 
     bool _hovered = false;
-    Button _buttons[kPointerButtonCount]{};
+    Button _buttons[InkingPointerButtonCount]{};
 };
 
-}  // namespace detail
-}  // namespace inking
+}  // namespace inking_detail

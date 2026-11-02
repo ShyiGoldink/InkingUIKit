@@ -12,26 +12,29 @@
 #include <canvas/InkingCanvasPainter.h>
 #include <canvas/InkingStaticCanvas.h>
 #include <image/InkingDynamicImage.h>
+#include <image/InkingDynamicSprite.h>
 #include <image/InkingSprite.h>
+#include <image/SpriteLike.h>
 #include <image/InkingStaticImage.h>
 #include <image/SpriteData.h>
 #include <video/InkingVideo.h>
 #include <event/InkingEvent.h>
 #include <input/KeyboardInput.h>
+#include <panel/InkingDynamicPanel.h>
 #include <panel/InkingStaticPanel.h>
 #include <prefab/FilePicker.h>
 #include <prefab/ListView.h>
 #include <prefab/MenuBar.h>
 #include <prefab/OptionBar.h>
 #include <prefab/Select.h>
+#include <text/InkingDynamicLabel.h>
 #include <text/InkingStaticLabel.h>
+#include <text/LabelLike.h>
 
 #include <SDL3/SDL.h>
 
 #include <type_traits>
 #include <utility>
-
-namespace inking {
 
 // ---------------------------------------------------------------------------
 // 编译期把两条设计约束钉住，别让后来的改动悄悄把它们拆掉
@@ -55,11 +58,11 @@ concept HasResize = requires(T& node) { node.Resize(1, 1); };
 
 template <typename T>
 concept HasChangeSelfAnchor =
-    requires(T& node) { node.ChangeSelfAnchor(AnchorPoint{0.5f, 0.5f}); };
+    requires(T& node) { node.ChangeSelfAnchor(InkingAnchorPoint{0.5f, 0.5f}); };
 
 template <typename T>
 concept HasChangeTraceAnchor =
-    requires(T& node) { node.ChangeTraceAnchor(AnchorPoint{0.5f, 0.5f}); };
+    requires(T& node) { node.ChangeTraceAnchor(InkingAnchorPoint{0.5f, 0.5f}); };
 
 template <typename T>
 concept HasChangeOffset =
@@ -74,7 +77,7 @@ concept HasChangeZIndex = requires(T& node) { node.ChangeZIndex(1); };
 /// A13：运行期显示变换的写入口（在**基类**上，所有组件都能调）。
 template <typename T>
 concept HasSetDisplayTransform =
-    requires(T& node) { node.SetDisplayTransform(TransformSpec{}); };
+    requires(T& node) { node.SetDisplayTransform(InkingTransformSpec{}); };
 
 static_assert(std::is_base_of_v<InkingStaticWidget, InkingStaticButton>,
               "Button 是静态组件：三态只换颜色，几何构造即定型");
@@ -126,17 +129,17 @@ static_assert(HasSetVisible<InkingDynamicButton>,
 static_assert(HasChangeZIndex<InkingDynamicButton>,
               "层级是骨架变化，两版都该有");
 
-// 两块按钮共用同一份三态外观与状态机（ButtonLook.h），不能各写一份：
+// 两块按钮共用同一份三态外观与状态机（InkingButtonLook.h），不能各写一份：
 // 两份实现各自演化就会出现"静态按钮按下去和动态按钮长得不一样"。
-// 这里钉住"两边问出来的三态是同一个类型"——谁另起一套 ButtonState 都会红。
+// 这里钉住"两边问出来的三态是同一个类型"——谁另起一套 InkingButtonState 都会红。
 static_assert(std::is_same_v<decltype(std::declval<const InkingStaticButton&>()
                                           .GetState()),
-                             ButtonState>,
-              "静态按钮的三态来自共用的 ButtonState");
+                             InkingButtonState>,
+              "静态按钮的三态来自共用的 InkingButtonState");
 static_assert(std::is_same_v<decltype(std::declval<const InkingDynamicButton&>()
                                           .GetState()),
-                             ButtonState>,
-              "动态按钮的三态也来自共用的 ButtonState");
+                             InkingButtonState>,
+              "动态按钮的三态也来自共用的 InkingButtonState");
 
 // ---------------------------------------------------------------------------
 // Panel（A1）：第一个"整块在动"的容器
@@ -169,6 +172,36 @@ static_assert(HasChangeZIndex<InkingStaticPanel>,
 // 该套件未搬入本仓库 ⇒ 这一项目前**没有**等价断言）：
 //   - `GetSubtreeTransform` 返回非单位变换时，子节点绘制要跟着动；
 //   - `OwnsSubtreeHit` 为 true 时，子孙不进命中表、而容器仍能被点到。
+// （G-07 补：动态面板那条等价断言已经在 `selftest` 的 `CheckDynamicPanel` 里，
+// 覆盖子树变换含滚动位移、裁剪与命中同源两项。）
+
+// ---------------------------------------------------------------------------
+// 动态面板（G-07）：同一个容器的另一档——几何能改、滚动拖动自判
+//
+// 与上面那段**镜像**，判据反过来。三条要盯住的：
+//   1. 动态面板**不能**是 `InkingStaticWidget`（既进表又不进表是自相矛盾的）；
+//   2. 四个几何写入口必须有，**静态版那四条反向断言必须仍在**——它们证明这一笔
+//      没有把旧类顺手改成动态（"复制"最容易犯的错）；
+//   3. 两档共用的是 `InkingPanelLook`（两态外观 / 过渡）与 `PanelPaint`（三笔绘制），
+//      本类**不继承** `InkingStaticPanel`：那条链上带着"几何构造即定型"的铁律。
+//      所以它**不可能**从静态版继承到几何写入口，反之亦然——这一条是结构上的。
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_base_of_v<InkingDynamicWidget, InkingDynamicPanel>,
+              "动态面板属于动态档：几何会自己变，所以不进命中表、占地记成洞");
+static_assert(!std::is_base_of_v<InkingStaticWidget, InkingDynamicPanel>,
+              "静态 / 动态是二选一，不能既进表又不进表");
+static_assert(!std::is_base_of_v<InkingStaticPanel, InkingDynamicPanel>,
+              "两档是兄弟不是父子：静态那条链上没有几何写入口");
+
+static_assert(HasResize<InkingDynamicPanel>,
+              "动态组件必须有 Resize（改占位是这一档存在的理由）");
+static_assert(HasChangeSelfAnchor<InkingDynamicPanel>,
+              "动态组件必须有 ChangeSelfAnchor");
+static_assert(HasChangeTraceAnchor<InkingDynamicPanel>,
+              "动态组件必须有 ChangeTraceAnchor");
+static_assert(HasChangeOffset<InkingDynamicPanel>,
+              "动态组件必须有 ChangeOffset");
 
 // ---------------------------------------------------------------------------
 // 预制件（C 系列）：**用现有配件组装**出来的可复用件
@@ -179,48 +212,48 @@ static_assert(HasChangeZIndex<InkingStaticPanel>,
 // 哪天有人为了"选项多了顺便改个高"把 Resize 塞进来，构建当场打红。
 // ---------------------------------------------------------------------------
 
-static_assert(std::is_base_of_v<InkingStaticWidget, prefab::OptionBar>,
+static_assert(std::is_base_of_v<InkingStaticWidget, inking_prefab::OptionBar>,
               "选项栏是预制件（静态档）：项的变化走重建 + 布局，不走几何写入口");
-static_assert(!std::is_base_of_v<InkingDynamicWidget, prefab::OptionBar>,
+static_assert(!std::is_base_of_v<InkingDynamicWidget, inking_prefab::OptionBar>,
               "静态 / 动态是二选一，不能既进表又不进表");
-static_assert(!HasResize<prefab::OptionBar>, "静态档不该有 Resize");
-static_assert(!HasChangeSelfAnchor<prefab::OptionBar>,
+static_assert(!HasResize<inking_prefab::OptionBar>, "静态档不该有 Resize");
+static_assert(!HasChangeSelfAnchor<inking_prefab::OptionBar>,
               "静态档不该有 ChangeSelfAnchor");
-static_assert(!HasChangeTraceAnchor<prefab::OptionBar>,
+static_assert(!HasChangeTraceAnchor<inking_prefab::OptionBar>,
               "静态档不该有 ChangeTraceAnchor");
-static_assert(!HasChangeOffset<prefab::OptionBar>,
+static_assert(!HasChangeOffset<inking_prefab::OptionBar>,
               "静态档不该有 ChangeOffset");
 
-static_assert(std::is_base_of_v<InkingStaticWidget, prefab::MenuBar>,
+static_assert(std::is_base_of_v<InkingStaticWidget, inking_prefab::MenuBar>,
               "菜单栏是预制件（静态档）：拖动是**窗口**的位移，不是自己的几何");
-static_assert(!std::is_base_of_v<InkingDynamicWidget, prefab::MenuBar>,
+static_assert(!std::is_base_of_v<InkingDynamicWidget, inking_prefab::MenuBar>,
               "静态 / 动态是二选一，不能既进表又不进表");
-static_assert(!HasResize<prefab::MenuBar>, "静态档不该有 Resize");
-static_assert(!HasChangeOffset<prefab::MenuBar>,
+static_assert(!HasResize<inking_prefab::MenuBar>, "静态档不该有 Resize");
+static_assert(!HasChangeOffset<inking_prefab::MenuBar>,
               "静态档不该有 ChangeOffset——窗口拖动走 MoveWindowBy");
 
-static_assert(std::is_base_of_v<InkingStaticWidget, prefab::ListView>,
+static_assert(std::is_base_of_v<InkingStaticWidget, inking_prefab::ListView>,
               "列表是预制件（静态档）：行由重建 + 布局安置，几何不自己动");
-static_assert(!std::is_base_of_v<InkingDynamicWidget, prefab::ListView>,
+static_assert(!std::is_base_of_v<InkingDynamicWidget, inking_prefab::ListView>,
               "静态 / 动态是二选一，不能既进表又不进表");
-static_assert(!HasResize<prefab::ListView>, "静态档不该有 Resize");
-static_assert(!HasChangeOffset<prefab::ListView>,
+static_assert(!HasResize<inking_prefab::ListView>, "静态档不该有 Resize");
+static_assert(!HasChangeOffset<inking_prefab::ListView>,
               "静态档不该有 ChangeOffset——滚动走 Panel 的 scroll 段");
 
-static_assert(std::is_base_of_v<InkingStaticWidget, prefab::Select>,
+static_assert(std::is_base_of_v<InkingStaticWidget, inking_prefab::Select>,
               "下拉是预制件（静态档）：展开收起只改可见性，几何构造即定型");
-static_assert(!std::is_base_of_v<InkingDynamicWidget, prefab::Select>,
+static_assert(!std::is_base_of_v<InkingDynamicWidget, inking_prefab::Select>,
               "静态 / 动态是二选一，不能既进表又不进表");
-static_assert(!HasResize<prefab::Select>, "静态档不该有 Resize");
-static_assert(!HasChangeOffset<prefab::Select>,
+static_assert(!HasResize<inking_prefab::Select>, "静态档不该有 Resize");
+static_assert(!HasChangeOffset<inking_prefab::Select>,
               "静态档不该有 ChangeOffset——展开态的位移写在配置里");
 
-static_assert(std::is_base_of_v<InkingStaticWidget, prefab::FilePicker>,
+static_assert(std::is_base_of_v<InkingStaticWidget, inking_prefab::FilePicker>,
               "文件选择器是预制件（静态档）：四块内容的位置构造期定死");
-static_assert(!std::is_base_of_v<InkingDynamicWidget, prefab::FilePicker>,
+static_assert(!std::is_base_of_v<InkingDynamicWidget, inking_prefab::FilePicker>,
               "静态 / 动态是二选一，不能既进表又不进表");
-static_assert(!HasResize<prefab::FilePicker>, "静态档不该有 Resize");
-static_assert(!HasChangeOffset<prefab::FilePicker>,
+static_assert(!HasResize<inking_prefab::FilePicker>, "静态档不该有 Resize");
+static_assert(!HasChangeOffset<inking_prefab::FilePicker>,
               "静态档不该有 ChangeOffset——换目录是换列表内容，不是挪自己");
 
 // ---------------------------------------------------------------------------
@@ -246,6 +279,60 @@ static_assert(HasSetVisible<InkingStaticLabel>,
               "可见性是骨架变化，两版都该有");
 static_assert(HasChangeZIndex<InkingStaticLabel>,
               "层级是骨架变化，两版都该有");
+
+// ---------------------------------------------------------------------------
+// 动态标签（G-05）：文字的另一个档——几何能改、改尺寸的时机**显式**
+//
+// 与上面那段**镜像**，判据反过来。三条要盯住的：
+//   1. 动态标签**不能**是 `InkingStaticWidget`（既进表又不进表是自相矛盾的）；
+//   2. 四个几何写入口必须有（这一档存在的理由），静态档的反向断言**必须仍在**
+//      ——它证明这一笔没有把旧类顺手改成动态（"复制"最容易犯的错）；
+//   3. A13 与 G-01 / G-03 同理保留：外部显示变换与几何正交，两套在绘制与
+//      命中处复合。
+//
+// 本类**唯一有的一笔新语义**（`FitToContent()`）是运行期的事，编译期查不到：
+// "在布局容器里不生效"由 `selftest` 的 `CheckDynamicLabel` 用
+// 返回值 + 尺寸不变 + 一条 WARN 钉住（那是静默失效的形态，只能在运行期断言）。
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_base_of_v<InkingDynamicWidget, InkingDynamicLabel>,
+              "动态标签属于动态档：几何会在运行期变，所以不进命中表、占地记成洞");
+static_assert(!std::is_base_of_v<InkingStaticWidget, InkingDynamicLabel>,
+              "静态 / 动态是二选一，不能既进表又不进表");
+
+static_assert(HasResize<InkingDynamicLabel>,
+              "动态组件必须有 Resize（`FitToContent()` 也走它）");
+static_assert(HasChangeSelfAnchor<InkingDynamicLabel>,
+              "动态组件必须有 ChangeSelfAnchor");
+static_assert(HasChangeTraceAnchor<InkingDynamicLabel>,
+              "动态组件必须有 ChangeTraceAnchor");
+static_assert(HasChangeOffset<InkingDynamicLabel>,
+              "动态组件必须有 ChangeOffset");
+
+static_assert(HasSetDisplayTransform<InkingDynamicLabel>,
+              "动态标签仍认外部显示变换（A13）：两套变换正交、在绘制/命中处复合");
+
+// ---------------------------------------------------------------------------
+// 排版共用层（G-06，纯重构）：两档共用 `InkingLabelLike`，且它**不是契约**
+//
+// 与 `InkingSpriteLike` 那一段同构，两条判据都是"改回去会静默出事"的那种：
+//   1. **不许有纯虚函数**（`TaskGuide-G.md` §4 第 2 条）：生成器会派生这些组件，
+//      基类里一个纯虚就让下游生成的类变成抽象类，报错却落在"实例化"那一行。
+//   2. **不许有虚函数**（含虚析构）：`InkingLabelLike` 是两档的**次基类**，给它一张
+//      vtable 就会给 `InkingStaticLabel` / `InkingDynamicLabel` 引入析构 thunk，
+//      `nm -g` 的符号集合当场变——G-02 在 `InkingImageLike` 上踩过同一条。所以
+//      "画字时要的水平滚动量"走**参数**（`paintLabelText(..., scrollX)`），
+//      不走虚钩子。
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_base_of_v<InkingLabelLike, InkingStaticLabel>,
+              "静态标签的排版在 InkingLabelLike：两档共用一份，别再各抄一份");
+static_assert(std::is_base_of_v<InkingLabelLike, InkingDynamicLabel>,
+              "动态标签的排版也在 InkingLabelLike：G-05 的复制品已并入");
+static_assert(!std::is_abstract_v<InkingLabelLike>,
+              "InkingLabelLike 里不许有纯虚函数：它是共用实现，不是契约（§4 第 2 条）");
+static_assert(!std::has_virtual_destructor_v<InkingLabelLike>,
+              "InkingLabelLike 不许有虚析构：会给两档加析构 thunk，nm 判据当场红");
 
 // ---------------------------------------------------------------------------
 // 通用事件槽（A9）：一个**类型**，不是基类上的一份清单
@@ -291,10 +378,10 @@ static_assert(HasSetVisible<InkingStaticImage>, "可见性是骨架变化，两�
 static_assert(HasChangeZIndex<InkingStaticImage>, "层级是骨架变化，两版都该有");
 
 // 图片的"数据"是按钮那份（A11：img 就是没有 onClicked 的 button）。
-// 钉住这条继承关系：哪天有人把 ImageData 改成"再抄一份字段"，这里会红——
-// 那时要一起想清楚"AnchorData 加字段要同步几处"（AGENTS §6 第 83 条）。
-static_assert(std::is_base_of_v<ButtonData, ImageData>,
-              "ImageData 复用 ButtonData：img 是没有 onClicked 的 button");
+// 钉住这条继承关系：哪天有人把 InkingImageData 改成"再抄一份字段"，这里会红——
+// 那时要一起想清楚"InkingAnchorData 加字段要同步几处"（AGENTS §6 第 83 条）。
+static_assert(std::is_base_of_v<InkingButtonData, InkingImageData>,
+              "InkingImageData 复用 InkingButtonData：img 是没有 onClicked 的 button");
 
 // ---------------------------------------------------------------------------
 // 动态图片（G-01）：同一张图的另一档——几何能改、输入靠拉
@@ -346,6 +433,56 @@ static_assert(HasSetVisible<InkingSprite>, "可见性是骨架变化，两版都
 static_assert(HasChangeZIndex<InkingSprite>, "层级是骨架变化，两版都该有");
 
 // ---------------------------------------------------------------------------
+// 动态精灵（G-03）：帧动画的另一档——帧机同源、几何能改
+//
+// 与上面那段**镜像**，判据反过来。两条要盯住的：
+//   1. 动态精灵**不能**是 `InkingStaticWidget`（既进表又不进表是自相矛盾的）；
+//   2. `!HasResize<InkingSprite>` 那条断言**必须仍在**——它证明这一笔没有把静态
+//      档顺手改成动态（"复制"这一笔最容易犯的错是改到旧类上）。
+//
+// A13 与 G-01 同理保留：外部显示变换与几何正交，两套在绘制与命中处复合。
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_base_of_v<InkingDynamicWidget, InkingDynamicSprite>,
+              "动态精灵属于动态档：几何会自己变，所以不进命中表、占地记成洞");
+static_assert(!std::is_base_of_v<InkingStaticWidget, InkingDynamicSprite>,
+              "静态 / 动态是二选一，不能既进表又不进表");
+
+static_assert(HasResize<InkingDynamicSprite>,
+              "动态组件必须有 Resize（几何写入口是这一档存在的理由）");
+static_assert(HasChangeSelfAnchor<InkingDynamicSprite>,
+              "动态组件必须有 ChangeSelfAnchor");
+static_assert(HasChangeTraceAnchor<InkingDynamicSprite>,
+              "动态组件必须有 ChangeTraceAnchor");
+static_assert(HasChangeOffset<InkingDynamicSprite>,
+              "动态组件必须有 ChangeOffset");
+
+static_assert(HasSetDisplayTransform<InkingDynamicSprite>,
+              "动态精灵仍认外部显示变换（A13）：两套变换正交、在绘制/命中处复合");
+
+// ---------------------------------------------------------------------------
+// 帧机共用层（G-04，纯重构）：两档共用 `InkingSpriteLike`，且它**不是契约**
+//
+// 两条判据钉在这里，都是"改回去会静默出事"的那种：
+//   1. **不许有纯虚函数**（`TaskGuide-G.md` §4 第 2 条）：代码生成器会派生这些
+//      组件，基类里一个纯虚就让下游生成的类变成抽象类，而报错落在"实例化"那一行，
+//      看不出是基类的问题。`is_abstract_v` 是这条的编译期防线。
+//   2. **不许有虚函数**（含虚析构）：`InkingSpriteLike` 是两档的**次基类**，给它一张
+//      vtable 就会给 `InkingSprite` 引入析构 thunk，`nm -g` 的符号集合当场变——
+//      G-04 的硬判据是"`InkingSprite` 的符号一个都不能少"，G-02 在 `InkingImageLike`
+//      上踩过同一条。所以"要组件替它做的事"走构造期注入的回调，不走虚函数。
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_base_of_v<InkingSpriteLike, InkingSprite>,
+              "静态精灵的帧机在 InkingSpriteLike：两档共用一份实现，别再各抄一份");
+static_assert(std::is_base_of_v<InkingSpriteLike, InkingDynamicSprite>,
+              "动态精灵的帧机也在 InkingSpriteLike：G-03 的复制品已并入");
+static_assert(!std::is_abstract_v<InkingSpriteLike>,
+              "InkingSpriteLike 里不许有纯虚函数：它是共用实现，不是契约（§4 第 2 条）");
+static_assert(!std::has_virtual_destructor_v<InkingSpriteLike>,
+              "InkingSpriteLike 不许有虚析构：会给两档加析构 thunk，nm 判据当场红");
+
+// ---------------------------------------------------------------------------
 // Canvas（A12）：一块"谁都能画"的表面
 //
 // 它也是**静态档**：几何构造即定型，内容变了只标重绘脏（`Invalidate`）——
@@ -354,7 +491,7 @@ static_assert(HasChangeZIndex<InkingSprite>, "层级是骨架变化，两版都�
 // 另外钉住两条 A12 特有的契约：
 //   1. **绘制器是纯接口、虚析构必须有**（`SKILL.md` §3.4）：业务代码派生它、
 //      经基类指针持有；缺虚析构就是 UB，而那种错只在销毁时才现形；
-//   2. **公开绘制词汇不拖 SDL 进来**（`AGENTS.md` §3 第 2 条）：`CanvasContext`
+//   2. **公开绘制词汇不拖 SDL 进来**（`AGENTS.md` §3 第 2 条）：`InkingCanvasContext`
 //      里出现 SDL 的地方只有前向声明的 `SDL_Renderer*`。这条最容易被"顺手
 //      include 一下"破坏，所以连"它是纯接口"一起钉在这里。
 // ---------------------------------------------------------------------------
@@ -374,12 +511,12 @@ static_assert(!HasChangeOffset<InkingStaticCanvas>,
 static_assert(HasSetVisible<InkingStaticCanvas>, "可见性是骨架变化，两版都该有");
 static_assert(HasChangeZIndex<InkingStaticCanvas>, "层级是骨架变化，两版都该有");
 
-static_assert(std::is_abstract_v<ICanvasPainter>,
+static_assert(std::is_abstract_v<InkingCanvasPainter>,
               "绘制器是纯接口：它自己不该能实例化");
-static_assert(std::has_virtual_destructor_v<ICanvasPainter>,
+static_assert(std::has_virtual_destructor_v<InkingCanvasPainter>,
               "虚析构必须有：否则经基类指针销毁派生绘制器是 UB（SKILL §3.4）");
-static_assert(std::is_constructible_v<CanvasPaintFn, void (*)(CanvasContext&)>,
-              "lambda 那条路要真的能构造（CanvasPaintFn 就是 std::function）");
+static_assert(std::is_constructible_v<InkingCanvasPaintFn, void (*)(InkingCanvasContext&)>,
+              "lambda 那条路要真的能构造（InkingCanvasPaintFn 就是 std::function）");
 
 // ---------------------------------------------------------------------------
 // 运行期显示变换（A13）：图片拖拽 / 缩放靠它
@@ -412,8 +549,8 @@ static_assert(HasSetDisplayTransform<InkingStaticPanel>,
 //      不过"——那就把可选依赖变成了硬依赖（`AGENTS.md` §3 第 2 条讲的是 SDL，
 //      同一条理由）。而"这两行能被编到"本身就证明了头是干净的（真接了 FFmpeg
 //      时，这个编译单元里 INK_HAS_FFMPEG=1，头要是拖了 FFmpeg 就会露）；
-//   2. **数据复用按钮那份**（和 `ImageData` 一样）：形状 / 描边阴影 / 锚点 /
-//      命中全同构，只有"画面从哪来"不同 ⇒ 往 `AnchorData` 加字段时不用再同步。
+//   2. **数据复用按钮那份**（和 `InkingImageData` 一样）：形状 / 描边阴影 / 锚点 /
+//      命中全同构，只有"画面从哪来"不同 ⇒ 往 `InkingAnchorData` 加字段时不用再同步。
 // ---------------------------------------------------------------------------
 
 static_assert(std::is_base_of_v<InkingStaticWidget, InkingStaticVideo>,
@@ -431,8 +568,8 @@ static_assert(!HasChangeOffset<InkingStaticVideo>,
 static_assert(HasSetVisible<InkingStaticVideo>, "可见性是骨架变化，两版都该有");
 static_assert(HasChangeZIndex<InkingStaticVideo>, "层级是骨架变化，两版都该有");
 
-static_assert(std::is_base_of_v<ButtonData, VideoData>,
-              "VideoData 复用 ButtonData：形状 / 描边阴影 / 锚点全同构");
+static_assert(std::is_base_of_v<InkingButtonData, InkingVideoData>,
+              "InkingVideoData 复用 InkingButtonData：形状 / 描边阴影 / 锚点全同构");
 static_assert(std::has_virtual_destructor_v<InkingStaticVideo>,
               "视频持有解码状态（pimpl），析构必须虚");
 static_assert(!std::is_copy_constructible_v<InkingStaticVideo>,
@@ -447,12 +584,12 @@ static_assert(!std::is_copy_constructible_v<InkingStaticVideo>,
 // 里，而且**故意不析构**——`AGENTS.md` §6 第 88 条）。
 // ---------------------------------------------------------------------------
 
-static_assert(std::is_copy_constructible_v<AssetConfig>,
+static_assert(std::is_copy_constructible_v<InkingAssetConfig>,
               "资源配置是值语义：按值传进去、按值读回来");
-static_assert(std::is_copy_constructible_v<AssetStats>,
+static_assert(std::is_copy_constructible_v<InkingAssetStats>,
               "统计是值语义：观测口返回一份快照");
 
-std::string sdl3_version() {
+std::string InkingSdl3_version() {
     // SDL3 把版本编码成一个整数返回（SDL2 是出参形式的 SDL_version）。
     const int version = SDL_GetVersion();
     return std::to_string(SDL_VERSIONNUM_MAJOR(version)) + "."
@@ -460,5 +597,4 @@ std::string sdl3_version() {
          + std::to_string(SDL_VERSIONNUM_MICRO(version));
 }
 
-}  // namespace inking
 

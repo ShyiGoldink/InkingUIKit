@@ -19,13 +19,13 @@
 
 | 结论 | 状态 | 一句话依据 |
 | --- | --- | --- |
-| 静态组件进烘焙命中表，动态组件不进表 | **成立** | `HitTable` + `rebuildHitTable()`；自检断言 `GetHitTableEntryCount() > 0` |
+| 静态组件进烘焙命中表，动态组件不进表 | **成立** | `InkingHitTable` + `rebuildHitTable()`；自检断言 `GetHitTableEntryCount() > 0` |
 | 抽屉 / 面板开合不重烘命中表 | **成立** | 变换通道；容器只登记一条盖住子树的包络 |
 | 同纹理连续绘制能合批 | **成立** | `BatchStats::textureDraws` 抓得住；批按纹理分界 |
 | 静止帧复用顶点、只做平移 | **成立** | `VertexCacheSlot` 的键与 `vertexReuses` 计数 |
 | 列表 1000 项也只建十几二十行 | **成立** | 窗口化 + 两头占位块；`GetBuiltRowCount()` |
-| 单行文本框的光标左右移动 / 选区 | **成立** | `TextEditState::MoveLeft/MoveRight(select)` |
-| 光标上下移动 + 跟随滚动 | **不成立（这版不做）** | 见 §7.6；`TextEditState.h:32` |
+| 单行文本框的光标左右移动 / 选区 | **成立** | `InkingTextEditState::MoveLeft/MoveRight(select)` |
+| 光标上下移动 + 跟随滚动 | **不成立（这版不做）** | 见 §7.6；`InkingTextEditState.h:32` |
 | 柔边阴影 / 真模糊 | **做不到（当前渲染路径）** | 阴影是偏移实心副本，见 §8 |
 | 局部层级（A8b） | **成立** | 树序 + 兄弟内 z；父子/兄弟/跨子树三项都有自检断言，含真渲染像素断言 |
 | 子节点逃出父级（portal） | **这版不做** | 子 z 再大也盖不过父级的兄弟；见 README「已知限制」4 |
@@ -38,7 +38,7 @@
 
 | 项 | 值 |
 | --- | --- |
-| 版本 | `0.5.2`（`kVersion` / `kVersionStage`） |
+| 版本 | `0.5.2`（`InkingVersion` / `InkingVersionStage`） |
 | 平台 | Windows 11 Home China + MSYS2 UCRT64 |
 | 图形 | SDL3；自检用 dummy 视频驱动 + 软件渲染器 |
 | 构建 | Release，Ninja |
@@ -65,7 +65,7 @@
 
 | 观测口 | 读什么 | 口径 / 注意 |
 | --- | --- | --- |
-| `detail::BatchStatsSnapshot()` | 提交层累计计数 | **累计值**，自检取前后差值 |
+| `inking_detail::BatchStatsSnapshot()` | 提交层累计计数 | **累计值**，自检取前后差值 |
 | `BatchStats::geometrySubmissions` | 真的调了几次 `SDL_RenderGeometry` | 合批生效时增长变慢 |
 | `BatchStats::vertexRebuilds` / `vertexReuses` | 重算 / 只平移复用顶点 | 静止帧应只有 `reuses` |
 | `BatchStats::textureSubmissions` / `textureDraws` | 绕开批次的直接绘制 / 带纹理提交 | 文字与 `contain` 图片会走前者 |
@@ -77,8 +77,8 @@
 | `InkingScene::GetHitDirtyNodeCount()` | 处于命中脏的节点数 | 约 `kHitQuietFrames = 3` 帧后回 0 |
 | `InkingScene::GetStructureGeneration()` | 骨架变化次数 | 判"有没有白重建"的硬判据 |
 | `InkingStaticButton::UnknownNameCount()` | 按名字取配置失败的次数 | 静默失败变成可断言 |
-| `prefab::ListView::GetBuiltRowCount()` | 真正建出来的行节点数 | 与 `GetItemCount()` 对照 |
-| `prefab::OptionBar::GetBuiltItemCount()` | 建出来的项节点数 | 等于拥有型子节点数 |
+| `inking_prefab::ListView::GetBuiltRowCount()` | 真正建出来的行节点数 | 与 `GetItemCount()` 对照 |
+| `inking_prefab::OptionBar::GetBuiltItemCount()` | 建出来的项节点数 | 等于拥有型子节点数 |
 | `InkingStaticCanvas::GetPaintCount()` / `GetReplayCount()` | 绘制器调用 / 命令表回放 | 脏驱动是否生效 |
 | `GetDisplayTransformRevision()` / `GetDisplayTransformRejectedCount()` | 外部变换生效 / 被拒次数 | 拒绝不静默 |
 
@@ -96,7 +96,7 @@
 
 | # | 结论 | 证据 / 观测口 |
 | --- | --- | --- |
-| 1 | 静态组件构造即进命中表，动态组件只留"洞" | `GetHitTableEntryCount()`；`HitTable::AddHole` |
+| 1 | 静态组件构造即进命中表，动态组件只留"洞" | `GetHitTableEntryCount()`；`InkingHitTable::AddHole` |
 | 2 | 面板开合只改变换，不重烘表 | 开合前后 `GetHitTableEntryCount()` 不变 |
 | 3 | 抽屉里的按钮仍可点 | 场景查表到容器后 `HitTestNode` 深挖一层 |
 | 4 | 同纹理连续绘制合并 | `BatchStats::textureDraws` 差值小于绘制笔数 |
@@ -272,12 +272,12 @@
 
 | 能力 | 状态 | 依据 |
 | --- | --- | --- |
-| 光标左右移动 | **已落地** | `TextEditState::MoveLeft` / `MoveRight` |
+| 光标左右移动 | **已落地** | `InkingTextEditState::MoveLeft` / `MoveRight` |
 | 选区（Shift + 左右、全选、拖选） | **已落地** | `MoveLeft(true)` / `SelectAll` / `PressAt` + `DragTo` |
 | 插入 / 退格 / Delete / 剪贴板 / IME 提交 | **已落地** | `InsertText` / `Backspace` / `DeleteForward` / `onTextInput` |
-| **光标上下移动 + 跟随滚动** | **未做（另一件事）** | `TextEditState.h:32` |
+| **光标上下移动 + 跟随滚动** | **未做（另一件事）** | `InkingTextEditState.h:32` |
 | 多行输入 | **未做** | `InkingTextInput.h:24-25` 强制 `NoWrap` |
-| 撤销 / 重做、双向文本、字素簇 | **未做** | `TextEditState.h:34-36` |
+| 撤销 / 重做、双向文本、字素簇 | **未做** | `InkingTextEditState.h:34-36` |
 | Tab 焦点遍历、候选窗位置 | **未做** | `InkingTextInput.h:62-63` |
 
 **为什么上下移动不是"多按两个键"**：单行输入框里"上 / 下"没有语义；到了多行，
@@ -291,7 +291,7 @@
 - 位置一律是**字节偏移里的码点边界**，点击算出的偏移会向前吸附；中文退格是
   整码点删，不会把汉字切成两半。
 - 粘贴多行时 `\r` / `\n` 被丢掉，Enter 留给"提交"。
-- 编辑状态是独立的一份 `TextEditState`（纯逻辑、可单测）；每次改动后同步给标签
+- 编辑状态是独立的一份 `InkingTextEditState`（纯逻辑、可单测）；每次改动后同步给标签
   基类，触发重排 + 重绘。
 
 ---
@@ -302,12 +302,12 @@
 | --- | --- | --- | --- |
 | **柔边阴影 / 真模糊** | 做不到（当前渲染路径） | `InkingDecoration.h:36-40` | 阴影是**偏移的实心副本**；真模糊要离屏目标 + 卷积（或 SDF 软化），是另一条渲染路径 |
 | **局部层级 A8b** | 这版不做 | `InkingStaticPanel.h:158`；`Select.h:21` | 全局只有一条 z 序；容器里的东西盖不住容器外的兄弟。`Select` 因此用 `expandedZIndex = 200` 换层级 |
-| **多指针** | 这版不做 | `MouseInput.h:99-107`；`InputDesign.md` §15 | 只认第一根按下的手指；后来的手指**明确忽略**，否则两根手指会互相抢一个指针状态 |
+| **多指针** | 这版不做 | `InkingMouseInput.h:99-107`；`InputDesign.md` §15 | 只认第一根按下的手指；后来的手指**明确忽略**，否则两根手指会互相抢一个指针状态 |
 | **跨平台（Linux / macOS）** | 未验证 | `API.md` §2；`CHANGELOG.md` | 只在 Windows + MSYS2 UCRT64 构建过；不承诺行为一致 |
 | **`ring` / `arc` 的描边** | 做不到（当前实现） | `InkingDraw.h:122-125` | 它们本身就是一条细带，沿边界描边会变成四条线；现在**直接不画**，配置写了也不报错 |
 | **原生文件对话框** | 这版不做（已裁定） | `FilePickerData.h:9-13` | COM + 宽字符 + 无法自检；走自绘 `FilePicker` |
-| **多行输入 / 光标上下 / 跟随滚动** | 这版不做 | `TextEditState.h:30-32` | 见 §7.6；要排版 + 编辑 + 滚动三处一起改 |
-| **撤销 / 重做、双向文本、字素簇** | 这版不做 | `TextEditState.h:34-36` | emoji 组合、国旗按码点删；纯逻辑层尚未建模 |
+| **多行输入 / 光标上下 / 跟随滚动** | 这版不做 | `InkingTextEditState.h:30-32` | 见 §7.6；要排版 + 编辑 + 滚动三处一起改 |
+| **撤销 / 重做、双向文本、字素簇** | 这版不做 | `InkingTextEditState.h:34-36` | emoji 组合、国旗按码点删；纯逻辑层尚未建模 |
 | **Tab 焦点遍历** | 这版不做 | `InkingTextInput.h:62-63` | 焦点是"点击获得"；键盘那层的遍历还没做 |
 | **图片纹理进顶点缓存** | 这版不做 | `InkingDraw.h:146-150` | 缓存键要带纹理句柄 + 适配模式 + 图尺寸，一个节点只有一个缓存槽 |
 | **动态组件的遮挡仲裁** | 这版不做 | `InkingDynamicButton.h:33`；`InputDesign.md` §15 第 1 条 | 动态组件自管自，z 序不由 `JudgePointer` 负责 |
@@ -320,7 +320,7 @@
 1. **真窗口渲染、文字栅格化、视频解码**：沙箱内 `SDL_IOFromFile` 可能失败，
    字体打不开；这三项按"可用但未逐项验收"看待。
 2. **手感的验收**：动画曲线、拖拽跟手、滚动惯性这类东西没有数值判据，必须人看。
-3. **`TaskQueue` 退出收尾**：函数内静态量在 DLL 卸载时析构并 join 管家线程，
+3. **`InkingTaskQueue` 退出收尾**：函数内静态量在 DLL 卸载时析构并 join 管家线程，
    某些环境下进程退出像"挂住"；与业务无关，属线程收尾语义。
 4. **文档缺口**：`InputDesign.md`、`TaskGuide.md`、`CXXCSS.md`、`AGENTS.md`
    仍不完整（见 `SKILL.md` §0），注释里的条号无法逐条核对。
@@ -336,7 +336,7 @@ cmake --build build -j
 cd build && PATH=.:$PATH ./bin/inking_demo_selftest.exe
 ```
 
-读 **stdout 末行"失败项：N"**，不要看退出码：自检退出时会因 `TaskQueue` 的
+读 **stdout 末行"失败项：N"**，不要看退出码：自检退出时会因 `InkingTaskQueue` 的
 静态量析构而"挂住"，与失败项无关（`API.md` §7）。
 
 要复现本报告里的计数：

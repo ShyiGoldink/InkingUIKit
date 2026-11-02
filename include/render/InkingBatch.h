@@ -30,7 +30,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace inking::detail {
+namespace inking_detail {
 
 /**
  * @brief 一个组件的**顶点缓存槽**（PIMPL：锚点持有一个 `unique_ptr`）。
@@ -43,11 +43,11 @@ struct VertexCacheSlot {
     std::vector<int> indices;
 
     /// 这批顶点是按什么算出来的：任何一项变了就重算（其余情况只做平移）。
-    ShapeSpec shape{};
+    InkingShapeSpec shape{};
     int width = 0;
     int height = 0;
     float magnification = 0.0f;
-    TransformSpec transform{};
+    InkingTransformSpec transform{};
     /// **颜色也算键**：顶点里带的是逐顶点颜色（`SDL_Vertex.color`），
     /// 换色不复用就会"状态切了、画面没变"——实测踩过一次。
     std::uint32_t color = 0u;
@@ -164,9 +164,9 @@ void NoteImmediateDraw() noexcept;
  * 取整用**包含式**（floor 起点、ceil 终点）：宁可多画半像素，也不要因为取整
  * 把内容削掉一条——"少画一像素"比"多画一像素"难查得多。
  */
-void SetClipRect(SDL_Renderer* renderer, const ShapeBounds& deviceRect) noexcept;
+void SetClipRect(SDL_Renderer* renderer, const InkingShapeBounds& deviceRect) noexcept;
 
 /// 关掉裁剪（恢复成整个渲染目标）。同样先刷缓冲（在旧裁剪下刷完再关）。
 void ClearClipRect(SDL_Renderer* renderer) noexcept;
 
-}  // namespace inking::detail
+}  // namespace inking_detail

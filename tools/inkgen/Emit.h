@@ -18,7 +18,7 @@
 // A7 的两项各有各的形态，不是"再抄一遍类声明"：
 //   - `Label` 与 Button / Panel 同形（一个名字一个类，数据烘在类里）；
 //   - `Text` 是**语言表**（不是组件）：产物里是静态数据 + 一个安装函数，
-//     启动期自动装进 `inking::InstallTextTable`；它只允许一份。
+//     启动期自动装进 `InkingInstallTextTable`；它只允许一份。
 
 #include "Cxxcss.h"
 
@@ -30,8 +30,8 @@ namespace inkgen {
 struct EmitOptions {
     /// 产物目录（不存在会创建）。约定只指向 build 目录，不写源码树。
     std::string outDir;
-    /// 生成代码的命名空间，默认 `inking::cxxcss`。
-    std::string nameSpace = "inking::cxxcss";
+    /// 生成代码的命名空间，默认 `cxxcss`。
+    std::string nameSpace = "cxxcss";
     /// 生成的头文件名，默认 `button_service.h`。
     /// 用 `#include <inkgen/button_service.h>` 这种带前缀的写法，避免撞名。
     std::string headerName = "button_service.h";

@@ -3,7 +3,7 @@
 // 画布的**绘制词汇**（A12）：使用者唯一的作画入口。
 //
 // 它是"业务代码也能画"这件事的公开面——以前只有框架内部的组件能画
-// （`detail::fillShape` 那些是**框架内部件**，见 `InkingDraw.h`）。这份头
+// （`inking_detail::fillShape` 那些是**框架内部件**，见 `InkingDraw.h`）。这份头
 // 把它重新包一层：词汇用**框架自己的类型**（形状 / 颜色 / 变换 / 文字请求），
 // 所以：
 //
@@ -16,7 +16,7 @@
 // 坐标系（唯一一件必须记住的事）
 //
 // 所有坐标都是**画布本地的设计坐标**：`(0,0)` 是画布左上角，单位与
-// `CanvasData::width / height` 同一套。画布在屏幕上的位置、祖先容器的子树变换
+// `InkingCanvasData::width / height` 同一套。画布在屏幕上的位置、祖先容器的子树变换
 // （抽屉拉开 / 面板滚动）、当前展示倍率——**都由框架负责**，绘制器一律按本地
 // 坐标写，不换算、不乘倍率。
 //
@@ -45,9 +45,7 @@
 
 struct SDL_Renderer;  // 只前向声明：公开头不拖 SDL 进来（AGENTS §3 第 2 条）
 
-namespace inking {
-
-namespace detail {
+namespace inking_detail {
 class CanvasRecorder;
 }
 
@@ -57,10 +55,10 @@ class CanvasRecorder;
  * 它**不拥有**任何东西，只是"这一笔往哪记"的句柄；由 `InkingStaticCanvas` 在
  * 调绘制器时构造在栈上，生命周期只到那次 `Paint` 返回。别存它。
  */
-class CanvasContext {
+class InkingCanvasContext {
 public:
-    CanvasContext(const CanvasContext&) = default;
-    CanvasContext& operator=(const CanvasContext&) = default;
+    InkingCanvasContext(const InkingCanvasContext&) = default;
+    InkingCanvasContext& operator=(const InkingCanvasContext&) = default;
 
     /// 画布宽度（设计坐标）。
     float Width() const noexcept;
@@ -73,26 +71,26 @@ public:
     /**
      * 按形状填一块（带抗锯齿）。
      *
-     * @param shape     形状定义；`ShapeSpec::Rect()` 就是矩形。
+     * @param shape     形状定义；`InkingShapeSpec::Rect()` 就是矩形。
      * @param x,y,w,h   形状要填满的框，**画布本地设计坐标**（w / h 会取整到设计单位
      *                  ——形状层的尺寸是整数，与组件尺寸同一套约定）。
      * @param color     0xAARRGGBB，alpha 参与合成。
      * @param transform 逐笔变换（平移 / 旋转 / 缩放），**绕这个框的中心**。
      */
-    void FillShape(const ShapeSpec& shape, float x, float y, float w, float h,
+    void FillShape(const InkingShapeSpec& shape, float x, float y, float w, float h,
                    std::uint32_t color,
-                   const TransformSpec& transform = TransformSpec{});
+                   const InkingTransformSpec& transform = InkingTransformSpec{});
 
     /// 沿形状边界画一圈描边（一半在外、一半在内，见 B3）。`ring` / `arc` 不描边。
-    void StrokeShape(const ShapeSpec& shape, float x, float y, float w, float h,
+    void StrokeShape(const InkingShapeSpec& shape, float x, float y, float w, float h,
                      float strokeWidth, std::uint32_t color,
-                     const TransformSpec& transform = TransformSpec{});
+                     const InkingTransformSpec& transform = InkingTransformSpec{});
 
     // ---------------- 便捷封装（常见形状，少写几个字） ----------------
 
-    /// 一个矩形：`FillShape(ShapeSpec::Rect(), ...)`。
+    /// 一个矩形：`FillShape(InkingShapeSpec::Rect(), ...)`。
     void FillRect(float x, float y, float w, float h, std::uint32_t color,
-                  const TransformSpec& transform = TransformSpec{});
+                  const InkingTransformSpec& transform = InkingTransformSpec{});
 
     /**
      * 一个正圆。
@@ -104,18 +102,18 @@ public:
      */
     void FillCircle(float centerX, float centerY, float diameter,
                     std::uint32_t color,
-                    const TransformSpec& transform = TransformSpec{});
+                    const InkingTransformSpec& transform = InkingTransformSpec{});
 
     /**
      * 任意两点之间的线段。
      *
      * 形状层的 `line` 是**水平**的，所以这里把它摆成"长度 × 线宽"的框再旋转到
-     * 目标角度（绕框中心，与 `TransformSpec::rotate` 的语义一致：度、顺时针为正）。
+     * 目标角度（绕框中心，与 `InkingTransformSpec::rotate` 的语义一致：度、顺时针为正）。
      *
-     * @param cap 端点形状：圆头（默认）/ 平头 / 方头（见 `LineCap`）。
+     * @param cap 端点形状：圆头（默认）/ 平头 / 方头（见 `InkingLineCap`）。
      */
     void DrawLine(float x0, float y0, float x1, float y1, float thickness,
-                  std::uint32_t color, LineCap cap = LineCap::Round);
+                  std::uint32_t color, InkingLineCap cap = InkingLineCap::Round);
 
     // ---------------- 文本 ----------------
 
@@ -125,7 +123,7 @@ public:
      * 走的是框架那条共享的文字路径（排版缓存 / 字形图集 / 颜色调制），所以画布上
      * 的文字与按钮 / 标签上的文字是同一份实现——不会"两边长得不一样"。
      */
-    void DrawText(const TextRequest& request);
+    void DrawText(const InkingTextRequest& request);
 
     /// 便捷重载：给文字、位置、字号、颜色就够（字体走机器默认）。
     void DrawText(const std::string& text, float x, float y, float fontSize,
@@ -151,7 +149,7 @@ public:
      *
      * 这是给"词汇表里还没有的东西"留的口子：函数拿到当前渲染器，爱画什么画什么。
      * 选它而不是裸拿渲染器，是因为两件事由框架兜住：
-     *   1. **顺序**：执行前会先登记批次边界（`detail::NoteImmediateDraw`），
+     *   1. **顺序**：执行前会先登记批次边界（`inking_detail::NoteImmediateDraw`），
      *      于是你这一笔不会被后刷出去的几何批盖掉（`AGENTS.md` §6 第 49 条）；
      *   2. **回放**：干净帧重画时这段代码**会**被再执行一次——直接拿 `Renderer()`
      *      自己画就没有这个保证（见那里的说明）。
@@ -173,9 +171,8 @@ public:
 private:
     friend class InkingStaticCanvas;  // 只有画布能造它（构造是 private）
 
-    explicit CanvasContext(detail::CanvasRecorder& recorder) noexcept;
+    explicit InkingCanvasContext(inking_detail::CanvasRecorder& recorder) noexcept;
 
-    detail::CanvasRecorder* _recorder = nullptr;  ///< 非拥有；生命周期 = 一次 Paint
+    inking_detail::CanvasRecorder* _recorder = nullptr;  ///< 非拥有；生命周期 = 一次 Paint
 };
 
-}  // namespace inking

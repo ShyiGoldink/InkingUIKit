@@ -14,8 +14,6 @@
 //   3. **省略号先回退再补**：`放得下吗` 这个判断把 `…` 的宽度也算进去，
 //      否则"加了省略号反而超出"会在窄框上稳定复现。
 
-namespace inking {
-
 namespace {
 
 /// 一个 UTF-8 码点。
@@ -104,21 +102,21 @@ std::vector<Unit> SplitUnits(std::string_view text, std::size_t begin,
     return units;
 }
 
-float MeasureWidth(const TextMeasureFn& measure, std::string_view text,
-                   std::size_t begin, std::size_t end, const TextStyle& style) {
+float MeasureWidth(const InkingTextMeasureFn& measure, std::string_view text,
+                   std::size_t begin, std::size_t end, const InkingTextStyle& style) {
     if (begin >= end) {
         return 0.0f;
     }
     return measure(std::string(text.substr(begin, end - begin)), style).width;
 }
 
-float MeasureHeight(const TextMeasureFn& measure, std::string_view text,
-                    std::size_t begin, std::size_t end, const TextStyle& style,
+float MeasureHeight(const InkingTextMeasureFn& measure, std::string_view text,
+                    std::size_t begin, std::size_t end, const InkingTextStyle& style,
                     float fallback) {
     if (begin >= end) {
         return fallback;
     }
-    const TextExtent extent =
+    const InkingTextExtent extent =
         measure(std::string(text.substr(begin, end - begin)), style);
     return extent.height > 0.0f ? extent.height : fallback;
 }
@@ -153,9 +151,9 @@ struct HardCut {
     bool fits = false;     ///< 至少放下了一个码点
 };
 
-HardCut CutToWidth(const TextMeasureFn& measure, std::string_view text,
+HardCut CutToWidth(const InkingTextMeasureFn& measure, std::string_view text,
                    std::size_t begin, std::size_t end, float maxWidth,
-                   const TextStyle& style) {
+                   const InkingTextStyle& style) {
     HardCut cut;
     cut.end = begin;
     std::size_t pos = begin;
@@ -175,23 +173,23 @@ HardCut CutToWidth(const TextMeasureFn& measure, std::string_view text,
 
 }  // namespace
 
-float LineOffsetX(float lineWidth, float availableWidth, TextAlignH align) {
+float InkingLineOffsetX(float lineWidth, float availableWidth, InkingTextAlignH align) {
     switch (align) {
-        case TextAlignH::Center:
+        case InkingTextAlignH::Center:
             return (availableWidth - lineWidth) * 0.5f;
-        case TextAlignH::Right:
+        case InkingTextAlignH::Right:
             return availableWidth - lineWidth;
-        case TextAlignH::Left:
+        case InkingTextAlignH::Left:
         default:
             return 0.0f;
     }
 }
 
-TextLayoutResult LayoutText(const TextLayoutRequest& request,
-                            const TextMeasureFn& measure) {
-    TextLayoutResult result;
-    const TextStyle& style = request.style;
-    const LayoutSpacing& padding = style.padding;
+InkingTextLayoutResult InkingLayoutText(const InkingTextLayoutRequest& request,
+                            const InkingTextMeasureFn& measure) {
+    InkingTextLayoutResult result;
+    const InkingTextStyle& style = request.style;
+    const InkingLayoutSpacing& padding = style.padding;
     const float available =
         request.maxWidth > 0.0f
             ? std::max(0.0f, request.maxWidth - padding.left - padding.right)
@@ -244,7 +242,7 @@ TextLayoutResult LayoutText(const TextLayoutRequest& request,
     };
     std::vector<RawLine> raw;
     bool truncated = false;
-    const bool wrapEnabled = request.wrap != TextWrap::NoWrap && available > 0.0f;
+    const bool wrapEnabled = request.wrap != InkingTextWrap::NoWrap && available > 0.0f;
 
     for (const auto& paragraph : paragraphs) {
         std::size_t cursor = paragraph.first;
@@ -320,7 +318,7 @@ TextLayoutResult LayoutText(const TextLayoutRequest& request,
 
     // 框高上限（T-01，0.8.3）：**累计行高超过可用高就丢尾行**。
     //
-    // 为什么在这里（而不是在绘制层裁剪）：`Clip` 是 `TextOverflow` 的默认值，
+    // 为什么在这里（而不是在绘制层裁剪）：`Clip` 是 `InkingTextOverflow` 的默认值，
     // 头文件里写着"多余的行不画"，但此前**没有任何人实现它**——`maxHeight` 只
     // 参与了垂直对齐，于是"框多高"对文字毫无约束力（300×40 的标签把 7 行全画
     // 出去，框外 10,030 个亮像素）。在排版层丢行是唯一一处就能收口的位置：
@@ -356,12 +354,12 @@ TextLayoutResult LayoutText(const TextLayoutRequest& request,
     bool lastLineEllipsis = false;
     const bool lastLineTooWide =
         !raw.empty() && available > 0.0f && raw.back().width > available;
-    if (request.overflow == TextOverflow::Ellipsis
+    if (request.overflow == InkingTextOverflow::Ellipsis
         && !raw.empty()
         && (overLines || lastLineTooWide)) {
         RawLine& last = raw.back();
         const std::size_t originalEnd = last.end;
-        const float hintWidth = measure(std::string(kTextEllipsis), style).width;
+        const float hintWidth = measure(std::string(InkingTextEllipsis), style).width;
         if (available > 0.0f) {
             // 从末尾回退，直到"这一行 + …"放得下（把省略号自己的宽度算进去）。
             std::size_t begin = last.begin;
@@ -411,13 +409,13 @@ TextLayoutResult LayoutText(const TextLayoutRequest& request,
         const float inner = std::max(0.0f, request.maxHeight - padding.top
                                                 - padding.bottom);
         switch (style.alignV) {
-            case TextAlignV::Middle:
+            case InkingTextAlignV::Middle:
                 verticalOffset = (inner - contentHeight) * 0.5f;
                 break;
-            case TextAlignV::Bottom:
+            case InkingTextAlignV::Bottom:
                 verticalOffset = inner - contentHeight;
                 break;
-            case TextAlignV::Top:
+            case InkingTextAlignV::Top:
             default:
                 break;
         }
@@ -426,11 +424,11 @@ TextLayoutResult LayoutText(const TextLayoutRequest& request,
     float y = padding.top + verticalOffset;
     result.lines.reserve(raw.size());
     for (const RawLine& line : raw) {
-        TextLine out;
+        InkingTextLine out;
         out.begin = line.begin;
         out.end = line.end;
         out.width = line.width;
-        out.x = padding.left + LineOffsetX(line.width, alignWidth, style.align);
+        out.x = padding.left + InkingLineOffsetX(line.width, alignWidth, style.align);
         out.y = y;
         out.height = line.height;
         out.hasEllipsis = lastLineEllipsis && (&line == &raw.back());
@@ -450,4 +448,3 @@ TextLayoutResult LayoutText(const TextLayoutRequest& request,
     return result;
 }
 
-}  // namespace inking

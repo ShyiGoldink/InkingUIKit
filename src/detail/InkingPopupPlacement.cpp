@@ -4,9 +4,7 @@
 // 会立刻报出来（四组数字覆盖"翻左翻上 / 原地不动 / 贴边 / 比范围还大"）。
 
 #include <detail/InkingPopupPlacement.h>
-
-namespace inking {
-namespace detail {
+namespace inking_detail {
 namespace {
 
 /// 一轴的解（内部形态，最后拼成 `PopupPlacement`）。
@@ -67,8 +65,8 @@ AxisSolution SolveAxis(float target, float size, float lo, float hi,
 }  // namespace
 
 PopupPlacement SolvePopupPlacement(float targetX, float targetY, int width,
-                                   int height, const ShapeBounds& bounds,
-                                   const AnchorPoint& preferred) {
+                                   int height, const InkingShapeBounds& bounds,
+                                   const InkingAnchorPoint& preferred) {
     PopupPlacement out;
     out.selfAnchor = preferred;
 
@@ -98,9 +96,8 @@ PopupPlacement SolvePopupPlacement(float targetX, float targetY, int width,
     out.clampedY = axisY.clamped;
 
     // 两轴可以翻成不同的方向（右下角的小菜单：x 翻左、y 仍向下）。
-    out.selfAnchor = AnchorPoint{axisX.anchor, axisY.anchor};
+    out.selfAnchor = InkingAnchorPoint{axisX.anchor, axisY.anchor};
     return out;
 }
 
-}  // namespace detail
-}  // namespace inking
+}  // namespace inking_detail

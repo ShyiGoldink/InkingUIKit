@@ -4,7 +4,7 @@
 #include <string>
 #include <utility>
 
-namespace inking::json {
+namespace inking_json {
 
 namespace {
 
@@ -435,4 +435,4 @@ std::string Escape(const std::string& text) {
     return out;
 }
 
-}  // namespace inking::json
+}  // namespace inking_json

@@ -13,18 +13,18 @@
 // ---------------------------------------------------------------------------
 // 局部快捷键 = 焦点模态（用户裁定）
 //
-//   - 表住在**本对象**里，**不注册到窗口的 `ShortcutRegistry`**。所以菜单关着时
+//   - 表住在**本对象**里，**不注册到窗口的 `InkingShortcutRegistry`**。所以菜单关着时
 //     这些组合在系统里根本不存在（不是"注册了但判空"）；
 //   - 生效条件：菜单开着 **且** 键盘焦点在本子树（`OpenAt` 夺取、点完内部按钮后
 //     由定点浮窗在指针变化时取回）；
-//   - **全局表优先**：窗口层先跑 `ShortcutRegistry`，命中就把这次 `KeyDown`
+//   - **全局表优先**：窗口层先跑 `InkingShortcutRegistry`，命中就把这次 `KeyDown`
 //     消费掉。所以 `BindLocalShortcut` 会用 `IsTaken` 预检，被占用时打 WARN 并
 //     返回 false——不静默。
 //
 // ---------------------------------------------------------------------------
 // 扩展点
 //
-//   - 换按钮样式：`AddButton(自己的 ButtonData, ...)`；
+//   - 换按钮样式：`AddButton(自己的 InkingButtonData, ...)`；
 //   - 加非按钮内容：`AddItem(unique_ptr / 工厂)`；
 //   - 换行为：派生本类重写 `onMenuActivated`（项被激活后、关闭之前调）。
 //
@@ -41,18 +41,16 @@
 #include <string>
 #include <vector>
 
-namespace inking {
-
 class InkingStaticButton;
 
-namespace prefab {
+namespace inking_prefab {
 
 /**
  * @brief 菜单浮窗。
  *
  * ```cpp
- * inking::prefab::MenuPopup menu(&scene);          // 默认样式
- * menu.AddButton(look, "保存", Save, inking::Shortcut::Parse("Ctrl+S"));
+ * inking_prefab::MenuPopup menu(&scene);          // 默认样式
+ * menu.AddButton(look, "保存", Save, InkingShortcut::Parse("Ctrl+S"));
  * menu.AddButton(look, "另存为", SaveAs);
  * menu.AddItem(std::make_unique<Separator>(nullptr));
  * menu.OpenAt(clickX, clickY);                     // 定点打开（父级坐标）
@@ -88,9 +86,9 @@ public:
      * @param shortcut   顺手绑一个**局部**快捷键（空 = 不绑）。绑定失败（与全局表
      *                   冲突 / 与已有局部项重复）时打 WARN，项仍然加上。
      */
-    InkingStaticButton* AddButton(const ButtonData& look, const std::string& text,
+    InkingStaticButton* AddButton(const InkingButtonData& look, const std::string& text,
                                   Action onActivate = {},
-                                  const Shortcut& shortcut = {});
+                                  const InkingShortcut& shortcut = {});
 
     // ---------------- 局部快捷键 ----------------
 
@@ -102,7 +100,7 @@ public:
      *   2. 已被**窗口全局表**占用（那样局部永远收不到，绑了等于没绑）；
      *   3. 已被本菜单的**另一个**局部项占用（先到先得，不覆盖）。
      */
-    bool BindLocalShortcut(const Shortcut& shortcut, Action action,
+    bool BindLocalShortcut(const InkingShortcut& shortcut, Action action,
                            std::string label = {});
 
     /// 现在挂着几条局部快捷键（自检观测口）。
@@ -115,7 +113,7 @@ public:
     std::size_t GetItemCount() const noexcept { return _items.size(); }
 
     /// 第 `index` 项的矩形，相对本浮窗左上角。越界 = 零矩形。
-    ShapeBounds GetItemRect(std::size_t index) const;
+    InkingShapeBounds GetItemRect(std::size_t index) const;
 
     /// 第 `index` 项那个节点（越界 = nullptr）。
     InkingWidget* GetItemNode(std::size_t index) const;
@@ -131,7 +129,7 @@ protected:
      *
      * 一次按键只做一个动作：命中就 `return`，不继续试后面的。
      */
-    void onKeyDown(const KeyEvent& key) override;
+    void onKeyDown(const InkingKeyEvent& key) override;
 
     /**
      * 一项被激活（点击或快捷键）之后、关闭之前调。
@@ -149,7 +147,7 @@ private:
     void activate(std::size_t index, InkingWidget* item);
 
     struct LocalShortcut {
-        Shortcut shortcut{};
+        InkingShortcut shortcut{};
         Action action{};
         std::string label{};
     };
@@ -160,5 +158,4 @@ private:
     int _activatedCount = 0;
 };
 
-}  // namespace prefab
-}  // namespace inking
+}  // namespace inking_prefab

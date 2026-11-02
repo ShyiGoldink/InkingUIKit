@@ -15,14 +15,13 @@
 #include <string>
 #include <vector>
 
-namespace inking {
 
 /**
  * @brief 一次文字请求：文字层的唯一输入，也是缓存键的来源。
  *
  * 字段里**没有 SDL 类型**：尺寸测量与绘制各取所需，谁都不必知道纹理是怎么建的。
  */
-struct TextRequest {
+struct InkingTextRequest {
     std::string text;   ///< 要画的文字（UTF-8）
     float fontSize = 16.0f;  ///< 字号，**设计坐标**（SDL3_ttf 的 DPI 是 72，所以
                              ///< "点"在这里就等于像素，不用再乘系数）
@@ -31,7 +30,7 @@ struct TextRequest {
     /**
      * @brief 字体回退链（T-13）：`fontPath` 之后**按顺序**尝试。
      *
-     * 语义与 `TextStyle::fontPaths` 一致（那里写了三条边界）：文件级、不是字形级；
+     * 语义与 `InkingTextStyle::fontPaths` 一致（那里写了三条边界）：文件级、不是字形级；
      * 链上"前面没命中、后面命中"不报警；整条链全失败才报一条汇总 WARN，
      * 并且**不静默换成机器默认字体**（宁可画占位方块，也不让设计意图偷偷失效）。
      *
@@ -43,8 +42,8 @@ struct TextRequest {
 
     /// 文字块左上角在**组件本地**的位置（设计坐标，相对组件左上角）。
     /// 按钮那边就是配置里的 `leftSpace` / `topSpace`；画布那边由绘制器自己填
-    /// （`CanvasContext::DrawText` 的两个便捷重载就是替调用方填这两个字段）。
-    /// `MeasureText` 不看这两个字段。
+    /// （`InkingCanvasContext::DrawText` 的两个便捷重载就是替调用方填这两个字段）。
+    /// `InkingMeasureText` 不看这两个字段。
     float offsetX = 0.0f;
     float offsetY = 0.0f;
 
@@ -52,9 +51,8 @@ struct TextRequest {
 };
 
 /// 量出来的文字尺寸，**设计坐标**（和组件尺寸同一套单位）。
-struct TextMetrics {
+struct InkingTextMetrics {
     float width = 0.0f;
     float height = 0.0f;
 };
 
-}  // namespace inking

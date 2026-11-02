@@ -26,7 +26,6 @@
 #include <unistd.h>
 #endif
 
-namespace inking {
 namespace {
 
 // ---------------------------------------------------------------------------
@@ -44,7 +43,7 @@ namespace {
 // ---------------------------------------------------------------------------
 
 constexpr std::uint8_t kMagic[4] = {'I', 'N', 'K', 'A'};
-constexpr std::uint8_t kVersion = 1;
+constexpr std::uint8_t InkingVersion = 1;
 constexpr std::size_t kHeaderSize = 12;
 constexpr std::size_t kMaxPayload = 0xFFFFFFFFu;
 
@@ -192,10 +191,10 @@ std::filesystem::path ExecutableDirectory() {
 
 struct State {
     std::mutex mutex;
-    AssetConfig config;
+    InkingAssetConfig config;
     std::string resolvedRoot;
     bool rootResolved = false;
-    AssetStats stats;
+    InkingAssetStats stats;
 };
 
 /// 进程级记账：**故意不析构**（`AGENTS.md` §6 第 88 条——别赌静态析构顺序）。
@@ -204,7 +203,7 @@ State& state() {
     return *instance;
 }
 
-AssetStats SnapshotStats() {
+InkingAssetStats SnapshotStats() {
     State& shared = state();
     std::lock_guard<std::mutex> guard(shared.mutex);
     return shared.stats;
@@ -229,14 +228,14 @@ void NoteMiss(const std::string& relative, const char* why) {
         std::lock_guard<std::mutex> guard(shared.mutex);
         ++shared.stats.misses;
     }
-    INK_LOG_ERROR(kAssetModuleName,
+    INK_LOG_ERROR(InkingAssetModuleName,
                   "读不到资源 \"" + relative + "\"：" + why + "（资源根 "
-                      + AssetRoot() + "）");
+                      + InkingAssetRoot() + "）");
 }
 
 }  // namespace
 
-void AssetConfigure(const AssetConfig& config) {
+void InkingAssetConfigure(const InkingAssetConfig& config) {
     State& shared = state();
     std::lock_guard<std::mutex> guard(shared.mutex);
     shared.config = config;
@@ -244,17 +243,17 @@ void AssetConfigure(const AssetConfig& config) {
     shared.resolvedRoot.clear();
 }
 
-AssetConfig AssetConfigSnapshot() {
+InkingAssetConfig InkingAssetConfigSnapshot() {
     State& shared = state();
     std::lock_guard<std::mutex> guard(shared.mutex);
     return shared.config;
 }
 
-void AssetResetConfig() {
-    AssetConfigure(AssetConfig{});
+void InkingAssetResetConfig() {
+    InkingAssetConfigure(InkingAssetConfig{});
 }
 
-std::string AssetRoot() {
+std::string InkingAssetRoot() {
     State& shared = state();
     std::lock_guard<std::mutex> guard(shared.mutex);
     if (!shared.rootResolved) {
@@ -270,22 +269,22 @@ std::string AssetRoot() {
     return shared.resolvedRoot;
 }
 
-std::string AssetResolve(const std::string& relative) {
+std::string InkingAssetResolve(const std::string& relative) {
     const std::filesystem::path given = ToPath(relative);
     if (given.is_absolute()) {
         return ToUtf8(given.lexically_normal());
     }
-    return ToUtf8((ToPath(AssetRoot()) / given).lexically_normal());
+    return ToUtf8((ToPath(InkingAssetRoot()) / given).lexically_normal());
 }
 
-bool AssetExists(const std::string& relative) {
+bool InkingAssetExists(const std::string& relative) {
     std::error_code code;
-    return std::filesystem::is_regular_file(ToPath(AssetResolve(relative)), code)
+    return std::filesystem::is_regular_file(ToPath(InkingAssetResolve(relative)), code)
         && !code;
 }
 
-std::vector<std::uint8_t> AssetLoad(const std::string& relative) {
-    const std::filesystem::path path = ToPath(AssetResolve(relative));
+std::vector<std::uint8_t> InkingAssetLoad(const std::string& relative) {
+    const std::filesystem::path path = ToPath(InkingAssetResolve(relative));
 
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -310,18 +309,18 @@ std::vector<std::uint8_t> AssetLoad(const std::string& relative) {
     }
 
     // 没有混淆头：原样返回（未混淆的资源照样能读——这是有意的兼容）。
-    if (!AssetIsObfuscated(raw.data(), raw.size())) {
+    if (!InkingAssetIsObfuscated(raw.data(), raw.size())) {
         NoteLoad(raw.size());
         return raw;
     }
 
-    const AssetConfig config = AssetConfigSnapshot();
+    const InkingAssetConfig config = InkingAssetConfigSnapshot();
     if (config.key.empty()) {
-        NoteMiss(relative, "它是混淆过的资源，但没配 key（AssetConfigure）");
+        NoteMiss(relative, "它是混淆过的资源，但没配 key（InkingAssetConfigure）");
         return {};
     }
     std::vector<std::uint8_t> plain
-        = AssetDeobfuscate(raw.data(), raw.size(), config.key);
+        = InkingAssetDeobfuscate(raw.data(), raw.size(), config.key);
     if (plain.empty()) {
         NoteMiss(relative, "解不开（key 不对，或者文件头坏了）");
         return {};
@@ -331,13 +330,13 @@ std::vector<std::uint8_t> AssetLoad(const std::string& relative) {
     return plain;
 }
 
-std::string AssetLoadText(const std::string& relative) {
-    const std::vector<std::uint8_t> bytes = AssetLoad(relative);
+std::string InkingAssetLoadText(const std::string& relative) {
+    const std::vector<std::uint8_t> bytes = InkingAssetLoad(relative);
     return std::string(bytes.begin(), bytes.end());
 }
 
 // ---------------------------------------------------------------------------
-// `inking::json::ParseAsset`：读资源根里的 json 再解析（0.6.5 T-15）
+// `inking_json::ParseAsset`：读资源根里的 json 再解析（0.6.5 T-15）
 // ---------------------------------------------------------------------------
 //
 // **为什么定义在资产层而不是 `src/util/InkingJson.cpp`**：那份 util 源也被生成器
@@ -345,20 +344,20 @@ std::string AssetLoadText(const std::string& relative) {
 // 包装函数去拖资产层（那里有 SDL 的文件 IO）。放这里，边界就干净：
 // `util/` 只认字符串，谁要"从资源根读"谁自己承担资产层。
 
-// 注意：这里已经在 `namespace inking` 里面，所以写 `namespace json {` 就是
-// `inking::json`。写成 `namespace inking::json` 会变成 inking::inking::json
-// （GCC 不报错，只在用到名字时才暴露——第一次就是这么红的）。
-namespace json {
+// 子命名空间统一带 `inking_` 前缀（0.9 的去命名空间改造）：库不再有 `inking`
+// 外壳，裸的 `json` 会和任何第三方 JSON 库在全局撞名，所以这里必须是
+// `inking_json`（GCC 对裸 `json` 不报错，用到名字才炸——第一次就是这么红的）。
+namespace inking_json {
 
 Result ParseAsset(const std::string& relative) {
     Result result;
-    const std::string text = AssetLoadText(relative);
+    const std::string text = InkingAssetLoadText(relative);
     if (text.empty()) {
-        // 读不到与"文件是空的"在这里分不开（`AssetLoadText` 两种都返回空串），
+        // 读不到与"文件是空的"在这里分不开（`InkingAssetLoadText` 两种都返回空串），
         // 所以文案把两种可能都说出来——猜一个反而误导。
         result.ok = false;
         result.error = "读不到资源或文件是空的：" + relative + "（资源根 "
-                       + AssetRoot() + "）";
+                       + InkingAssetRoot() + "）";
         return result;
     }
 
@@ -370,15 +369,15 @@ Result ParseAsset(const std::string& relative) {
     return result;
 }
 
-}  // namespace json
+}  // namespace inking_json
 
-bool AssetIsObfuscated(const std::uint8_t* data, std::size_t size) noexcept {    if (data == nullptr || size < kHeaderSize) {
+bool InkingAssetIsObfuscated(const std::uint8_t* data, std::size_t size) noexcept {    if (data == nullptr || size < kHeaderSize) {
         return false;
     }
     return std::memcmp(data, kMagic, sizeof(kMagic)) == 0;
 }
 
-std::vector<std::uint8_t> AssetObfuscate(const std::uint8_t* data,
+std::vector<std::uint8_t> InkingAssetObfuscate(const std::uint8_t* data,
                                          std::size_t size,
                                          const std::string& key) {
     if (data == nullptr || size == 0 || size > kMaxPayload) {
@@ -387,14 +386,14 @@ std::vector<std::uint8_t> AssetObfuscate(const std::uint8_t* data,
     if (key.empty()) {
         // "加密得先给密钥"：空密钥会让输出看起来像"混淆过了"，但任何人拿空 key
         // 都能解开——那种虚假的安全感比不加密更糟。
-        INK_LOG_ERROR(kAssetModuleName, "混淆需要非空 key（空 key 等于没混淆）");
+        INK_LOG_ERROR(InkingAssetModuleName, "混淆需要非空 key（空 key 等于没混淆）");
         return {};
     }
 
     const std::uint64_t keyHash = HashKey(key);
     std::vector<std::uint8_t> out(kHeaderSize + size, 0);
     std::memcpy(out.data(), kMagic, sizeof(kMagic));
-    out[4] = kVersion;
+    out[4] = InkingVersion;
     out[5] = static_cast<std::uint8_t>(keyHash & 0xFFu);
     out[6] = 0;
     out[7] = 0;
@@ -404,7 +403,7 @@ std::vector<std::uint8_t> AssetObfuscate(const std::uint8_t* data,
     return out;
 }
 
-std::vector<std::uint8_t> AssetDeobfuscate(const std::uint8_t* data,
+std::vector<std::uint8_t> InkingAssetDeobfuscate(const std::uint8_t* data,
                                            std::size_t size,
                                            const std::string& key) {
     if (data == nullptr || size == 0) {
@@ -412,13 +411,13 @@ std::vector<std::uint8_t> AssetDeobfuscate(const std::uint8_t* data,
     }
 
     // 没有 magic：**原样拷贝**（"未混淆也能读"这条兼容路）。
-    if (!AssetIsObfuscated(data, size)) {
+    if (!InkingAssetIsObfuscated(data, size)) {
         return std::vector<std::uint8_t>(data, data + size);
     }
-    if (data[4] != kVersion) {
-        INK_LOG_ERROR(kAssetModuleName,
+    if (data[4] != InkingVersion) {
+        INK_LOG_ERROR(InkingAssetModuleName,
                       "混淆版本不认识（文件是 " + std::to_string(data[4])
-                          + "，本程序认得 " + std::to_string(kVersion) + "）");
+                          + "，本程序认得 " + std::to_string(InkingVersion) + "）");
         return {};
     }
     if (key.empty()) {
@@ -429,13 +428,13 @@ std::vector<std::uint8_t> AssetDeobfuscate(const std::uint8_t* data,
     if (data[5] != static_cast<std::uint8_t>(keyHash & 0xFFu)) {
         // 密钥校验字节不符：**这是"密钥不对"**，不是"文件坏了"——分开报，
         // 因为两者的修法完全不同（换 key vs 重新打包）。
-        INK_LOG_ERROR(kAssetModuleName, "key 不对（文件头里的校验字节不匹配）");
+        INK_LOG_ERROR(InkingAssetModuleName, "key 不对（文件头里的校验字节不匹配）");
         return {};
     }
 
     const std::uint32_t expected = ReadU32(data + 8);
     if (kHeaderSize + static_cast<std::size_t>(expected) != size) {
-        INK_LOG_ERROR(kAssetModuleName,
+        INK_LOG_ERROR(InkingAssetModuleName,
                       "长度字段不合法（文件头写 " + std::to_string(expected)
                           + "，实际负载 "
                           + std::to_string(size - kHeaderSize) + "）");
@@ -447,31 +446,31 @@ std::vector<std::uint8_t> AssetDeobfuscate(const std::uint8_t* data,
     return plain;
 }
 
-bool AssetPackFile(const std::string& sourcePath, const std::string& outPath,
+bool InkingAssetPackFile(const std::string& sourcePath, const std::string& outPath,
                    const std::string& key) {
     std::ifstream input(ToPath(sourcePath), std::ios::binary);
     if (!input) {
-        INK_LOG_ERROR(kAssetModuleName, "打包：打不开源文件 " + sourcePath);
+        INK_LOG_ERROR(InkingAssetModuleName, "打包：打不开源文件 " + sourcePath);
         return false;
     }
     input.seekg(0, std::ios::end);
     const std::streamoff length = input.tellg();
     input.seekg(0);
     if (length <= 0) {
-        INK_LOG_ERROR(kAssetModuleName, "打包：源文件是空的（或读不出长度）"
+        INK_LOG_ERROR(InkingAssetModuleName, "打包：源文件是空的（或读不出长度）"
                                             + sourcePath);
         return false;
     }
     std::vector<std::uint8_t> raw(static_cast<std::size_t>(length));
     input.read(reinterpret_cast<char*>(raw.data()), length);
     if (!input) {
-        INK_LOG_ERROR(kAssetModuleName, "打包：读源文件失败 " + sourcePath);
+        INK_LOG_ERROR(InkingAssetModuleName, "打包：读源文件失败 " + sourcePath);
         return false;
     }
     input.close();
 
     const std::vector<std::uint8_t> packed
-        = AssetObfuscate(raw.data(), raw.size(), key);
+        = InkingAssetObfuscate(raw.data(), raw.size(), key);
     if (packed.empty()) {
         return false;
     }
@@ -483,34 +482,34 @@ bool AssetPackFile(const std::string& sourcePath, const std::string& outPath,
     }
     std::ofstream output(out, std::ios::binary);
     if (!output) {
-        INK_LOG_ERROR(kAssetModuleName, "打包：写不出目标文件 " + outPath);
+        INK_LOG_ERROR(InkingAssetModuleName, "打包：写不出目标文件 " + outPath);
         return false;
     }
     output.write(reinterpret_cast<const char*>(packed.data()),
                  static_cast<std::streamsize>(packed.size()));
     if (!output) {
-        INK_LOG_ERROR(kAssetModuleName, "打包：写目标文件失败 " + outPath);
+        INK_LOG_ERROR(InkingAssetModuleName, "打包：写目标文件失败 " + outPath);
         return false;
     }
-    INK_LOG_PASS(kAssetModuleName,
+    INK_LOG_PASS(InkingAssetModuleName,
                  "打包完成：" + sourcePath + " → " + outPath + "（"
                      + std::to_string(raw.size()) + " 字节明文 → "
                      + std::to_string(packed.size()) + " 字节混淆）");
     return true;
 }
 
-bool AssetUnpackFile(const std::string& sourcePath, const std::string& outPath,
+bool InkingAssetUnpackFile(const std::string& sourcePath, const std::string& outPath,
                      const std::string& key) {
     std::ifstream input(ToPath(sourcePath), std::ios::binary);
     if (!input) {
-        INK_LOG_ERROR(kAssetModuleName, "还原：打不开源文件 " + sourcePath);
+        INK_LOG_ERROR(InkingAssetModuleName, "还原：打不开源文件 " + sourcePath);
         return false;
     }
     input.seekg(0, std::ios::end);
     const std::streamoff length = input.tellg();
     input.seekg(0);
     if (length <= 0) {
-        INK_LOG_ERROR(kAssetModuleName, "还原：源文件是空的 " + sourcePath);
+        INK_LOG_ERROR(InkingAssetModuleName, "还原：源文件是空的 " + sourcePath);
         return false;
     }
     std::vector<std::uint8_t> raw(static_cast<std::size_t>(length));
@@ -518,7 +517,7 @@ bool AssetUnpackFile(const std::string& sourcePath, const std::string& outPath,
     input.close();
 
     const std::vector<std::uint8_t> plain
-        = AssetDeobfuscate(raw.data(), raw.size(), key);
+        = InkingAssetDeobfuscate(raw.data(), raw.size(), key);
     if (plain.empty()) {
         return false;
     }
@@ -530,7 +529,7 @@ bool AssetUnpackFile(const std::string& sourcePath, const std::string& outPath,
     }
     std::ofstream output(out, std::ios::binary);
     if (!output) {
-        INK_LOG_ERROR(kAssetModuleName, "还原：写不出目标文件 " + outPath);
+        INK_LOG_ERROR(InkingAssetModuleName, "还原：写不出目标文件 " + outPath);
         return false;
     }
     output.write(reinterpret_cast<const char*>(plain.data()),
@@ -538,12 +537,11 @@ bool AssetUnpackFile(const std::string& sourcePath, const std::string& outPath,
     return static_cast<bool>(output);
 }
 
-AssetStats AssetStatsSnapshot() { return SnapshotStats(); }
+InkingAssetStats InkingAssetStatsSnapshot() { return SnapshotStats(); }
 
-void AssetResetStats() {
+void InkingAssetResetStats() {
     State& shared = state();
     std::lock_guard<std::mutex> guard(shared.mutex);
-    shared.stats = AssetStats{};
+    shared.stats = InkingAssetStats{};
 }
 
-}  // namespace inking

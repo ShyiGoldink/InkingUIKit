@@ -11,15 +11,14 @@
 #include <cmath>
 #include <cstddef>
 
-namespace inking {
 namespace {
 
 /// 单行化：这一版输入框只支持单行（多行要连排版、上下移动、滚动一起做）。
 /// `wrap` 与 `maxLines` 一起改，光改一个会让排版在边界上给出反直觉的结果。
-TextInputData AsSingleLine(const TextInputData& data) {
-    TextInputData out = data;
-    out.wrap = TextWrap::NoWrap;
-    out.overflow = TextOverflow::Clip;
+InkingTextInputData AsSingleLine(const InkingTextInputData& data) {
+    InkingTextInputData out = data;
+    out.wrap = InkingTextWrap::NoWrap;
+    out.overflow = InkingTextOverflow::Clip;
     out.maxLines = 1;
     return out;
 }
@@ -78,7 +77,7 @@ void InkingTextInput::ResetClipboardHandlers() {
     state.set = nullptr;
 }
 
-InkingTextInput::InkingTextInput(InkingWidget* parent, const TextInputData& data)
+InkingTextInput::InkingTextInput(InkingWidget* parent, const InkingTextInputData& data)
     : InkingStaticLabel(parent, AsSingleLine(data)), _input(data) {
     // 标签的默认是**穿透**（它常压在按钮上）；输入框必须吃点击，否则点不进去。
     // 这一条显式写：指望默认值就会得到一个"点不动的输入框"。
@@ -140,7 +139,7 @@ void InkingTextInput::syncToLabel() {
 // 输入
 // ---------------------------------------------------------------------------
 
-bool InkingTextInput::HandleKey(const KeyEvent& key) {
+bool InkingTextInput::HandleKey(const InkingKeyEvent& key) {
     const bool shift = key.shift;
     const bool ctrl = key.ctrl;
 
@@ -262,10 +261,10 @@ float InkingTextInput::localY(float designY) const {
     return designY - GetAbsY();
 }
 
-TextInputRect InkingTextInput::RawBoxForOffset(std::size_t offset) const {
-    const TextLayoutResult& layout = GetTextLayout();
+InkingTextInputRect InkingTextInput::RawBoxForOffset(std::size_t offset) const {
+    const InkingTextLayoutResult& layout = GetTextLayout();
     if (layout.lines.empty()) {
-        return TextInputRect{0.0f, 0.0f, _input.caretWidth,
+        return InkingTextInputRect{0.0f, 0.0f, _input.caretWidth,
                              _input.style.fontSize};
     }
 
@@ -277,13 +276,13 @@ TextInputRect InkingTextInput::RawBoxForOffset(std::size_t offset) const {
             break;
         }
     }
-    const TextLine& line = layout.lines[index];
+    const InkingTextLine& line = layout.lines[index];
     const std::size_t target = std::min(offset, line.end);
 
     // 行内**逐码点**累加宽度：比例字体下光标才贴在正确的字缝上
     // （等宽估算在中英混排里必然偏）。
     const std::string& text = _edit.Text();
-    TextRequest request;
+    InkingTextRequest request;
     request.fontSize = _input.style.fontSize;
     request.fontPath = _input.style.fontPath;
     request.fontPaths = _input.style.fontPaths;
@@ -291,26 +290,26 @@ TextInputRect InkingTextInput::RawBoxForOffset(std::size_t offset) const {
     float width = 0.0f;
     std::size_t pos = line.begin;
     while (pos < target) {
-        const std::size_t next = TextEditState::NextCodePoint(text, pos);
+        const std::size_t next = InkingTextEditState::NextCodePoint(text, pos);
         if (next > target) {
             break;
         }
         request.text = text.substr(pos, next - pos);
-        width += MeasureText(request).width;
+        width += InkingMeasureText(request).width;
         pos = next;
     }
 
-    return TextInputRect{line.x + width, line.y, _input.caretWidth,
+    return InkingTextInputRect{line.x + width, line.y, _input.caretWidth,
                          line.height};
 }
 
-TextInputRect InkingTextInput::BoxForOffset(std::size_t offset) const {
+InkingTextInputRect InkingTextInput::BoxForOffset(std::size_t offset) const {
     // 未滚动坐标 → 减去滚动量 → **夹进本体**（T-12）。
     //
     // 夹取是"滚动量还没跟上"那一帧的兜底：`EnsureCaretVisible` 只在跨越边界时
     // 动，而排版 / 文本可能在两次调用之间变（例如退格把文本变短）。没有这一层，
     // 光标就会有一两帧画在框外——而面板默认不剪子孙，它是**真的**画出去。
-    TextInputRect box = RawBoxForOffset(offset);
+    InkingTextInputRect box = RawBoxForOffset(offset);
     box.x -= _scrollX;
     const float width = static_cast<float>(GetWidth());
     const float maxX = std::max(0.0f, width - box.width);
@@ -323,7 +322,7 @@ TextInputRect InkingTextInput::BoxForOffset(std::size_t offset) const {
 }
 
 float InkingTextInput::GetTextWidth() const {
-    const TextLayoutResult& layout = GetTextLayout();
+    const InkingTextLayoutResult& layout = GetTextLayout();
     if (layout.lines.empty()) {
         return 0.0f;
     }
@@ -351,7 +350,7 @@ void InkingTextInput::EnsureCaretVisible() {
     if (width <= 0.0f) {
         return;
     }
-    const TextInputRect caret = RawBoxForOffset(_edit.Caret());
+    const InkingTextInputRect caret = RawBoxForOffset(_edit.Caret());
     const float caretLeft = caret.x;
     const float caretRight = caret.x + caret.width;
 
@@ -366,20 +365,20 @@ void InkingTextInput::EnsureCaretVisible() {
     }
 }
 
-TextInputRect InkingTextInput::CaretBox() const {
+InkingTextInputRect InkingTextInput::CaretBox() const {
     return BoxForOffset(_edit.Caret());
 }
 
-std::vector<TextInputRect> InkingTextInput::SelectionBoxes() const {
-    std::vector<TextInputRect> boxes;
+std::vector<InkingTextInputRect> InkingTextInput::SelectionBoxes() const {
+    std::vector<InkingTextInputRect> boxes;
     if (!_edit.HasSelection()) {
         return boxes;
     }
     const std::size_t begin = _edit.SelectionBegin();
     const std::size_t end = _edit.SelectionEnd();
-    const TextLayoutResult& layout = GetTextLayout();
+    const InkingTextLayoutResult& layout = GetTextLayout();
 
-    for (const TextLine& line : layout.lines) {
+    for (const InkingTextLine& line : layout.lines) {
         const std::size_t from = std::max(begin, line.begin);
         const std::size_t to = std::min(end, line.end);
         if (from > to) {
@@ -390,14 +389,14 @@ std::vector<TextInputRect> InkingTextInput::SelectionBoxes() const {
         if (x1 - x0 <= 0.0f) {
             continue;  // 空行 / 零宽：没有可画的选区
         }
-        boxes.push_back(TextInputRect{x0, line.y, x1 - x0, line.height});
+        boxes.push_back(InkingTextInputRect{x0, line.y, x1 - x0, line.height});
     }
     return boxes;
 }
 
 std::size_t InkingTextInput::OffsetAtPoint(float designX,
                                            float designY) const {
-    const TextLayoutResult& layout = GetTextLayout();
+    const InkingTextLayoutResult& layout = GetTextLayout();
     if (layout.lines.empty()) {
         return 0;
     }
@@ -415,7 +414,7 @@ std::size_t InkingTextInput::OffsetAtPoint(float designX,
             break;
         }
     }
-    const TextLine& line = layout.lines[index];
+    const InkingTextLine& line = layout.lines[index];
     const float target = x - line.x;
 
     const std::string& text = _edit.Text();
@@ -426,7 +425,7 @@ std::size_t InkingTextInput::OffsetAtPoint(float designX,
     if (line.end > text.size()) {
         return text.size();
     }
-    TextRequest request;
+    InkingTextRequest request;
     request.fontSize = _input.style.fontSize;
     request.fontPath = _input.style.fontPath;
     request.fontPaths = _input.style.fontPaths;
@@ -434,12 +433,12 @@ std::size_t InkingTextInput::OffsetAtPoint(float designX,
     float width = 0.0f;
     std::size_t pos = line.begin;
     while (pos < line.end) {
-        const std::size_t next = TextEditState::NextCodePoint(text, pos);
+        const std::size_t next = InkingTextEditState::NextCodePoint(text, pos);
         if (next > line.end || next <= pos) {  // next <= pos = 不前进，防死循环
             break;
         }
         request.text = text.substr(pos, next - pos);
-        const float charWidth = MeasureText(request).width;
+        const float charWidth = InkingMeasureText(request).width;
         // 落在字的中线左边 ⇒ 光标停在这个字的起点（右半边则往下一个字走）。
         if (target < width + charWidth * 0.5f) {
             return pos;
@@ -455,18 +454,18 @@ std::size_t InkingTextInput::OffsetAtPoint(float designX,
 // ---------------------------------------------------------------------------
 
 void InkingTextInput::onRender(float pixelX, float pixelY) const {
-    SDL_Renderer* renderer = detail::currentRenderer();
+    SDL_Renderer* renderer = inking_detail::currentRenderer();
     const float magnitude = GetMagnification() > 0.0f ? GetMagnification() : 1.0f;
 
     // ① 选区：一行一个矩形，画在**文字下面**（不然会盖住字）。
     if (renderer != nullptr) {
-        for (const TextInputRect& box : SelectionBoxes()) {
-            detail::fillShape(
-                renderer, ShapeSpec::Rect(),
+        for (const InkingTextInputRect& box : SelectionBoxes()) {
+            inking_detail::fillShape(
+                renderer, InkingShapeSpec::Rect(),
                 std::max(1, static_cast<int>(box.width + 0.5f)),
                 std::max(1, static_cast<int>(box.height + 0.5f)), magnitude,
                 pixelX + box.x * magnitude, pixelY + box.y * magnitude,
-                TransformSpec{}, _input.selectionColor);
+                InkingTransformSpec{}, _input.selectionColor);
         }
     }
 
@@ -475,13 +474,13 @@ void InkingTextInput::onRender(float pixelX, float pixelY) const {
 
     // ③ 光标：有焦点 + 闪烁相位在"亮"的那半边。
     if (renderer != nullptr && _focused && _caretVisible) {
-        const TextInputRect box = CaretBox();
-        detail::fillShape(
-            renderer, ShapeSpec::Rect(),
+        const InkingTextInputRect box = CaretBox();
+        inking_detail::fillShape(
+            renderer, InkingShapeSpec::Rect(),
             std::max(1, static_cast<int>(box.width + 0.5f)),
             std::max(1, static_cast<int>(box.height + 0.5f)), magnitude,
             pixelX + box.x * magnitude, pixelY + box.y * magnitude,
-            TransformSpec{}, _input.caretColor);
+            InkingTransformSpec{}, _input.caretColor);
     }
 }
 
@@ -508,7 +507,7 @@ void InkingTextInput::onAnimationTick(float deltaSeconds) {
 // 钩子转发：真链路与公开写入口走同一份实现
 // ---------------------------------------------------------------------------
 
-void InkingTextInput::onKeyDown(const KeyEvent& key) { HandleKey(key); }
+void InkingTextInput::onKeyDown(const InkingKeyEvent& key) { HandleKey(key); }
 
 void InkingTextInput::onTextInput(const std::string& text) {
     HandleText(text);
@@ -516,10 +515,10 @@ void InkingTextInput::onTextInput(const std::string& text) {
 
 void InkingTextInput::onFocusChanged(bool focused) { SetFocused(focused); }
 
-void InkingTextInput::onPointerPress(PointerButton button, bool press) {
+void InkingTextInput::onPointerPress(InkingPointerButton button, bool press) {
     // 开始编辑 / 选区都是**主键**手势（0.5.0）。右键留给将来的"粘贴 / 全选"
     // 上下文菜单——那时在这个守卫之后加一条 Secondary 分支即可。
-    if (button != PointerButton::Primary) {
+    if (button != InkingPointerButton::Primary) {
         return;
     }
     if (!press) {
@@ -539,4 +538,3 @@ void InkingTextInput::onPointerDrag(float designX, float designY, float,
     DragTo(designX, designY);
 }
 
-}  // namespace inking

@@ -1,0 +1,7 @@
+// 把 app.manifest 编进 exe 的资源段（RT_MANIFEST = 24）。
+//
+// 没有这一条，`dpiAwareness` 就只是一份躺在目录里的 XML——Windows 只认 exe
+// 资源段里的那份，磁盘上放一个同名文件**不会有任何效果**。
+#include <windows.h>
+
+1 RT_MANIFEST "app.manifest"

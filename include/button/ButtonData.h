@@ -29,13 +29,12 @@
 #include <string>
 #include <vector>
 
-namespace inking {
 
 /// 模块名常量：日志和自检要用（约定：每个模块都暴露一个）。
-inline constexpr const char* kButtonModuleName = "InkingStaticButton";
+inline constexpr const char* InkingButtonModuleName = "InkingStaticButton";
 
 /// 三态外观的类型，对应配置里的 `"type": "color" | "img" | "svg"`。
-enum class AppearanceType : std::uint8_t {
+enum class InkingAppearanceType : std::uint8_t {
     Color = 0,  ///< source 是 `"r|g|b|a"`（0~1 浮点）
     Image,      ///< source 是图像绝对路径，编译期转成二进制纹理
     Svg,        ///< source 是 SVG 代码
@@ -46,7 +45,7 @@ enum class AppearanceType : std::uint8_t {
  *
  * `color` 是 `source` 解析后的结果，渲染直接用这个字段，不在每帧去解析字符串。
  *
- * **Image 已经落地**：`ButtonPaint` 用 `detail::PaintImage` 把图像按形状裁剪后
+ * **Image 已经落地**：`ButtonPaint` 用 `inking_detail::PaintImage` 把图像按形状裁剪后
  * 画进按钮（见 `src/button/ButtonPaint.cpp`）；字节是 SVG 时按目标设备像素光栅化
  * （0.5.1，见 `CXXCSS.md` §4.2）。
  * **Svg 是"生成期转形状"那条路**：配置里的 `svg` 只支持**一个图形元素**、一种填充，
@@ -54,8 +53,8 @@ enum class AppearanceType : std::uint8_t {
  * 运行期与 `color` 走同一条填色路。**整张设计稿**请走图片的 `type:"svg"`（纹理路，
  * 支持多图元 / 渐变 / 变换），两者同名不同义，见 `CXXCSS.md` §4.1 的对照表。
  */
-struct ButtonAppearance {
-    AppearanceType type = AppearanceType::Color;
+struct InkingButtonAppearance {
+    InkingAppearanceType type = InkingAppearanceType::Color;
     std::uint32_t color = 0xFF000000u;  ///< type == Color 时有效，0xAARRGGBB
     std::string source;                 ///< 原样的配置串，留给纹理层用
 
@@ -90,9 +89,9 @@ struct ButtonAppearance {
      * 居中，留白处不画）、`cover`（铺满框、居中，超出的一边被框裁掉）。
      * 三种模式都**按组件形状裁剪**：圆角按钮配图片时四个角跟着圆角一起被剪。
      *
-     * 几何计算在 `ImageFitSpec`（纯函数），绘制在 `detail::fillShapeTextured`。
+     * 几何计算在 `InkingImageFitSpec`（纯函数），绘制在 `inking_detail::fillShapeTextured`。
      */
-    ImageFit imageFit = ImageFit::Fill;
+    InkingImageFit imageFit = InkingImageFit::Fill;
 
     /**
      * @brief 这个外观只画纹理的**哪一块**（像素矩形，0.6.1 T-04）。
@@ -103,12 +102,12 @@ struct ButtonAppearance {
      * 两条容易踩的：
      *   - 单位是**纹理像素**，不是设计坐标、也不乘展示倍率；
      *   - 它描述"取哪块"，不描述"画多大"——画多大仍是 `width`/`height` 加
-     *     `imageFit` 的事（`ImageFitSpec::DrawnRect` 用**这块的宽高**算等比）。
+     *     `imageFit` 的事（`InkingImageFitSpec::DrawnRect` 用**这块的宽高**算等比）。
      *
      * 由 `InkingStaticImage::SetRenderSourceRect()` 写（protected，派生类专用）：
      * 派生类不该直接碰 `_renderAppearance`（那是 private 段）。
      */
-    ShapeBounds srcRect{};
+    InkingShapeBounds srcRect{};
 
     /// 给过源矩形吗（宽高都 > 0）；假 = 画整张。
     bool HasSourceRect() const noexcept {
@@ -122,7 +121,7 @@ struct ButtonAppearance {
      * normal→hover 用 hover 这份，hover→normal 用 normal 那份，各配各的。
      *
      * 过渡**只插值颜色与透明度，绝不碰几何**——那是按钮能继续待在静态档
-     * （几何不变 → 进命中表）的前提。运行期怎么插值见 `ButtonLook::Advance`。
+     * （几何不变 → 进命中表）的前提。运行期怎么插值见 `InkingButtonLook::Advance`。
      */
     float transitionSeconds = 0.0f;
 
@@ -136,7 +135,7 @@ struct ButtonAppearance {
      *
      * 时长是 0（没配过渡）时这条曲线不生效——生成期会把那种配置拦下来。
      */
-    Easing easing = Easing::Linear;
+    InkingEasing easing = InkingEasing::Linear;
 
     /**
      * 这个状态下的**目标变换**（平移 / 旋转 / 缩放），缺省是单位变换。
@@ -148,16 +147,16 @@ struct ButtonAppearance {
      * 与 `transitionSeconds` 配合：进这个状态时，颜色与变换**一起**按同一段时长插过去。
      *
      * 数据上放在"外观"里是刻意的：配置里它就写在同一个状态对象里
-     * （`"hover": { ..., "transform": {...} }`），`ButtonLook::For(state)` 一次就能拿到
+     * （`"hover": { ..., "transform": {...} }`），`InkingButtonLook::For(state)` 一次就能拿到
      * "这个状态长什么样、摆在哪儿"。要是拆成另一组三态字段，两边就得同步维护了。
      */
-    TransformSpec transform{};
+    InkingTransformSpec transform{};
 
     /**
      * 这个状态下的**尺寸**（T-5 的布局通道）。0 = 用组件自己的 `width`/`height`。
      *
      * 和 `transform` 的区别：变换只改"画在哪儿 / 画多大"，**不改本地几何**；
-     * 这里改的就是本地几何本身（`ShapeContains` 与 `GetShapeBounds` 都吃它），
+     * 这里改的就是本地几何本身（`InkingShapeContains` 与 `InkingGetShapeBounds` 都吃它），
      * 所以"命中区域跟着变"是应该的、也是自检要钉住的。
      *
      * 三条约定（`CXXCSS.md` §4.1.3）：
@@ -172,23 +171,23 @@ struct ButtonAppearance {
     float width = 0.0f;
     float height = 0.0f;
 
-    ButtonAppearance() = default;
-    ButtonAppearance(AppearanceType appearanceType, std::uint32_t argb)
+    InkingButtonAppearance() = default;
+    InkingButtonAppearance(InkingAppearanceType appearanceType, std::uint32_t argb)
         : type(appearanceType), color(argb) {}
 
     /// CXXCSS 里 `"0|0|0|0.75"` 那种 0~1 写法。
-    static ButtonAppearance FromUnitRgba(float r, float g, float b,
+    static InkingButtonAppearance InkingFromUnitRgba(float r, float g, float b,
                                          float a = 1.0f) {
-        // 必须写 inking::——本类里有个同名静态函数，不加限定会找到自己。
-        return ButtonAppearance(AppearanceType::Color,
-                                inking::FromUnitRgba(r, g, b, a));
+        // 必须写 `::`——本类里有个同名静态函数，不加限定会找到自己（无限递归）。
+        return InkingButtonAppearance(InkingAppearanceType::Color,
+                                ::InkingFromUnitRgba(r, g, b, a));
     }
 
-    bool IsColor() const noexcept { return type == AppearanceType::Color; }
+    bool IsColor() const noexcept { return type == InkingAppearanceType::Color; }
 };
 
 /// 文字段（配置里的 `text`）。`path` 为空表示用机器默认字体。
-struct ButtonTextData {
+struct InkingButtonTextData {
     float fontSize = 0.0f;   ///< 设计坐标的字号
     float leftSpace = 0.0f;  ///< 距左侧，设计坐标（`align == Left` 时用）
     float topSpace = 0.0f;   ///< 距顶部，设计坐标（`alignV == Top` 时用）
@@ -199,7 +198,7 @@ struct ButtonTextData {
      *
      * 配置里 `"path"` 写成数组时，**第一个元素进 `path`、其余进这里**——这样
      * "首选"仍然只有一个字段（`InkingStaticButton` 的构造日志只认 `path`），
-     * 链只是它的尾巴。语义与 `TextStyle::fontPaths` 完全一致（文件级、不是
+     * 链只是它的尾巴。语义与 `InkingTextStyle::fontPaths` 完全一致（文件级、不是
      * 字形级；中间没命中不报警；全失败退化成占位方块 + 一条汇总 WARN）。
      */
     std::vector<std::string> paths;
@@ -210,7 +209,7 @@ struct ButtonTextData {
      * 默认 `Left` / `Top` = 老行为：文字左上角就在 `(leftSpace, topSpace)`——
      * 一个字都不改，所以既有配置与产物完全不受影响。
      *
-     * 另外两个值时**先量文字块的真实尺寸**（`MeasureText`），再按它算偏移：
+     * 另外两个值时**先量文字块的真实尺寸**（`InkingMeasureText`），再按它算偏移：
      *   - `align == Center`：水平居中（忽略 `leftSpace`）；
      *   - `align == Right`：右对齐（`leftSpace` 当右边距用）；
      *   - `alignV == Middle` / `Bottom`：垂直居中 / 贴底（忽略 `topSpace`）。
@@ -218,20 +217,20 @@ struct ButtonTextData {
      * 为什么需要它：按钮的文字以前**只能**按固定偏移贴左上角（`leftSpace` /
      * `topSpace` 是"距左 / 距上多少"），于是"菜单项文字居中"这种最基本的需求要靠
      * 手填一个估算值——比例字体下必然歪。量一遍文字再算，是唯一不用猜的做法。
-     * 复用的是标签那套现成枚举（`TextAlignH` / `TextAlignV`），不新增词汇。
+     * 复用的是标签那套现成枚举（`InkingTextAlignH` / `InkingTextAlignV`），不新增词汇。
      */
-    TextAlignH align = TextAlignH::Left;
-    TextAlignV alignV = TextAlignV::Top;
+    InkingTextAlignH align = InkingTextAlignH::Left;
+    InkingTextAlignV alignV = InkingTextAlignV::Top;
 };
 
 /**
  * @brief 一个 Button 的全部静态配置。
  *
  * 三态外观（normal / hover / onclicked）按配置写法平铺成三个字段，
- * 而不是塞一个 `ButtonAppearance[3]`：配置里就是三个具名段，
+ * 而不是塞一个 `InkingButtonAppearance[3]`：配置里就是三个具名段，
  * 展开之后字段名能直接对上，找起来不用在脑子里做下标映射。
  */
-struct ButtonData {
+struct InkingButtonData {
     std::string name;  ///< 与 json 文件名、代码里用的名字三处一致
 
     /// 设计坐标尺寸。配置里历史上有 `"200"` 这种字符串写法，
@@ -239,16 +238,16 @@ struct ButtonData {
     int width = 0;
     int height = 0;
 
-    ButtonAppearance normal{};     ///< 通常状态
-    ButtonAppearance hover{};      ///< 悬停
-    ButtonAppearance onclicked{};  ///< 按下
+    InkingButtonAppearance normal{};     ///< 通常状态
+    InkingButtonAppearance hover{};      ///< 悬停
+    InkingButtonAppearance onclicked{};  ///< 按下
 
     /// 省略 hover / onclicked 时**继承 normal**。
     /// 这个收尾工作由 Normalize() 做，不在读取方那边各写一遍。
     bool hoverInheritsNormal = true;
     bool onclickedInheritsNormal = true;
 
-    ButtonTextData text{};
+    InkingButtonTextData text{};
     std::string label;  ///< text.content.normal 的运行时形态（当前按它画）
 
     /// 按钮文字的颜色。**配置里没有这个字段**（json 的 text 段没定义颜色），
@@ -256,8 +255,8 @@ struct ButtonData {
     /// 等 text 段定稿，这个字段要么被配置覆盖，要么被删掉。
     std::uint32_t textColor = 0xFFFFFFFFu;
 
-    AnchorPoint selfAnchor{};   ///< 自身锚点
-    AnchorPoint traceAnchor{};  ///< 上级锚点
+    InkingAnchorPoint selfAnchor{};   ///< 自身锚点
+    InkingAnchorPoint traceAnchor{};  ///< 上级锚点
     float offsetX = 0.0f;  ///< 对齐之后再挪一点，设计坐标
     float offsetY = 0.0f;
 
@@ -265,27 +264,27 @@ struct ButtonData {
      * 布局（A6）：`layout` = 我是容器时怎么排孩子；`layoutItem` = 我在父容器
      * 布局里的意愿。两个都默认空，所以不带布局的按钮一行配置都不用改。
      *
-     * ⚠️ 这两个字段与 `AnchorData` 里同名的那两个是**同一份语义**：组件构造时
+     * ⚠️ 这两个字段与 `InkingAnchorData` 里同名的那两个是**同一份语义**：组件构造时
      * 会逐字段把它们拷进基类（和 `selfAnchor` / `offsetX` 那几行走同一条路）。
      * 往这里加字段时别忘了那一处（`AGENTS.md` §6 第 83 条）。
      */
-    LayoutSpec layout;
-    LayoutItem layoutItem;
+    InkingLayoutSpec layout;
+    InkingLayoutItem layoutItem;
 
     int zIndex = 0;          ///< 越大越靠上
     bool visible = true;     ///< 自己这一层的可见性
 
-    ShapeSpec shape = ShapeSpec::Rect();  ///< 形状层，省略即直角矩形
+    InkingShapeSpec shape = InkingShapeSpec::Rect();  ///< 形状层，省略即直角矩形
 
     /**
      * 描边与阴影（B3）：与 `shape` **平级**的两笔装饰（`CXXCSS.md` §3.5）。
      *
      * 它们**不进形状参数**：形状只管几何，描边/阴影画在几何之上/之下。
-     * 命中也不受它们影响——命中判的是形状本体（`ShapeContains`）。
+     * 命中也不受它们影响——命中判的是形状本体（`InkingShapeContains`）。
      * 两者都是**组件级**（三态共用），要"悬停加亮描边"得等真有需求再谈。
      */
-    StrokeSpec stroke;
-    ShadowSpec shadow;
+    InkingStrokeSpec stroke;
+    InkingShadowSpec shadow;
 
     /**
      * 收尾：把"省略即继承"的默认值补齐。
@@ -310,9 +309,9 @@ struct ButtonData {
         // "这里配错了"。同时补一条 WARN：兜底是给"配错了"用的，不是正常路径。
         // 0.2.0 T-07 补一条豁免（与面板同一条规矩）：**有可见描边或阴影时不兜底**
         // ——"透明底 + 一圈描边"是正当配置（空心按钮），兜底成品红反而把它毁了。
-        if (normal.IsColor() && ColorAlpha(normal.color) == 0u
-            && ColorAlpha(hover.color) == 0u
-            && ColorAlpha(onclicked.color) == 0u && !stroke.Visible()
+        if (normal.IsColor() && InkingColorAlpha(normal.color) == 0u
+            && InkingColorAlpha(hover.color) == 0u
+            && InkingColorAlpha(onclicked.color) == 0u && !stroke.Visible()
             && !shadow.Visible()) {
             normal.color = 0xFFFF00FFu;
             hover.color = 0xFFFF00FFu;
@@ -322,7 +321,7 @@ struct ButtonData {
             normal.themeColor = nullptr;
             hover.themeColor = nullptr;
             onclicked.themeColor = nullptr;
-            INK_LOG_WARN(kButtonModuleName,
+            INK_LOG_WARN(InkingButtonModuleName,
                          "三态颜色全透明（alpha 都是 0），已兜底成品红："
                              + label
                              + "。真要一个看不见的按钮请给一个极小非零 alpha"
@@ -334,4 +333,3 @@ struct ButtonData {
     bool HasLabel() const noexcept { return !label.empty(); }
 };
 
-}  // namespace inking

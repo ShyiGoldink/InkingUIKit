@@ -43,14 +43,17 @@
 #include <image/ImageData.h>
 #include <image/InkingAtlas.h>
 #include <image/InkingDynamicImage.h>
+#include <image/InkingDynamicSprite.h>
 #include <image/InkingSpriteGroup.h>
 #include <image/InkingSprite.h>
 #include <util/InkingJson.h>
 #include <image/InkingStaticImage.h>
 #include <image/SpriteData.h>
+#include <panel/InkingDynamicPanel.h>
 #include <panel/InkingStaticPanel.h>
 #include <panel/PanelData.h>
 #include <panel/InkingFixedPopup.h>
+#include <text/InkingDynamicLabel.h>
 #include <text/InkingStaticLabel.h>
 #include <text/InkingTextInput.h>
 #include <text/LabelData.h>
@@ -108,53 +111,53 @@ std::vector<std::uint32_t> ReadPixelRegion(SDL_Renderer* renderer,
                                            const SDL_Rect& rect);
 
 /// 动态按钮：每逻辑步把自己往右推 10 像素——用来验"Tick 真的派发到组件"。
-class Mover : public inking::InkingDynamicButton {
+class Mover : public InkingDynamicButton {
 public:
-    using inking::InkingDynamicButton::InkingDynamicButton;
+    using InkingDynamicButton::InkingDynamicButton;
 
 protected:
     void onTick(float deltaSeconds) override {
-        inking::InkingDynamicButton::onTick(deltaSeconds);  // 先收输入，再动几何
+        InkingDynamicButton::onTick(deltaSeconds);  // 先收输入，再动几何
         ChangeOffset(10.0f, 0.0f);
     }
 };
 
-struct TestScene : public inking::InkingScene {
-    TestScene() : inking::InkingScene("selftest") {
-        inking::ButtonData bd;
+struct TestScene : public InkingScene {
+    TestScene() : InkingScene("selftest") {
+        InkingButtonData bd;
         bd.name = "probe_button";
         bd.width = 200;
         bd.height = 60;
-        bd.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+        bd.normal = InkingButtonAppearance(InkingAppearanceType::Color,
                                              0xFF3F7FD6u);
         bd.label = "probe";
         bd.text.fontSize = 20.0f;
-        bd.selfAnchor = inking::InkingChangeAnchor::Center;
-        bd.traceAnchor = inking::InkingChangeAnchor::Center;
+        bd.selfAnchor = InkingChangeAnchor::Center;
+        bd.traceAnchor = InkingChangeAnchor::Center;
 
-        button = static_cast<inking::InkingStaticButton*>(
-            AddChild(std::make_unique<inking::InkingStaticButton>(this, bd)));
+        button = static_cast<InkingStaticButton*>(
+            AddChild(std::make_unique<InkingStaticButton>(this, bd)));
         button->SetOnClicked([this] { clicked = true; });
 
         // 动态按钮挪开摆：两个组件重叠时，**后注册的会正确地挡在上面**，
         // 那时静态按钮收不到 hover 是正确行为，不是故障。
-        inking::ButtonData dd = bd;
+        InkingButtonData dd = bd;
         dd.name = "probe_mover";
         dd.offsetY = 200.0f;
         mover =
             static_cast<Mover*>(AddChild(std::make_unique<Mover>(this, dd)));
     }
 
-    inking::InkingStaticButton* button = nullptr;
+    InkingStaticButton* button = nullptr;
     Mover* mover = nullptr;
     bool clicked = false;
 };
 
 // ---------------------------------------------------------------------------
-// InkingMesh × ShapeContains 对账
+// InkingMesh × InkingShapeContains 对账
 //
 // 这两者是**同一个几何问题的两条实现**：`AppendContour` 决定"画出来的轮廓长
-// 什么样"（填充与描边都用它），`SignedDistance` / `ShapeContains` 决定"点在不在
+// 什么样"（填充与描边都用它），`InkingSignedDistance` / `InkingShapeContains` 决定"点在不在
 // 形状里"（命中、裁剪、包围盒都用它）。两边一旦分叉，症状就是"画的是圆角、
 // 点到的是直角"——只在边角露头，人眼极难发现。
 //
@@ -164,7 +167,7 @@ struct TestScene : public inking::InkingScene {
 // ---------------------------------------------------------------------------
 
 /// 射线法：点是否在这一圈闭合多边形内（只用于对账，不参与任何绘制）。
-bool PointInPolygon(const std::vector<inking::detail::OutlinePoint>& ring,
+bool PointInPolygon(const std::vector<inking_detail::OutlinePoint>& ring,
                     float x, float y) {
     const std::size_t n = ring.size();
     if (n < 3) {
@@ -191,17 +194,17 @@ bool PointInPolygon(const std::vector<inking::detail::OutlinePoint>& ring,
 int ReconcileShapeMesh() {
     struct Case {
         const char* name;
-        inking::ShapeSpec shape;
+        InkingShapeSpec shape;
     };
     const Case cases[] = {
-        {"rect", inking::ShapeSpec::Rect()},
-        {"roundedRect(24)", inking::ShapeSpec::RoundedRect(24.0f)},
-        {"circle", inking::ShapeSpec::Circle()},
-        {"ellipse", inking::ShapeSpec::Ellipse()},
-        {"capsule", inking::ShapeSpec::Capsule()},
-        {"polygon(6)", inking::ShapeSpec::Polygon(6, 0.0f)},
-        {"star(5,0.5)", inking::ShapeSpec::Star(5, 0.5f)},
-        {"superellipse(4)", inking::ShapeSpec::Superellipse(4.0f)},
+        {"rect", InkingShapeSpec::Rect()},
+        {"roundedRect(24)", InkingShapeSpec::RoundedRect(24.0f)},
+        {"circle", InkingShapeSpec::Circle()},
+        {"ellipse", InkingShapeSpec::Ellipse()},
+        {"capsule", InkingShapeSpec::Capsule()},
+        {"polygon(6)", InkingShapeSpec::Polygon(6, 0.0f)},
+        {"star(5,0.5)", InkingShapeSpec::Star(5, 0.5f)},
+        {"superellipse(4)", InkingShapeSpec::Superellipse(4.0f)},
     };
 
     constexpr int kWidth = 200;
@@ -211,12 +214,12 @@ int ReconcileShapeMesh() {
 
     int bad = 0;
     for (const Case& c : cases) {
-        std::vector<inking::detail::OutlinePoint> ring;
+        std::vector<inking_detail::OutlinePoint> ring;
         const float w = static_cast<float>(kWidth);
         const float h = static_cast<float>(kHeight);
-        inking::detail::AppendContour(
+        inking_detail::AppendContour(
             ring, c.shape, w, h,
-            inking::detail::ContourSteps(c.shape, w, h), 0.0f);
+            inking_detail::ContourSteps(c.shape, w, h), 0.0f);
 
         if (ring.size() < 3) {
             std::printf("      [FAIL] %s：轮廓点数 %zu（应 >= 3）\n", c.name,
@@ -234,7 +237,7 @@ int ReconcileShapeMesh() {
                 const float py = (static_cast<float>(gy) + 0.5f) * h
                                / static_cast<float>(kRows);
                 const float sdf =
-                    inking::SignedDistance(c.shape, px, py, kWidth, kHeight);
+                    InkingSignedDistance(c.shape, px, py, kWidth, kHeight);
                 if (std::fabs(sdf) < 1.5f) {
                     continue;  // 边界带：两种判法都有理，不参与对账
                 }
@@ -268,14 +271,14 @@ int ReconcileShapeMesh() {
 // ---------------------------------------------------------------------------
 
 void CheckWindowZoomAndFullscreen() {
-    inking::InkingWindow& window = inking::InkingWindow::Instance();
+    InkingWindow& window = InkingWindow::Instance();
 
     // ---- 档位表：运行时按设计尺寸 + 显示器可用区域生成 ----
     const std::vector<float> ladder = window.GetZoomLadder();
     bool ladderOk = !ladder.empty();
     for (std::size_t i = 0; i < ladder.size(); ++i) {
-        if (ladder[i] < inking::InkingWindow::kMinZoom - 1e-3f
-            || ladder[i] > inking::InkingWindow::kMaxZoom + 1e-3f) {
+        if (ladder[i] < InkingWindow::kMinZoom - 1e-3f
+            || ladder[i] > InkingWindow::kMaxZoom + 1e-3f) {
             ladderOk = false;
         }
         if (i > 0 && ladder[i] <= ladder[i - 1]) {
@@ -295,18 +298,18 @@ void CheckWindowZoomAndFullscreen() {
 
     const int width = window.GetWindowWidth();
     const int height = window.GetWindowHeight();
-    Check(width == static_cast<int>(std::lround(inking::DesignWidth() * top))
+    Check(width == static_cast<int>(std::lround(InkingDesignWidth() * top))
               && height
                      == static_cast<int>(
-                            std::lround(inking::DesignHeight() * top)),
+                            std::lround(InkingDesignHeight() * top)),
           "窗口尺寸 = 设计尺寸 × 档位（整数像素）");
 
     // 严格等比的判据：两轴算出来的"实际倍率"之差，折算回设计像素 ≤ 1。
     const double zoomW =
-        static_cast<double>(width) / static_cast<double>(inking::DesignWidth());
+        static_cast<double>(width) / static_cast<double>(InkingDesignWidth());
     const double zoomH =
-        static_cast<double>(height) / static_cast<double>(inking::DesignHeight());
-    Check(std::fabs(zoomW - zoomH) * inking::DesignWidth() <= 1.0,
+        static_cast<double>(height) / static_cast<double>(InkingDesignHeight());
+    Check(std::fabs(zoomW - zoomH) * InkingDesignWidth() <= 1.0,
           "两轴倍率一致（letterbox 黑边 ≤ 1px）");
 
     // ---- 夹取与幂等 ----
@@ -330,34 +333,34 @@ void CheckWindowZoomAndFullscreen() {
 }
 
 // ---------------------------------------------------------------------------
-// 窗口启动配置（`WindowConfig`）：set + **回读校验**
+// 窗口启动配置（`InkingWindowConfig`）：set + **回读校验**
 //
 // 这一层的价值全在"回读"上：三个 setter 返回的是"真的变了没有"，幂等调用返回
 // false，和失败长得一样；`SetBackgroundColor` 干脆是 void。所以判据只能是"读回来比"。
 // ---------------------------------------------------------------------------
 
 void CheckWindowConfigApply() {
-    inking::InkingWindow& window = inking::InkingWindow::Instance();
+    InkingWindow& window = InkingWindow::Instance();
 
     const std::uint32_t backgroundBefore = window.GetBackgroundColor();
     const bool borderlessBefore = window.IsBorderless();
 
     // 1) 空配置：一项都不动（"没写 = 不碰"，留给库的默认值）。
-    inking::WindowConfig empty;
-    Check(inking::ApplyWindowConfig(empty) == 0,
-          "空 WindowConfig 返回 0（没写 = 不动库的默认值）");
+    InkingWindowConfig empty;
+    Check(InkingApplyWindowConfig(empty) == 0,
+          "空 InkingWindowConfig 返回 0（没写 = 不动库的默认值）");
     Check(window.GetBackgroundColor() == backgroundBefore
               && window.IsBorderless() == borderlessBefore,
-          "空 WindowConfig 确实一项都没动");
+          "空 InkingWindowConfig 确实一项都没动");
 
     // 2) 五项全设：回读一致、失败数为 0。
-    inking::WindowConfig config;
+    InkingWindowConfig config;
     config.borderless = true;
     config.roundedCorners = true;
     config.transparent = true;
     config.background = 0xFF010203u;
     config.fullscreen = true;
-    Check(inking::ApplyWindowConfig(config) == 0,
+    Check(InkingApplyWindowConfig(config) == 0,
           "五项窗口设置回读全部一致（失败数 0）");
     Check(window.IsBorderless(), "borderless 回读为真");
     Check(window.GetBackgroundColor() == 0xFF010203u, "background 回读一致");
@@ -370,12 +373,12 @@ void CheckWindowConfigApply() {
           "没有窗口时 IsTransparentApplied 恒为假（它读的是窗口标志）");
 
     // 3) 复原，别污染后面的用例。
-    inking::WindowConfig restore;
+    InkingWindowConfig restore;
     restore.borderless = borderlessBefore;
     restore.transparent = false;
     restore.background = backgroundBefore;
     restore.fullscreen = false;
-    Check(inking::ApplyWindowConfig(restore) == 0, "复原窗口设置成功");
+    Check(InkingApplyWindowConfig(restore) == 0, "复原窗口设置成功");
 }
 
 // ---------------------------------------------------------------------------
@@ -383,8 +386,8 @@ void CheckWindowConfigApply() {
 // ---------------------------------------------------------------------------
 
 void CheckMenuBarFullscreenHiding() {
-    inking::InkingWindow& window = inking::InkingWindow::Instance();
-    inking::prefab::MenuBar bar(nullptr);
+    InkingWindow& window = InkingWindow::Instance();
+    inking_prefab::MenuBar bar(nullptr);
 
     Check(bar.IsVisible(), "菜单栏初始可见");
     window.SetFullscreen(true);
@@ -408,26 +411,26 @@ void CheckMenuBarFullscreenHiding() {
 void CheckShortcuts() {
     // ---- 解析与回写 ----
     bool ok = false;
-    const inking::Shortcut combo = inking::Shortcut::Parse("Ctrl+Shift+S", &ok);
+    const InkingShortcut combo = InkingShortcut::Parse("Ctrl+Shift+S", &ok);
     Check(ok && !combo.Empty(), "解析 Ctrl+Shift+S 成功");
     Check(combo.ToString() == "Ctrl+Shift+S", "ToString 与输入一致（往返稳定）");
-    Check(combo.modifiers == (inking::Shortcut::kCtrl | inking::Shortcut::kShift),
+    Check(combo.modifiers == (InkingShortcut::kCtrl | InkingShortcut::kShift),
           "修饰键位掩码正确");
 
     ok = true;
-    const inking::Shortcut bogus = inking::Shortcut::Parse("Ctrl+Nope", &ok);
+    const InkingShortcut bogus = InkingShortcut::Parse("Ctrl+Nope", &ok);
     Check(!ok && bogus.Empty(), "非法主键名解析失败且不返回半个快捷键");
 
     ok = true;
-    Check(inking::Shortcut::Parse("Ctrl+", &ok).Empty() && !ok,
+    Check(InkingShortcut::Parse("Ctrl+", &ok).Empty() && !ok,
           "只有修饰键的串不算快捷键");
 
     // ---- 匹配：修饰键必须完全相等 ----
-    inking::KeyEvent press{};
+    InkingKeyEvent press{};
     press.key = 's';
     press.ctrl = true;
     press.shift = true;
-    const inking::Shortcut save = inking::Shortcut::Parse("Ctrl+S");
+    const InkingShortcut save = InkingShortcut::Parse("Ctrl+S");
     Check(!save.Matches(press), "Ctrl+S 不被 Ctrl+Shift+S 命中（严格匹配）");
     press.shift = false;
     Check(save.Matches(press), "Ctrl+S 命中 Ctrl+S");
@@ -436,9 +439,9 @@ void CheckShortcuts() {
     press.repeat = false;
 
     // ---- 绑定表：冲突 / 派发 / 消费 ----
-    inking::ShortcutRegistry registry;
+    InkingShortcutRegistry registry;
     int fired = 0;
-    const inking::ShortcutRegistry::Id id =
+    const InkingShortcutRegistry::Id id =
         registry.Bind(save, [&fired] { ++fired; }, "保存");
     Check(id != 0 && registry.Count() == 1, "快捷键绑定成功");
     Check(registry.Bind(save, [] {}, "重复项") == 0 && registry.Count() == 1,
@@ -446,7 +449,7 @@ void CheckShortcuts() {
     Check(registry.IsTaken(save), "IsTaken 能预检冲突");
 
     // 造一条真实的按键事件喂进去（不经过窗口，自检要能单独验这条路）。
-    inking::KeyboardInput input;
+    InkingKeyboardInput input;
     SDL_Event event{};
     event.type = SDL_EVENT_KEY_DOWN;
     event.key.key = SDLK_S;
@@ -466,18 +469,18 @@ void CheckShortcuts() {
 // ---------------------------------------------------------------------------
 
 void CheckMenuBarShortcutBinding() {
-    inking::InkingWindow& window = inking::InkingWindow::Instance();
+    InkingWindow& window = InkingWindow::Instance();
     const std::size_t before = window.GetShortcuts().Count();
 
-    inking::ButtonData look;
+    InkingButtonData look;
     look.name = "menu_item";
     look.width = 80;
     look.height = 28;
 
-    const inking::Shortcut open = inking::Shortcut::Parse("Ctrl+O");
+    const InkingShortcut open = InkingShortcut::Parse("Ctrl+O");
     {
-        inking::prefab::MenuBar bar(nullptr);
-        inking::InkingStaticButton* item =
+        inking_prefab::MenuBar bar(nullptr);
+        InkingStaticButton* item =
             bar.AddButton(look, "打开", [] {}, open);
         Check(item != nullptr && bar.GetBoundShortcutCount() == 1,
               "AddButton 第 4 参顺手绑定了快捷键");
@@ -559,7 +562,7 @@ bool InkBox(SDL_Renderer* renderer, SDL_Rect* out) {
 ///
 /// 判据不能用 `SDL_GetPathInfo`：它只问"这个路径存在吗"，而字体能不能被
 /// TTF 打开是另一件事（权限、被占用、沙箱都可能拦下来）。所以拿
-/// `MeasureText` 量两个字符——量出来正好等于"字号 × 码点数"就是**估算法**
+/// `InkingMeasureText` 量两个字符——量出来正好等于"字号 × 码点数"就是**估算法**
 /// 的答案，说明没打开字体；不等于才是真字体度量。
 ///
 /// 环境变量 `INK_TEST_FONT` 优先：CI / 沙箱里系统字体不一定可读。
@@ -574,11 +577,11 @@ std::string FindUsableFont() {
     candidates.emplace_back("C:/Windows/Fonts/arial.ttf");
 
     for (const std::string& path : candidates) {
-        inking::TextRequest probe;
+        InkingTextRequest probe;
         probe.text = "Hg";
         probe.fontSize = 40.0f;
         probe.fontPath = path;
-        const inking::TextMetrics metrics = inking::MeasureText(probe);
+        const InkingTextMetrics metrics = InkingMeasureText(probe);
         if (std::fabs(metrics.width - 80.0f) > 0.5f) {  // 80 = 2 码点 × 40
             return path;
         }
@@ -656,10 +659,10 @@ void NoteSilentFailure(const char* id) { g_silentChecked.emplace_back(id); }
 // 对"这种判据；每一项都用 `ResetStats()` 把计数归零，于是"恰好 1 条"是能断言的。
 // ---------------------------------------------------------------------------
 
-class ZeroProbe : public inking::InkingStaticWidget {
+class ZeroProbe : public InkingStaticWidget {
 public:
-    explicit ZeroProbe(inking::InkingWidget* parent)
-        : inking::InkingStaticWidget(parent, "zero_probe") {}
+    explicit ZeroProbe(InkingWidget* parent)
+        : InkingStaticWidget(parent, "zero_probe") {}
 
     /// 把 protected 的护栏与几何暴露出来：这里验的是**机制**本身
     /// （0×0 报一条、有尺寸不报），不依赖某个具体组件怎么排自己。
@@ -670,136 +673,136 @@ public:
     }
 };
 
-void CheckSilentFailureGuards(SDL_Renderer* renderer, inking::InkingScene* home) {
+void CheckSilentFailureGuards(SDL_Renderer* renderer, InkingScene* home) {
     std::printf("\n-- 静默失效护栏（0.1.1）--\n");
 
-    struct GuardScene : inking::InkingScene {
-        explicit GuardScene(const char* name) : inking::InkingScene(name) {}
+    struct GuardScene : InkingScene {
+        explicit GuardScene(const char* name) : InkingScene(name) {}
     };
     GuardScene scene("selftest-guard");
 
     // 面板**故意不声明 layout**：这正是反馈方那种"手搭界面"的形态。
-    inking::PanelData panelData;
+    InkingPanelData panelData;
     panelData.name = "guard_panel";
     panelData.width = 400;
     panelData.height = 300;
-    auto* panel = static_cast<inking::InkingStaticPanel*>(
-        scene.AddChild(std::make_unique<inking::InkingStaticPanel>(&scene, panelData)));
+    auto* panel = static_cast<InkingStaticPanel*>(
+        scene.AddChild(std::make_unique<InkingStaticPanel>(&scene, panelData)));
 
     // ---- T-01：省略 height + 无布局容器 ⇒ 按内容自测量（不是 0） ----
-    inking::LabelData labelData;
+    InkingLabelData labelData;
     labelData.name = "guard_label";
     labelData.width = 200;  // 显式宽度，height 省略（= 0）
     labelData.text = "guard label text";
     labelData.style.fontSize = 16.0f;
-    auto* label = static_cast<inking::InkingStaticLabel*>(
-        panel->AddChild(std::make_unique<inking::InkingStaticLabel>(panel, labelData)));
+    auto* label = static_cast<InkingStaticLabel*>(
+        panel->AddChild(std::make_unique<InkingStaticLabel>(panel, labelData)));
 
     Check(label->GetWidth() == 200,
           "label_self_size：配置的宽度不被测量值覆盖（200 仍是 200）");
     Check(label->GetHeight() > 0,
           "label_self_size：无布局容器时按内容撑开（不再是 0 高、不是一像素不画）");
     {
-        const inking::LayoutSize measured =
-            label->MeasureLayout(inking::LayoutConstraints{0.0f, 0.0f});
+        const InkingLayoutSize measured =
+            label->MeasureLayout(InkingLayoutConstraints{0.0f, 0.0f});
         Check(static_cast<int>(std::lround(measured.height)) == label->GetHeight(),
               "label_self_size：高度等于 MeasureLayout 报的那一份（两条腿同一个答案）");
     }
     NoteSilentFailure("label_self_size");
 
     // ---- T-01 反例：显式高度优先，绝不按内容覆盖 ----
-    inking::LabelData tallData;
+    InkingLabelData tallData;
     tallData.name = "guard_label_tall";
     tallData.width = 200;
     tallData.height = 24;  // 文字要三行，24 装不下 —— 那是使用者的选择
     tallData.text = "line one\nline two\nline three";
     tallData.style.fontSize = 16.0f;
-    auto* tall = static_cast<inking::InkingStaticLabel*>(
-        panel->AddChild(std::make_unique<inking::InkingStaticLabel>(panel, tallData)));
+    auto* tall = static_cast<InkingStaticLabel*>(
+        panel->AddChild(std::make_unique<InkingStaticLabel>(panel, tallData)));
     Check(tall->GetHeight() == 24,
           "label_explicit_height：写了 height: 24 就是 24（自测量只补零的那一维）");
 
     // ---- T-02：0 尺寸走统一护栏，且只有这一条 ----
     auto probe = std::make_unique<ZeroProbe>(panel);
-    inking::InkLog::ResetStats();
+    InkLog::ResetStats();
     probe->Fire();
-    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+    Check(InkLog::CountOf(InkingLogLevel::Warn) == 1,
           "warn_zero_size：0×0 产生 1 条 WARN");
     probe->SetBox(120, 40);
-    inking::InkLog::ResetStats();
+    InkLog::ResetStats();
     probe->Fire();
-    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 0,
+    Check(InkLog::CountOf(InkingLogLevel::Warn) == 0,
           "warn_zero_size：有尺寸时一条都不产生（不是每帧刷）");
     NoteSilentFailure("warn_zero_size");
 
     // ---- T-03：两态全透明 ⇒ 品红兜底 + 1 条 WARN ----
     {
-        inking::PanelData transparent;
+        InkingPanelData transparent;
         transparent.name = "guard_transparent";
         transparent.closed.color = 0x00000000u;
         transparent.openInheritsClosed = true;  // open 也跟着继承 ⇒ 两态都透明
-        inking::InkLog::ResetStats();
+        InkLog::ResetStats();
         transparent.Normalize();
         Check(transparent.closed.color == 0xFFFF00FFu
                   && transparent.open.color == 0xFFFF00FFu,
               "panel_transparent_fallback：兜底成品红（0xFFFF00FF），不再是看不见的黑");
-        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+        Check(InkLog::CountOf(InkingLogLevel::Warn) == 1,
               "panel_transparent_fallback：兜底同时产生 1 条 WARN");
 
         // 半透明（alpha = 1）**不该**进兜底：那是"看不见但点得到"的正规做法。
-        inking::PanelData veil;
+        InkingPanelData veil;
         veil.name = "guard_veil";
         veil.closed.color = 0x01000000u;
         veil.openInheritsClosed = true;
-        inking::InkLog::ResetStats();
+        InkLog::ResetStats();
         veil.Normalize();
         Check(veil.closed.color == 0x01000000u
-                  && inking::InkLog::CountOf(inking::LogLevel::Warn) == 0,
+                  && InkLog::CountOf(InkingLogLevel::Warn) == 0,
               "panel_transparent_fallback：alpha = 1/255 是正规用法，不动、也不报");
     }
     NoteSilentFailure("panel_transparent_fallback");
 
     // ---- T-04：字体打不开要说出来（否则只能看到"字变成了方块"） ----
     if (renderer != nullptr) {
-        inking::TextRequest request;
+        InkingTextRequest request;
         request.text = "font probe";
         request.fontSize = 18.0f;
         request.fontPath = "Z:/definitely/not/a/font.ttf";
-        inking::InkLog::ResetStats();
-        inking::detail::BeginFrame(renderer);
-        inking::detail::PaintText(renderer, request, 400, 100, 1.0f, 0.0f, 0.0f,
-                                  inking::TransformSpec{});
-        inking::detail::EndFrame();
-        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+        InkLog::ResetStats();
+        inking_detail::BeginFrame(renderer);
+        inking_detail::PaintText(renderer, request, 400, 100, 1.0f, 0.0f, 0.0f,
+                                  InkingTransformSpec{});
+        inking_detail::EndFrame();
+        Check(InkLog::CountOf(InkingLogLevel::Warn) == 1,
               "font_open_failure：路径打不开产生 1 条 WARN（带路径、字号、SDL 错误）");
-        Check(!inking::InkLog::grep("not/a/font", "InkingText").empty(),
+        Check(!InkLog::grep("not/a/font", "InkingText").empty(),
               "font_open_failure：日志里能按路径搜到（可归因，不是只说'画不出来'）");
     }
     NoteSilentFailure("font_open_failure");
 
     // ---- T-05：分级计数 + 同级去重 ----
-    inking::InkLog::ResetStats();
+    InkLog::ResetStats();
     for (int i = 0; i < 3; ++i) {
         INK_LOG_INFO("SelftestLog", "dedup-probe-message");
     }
     const std::vector<std::string> hit =
-        inking::InkLog::grep("dedup-probe-message", "SelftestLog");
+        InkLog::grep("dedup-probe-message", "SelftestLog");
     Check(hit.size() == 1,
           "log_dedup：同一消息连写 3 次只落 1 行（其余的进 FOLD 汇总行）");
-    Check(inking::InkLog::CountOf(inking::LogLevel::Info) == 3,
+    Check(InkLog::CountOf(InkingLogLevel::Info) == 3,
           "log_dedup：计数按**调用次数**算（3 次），不是按落盘行数算");
 #if defined(INK_ISDEBUG)
     std::printf("      [skip] 本次构建打开了 INKING_DEBUG_LOG —— "
                 "级别开关的验收不适用\n");
 #else
     INK_LOG_DEBUG("SelftestLog", "debug-probe-message");
-    Check(inking::InkLog::CountOf(inking::LogLevel::Debug) == 0,
+    Check(InkLog::CountOf(InkingLogLevel::Debug) == 0,
           "log_level_filter：INKING_DEBUG_LOG=OFF 时 DEBUG 根本不进二进制（计数为 0）");
 #endif
 
     // 场景库是"构造即登记"的：本组用完把活跃场景还回去，别让后面的用例
     // 渲染到的是一张空场景（`CheckLayerOrder` 自己会切，但别靠它）。
-    inking::SceneLibrary::SetActiveScene(home);
+    InkingSceneLibrary::SetActiveScene(home);
 }
 
 // ---------------------------------------------------------------------------
@@ -812,31 +815,31 @@ void CheckSilentFailureGuards(SDL_Renderer* renderer, inking::InkingScene* home)
 // 本机若一份字体都打不开（沙箱里 `SDL_IOFromFile` 对所有路径失败），
 // "退到第二条"那一段无从验起：如实跳过，别让环境问题伪装成通过。
 void CheckFontFallbackChain(SDL_Renderer* renderer,
-                            inking::InkingScene* home) {
+                            InkingScene* home) {
     std::printf("\n-- 字体回退链（0.3.0 T-13）--\n");
 
     // ---- ① 整条链全打不开：1 条汇总 WARN（带全部候选），且不"静默换字体" ----
     {
-        inking::TextRequest request;
+        InkingTextRequest request;
         request.text = "chain probe";  // 11 个码点
         request.fontSize = 18.0f;
         request.fontPath = "Z:/definitely/not/a/font.ttf";
         request.fontPaths = {"Z:/also/not/here.ttf"};
 
-        inking::InkLog::ResetStats();
-        const inking::TextMetrics metrics = inking::MeasureText(request);
-        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+        InkLog::ResetStats();
+        const InkingTextMetrics metrics = InkingMeasureText(request);
+        Check(InkLog::CountOf(InkingLogLevel::Warn) == 1,
               "font_fallback_chain：两条候选都打不开 → 汇总 1 条 WARN（不是每条一条）");
-        Check(!inking::InkLog::grep("also/not/here", "InkingText").empty(),
+        Check(!InkLog::grep("also/not/here", "InkingText").empty(),
               "font_fallback_chain：WARN 里列全了链上每一条路径（可归因）");
         // 没字体 ⇒ 估算法：高 = 字号，宽 = 字号 × 码点数。与退化画法同一套数。
         Check(std::fabs(metrics.height - 18.0f) < 0.01f,
               "font_fallback_chain：全失败时退回估算法（不是 0、也不是乱猜）");
 
         // 同一条链再问一次：结论进缓存 ⇒ 不再产生第二条 WARN（否则每帧一条）。
-        inking::InkLog::ResetStats();
-        (void)inking::MeasureText(request);
-        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 0,
+        InkLog::ResetStats();
+        (void)InkingMeasureText(request);
+        Check(InkLog::CountOf(InkingLogLevel::Warn) == 0,
               "font_fallback_chain：同一条链只报一次（第二次解析命中缓存）");
     }
 
@@ -844,8 +847,8 @@ void CheckFontFallbackChain(SDL_Renderer* renderer,
     // 为什么单独验：链解析发生在两个不同的字号上（排版用 `fontSize`、绘制用
     // `deviceSize`），按字号缓存就会**两趟各报一条**——门槛要的是一共一条。
     if (renderer != nullptr && home != nullptr) {
-        inking::InkingScene scene("selftest-font-chain");
-        inking::LabelData data;
+        InkingScene scene("selftest-font-chain");
+        InkingLabelData data;
         data.name = "chain_label";
         data.width = 200;
         data.text = "chain label";
@@ -853,22 +856,22 @@ void CheckFontFallbackChain(SDL_Renderer* renderer,
         data.style.fontPath = "Z:/chain/missing.ttf";
         data.style.fontPaths = {"Z:/chain/missing2.ttf"};
 
-        inking::InkLog::ResetStats();
-        auto* label = static_cast<inking::InkingStaticLabel*>(
+        InkLog::ResetStats();
+        auto* label = static_cast<InkingStaticLabel*>(
             scene.AddChild(
-                std::make_unique<inking::InkingStaticLabel>(&scene, data)));
-        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+                std::make_unique<InkingStaticLabel>(&scene, data)));
+        Check(InkLog::CountOf(InkingLogLevel::Warn) == 1,
               "font_fallback_chain：构造（排版那一趟）报 1 条");
         Check(label->GetWidth() > 0,
               "font_fallback_chain：没字体也照常排版（估算法给出宽度，不是 0）");
 
-        inking::SceneLibrary::SetActiveScene(&scene);
+        InkingSceneLibrary::SetActiveScene(&scene);
         scene.TickFrame(1.0f / 60.0f);
-        Check(inking::SceneLibrary::RenderScene(renderer),
+        Check(InkingSceneLibrary::RenderScene(renderer),
               "font_fallback_chain：退化画法也能提交一帧");
-        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+        Check(InkLog::CountOf(InkingLogLevel::Warn) == 1,
               "font_fallback_chain：绘制那一趟不再重复报（整条链路共 1 条 WARN）");
-        inking::SceneLibrary::SetActiveScene(home);
+        InkingSceneLibrary::SetActiveScene(home);
     }
 
     // ---- ③ 链上第二条命中 ⇒ `fontFallbacks` +1（需要一份真字体） ----
@@ -878,16 +881,16 @@ void CheckFontFallbackChain(SDL_Renderer* renderer,
                     "「退到第二条」这一段无从验起\n");
         return;
     }
-    inking::TextRequest request;
+    InkingTextRequest request;
     request.text = "Hg";
     request.fontSize = 40.0f;
     request.fontPath = "Z:/definitely/not/a/font.ttf";
     request.fontPaths = {usable};
     const std::uint64_t before =
-        inking::detail::TextCacheStatsSnapshot().fontFallbacks;
-    const inking::TextMetrics metrics = inking::MeasureText(request);
+        inking_detail::TextCacheStatsSnapshot().fontFallbacks;
+    const InkingTextMetrics metrics = InkingMeasureText(request);
     const std::uint64_t after =
-        inking::detail::TextCacheStatsSnapshot().fontFallbacks;
+        inking_detail::TextCacheStatsSnapshot().fontFallbacks;
     Check(after == before + 1,
           "font_fallback_chain：命中第二条 → fontFallbacks +1（用的是第二份字体）");
     Check(std::fabs(metrics.width - 80.0f) > 0.5f,
@@ -909,17 +912,17 @@ void CheckFontFallbackChain(SDL_Renderer* renderer,
 void CheckThemeTokenMissing() {
     std::printf("\n-- 主题 token 缺失 --\n");
 
-    inking::ClearThemeTables();
-    inking::ThemeTable partial;
+    InkingClearThemeTables();
+    InkingThemeTable partial;
     partial.name = "t_partial";
     partial.colors = {{"surface", 0xFF112233u}};
-    Check(inking::InstallThemeTable(std::move(partial)),
+    Check(InkingInstallThemeTable(std::move(partial)),
           "装一张只含部分 token 的表");
-    Check(inking::SetActiveTheme("t_partial"), "切到那张不全的表");
+    Check(InkingSetActiveTheme("t_partial"), "切到那张不全的表");
 
-    const inking::ThemeStats before = inking::ThemeStatsSnapshot();
-    const std::uint32_t got = inking::ResolveThemeColor("not_a_token", 0xFF445566u);
-    const inking::ThemeStats after = inking::ThemeStatsSnapshot();
+    const InkingThemeStats before = InkingThemeStatsSnapshot();
+    const std::uint32_t got = InkingResolveThemeColor("not_a_token", 0xFF445566u);
+    const InkingThemeStats after = InkingThemeStatsSnapshot();
     Check(got == 0xFF445566u,
           "theme_token_missing：表里没有的 token 退回兜底色（不是黑、不是随机色）");
     Check(after.misses == before.misses + 1,
@@ -928,10 +931,10 @@ void CheckThemeTokenMissing() {
 
     // 一张表都没装 = 零成本路径：直接给兜底色，**不计 miss**。
     // （否则"不用运行期主题"的项目会看到一堆假 miss，把观测口变成噪声。）
-    inking::ClearThemeTables();
-    const inking::ThemeStats idle = inking::ThemeStatsSnapshot();
-    (void)inking::ResolveThemeColor("surface", 0xFF667788u);
-    Check(inking::ThemeStatsSnapshot().misses == idle.misses,
+    InkingClearThemeTables();
+    const InkingThemeStats idle = InkingThemeStatsSnapshot();
+    (void)InkingResolveThemeColor("surface", 0xFF667788u);
+    Check(InkingThemeStatsSnapshot().misses == idle.misses,
           "theme_token_missing：一张表都没装时不算 miss（零成本路径不该被误报）");
 }
 
@@ -942,23 +945,23 @@ void CheckThemeTokenMissing() {
 void CheckScrollRangeStale() {
     std::printf("\n-- 滚动范围 --\n");
 
-    inking::InkingScene scene("selftest-scroll");
-    inking::PanelData panelData;
+    InkingScene scene("selftest-scroll");
+    InkingPanelData panelData;
     panelData.name = "scroll_panel";
     panelData.width = 200;
     panelData.height = 100;
     panelData.scroll.enabled = true;
-    auto* panel = static_cast<inking::InkingStaticPanel*>(
+    auto* panel = static_cast<InkingStaticPanel*>(
         scene.AddChild(
-            std::make_unique<inking::InkingStaticPanel>(&scene, panelData)));
+            std::make_unique<InkingStaticPanel>(&scene, panelData)));
 
     for (int i = 0; i < 3; ++i) {
-        inking::PanelData row;
+        InkingPanelData row;
         row.name = "scroll_row" + std::to_string(i);
         row.width = 200;
         row.height = 60;
         row.offsetY = static_cast<float>(i) * 60.0f;
-        panel->AddChild(std::make_unique<inking::InkingStaticPanel>(panel, row));
+        panel->AddChild(std::make_unique<InkingStaticPanel>(panel, row));
     }
 
     panel->UpdateScrollRange();
@@ -973,7 +976,7 @@ void CheckScrollRangeStale() {
           "scroll_range_stale：SetScroll 按这个范围夹住（范围错了这里立刻露馅）");
     NoteSilentFailure("scroll_range_stale");
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 /// 文本区宽度为负：两层都要挡住，不能变成"什么都不画"。
@@ -982,23 +985,23 @@ void CheckTextNegativeWidth() {
 
     // ---- ① 排版层：可排宽度 = maxWidth − 左右 padding ≤ 0 ⇒ **不换行** ----
     // 这条挡住的是"框比内缩还窄"时排出一堆零宽行、最后一像素不画。
-    inking::TextLayoutRequest request;
+    InkingTextLayoutRequest request;
     request.text = "negative width probe";
     request.style.fontSize = 16.0f;
     request.style.padding.left = 8.0f;
     request.style.padding.right = 8.0f;
     request.maxWidth = 10.0f;  // 可排宽度 = 10 − 16 = −6
     const auto measure = [](const std::string& text,
-                            const inking::TextStyle& style) {
-        inking::TextRequest probe;
+                            const InkingTextStyle& style) {
+        InkingTextRequest probe;
         probe.text = text;
         probe.fontSize = style.fontSize > 0.0f ? style.fontSize : 16.0f;
         probe.fontPath = style.fontPath;
         probe.fontPaths = style.fontPaths;
-        const inking::TextMetrics metrics = inking::MeasureText(probe);
-        return inking::TextExtent{metrics.width, metrics.height};
+        const InkingTextMetrics metrics = InkingMeasureText(probe);
+        return InkingTextExtent{metrics.width, metrics.height};
     };
-    const inking::TextLayoutResult laid = inking::LayoutText(request, measure);
+    const InkingTextLayoutResult laid = InkingLayoutText(request, measure);
     Check(laid.lines.size() == 1,
           "text_negative_width：可排宽度为负时不换行（不是零行、不是崩）");
     Check(laid.contentWidth > 0.0f,
@@ -1006,27 +1009,27 @@ void CheckTextNegativeWidth() {
     NoteSilentFailure("text_negative_width");
 
     // ---- ② 组件层：配置了负宽度 ⇒ 夹到 0，再按内容补一维 ----
-    inking::InkingScene scene("selftest-negative");
-    inking::LabelData data;
+    InkingScene scene("selftest-negative");
+    InkingLabelData data;
     data.name = "negative_label";
     data.width = -40;   // 明显不合法的配置
     data.height = 20;
     data.text = "neg";
     data.style.fontSize = 16.0f;
-    auto* label = static_cast<inking::InkingStaticLabel*>(
+    auto* label = static_cast<InkingStaticLabel*>(
         scene.AddChild(
-            std::make_unique<inking::InkingStaticLabel>(&scene, data)));
+            std::make_unique<InkingStaticLabel>(&scene, data)));
     Check(label->GetWidth() > 0 && label->GetHeight() == 20,
           "text_negative_width：负宽度被夹到 0 后按内容补，不会出现负几何");
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
 // T-01（0.8.3）：文字按框高裁行
 // ---------------------------------------------------------------------------
 //
-// `TextOverflow::Clip` 是默认值、头文件里写着"多余的行不画"，但 0.8.2 之前
+// `InkingTextOverflow::Clip` 是默认值、头文件里写着"多余的行不画"，但 0.8.2 之前
 // **没有任何人实现它**：`maxHeight` 只参与垂直对齐，于是 300×40 的标签把 7 行
 // 全画到框外（实测框外 10,030 个亮像素）。
 //
@@ -1040,22 +1043,22 @@ void CheckTextClipByHeight() {
 
     // ---- ① 排版层：假测量，数值完全可控（宽 10/码点、行高 = 字号 × 行距） ----
     const auto measure = [](const std::string& text,
-                            const inking::TextStyle& style) {
+                            const InkingTextStyle& style) {
         std::size_t codepoints = 0;
         for (const unsigned char byte : text) {
             if ((byte & 0xC0u) != 0x80u) {
                 ++codepoints;
             }
         }
-        return inking::TextExtent{10.0f * static_cast<float>(codepoints),
+        return InkingTextExtent{10.0f * static_cast<float>(codepoints),
                                   style.fontSize};
     };
-    inking::TextLayoutRequest request;
+    InkingTextLayoutRequest request;
     request.text = "a\nb\nc\nd";     // 4 行，每行 20 × 1.25 = 25
     request.style.fontSize = 20.0f;
     request.maxWidth = 0.0f;         // 宽度不限 ⇒ 不换行，纯靠 \n
     request.maxHeight = 60.0f;       // 装得下 2 行（50），第 3 行超
-    const inking::TextLayoutResult clipped = inking::LayoutText(request, measure);
+    const InkingTextLayoutResult clipped = InkingLayoutText(request, measure);
     std::printf("         4 行 / 框高 60 ⇒ %zu 行 / 高 %.0f / truncated=%d\n",
                 clipped.lines.size(), static_cast<double>(clipped.height),
                 clipped.truncated ? 1 : 0);
@@ -1066,17 +1069,17 @@ void CheckTextClipByHeight() {
 
     // ---- ② 至少留一行：框比一行还矮 ----
     request.maxHeight = 5.0f;  // 5 < 25（一行都装不下）
-    const inking::TextLayoutResult tooShort = inking::LayoutText(request, measure);
+    const InkingTextLayoutResult tooShort = InkingLayoutText(request, measure);
     Check(tooShort.lines.size() == 1 && tooShort.truncated,
           "text_clip_by_height：框比一行还矮时仍留一行（宁可溢出几像素，也不许整块消失）");
 
     // ---- ③ 与 maxLines 取更严的那个 ----
     request.maxHeight = 0.0f;  // 不限高
     request.maxLines = 3;
-    const inking::TextLayoutResult byLines = inking::LayoutText(request, measure);
+    const InkingTextLayoutResult byLines = InkingLayoutText(request, measure);
     request.maxLines = 0;
     request.maxHeight = 60.0f;
-    const inking::TextLayoutResult byHeight = inking::LayoutText(request, measure);
+    const InkingTextLayoutResult byHeight = InkingLayoutText(request, measure);
     Check(byLines.lines.size() == 3 && byHeight.lines.size() == 2,
           "text_clip_by_height：maxLines 与 maxHeight 各管一头（谁更严谁生效）");
 
@@ -1085,15 +1088,15 @@ void CheckTextClipByHeight() {
     // 先清一次文字缓存：`AcquireFont` 会把"打开失败"也记成一格（**空**那一格，
     // 免得每帧重试），而本进程早于 `SDL_Init` 就量过文字——那一笔失败的缓存会
     // 让这里永远拿到估算法。清掉之后重新试开，才是"这台机器到底有没有字体"。
-    inking::detail::ReleaseTextCache();
+    inking_detail::ReleaseTextCache();
     const std::string font = FindUsableFont();
     if (font.empty()) {
         std::printf("         [skip] 没找到可用字体：像素那一段验不了"
                     "（排版那几条上面已经验过）\n");
         return;
     }
-    SDL_Window* win = SDL_CreateWindow("text-clip", inking::DesignWidth(),
-                                       inking::DesignHeight(), 0);
+    SDL_Window* win = SDL_CreateWindow("text-clip", InkingDesignWidth(),
+                                       InkingDesignHeight(), 0);
     SDL_Renderer* rnd =
         win != nullptr ? SDL_CreateRenderer(win, nullptr) : nullptr;
     if (rnd == nullptr) {
@@ -1108,36 +1111,36 @@ void CheckTextClipByHeight() {
     for (int i = 0; i < 100; ++i) {
         longText += "中";
     }
-    inking::InkingScene scene("text_clip");
-    inking::LabelData data;
+    InkingScene scene("text_clip");
+    InkingLabelData data;
     data.name = "clip_label";
     data.width = 300;
     data.height = 40;  // 只装得下一行多一点
     data.style.fontSize = 20.0f;
     data.style.fontPath = font;
     data.text = longText;
-    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.selfAnchor = InkingChangeAnchor::LeftTop;
+    data.traceAnchor = InkingChangeAnchor::LeftTop;
     data.offsetX = 100.0f;
     data.offsetY = 100.0f;
-    auto* label = static_cast<inking::InkingStaticLabel*>(
-        scene.AddChild(std::make_unique<inking::InkingStaticLabel>(&scene, data)));
+    auto* label = static_cast<InkingStaticLabel*>(
+        scene.AddChild(std::make_unique<InkingStaticLabel>(&scene, data)));
     scene.TickFrame(1.0f / 60.0f);
 
-    const inking::TextLayoutResult& laid = label->GetTextLayout();
+    const InkingTextLayoutResult& laid = label->GetTextLayout();
     std::printf("         100 汉字 / 300×40 ⇒ %zu 行 / 排出来高 %.0f\n",
                 laid.lines.size(), static_cast<double>(laid.height));
     Check(laid.truncated && laid.height <= 40.0f && !laid.lines.empty(),
           "text_clip_by_height：组件层的排版也按 40 的框高截（高度不超框、置 truncated）");
 
     // 与探针同一套读回口径：窗口 = 设计尺寸 + 关掉逻辑呈现 ⇒ 1 设计单位 = 1 像素。
-    SDL_SetRenderLogicalPresentation(rnd, inking::DesignWidth(),
-                                     inking::DesignHeight(),
+    SDL_SetRenderLogicalPresentation(rnd, InkingDesignWidth(),
+                                     InkingDesignHeight(),
                                      SDL_LOGICAL_PRESENTATION_DISABLED);
     SDL_SetRenderDrawColor(rnd, 0, 0, 0, 255);
     SDL_RenderClear(rnd);
-    inking::SceneLibrary::SetActiveScene(&scene);
-    inking::SceneLibrary::RenderScene(rnd);
+    InkingSceneLibrary::SetActiveScene(&scene);
+    InkingSceneLibrary::RenderScene(rnd);
 
     // 只读框那一带：左侧 600 宽 × 下方 300 高（覆盖"下方"与"右侧"两个溢出方向）。
     const std::vector<std::uint32_t> pixels =
@@ -1174,7 +1177,7 @@ void CheckTextClipByHeight() {
     Check(below == 0 && right == 0,
           "text_clip_by_height：框外亮像素 == 0（E3 的原始症状：改动前是 10,030）");
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
     SDL_DestroyRenderer(rnd);
     SDL_DestroyWindow(win);
 }
@@ -1203,7 +1206,7 @@ void CheckGlyphAtlasFullNoRetry(SDL_Renderer* renderer) {
     }
     // 从干净状态开始：前面的用例留下的图集可能是"半满"的，那会让灌满需要多少格
     // 变得不可预测（这里要的是确定性，不是速度）。
-    inking::detail::ReleaseTextCache();
+    inking_detail::ReleaseTextCache();
     const std::string font = FindUsableFont();
     if (font.empty()) {
         std::printf("         [skip] 没有可读字体，图集无从灌起"
@@ -1222,62 +1225,62 @@ void CheckGlyphAtlasFullNoRetry(SDL_Renderer* renderer) {
         return out;
     };
 
-    inking::InkLog::ResetStats();
+    InkLog::ResetStats();
     std::uint32_t code = 0x4E00u;
     int filled = 0;
     bool full = false;
     for (int i = 0; i < 4000 && !full; ++i, ++code) {
         const std::string glyph = glyphAt(code);
-        (void)inking::detail::AcquireGlyph(renderer, font, kDeviceSize,
+        (void)inking_detail::AcquireGlyph(renderer, font, kDeviceSize,
                                            std::string_view(glyph));
         ++filled;
-        full = inking::detail::GlyphAtlasSnapshot().full;
+        full = inking_detail::GlyphAtlasSnapshot().full;
     }
-    const inking::detail::GlyphAtlasStats atFull =
-        inking::detail::GlyphAtlasSnapshot();
+    const inking_detail::GlyphAtlasStats atFull =
+        inking_detail::GlyphAtlasSnapshot();
     std::printf("         灌 %d 个字形 ⇒ 图集 %d 格（上限 %d²）/ full=%d\n", filled,
                 atFull.slots, 1024, atFull.full ? 1 : 0);
     Check(full && atFull.slots > 0,
           "glyph_atlas_full：图集真的被灌满了（观测口 full 置起来、格数 > 0）");
 
     // ---- ② 第一次满恰好 1 条 WARN ----
-    const int warnsAtFull = inking::InkLog::CountOf(inking::LogLevel::Warn);
+    const int warnsAtFull = InkLog::CountOf(InkingLogLevel::Warn);
     Check(warnsAtFull == 1,
           "glyph_atlas_full：第一次满恰好 1 条 WARN（带格数 / 上限 / 后果）");
     for (int i = 0; i < 2000; ++i, ++code) {
         const std::string glyph = glyphAt(code);
-        (void)inking::detail::AcquireGlyph(renderer, font, kDeviceSize,
+        (void)inking_detail::AcquireGlyph(renderer, font, kDeviceSize,
                                            std::string_view(glyph));
     }
-    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == warnsAtFull,
+    Check(InkLog::CountOf(InkingLogLevel::Warn) == warnsAtFull,
           "glyph_atlas_full：再灌 2000 个新字仍然只有那 1 条（不是每个字一条）");
     NoteSilentFailure("glyph_atlas_full");
 
     // ---- ① 连画 60 帧：重烘次数一个都不该涨 ----
-    inking::InkingScene scene("glyph_full");
-    inking::LabelData data;
+    InkingScene scene("glyph_full");
+    InkingLabelData data;
     data.name = "glyph_full_label";
     data.width = 400;
     data.height = 60;
     data.style.fontSize = 20.0f;
     data.style.fontPath = font;
     data.text = "abc中文测试";
-    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.selfAnchor = InkingChangeAnchor::LeftTop;
+    data.traceAnchor = InkingChangeAnchor::LeftTop;
     data.offsetX = 40.0f;
     data.offsetY = 40.0f;
-    scene.AddChild(std::make_unique<inking::InkingStaticLabel>(&scene, data));
+    scene.AddChild(std::make_unique<InkingStaticLabel>(&scene, data));
     scene.TickFrame(1.0f / 60.0f);
-    inking::SceneLibrary::SetActiveScene(&scene);
+    InkingSceneLibrary::SetActiveScene(&scene);
 
     const int rasterizedBefore =
-        inking::detail::GlyphAtlasSnapshot().rasterized;
+        inking_detail::GlyphAtlasSnapshot().rasterized;
     for (int frame = 0; frame < 60; ++frame) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
-        inking::SceneLibrary::RenderScene(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
     }
-    const int rasterizedAfter = inking::detail::GlyphAtlasSnapshot().rasterized;
+    const int rasterizedAfter = inking_detail::GlyphAtlasSnapshot().rasterized;
     std::printf("         连画 60 帧：重烘 %d → %d\n", rasterizedBefore,
                 rasterizedAfter);
     Check(rasterizedAfter == rasterizedBefore,
@@ -1303,9 +1306,9 @@ void CheckGlyphAtlasFullNoRetry(SDL_Renderer* renderer) {
     Check(bright > 0, "glyph_atlas_full：回退之后画面仍有字（回退没坏）");
 
     // ---- ③ 复位：ReleaseGlyphAtlas 之后 full 必须落回 false ----
-    inking::SceneLibrary::SetActiveScene(nullptr);
-    inking::detail::ReleaseGlyphAtlas();
-    Check(!inking::detail::GlyphAtlasSnapshot().full,
+    InkingSceneLibrary::SetActiveScene(nullptr);
+    inking_detail::ReleaseGlyphAtlas();
+    Check(!inking_detail::GlyphAtlasSnapshot().full,
           "glyph_atlas_full：ReleaseGlyphAtlas 之后 full 复位（新图集不该一上来就满）");
 }
 
@@ -1334,29 +1337,29 @@ void CheckTextureBudgetEviction(SDL_Renderer* renderer) {
         return;
     }
 
-    using inking::detail::TextCacheStats;
-    using inking::detail::TextCacheStatsSnapshot;
+    using inking_detail::TextCacheStats;
+    using inking_detail::TextCacheStatsSnapshot;
     constexpr std::uint64_t kMegabyte = 1024ull * 1024ull;
     constexpr std::uint64_t kBudget = 8ull * kMegabyte;
 
     // 逐字形那条路关掉：这一条验的是"整段一张纹理"那张表。
-    inking::detail::SetGlyphAtlasEnabled(false);
-    inking::detail::ReleaseTextCache();
-    inking::detail::SetTextureBudget(0);  // 先确认默认档（不淘汰）
+    inking_detail::SetGlyphAtlasEnabled(false);
+    inking_detail::ReleaseTextCache();
+    inking_detail::SetTextureBudget(0);  // 先确认默认档（不淘汰）
 
-    inking::InkingScene scene("texture_budget");
-    inking::LabelData data;
+    InkingScene scene("texture_budget");
+    InkingLabelData data;
     data.name = "budget_label";
     data.width = 800;
     data.height = 40;
     data.style.fontSize = 20.0f;
     data.style.fontPath = font;
-    data.wrap = inking::TextWrap::NoWrap;  // 单行：一张纹理就是这一串
-    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
-    auto* label = static_cast<inking::InkingStaticLabel*>(
-        scene.AddChild(std::make_unique<inking::InkingStaticLabel>(&scene, data)));
-    inking::SceneLibrary::SetActiveScene(&scene);
+    data.wrap = InkingTextWrap::NoWrap;  // 单行：一张纹理就是这一串
+    data.selfAnchor = InkingChangeAnchor::LeftTop;
+    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    auto* label = static_cast<InkingStaticLabel*>(
+        scene.AddChild(std::make_unique<InkingStaticLabel>(&scene, data)));
+    InkingSceneLibrary::SetActiveScene(&scene);
 
     // 每串都不一样的**长**串：一张纹理约 60 KB，200 张就是 12 MB 上下。
     const std::string base =
@@ -1366,7 +1369,7 @@ void CheckTextureBudgetEviction(SDL_Renderer* renderer) {
         scene.TickFrame(1.0f / 60.0f);
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
-        inking::SceneLibrary::RenderScene(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
         return TextCacheStatsSnapshot();
     };
 
@@ -1391,7 +1394,7 @@ void CheckTextureBudgetEviction(SDL_Renderer* renderer) {
           "T-04：预算 0 时一次淘汰都不发生（淘汰必须可关）");
 
     // ---- ①② 预算 8 MB：淘汰生效、且被丢的能重建 ----
-    inking::detail::SetTextureBudget(kBudget);
+    inking_detail::SetTextureBudget(kBudget);
     for (int i = 201; i <= 400; ++i) {
         frame(i);
     }
@@ -1416,11 +1419,11 @@ void CheckTextureBudgetEviction(SDL_Renderer* renderer) {
           "T-04：被淘汰的那一串能重建（丢的是缓存，不是内容；也没有野句柄）");
 
     // ---- 收尾：预算归 0、逐字形那条路开回去、缓存清空 ----
-    inking::detail::SetTextureBudget(0);
-    Check(inking::detail::GetTextureBudget() == 0, "T-04：预算可以关回去（0 = 不淘汰）");
-    inking::detail::SetGlyphAtlasEnabled(true);
-    inking::SceneLibrary::SetActiveScene(nullptr);
-    inking::detail::ReleaseTextCache();
+    inking_detail::SetTextureBudget(0);
+    Check(inking_detail::GetTextureBudget() == 0, "T-04：预算可以关回去（0 = 不淘汰）");
+    inking_detail::SetGlyphAtlasEnabled(true);
+    InkingSceneLibrary::SetActiveScene(nullptr);
+    inking_detail::ReleaseTextCache();
 }
 
 /// 元自检：清单里的每一条**都真的跑过**。
@@ -1474,8 +1477,8 @@ void CheckTextHiDpi() {
     // 与窗口层同一条设置：设计尺寸的逻辑呈现，等比 + 黑边。
     // **只给 B 设**：A 代表"没有逻辑呈现的普通窗口"，那也是一条真实路径
     // （`RendererDeviceRatio` 对它退回 1）。
-    SDL_SetRenderLogicalPresentation(rendererB, inking::DesignWidth(),
-                                     inking::DesignHeight(),
+    SDL_SetRenderLogicalPresentation(rendererB, InkingDesignWidth(),
+                                     InkingDesignHeight(),
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
     // 高清那条路的**输入**：文字层就是从这两个数算出"1 逻辑单位 = 多少设备像素"。
@@ -1491,13 +1494,13 @@ void CheckTextHiDpi() {
                                              &logicalHeight, &mode)
             && SDL_GetCurrentRenderOutputSize(rendererB, &outputWidth,
                                               &outputHeight);
-        Check(readable && logicalWidth == inking::DesignWidth()
-                  && logicalHeight == inking::DesignHeight()
+        Check(readable && logicalWidth == InkingDesignWidth()
+                  && logicalHeight == InkingDesignHeight()
                   && outputWidth == 2560 && outputHeight == 1440,
               "比例来源可读：逻辑 1280×720 / 输出 2560×1440 ⇒ ratio = 2");
     }
 
-    inking::TextRequest request;
+    InkingTextRequest request;
     request.text = "Hg高清Text";
     request.fontSize = 40.0f;
     request.color = 0xFFFFFFFFu;
@@ -1519,10 +1522,10 @@ void CheckTextHiDpi() {
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
         SDL_RenderClear(renderer);
         // 走场景那条**同一条**提交路径（刷批 → 画纹理），不自造一套。
-        inking::detail::BeginFrame(renderer);
-        inking::detail::PaintText(renderer, request, 400, 100, 1.0f, 100.0f,
-                                  60.0f, inking::TransformSpec{});
-        inking::detail::EndFrame();
+        inking_detail::BeginFrame(renderer);
+        inking_detail::PaintText(renderer, request, 400, 100, 1.0f, 100.0f,
+                                  60.0f, InkingTransformSpec{});
+        inking_detail::EndFrame();
     };
 
     drawAt(rendererA);
@@ -1556,7 +1559,7 @@ void CheckTextHiDpi() {
               "比例 2 下墨迹是 2 倍设备像素（真按比例重烘，不是拉伸）");
     }
     if (hasFont) {
-        Check(inking::detail::GlyphAtlasSnapshot().rasterized > 0,
+        Check(inking_detail::GlyphAtlasSnapshot().rasterized > 0,
               "文字走了字形图集（高清路径不是退化方块）");
     }
 
@@ -1597,44 +1600,44 @@ void CheckTextRasterCap() {
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
     // 复位到默认并**重新武装**告警（同值调用也算一次决策，见头文件那段）。
-    inking::detail::SetTextRasterCap(3.0f);
-    Check(inking::detail::GetTextRasterCap() == 3.0f,
+    inking_detail::SetTextRasterCap(3.0f);
+    Check(inking_detail::GetTextRasterCap() == 3.0f,
           "text_raster_capped：默认上限是 3×（不调 setter 等于改动之前）");
 
     const auto drawText = [renderer] {
-        inking::TextRequest request;
+        InkingTextRequest request;
         request.text = "cap";
         request.fontSize = 20.0f;
         request.color = 0xFFFFFFFFu;
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
         SDL_RenderClear(renderer);
-        inking::detail::BeginFrame(renderer);
-        inking::detail::PaintText(renderer, request, 200, 60, 1.0f, 0.0f, 0.0f,
-                                  inking::TransformSpec{});
-        inking::detail::EndFrame();
+        inking_detail::BeginFrame(renderer);
+        inking_detail::PaintText(renderer, request, 200, 60, 1.0f, 0.0f, 0.0f,
+                                  InkingTransformSpec{});
+        inking_detail::EndFrame();
     };
     const auto cappedNow = [] {
-        return inking::detail::TextCacheStatsSnapshot().rasterCapped;
+        return inking_detail::TextCacheStatsSnapshot().rasterCapped;
     };
 
     const std::uint64_t cappedBefore = cappedNow();
-    inking::InkLog::ResetStats();
+    InkLog::ResetStats();
     drawText();  // R=4 vs 上限 3：夹取
     const std::uint64_t cappedAfterFirst = cappedNow();
     Check(cappedAfterFirst == cappedBefore + 1,
           "text_raster_capped：R=4 超过上限 3 ⇒ 夹取计数 +1");
-    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+    Check(InkLog::CountOf(InkingLogLevel::Warn) == 1,
           "text_raster_capped：触顶报 1 条 WARN（不是静默夹取）");
     NoteSilentFailure("text_raster_capped");
 
     drawText();  // 同一档上限的第二帧
-    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+    Check(InkLog::CountOf(InkingLogLevel::Warn) == 1,
           "触顶 WARN 只报一次：第二帧不再刷日志");
 
     // 提到 6×：R=4 不再触顶 ⇒ 计数不动
-    Check(inking::detail::SetTextRasterCap(6.0f)
-              && inking::detail::GetTextRasterCap() == 6.0f,
+    Check(inking_detail::SetTextRasterCap(6.0f)
+              && inking_detail::GetTextRasterCap() == 6.0f,
           "SetTextRasterCap(6) 生效");
     const std::uint64_t cappedBeforeRaise = cappedNow();
     drawText();
@@ -1642,19 +1645,19 @@ void CheckTextRasterCap() {
           "上限提到 6 以后 R=4 不再夹取（计数不动，字按 4× 烘）");
 
     // 边界：夹在 [1, 8]，非法入参被拒
-    Check(inking::detail::SetTextRasterCap(99.0f)
-              && inking::detail::GetTextRasterCap() == 8.0f,
+    Check(inking_detail::SetTextRasterCap(99.0f)
+              && inking_detail::GetTextRasterCap() == 8.0f,
           "上限夹在 8（99 被夹成 8）");
-    Check(inking::detail::SetTextRasterCap(0.25f)
-              && inking::detail::GetTextRasterCap() == 1.0f,
+    Check(inking_detail::SetTextRasterCap(0.25f)
+              && inking_detail::GetTextRasterCap() == 1.0f,
           "上限夹在 1（0.25 被夹成 1）");
-    const float kept = inking::detail::GetTextRasterCap();
-    Check(!inking::detail::SetTextRasterCap(-1.0f)
-              && inking::detail::GetTextRasterCap() == kept,
+    const float kept = inking_detail::GetTextRasterCap();
+    Check(!inking_detail::SetTextRasterCap(-1.0f)
+              && inking_detail::GetTextRasterCap() == kept,
           "负上限被拒绝，当前值不变");
 
     // 收尾：还原默认，别让后面的用例继承一个奇怪的上限
-    inking::detail::SetTextRasterCap(3.0f);
+    inking_detail::SetTextRasterCap(3.0f);
     SDL_SetRenderLogicalPresentation(renderer, 0, 0,
                                      SDL_LOGICAL_PRESENTATION_DISABLED);
     SDL_DestroyRenderer(renderer);
@@ -1664,7 +1667,7 @@ void CheckTextRasterCap() {
 // ---------------------------------------------------------------------------
 // T-02：缩放规则（素材该多大 / σ 干不干净）
 //
-// 这一条验的是**规则本身**，不是绘制：`ImageScaleSpec` 是纯函数，所以断言可以
+// 这一条验的是**规则本身**，不是绘制：`InkingImageScaleSpec` 是纯函数，所以断言可以
 // 逐字对着任务书 §3 的数字（设计 1920 × 纵深 1 × R_max 2 = 3840 等）。
 //
 // 为什么必须落成自检而不是只写进 API.md：文档写错了没人会发现。而这四个数字
@@ -1675,7 +1678,7 @@ void CheckImageScaleRules() {
     std::printf("\n-- 缩放规则：素材该多大 / σ 干不干净（0.7.0 T-02）--\n");
 
     const auto make = [](int designWidth, float depth, float ratioMax) {
-        inking::ImageScaleSpec spec;
+        InkingImageScaleSpec spec;
         spec.designWidth = designWidth;
         spec.depth = depth;
         spec.ratioMax = ratioMax;
@@ -1703,18 +1706,18 @@ void CheckImageScaleRules() {
           "σ：3840 素材占 1280×2 屏幕 ⇒ 1.5（会有一列纹素被跳过）");
 
     // 干净档位判定：整数干净、分数不干净、放大不干净
-    Check(inking::ImageScaleSpec::IsCleanRatio(1.0f)
-              && inking::ImageScaleSpec::IsCleanRatio(2.0f)
-              && inking::ImageScaleSpec::IsCleanRatio(3.0f),
+    Check(InkingImageScaleSpec::IsCleanRatio(1.0f)
+              && InkingImageScaleSpec::IsCleanRatio(2.0f)
+              && InkingImageScaleSpec::IsCleanRatio(3.0f),
           "IsCleanRatio：1 / 2 / 3 都干净（整数档）");
-    Check(!inking::ImageScaleSpec::IsCleanRatio(1.5f)
-              && !inking::ImageScaleSpec::IsCleanRatio(1.2f)
-              && !inking::ImageScaleSpec::IsCleanRatio(0.5f),
+    Check(!InkingImageScaleSpec::IsCleanRatio(1.5f)
+              && !InkingImageScaleSpec::IsCleanRatio(1.2f)
+              && !InkingImageScaleSpec::IsCleanRatio(0.5f),
           "IsCleanRatio：1.5 / 1.2 / 0.5 都不干净（0.5 是放大，不是整数倍缩小）");
 
     // 档位生成式 d = m / k：2× 素材的干净纵深 = 1.0 / 0.667 / 0.5 / 0.4
-    Check(std::fabs(inking::ImageScaleSpec::CleanDepth(2.0f, 3) - 0.6667f) < 0.001f
-              && std::fabs(inking::ImageScaleSpec::CleanDepth(2.0f, 5) - 0.4f)
+    Check(std::fabs(InkingImageScaleSpec::CleanDepth(2.0f, 3) - 0.6667f) < 0.001f
+              && std::fabs(InkingImageScaleSpec::CleanDepth(2.0f, 5) - 0.4f)
                      < 0.001f,
           "CleanDepth：2× 素材的 k=3 / k=5 档 ⇒ 0.667 / 0.4");
 
@@ -1730,11 +1733,11 @@ void CheckImageScaleRules() {
 //
 // 这一条存在的理由：音频整层曾经被 `#if defined(INK_HAS_SDL3_MIXER)` 关掉，
 // 而 CMake 仍然 find_package + 链接 SDL3_mixer —— "能编能链"把"没接上"完全
-// 盖住：`AudioInit()` 恒 false、BGM / SE 全无声，而且不报错、不警告。
+// 盖住：`InkingAudioInit()` 恒 false、BGM / SE 全无声，而且不报错、不警告。
 // 二进制判据（导入表里有 SDL3_mixer.dll + MIX_ 符号）由构建侧查；
 // **"淡入真的在推进"只能靠跑一遍**，那是空桩版本永远涨不上去的量。
 //
-// 这里直接调 `AudioTick`：它和窗口层每帧调的是**同一个函数**（窗口那边删掉
+// 这里直接调 `InkingAudioTick`：它和窗口层每帧调的是**同一个函数**（窗口那边删掉
 // 匿名 namespace 空桩之后解析到的就是它），所以这条断言同时钉住了两层。
 // ---------------------------------------------------------------------------
 
@@ -1775,30 +1778,30 @@ std::vector<std::uint8_t> MakeSilentWav(int sampleRate, int channels, int bits,
 void CheckAudioPipeline() {
     // dummy 驱动：自检不出声、也不需要声卡（AGENTS.md §6 第 79 条）。
     SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
-    const bool inited = inking::AudioInit();
-    Check(inited, "AudioInit 成功（音频层真的接上了 SDL3_mixer）");
+    const bool inited = InkingAudioInit();
+    Check(inited, "InkingAudioInit 成功（音频层真的接上了 SDL3_mixer）");
     if (!inited) {
         return;  // 没接上：后面都无从验，不再往下编故事
     }
 
     const std::vector<std::uint8_t> wav = MakeSilentWav(44100, 1, 16, 0.2f);
-    const inking::SoundId sound =
-        inking::AudioLoadFromMemory(wav.data(), wav.size(), "selftest.wav");
-    Check(sound != 0u && inking::AudioIsReady(sound), "内存 WAV 加载成功");
+    const InkingSoundId sound =
+        InkingAudioLoadFromMemory(wav.data(), wav.size(), "selftest.wav");
+    Check(sound != 0u && InkingAudioIsReady(sound), "内存 WAV 加载成功");
 
     // 0.5 秒淡入、目标 1.0：增益必须**按帧上升**，而不是一步到 1。
-    inking::AudioPlayBgm(sound, 0.5f, 1.0f);
-    const float start = inking::AudioBgmVolume();
+    InkingAudioPlayBgm(sound, 0.5f, 1.0f);
+    const float start = InkingAudioBgmVolume();
     for (int frame = 0; frame < 10; ++frame) {
-        inking::AudioTick(0.05f);  // 累计 0.5 秒
+        InkingAudioTick(0.05f);  // 累计 0.5 秒
     }
-    const float end = inking::AudioBgmVolume();
+    const float end = InkingAudioBgmVolume();
     std::printf("      [audio] 淡入增益 %.3f → %.3f\n",
                 static_cast<double>(start), static_cast<double>(end));
-    Check(end > start + 0.1f, "BGM 淡入在 AudioTick 里推进（增益上升）");
+    Check(end > start + 0.1f, "BGM 淡入在 InkingAudioTick 里推进（增益上升）");
 
-    inking::AudioStopBgm(0.0f);
-    inking::AudioShutdown();
+    InkingAudioStopBgm(0.0f);
+    InkingAudioShutdown();
 }
 
 // ---------------------------------------------------------------------------
@@ -1812,25 +1815,25 @@ void CheckAudioPipeline() {
 // ---------------------------------------------------------------------------
 
 void CheckDesignSizeDefault() {
-    Check(inking::DesignWidth() == inking::kDefaultDesignWidth
-              && inking::DesignHeight() == inking::kDefaultDesignHeight,
+    Check(InkingDesignWidth() == InkingDefaultDesignWidth
+              && InkingDesignHeight() == InkingDefaultDesignHeight,
           "没有配置时设计尺寸 = 默认值（1280×720）");
-    Check(!inking::detail::DesignSizeTaken(),
+    Check(!inking_detail::DesignSizeTaken(),
           "场景 / 窗口构造之前设计尺寸还没定型");
-    Check(!inking::SetDesignSize(0, 720), "宽 0 被拒（不静默夹到 1）");
-    Check(!inking::SetDesignSize(20000, 720), "超出上限被拒（1..16384）");
-    Check(inking::SetDesignSize(inking::kDefaultDesignWidth,
-                                inking::kDefaultDesignHeight),
+    Check(!InkingSetDesignSize(0, 720), "宽 0 被拒（不静默夹到 1）");
+    Check(!InkingSetDesignSize(20000, 720), "超出上限被拒（1..16384）");
+    Check(InkingSetDesignSize(InkingDefaultDesignWidth,
+                                InkingDefaultDesignHeight),
           "设成当前值是幂等的（返回 true，不算失败）");
 }
 
 void CheckDesignSizeLocked() {
-    Check(inking::detail::DesignSizeTaken(),
+    Check(inking_detail::DesignSizeTaken(),
           "场景构造之后设计尺寸已定型");
-    Check(!inking::SetDesignSize(1600, 900),
+    Check(!InkingSetDesignSize(1600, 900),
           "定型之后再改被拒（返回 false，不静默半生效）");
-    Check(inking::DesignWidth() == inking::kDefaultDesignWidth
-              && inking::DesignHeight() == inking::kDefaultDesignHeight,
+    Check(InkingDesignWidth() == InkingDefaultDesignWidth
+              && InkingDesignHeight() == InkingDefaultDesignHeight,
           "被拒之后设计尺寸没有变（没有留下改了一半的状态）");
 }
 
@@ -1858,20 +1861,20 @@ void CheckDesignSizeLocked() {
 void CheckLayerOrder(SDL_Renderer* renderer) {
     std::printf("\n-- 层级：树序绘制 + 兄弟内 z --\n");
 
-    inking::InkingScene scene;  // 运行时构造：不登记进 SceneLibrary
+    InkingScene scene;  // 运行时构造：不登记进 InkingSceneLibrary
 
     const auto makePanel = [](const char* name, int width, int height, int z,
                               float offsetX, float offsetY,
                               std::uint32_t color) {
-        inking::PanelData data;
+        InkingPanelData data;
         data.name = name;
         data.width = width;
         data.height = height;
         data.zIndex = z;
         data.offsetX = offsetX;
         data.offsetY = offsetY;
-        data.selfAnchor = inking::InkingChangeAnchor::Center;
-        data.traceAnchor = inking::InkingChangeAnchor::Center;
+        data.selfAnchor = InkingChangeAnchor::Center;
+        data.traceAnchor = InkingChangeAnchor::Center;
         data.closed.color = color;
         data.open.color = color;
         return data;
@@ -1881,53 +1884,53 @@ void CheckLayerOrder(SDL_Renderer* renderer) {
     constexpr std::uint32_t kBlue = 0xFF0000FFu;
     constexpr std::uint32_t kGreen = 0xFF00C000u;
 
-    inking::InkingWidget* outer = scene.AddChild(
-        std::make_unique<inking::InkingStaticPanel>(
+    InkingWidget* outer = scene.AddChild(
+        std::make_unique<InkingStaticPanel>(
             &scene, makePanel("layer_outer", 300, 200, 20, 0.0f, 0.0f, kRed)));
-    inking::InkingWidget* inner = outer->AddChild(
-        std::make_unique<inking::InkingStaticPanel>(
+    InkingWidget* inner = outer->AddChild(
+        std::make_unique<InkingStaticPanel>(
             outer, makePanel("layer_inner", 100, 80, 1, 0.0f, 0.0f, kBlue)));
-    inking::InkingWidget* card = scene.AddChild(
-        std::make_unique<inking::InkingStaticPanel>(
+    InkingWidget* card = scene.AddChild(
+        std::make_unique<InkingStaticPanel>(
             &scene, makePanel("layer_card", 300, 200, 15, 0.0f, 0.0f, kGreen)));
-    inking::InkingWidget* deep = card->AddChild(
-        std::make_unique<inking::InkingStaticPanel>(
+    InkingWidget* deep = card->AddChild(
+        std::make_unique<InkingStaticPanel>(
             card, makePanel("layer_deep", 40, 40, 100, 0.0f, 0.0f, kRed)));
-    inking::InkingWidget* tieA = scene.AddChild(
-        std::make_unique<inking::InkingStaticPanel>(
+    InkingWidget* tieA = scene.AddChild(
+        std::make_unique<InkingStaticPanel>(
             &scene, makePanel("layer_tie_a", 40, 40, 5, -500.0f, -300.0f, kRed)));
-    inking::InkingWidget* tieB = scene.AddChild(
-        std::make_unique<inking::InkingStaticPanel>(
+    InkingWidget* tieB = scene.AddChild(
+        std::make_unique<InkingStaticPanel>(
             &scene, makePanel("layer_tie_b", 40, 40, 5, 500.0f, -300.0f, kRed)));
 
     scene.TickFrame(1.0f / 60.0f);
 
     // ① 父先于子：子 z=1 也在父 z=20 之上。
-    Check(inking::InkingWidget::IsAbove(*inner, *outer),
+    Check(InkingWidget::IsAbove(*inner, *outer),
           "父先于子：子 z=1 仍在父 z=20 之上（底色不再盖住内容）");
-    Check(!inking::InkingWidget::IsAbove(*outer, *inner),
+    Check(!InkingWidget::IsAbove(*outer, *inner),
           "父先于子：反向不成立（没有两头都说自己在上）");
 
     // ② 兄弟之间按 z。
-    Check(inking::InkingWidget::IsAbove(*outer, *card),
+    Check(InkingWidget::IsAbove(*outer, *card),
           "兄弟内 z：z=20 的 outer 在 z=15 的 card 之上");
-    Check(!inking::InkingWidget::IsAbove(*card, *outer),
+    Check(!InkingWidget::IsAbove(*card, *outer),
           "兄弟内 z：反向不成立");
 
     // ③ 跨子树不穿透：deep 的 z=100 只在 card 内部有效。
-    Check(inking::InkingWidget::IsAbove(*outer, *deep),
+    Check(InkingWidget::IsAbove(*outer, *deep),
           "跨子树不穿透：card 的子孙 z=100 也盖不过 z=20 那一支");
-    Check(!inking::InkingWidget::IsAbove(*deep, *outer),
+    Check(!InkingWidget::IsAbove(*deep, *outer),
           "跨子树不穿透：反向不成立");
 
     // ④ 同 z 看注册序号（后挂的在上）。
-    Check(inking::InkingWidget::IsAbove(*tieB, *tieA),
+    Check(InkingWidget::IsAbove(*tieB, *tieA),
           "同 z 的兄弟：后注册的 tieB 在 tieA 之上");
 
     // ⑤ 绘制列表必须和 IsAbove 同源：父在前、兄弟按 z、跨子树整支连成一段。
-    const std::vector<inking::InkingScene::DrawItem>& items =
+    const std::vector<InkingScene::DrawItem>& items =
         scene.BuildDrawList();
-    const auto indexOf = [&items](const inking::InkingWidget* node) {
+    const auto indexOf = [&items](const InkingWidget* node) {
         for (std::size_t i = 0; i < items.size(); ++i) {
             if (items[i].node == node) {
                 return static_cast<int>(i);
@@ -1947,7 +1950,7 @@ void CheckLayerOrder(SDL_Renderer* renderer) {
     Check(iDeep >= 0 && iDeep < iOuter, "绘制顺序：card 整支（含 deep）都在 outer 之前");
 
     // ⑥ 命中和绘制同源：中心点上 inner 压在 outer 上，所以命中的该是 inner。
-    const inking::HitResult hit = scene.QueryHit(640.0f, 360.0f);
+    const InkingHitResult hit = scene.QueryHit(640.0f, 360.0f);
     Check(hit.target == inner,
           "命中最上面那个：中心点命中的是子面板 inner，不是父面板");
 
@@ -1957,11 +1960,11 @@ void CheckLayerOrder(SDL_Renderer* renderer) {
         // 的 letterbox 呈现负责（`InkingWindow` 里那一行）。这里没有窗口对象，
         // 不补这一句的话组件会被画到设计坐标去——1280x720 的画布落在 640x360
         // 的窗口之外，中心像素读到的是空的。
-        SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
-                                         inking::DesignHeight(),
+        SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                         InkingDesignHeight(),
                                          SDL_LOGICAL_PRESENTATION_LETTERBOX);
-        inking::SceneLibrary::SetActiveScene(&scene);
-        const bool rendered = inking::SceneLibrary::RenderScene(renderer);
+        InkingSceneLibrary::SetActiveScene(&scene);
+        const bool rendered = InkingSceneLibrary::RenderScene(renderer);
         const SDL_Rect one{320, 180, 1, 1};  // 窗口 640x360 的正中（物理像素）
         // SDL3 的 RenderReadPixels 返回一张新 surface（SDL2 那条"传缓冲"的
         // 签名在 3.x 里已经没了），所以转成 ARGB8888 再取那一个像素。
@@ -1978,7 +1981,7 @@ void CheckLayerOrder(SDL_Renderer* renderer) {
             }
             SDL_DestroySurface(shot);
         }
-        inking::SceneLibrary::SetActiveScene(nullptr);
+        InkingSceneLibrary::SetActiveScene(nullptr);
         SDL_SetRenderLogicalPresentation(renderer, 0, 0,
                                          SDL_LOGICAL_PRESENTATION_DISABLED);
         Check(rendered && read, "层级场景渲染一帧并读回中心像素");
@@ -2028,68 +2031,68 @@ void CheckPanelDecoration(SDL_Renderer* renderer) {
     constexpr std::uint32_t kFill = 0xFFFF0000u;    // 阴影测试面板的填充（红）
     constexpr std::uint32_t kShadow = 0xFF804000u;  // 阴影（棕）
 
-    inking::InkingScene scene;
+    InkingScene scene;
 
-    inking::PanelData a;
+    InkingPanelData a;
     a.name = "deco_parent";
     a.width = 200;
     a.height = 200;
-    a.selfAnchor = inking::InkingChangeAnchor::Center;
-    a.traceAnchor = inking::InkingChangeAnchor::Center;
+    a.selfAnchor = InkingChangeAnchor::Center;
+    a.traceAnchor = InkingChangeAnchor::Center;
     a.closed.color = kDark;
     a.open.color = kDark;
-    a.closed.stroke = inking::StrokeSpec{6.0f, kEdge};  // 6 设计像素 = 3 设备像素
+    a.closed.stroke = InkingStrokeSpec{6.0f, kEdge};  // 6 设计像素 = 3 设备像素
 
-    inking::InkingWidget* parent = scene.AddChild(
-        std::make_unique<inking::InkingStaticPanel>(&scene, a));
+    InkingWidget* parent = scene.AddChild(
+        std::make_unique<InkingStaticPanel>(&scene, a));
 
-    inking::PanelData c;
+    InkingPanelData c;
     c.name = "deco_child";
     c.width = 200;
     c.height = 200;  // 和父**完全重合**：描边只能靠装饰遍才活下来
-    c.selfAnchor = inking::InkingChangeAnchor::Center;
-    c.traceAnchor = inking::InkingChangeAnchor::Center;
+    c.selfAnchor = InkingChangeAnchor::Center;
+    c.traceAnchor = InkingChangeAnchor::Center;
     c.closed.color = kChild;
     c.open.color = kChild;
     parent->AddChild(
-        std::make_unique<inking::InkingStaticPanel>(parent, c));
+        std::make_unique<InkingStaticPanel>(parent, c));
 
     // B：后注册 = 层级更高，压住 A 的左上边框（设计 530..600 × 260..320）。
-    inking::PanelData b;
+    InkingPanelData b;
     b.name = "deco_sibling";
     b.width = 70;
     b.height = 60;
-    b.selfAnchor = inking::InkingChangeAnchor::Center;
-    b.traceAnchor = inking::InkingChangeAnchor::Center;
+    b.selfAnchor = InkingChangeAnchor::Center;
+    b.traceAnchor = InkingChangeAnchor::Center;
     b.offsetX = -75.0f;
     b.offsetY = -70.0f;
     b.closed.color = kSibling;
     b.open.color = kSibling;
-    scene.AddChild(std::make_unique<inking::InkingStaticPanel>(&scene, b));
+    scene.AddChild(std::make_unique<InkingStaticPanel>(&scene, b));
 
     // D：阴影测试（摆开，不和 A 重叠）。设计 280..400 × 450..570。
-    inking::PanelData d;
+    InkingPanelData d;
     d.name = "deco_shadow";
     d.width = 120;
     d.height = 120;
-    d.selfAnchor = inking::InkingChangeAnchor::Center;
-    d.traceAnchor = inking::InkingChangeAnchor::Center;
+    d.selfAnchor = InkingChangeAnchor::Center;
+    d.traceAnchor = InkingChangeAnchor::Center;
     d.offsetX = -300.0f;
     d.offsetY = 150.0f;
     d.closed.color = kFill;
     d.open.color = kFill;
-    d.closed.shadow = inking::ShadowSpec{12.0f, 12.0f, kShadow};
-    scene.AddChild(std::make_unique<inking::InkingStaticPanel>(&scene, d));
+    d.closed.shadow = InkingShadowSpec{12.0f, 12.0f, kShadow};
+    scene.AddChild(std::make_unique<InkingStaticPanel>(&scene, d));
 
     scene.TickFrame(1.0f / 60.0f);
     Check(scene.GetDrawItemCount() == 4,
           "装饰笔不是节点：绘制列表条目数 = 4（描边 / 阴影不各占一条）");
 
-    inking::SceneLibrary::SetActiveScene(&scene);
-    SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
-                                     inking::DesignHeight(),
+    InkingSceneLibrary::SetActiveScene(&scene);
+    SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                     InkingDesignHeight(),
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    const bool rendered = inking::SceneLibrary::RenderScene(renderer);
+    const bool rendered = InkingSceneLibrary::RenderScene(renderer);
     // 这一帧画完再逐个读像素（每次 RenderScene 都会清屏重画，读一次就够）。
     const auto readPixel = [&](int x, int y) -> std::uint32_t {
         const SDL_Rect one{x, y, 1, 1};
@@ -2115,7 +2118,7 @@ void CheckPanelDecoration(SDL_Renderer* renderer) {
 
     SDL_SetRenderLogicalPresentation(renderer, 0, 0,
                                      SDL_LOGICAL_PRESENTATION_DISABLED);
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 
     Check(rendered, "装饰场景渲染一帧");
     std::printf("         边框=0x%08X 内部=0x%08X 重叠=0x%08X 填充=0x%08X 阴影=0x%08X\n",
@@ -2133,28 +2136,28 @@ void CheckPanelDecoration(SDL_Renderer* renderer) {
     // -----------------------------------------------------------------------
     // 描边 / 阴影跟着开合过渡插值（观测口，不猜像素）
     // -----------------------------------------------------------------------
-    inking::InkingScene anim;
-    inking::PanelData p;
+    InkingScene anim;
+    InkingPanelData p;
     p.name = "deco_anim";
     p.width = 100;
     p.height = 100;
-    p.selfAnchor = inking::InkingChangeAnchor::Center;
-    p.traceAnchor = inking::InkingChangeAnchor::Center;
+    p.selfAnchor = InkingChangeAnchor::Center;
+    p.traceAnchor = InkingChangeAnchor::Center;
     p.closed.color = kDark;
-    p.closed.stroke = inking::StrokeSpec{};  // 关着：没描边
+    p.closed.stroke = InkingStrokeSpec{};  // 关着：没描边
     p.open.color = kDark;
-    p.open.stroke = inking::StrokeSpec{4.0f, kEdge};
+    p.open.stroke = InkingStrokeSpec{4.0f, kEdge};
     p.open.transitionSeconds = 0.2f;
     p.openInheritsClosed = false;  // 显式给了 open 的描边，不继承
-    inking::InkingStaticPanel* animated =
-        static_cast<inking::InkingStaticPanel*>(anim.AddChild(
-            std::make_unique<inking::InkingStaticPanel>(&anim, p)));
+    InkingStaticPanel* animated =
+        static_cast<InkingStaticPanel*>(anim.AddChild(
+            std::make_unique<InkingStaticPanel>(&anim, p)));
 
     Check(!animated->GetDisplayStroke().Visible(),
           "关着时没有描边");
     Check(animated->SetOpen(true), "打开（起一段 0.2s 过渡）");
     // 必须让它**活跃**：`TickFrame` 对非活跃场景直接返回（和上面主题那段同一条坑）。
-    inking::SceneLibrary::SetActiveScene(&anim);
+    InkingSceneLibrary::SetActiveScene(&anim);
     anim.TickFrame(0.1f);  // 过一半
     const float midWidth = animated->GetDisplayStroke().width;
     std::printf("         过渡中点描边宽度 = %.2f（目标 4）\n", midWidth);
@@ -2163,7 +2166,7 @@ void CheckPanelDecoration(SDL_Renderer* renderer) {
     anim.TickFrame(0.2f);  // 收尾
     Check(animated->GetDisplayStroke().width == 4.0f,
           "过渡结束落目标值（4 设计像素）");
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -2193,26 +2196,26 @@ void CheckButtonPaintOrder(SDL_Renderer* renderer) {
     constexpr std::uint32_t kEdge = 0xFF00FF00u;    // 描边（绿）
     constexpr std::uint32_t kShadow = 0xFF804000u;  // 阴影（棕）
 
-    inking::InkingScene scene;
-    inking::ButtonData data;
+    InkingScene scene;
+    InkingButtonData data;
     data.name = "paint_button";
     data.width = 200;
     data.height = 60;
-    data.selfAnchor = inking::InkingChangeAnchor::Center;
-    data.traceAnchor = inking::InkingChangeAnchor::Center;
-    data.normal = inking::ButtonAppearance(inking::AppearanceType::Color, kFill);
+    data.selfAnchor = InkingChangeAnchor::Center;
+    data.traceAnchor = InkingChangeAnchor::Center;
+    data.normal = InkingButtonAppearance(InkingAppearanceType::Color, kFill);
     data.hover = data.normal;
     data.onclicked = data.normal;
-    data.stroke = inking::StrokeSpec{8.0f, kEdge};       // 8 设计 = 4 设备像素
-    data.shadow = inking::ShadowSpec{10.0f, 10.0f, kShadow};
-    scene.AddChild(std::make_unique<inking::InkingStaticButton>(&scene, data));
+    data.stroke = InkingStrokeSpec{8.0f, kEdge};       // 8 设计 = 4 设备像素
+    data.shadow = InkingShadowSpec{10.0f, 10.0f, kShadow};
+    scene.AddChild(std::make_unique<InkingStaticButton>(&scene, data));
 
     scene.TickFrame(1.0f / 60.0f);
-    inking::SceneLibrary::SetActiveScene(&scene);
-    SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
-                                     inking::DesignHeight(),
+    InkingSceneLibrary::SetActiveScene(&scene);
+    SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                     InkingDesignHeight(),
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    const bool rendered = inking::SceneLibrary::RenderScene(renderer);
+    const bool rendered = InkingSceneLibrary::RenderScene(renderer);
 
     const auto readPixel = [&](int x, int y) -> std::uint32_t {
         const SDL_Rect one{x, y, 1, 1};
@@ -2237,7 +2240,7 @@ void CheckButtonPaintOrder(SDL_Renderer* renderer) {
 
     SDL_SetRenderLogicalPresentation(renderer, 0, 0,
                                      SDL_LOGICAL_PRESENTATION_DISABLED);
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 
     std::printf("         中心=0x%08X 边框=0x%08X 右下外侧=0x%08X\n", center,
                 border, outside);
@@ -2262,57 +2265,57 @@ void CheckButtonPaintOrder(SDL_Renderer* renderer) {
 void CheckButtonStateEvent() {
     std::printf("\n-- 按钮状态事件：两档共用 stateChanged --\n");
 
-    inking::InkingScene scene;
+    InkingScene scene;
 
-    inking::ButtonData base;
+    InkingButtonData base;
     base.width = 160;
     base.height = 60;
-    base.selfAnchor = inking::InkingChangeAnchor::Center;
-    base.traceAnchor = inking::InkingChangeAnchor::Center;
-    base.normal = inking::ButtonAppearance(inking::AppearanceType::Color, 0xFF3070C0u);
+    base.selfAnchor = InkingChangeAnchor::Center;
+    base.traceAnchor = InkingChangeAnchor::Center;
+    base.normal = InkingButtonAppearance(InkingAppearanceType::Color, 0xFF3070C0u);
 
-    inking::ButtonData staticData = base;
+    InkingButtonData staticData = base;
     staticData.name = "event_static";
-    auto* staticButton = static_cast<inking::InkingStaticButton*>(
-        scene.AddChild(std::make_unique<inking::InkingStaticButton>(
+    auto* staticButton = static_cast<InkingStaticButton*>(
+        scene.AddChild(std::make_unique<InkingStaticButton>(
             &scene, staticData)));
 
     int staticCount = 0;
-    inking::ButtonState staticFrom = inking::ButtonState::Pressed;
-    inking::ButtonState staticTo = inking::ButtonState::Pressed;
+    InkingButtonState staticFrom = InkingButtonState::Pressed;
+    InkingButtonState staticTo = InkingButtonState::Pressed;
     staticButton->stateChanged.Subscribe(
-        [&](inking::ButtonState from, inking::ButtonState to) {
+        [&](InkingButtonState from, InkingButtonState to) {
             ++staticCount;
             staticFrom = from;
             staticTo = to;
         });
 
     // 动态档挪开摆（正下方 200 设计像素），两档各自独立收指针。
-    inking::ButtonData dynamicData = base;
+    InkingButtonData dynamicData = base;
     dynamicData.name = "event_dynamic";
     dynamicData.offsetY = 200.0f;
-    auto* dynamicButton = static_cast<inking::InkingDynamicButton*>(
-        scene.AddChild(std::make_unique<inking::InkingDynamicButton>(
+    auto* dynamicButton = static_cast<InkingDynamicButton*>(
+        scene.AddChild(std::make_unique<InkingDynamicButton>(
             &scene, dynamicData)));
 
     int dynamicCount = 0;
-    inking::ButtonState dynamicFrom = inking::ButtonState::Pressed;
-    inking::ButtonState dynamicTo = inking::ButtonState::Pressed;
+    InkingButtonState dynamicFrom = InkingButtonState::Pressed;
+    InkingButtonState dynamicTo = InkingButtonState::Pressed;
     dynamicButton->stateChanged.Subscribe(
-        [&](inking::ButtonState from, inking::ButtonState to) {
+        [&](InkingButtonState from, InkingButtonState to) {
             ++dynamicCount;
             dynamicFrom = from;
             dynamicTo = to;
         });
 
-    inking::SceneLibrary::SetActiveScene(&scene);
+    InkingSceneLibrary::SetActiveScene(&scene);
     scene.TickFrame(1.0f / 60.0f);
 
     // ① 静态档：指针进按钮 → 场景派发。
     scene.SetPointerState(640.0f, 360.0f, false, true);
     scene.DispatchPointer();
-    Check(staticCount == 1 && staticFrom == inking::ButtonState::Normal
-              && staticTo == inking::ButtonState::Hover,
+    Check(staticCount == 1 && staticFrom == InkingButtonState::Normal
+              && staticTo == InkingButtonState::Hover,
           "静态档：hover 推一次 → (Normal, Hover)，计数 1");
 
     // 同一状态再派发一次：不该重复发（事件报的是"变化"）。
@@ -2324,11 +2327,11 @@ void CheckButtonStateEvent() {
     //    变了"那一帧上，所以驱动方式换成 `DispatchPointer`，断言一字不改。
     scene.SetPointerState(640.0f, 560.0f, false, true);
     scene.DispatchPointer();
-    Check(dynamicCount == 1 && dynamicFrom == inking::ButtonState::Normal
-              && dynamicTo == inking::ButtonState::Hover,
+    Check(dynamicCount == 1 && dynamicFrom == InkingButtonState::Normal
+              && dynamicTo == InkingButtonState::Hover,
           "动态档：指针变化通知 → (Normal, Hover)，计数 1");
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -2341,11 +2344,11 @@ void CheckButtonStateEvent() {
 //   T-03 边沿判定只有一份（`PointerProbe`），语义与静态档同一套。
 
 /// 动态容器：矩形命中 + 声明"子树由我判"（`OwnsSubtreeHit`）。
-class DynamicContainerSpy : public inking::InkingDynamicWidget {
+class DynamicContainerSpy : public InkingDynamicWidget {
 public:
-    DynamicContainerSpy(inking::InkingWidget* parent,
-                        const inking::AnchorData& data)
-        : inking::InkingDynamicWidget(parent, data) {}
+    DynamicContainerSpy(InkingWidget* parent,
+                        const InkingAnchorData& data)
+        : InkingDynamicWidget(parent, data) {}
 
     bool HitTest(float worldX, float worldY) const override {
         const float lx = worldX - GetAbsX();
@@ -2359,10 +2362,10 @@ public:
 };
 
 /// 只数"被通知了几次"的动态节点。
-class PointerSpy : public inking::InkingDynamicWidget {
+class PointerSpy : public InkingDynamicWidget {
 public:
-    PointerSpy(inking::InkingWidget* parent, const inking::AnchorData& data)
-        : inking::InkingDynamicWidget(parent, data) {}
+    PointerSpy(InkingWidget* parent, const InkingAnchorData& data)
+        : InkingDynamicWidget(parent, data) {}
 
     bool HitTest(float, float) const override { return false; }
 
@@ -2375,7 +2378,7 @@ public:
 protected:
     void onPointerStateChanged() override {
         ++notifications;
-        const inking::InkingScene* scene = GetScene();
+        const InkingScene* scene = GetScene();
         if (scene != nullptr && scene->GetPointerDown().secondary) {
             sawSecondaryDown = true;
         }
@@ -2386,9 +2389,9 @@ protected:
 void CheckPopupHitOwner() {
     std::printf("\n-- 统一输入语义：动态容器的答案深挖到子控件（T-01）--\n");
 
-    inking::InkingScene scene("hit_owner");
+    InkingScene scene("hit_owner");
 
-    inking::AnchorData panelData;
+    InkingAnchorData panelData;
     panelData.width = 200;
     panelData.height = 200;
     panelData.offsetX = 100.0f;
@@ -2397,16 +2400,16 @@ void CheckPopupHitOwner() {
         std::make_unique<DynamicContainerSpy>(&scene, panelData)));
     container->SetName("dyn_container");
 
-    inking::ButtonData buttonData;
+    InkingButtonData buttonData;
     buttonData.name = "inner_button";
     buttonData.width = 80;
     buttonData.height = 40;
     buttonData.offsetX = 10.0f;
     buttonData.offsetY = 10.0f;
-    buttonData.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+    buttonData.normal = InkingButtonAppearance(InkingAppearanceType::Color,
                                                  0xFF204060u);
-    auto* inner = static_cast<inking::InkingStaticButton*>(container->AddChild(
-        std::make_unique<inking::InkingStaticButton>(container, buttonData)));
+    auto* inner = static_cast<InkingStaticButton*>(container->AddChild(
+        std::make_unique<InkingStaticButton>(container, buttonData)));
 
     // 按钮世界中心 = 100 + 10 + 40, 100 + 10 + 20
     Check(scene.QueryHit(150.0f, 130.0f).target == inner,
@@ -2421,9 +2424,9 @@ void CheckPopupHitOwner() {
 void CheckPointerStateChannel() {
     std::printf("\n-- 统一输入语义：指针不变就不通知动态节点（T-02）--\n");
 
-    inking::InkingScene scene("pointer_channel");
+    InkingScene scene("pointer_channel");
 
-    inking::AnchorData data;
+    InkingAnchorData data;
     data.width = 100;
     data.height = 100;
     auto* spy = static_cast<PointerSpy*>(
@@ -2451,15 +2454,15 @@ void CheckPointerStateChannel() {
 void CheckPointerProbe() {
     std::printf("\n-- 统一输入语义：PointerProbe 的边沿与捕获（T-03）--\n");
 
-    inking::detail::PointerProbe probe;
+    inking_detail::PointerProbe probe;
 
     // 0.5.0：`Update` 吃的是**两个键**的整包状态。这些老断言只关心主键，
     // 所以用一个 helper 把 bool 包成"只有主键"——次键全关，语义与以前一样。
     const auto onlyPrimary = [](bool down) {
-        return inking::PointerDownState{down, false};
+        return InkingPointerDownState{down, false};
     };
     const auto primaryCaptured = [&probe] {
-        return probe.IsCaptured(inking::PointerButton::Primary);
+        return probe.IsCaptured(InkingPointerButton::Primary);
     };
 
     // ① 同点按下 → 抬起 = 一次点击
@@ -2511,13 +2514,13 @@ void CheckPointerProbe() {
     // 键的 `released` 吞掉，表现是按钮永久停在 Pressed 色。
     probe.Reset();
     probe.Update(true, onlyPrimary(false));
-    r = probe.Update(true, inking::PointerDownState{true, true});
+    r = probe.Update(true, InkingPointerDownState{true, true});
     Check(r.primary.pressed && r.secondary.pressed && r.anyDownEdge,
           "0.5.0：左右同时按下 → 两个槽各自 pressed");
-    r = probe.Update(true, inking::PointerDownState{false, true});
+    r = probe.Update(true, InkingPointerDownState{false, true});
     Check(r.primary.released && r.primary.clicked && !r.secondary.released,
           "0.5.0：只抬左键 → 主键 click，次键仍按着");
-    r = probe.Update(true, inking::PointerDownState{false, false});
+    r = probe.Update(true, InkingPointerDownState{false, false});
     Check(r.secondary.released && r.secondary.clicked && !r.primary.clicked,
           "0.5.0：再抬右键 → 次键 click，主键不重复报");
 }
@@ -2532,12 +2535,12 @@ void CheckPointerProbe() {
 
 /// 只数事件的静态按钮。
 ///
-/// 三态仍然用真的 `ButtonLook`（不是假的），所以"右键不该点亮按钮"这条
+/// 三态仍然用真的 `InkingButtonLook`（不是假的），所以"右键不该点亮按钮"这条
 /// 断言验的是**真实现**，不是替身。
-class ButtonSpy : public inking::InkingStaticButton {
+class ButtonSpy : public InkingStaticButton {
 public:
-    ButtonSpy(inking::InkingWidget* parent, const inking::ButtonData& data)
-        : inking::InkingStaticButton(parent, data) {}
+    ButtonSpy(InkingWidget* parent, const InkingButtonData& data)
+        : InkingStaticButton(parent, data) {}
 
     struct Counts {
         int primaryPress = 0;
@@ -2553,40 +2556,40 @@ public:
     float lastClickY = -1.0f;
 
 protected:
-    void onPointerPress(inking::PointerButton button, bool press) override {
+    void onPointerPress(InkingPointerButton button, bool press) override {
         // 先记账再交给基类：基类对 Secondary 会直接 return（不换三态），
         // 但我们仍然要数到这次 press。
-        if (button == inking::PointerButton::Primary) {
+        if (button == InkingPointerButton::Primary) {
             press ? ++counts.primaryPress : ++counts.primaryRelease;
         } else {
             press ? ++counts.secondaryPress : ++counts.secondaryRelease;
         }
-        inking::InkingStaticButton::onPointerPress(button, press);
+        InkingStaticButton::onPointerPress(button, press);
     }
 
-    void onPointerClick(inking::PointerButton button, float designX,
+    void onPointerClick(InkingPointerButton button, float designX,
                         float designY) override {
-        if (button == inking::PointerButton::Primary) {
+        if (button == InkingPointerButton::Primary) {
             ++counts.primaryClick;
         } else {
             ++counts.secondaryClick;
             lastClickX = designX;
             lastClickY = designY;
         }
-        inking::InkingStaticButton::onPointerClick(button, designX, designY);
+        InkingStaticButton::onPointerClick(button, designX, designY);
     }
 };
 
 /// 在一个干净场景里放一个 200×100 的按钮（左下角 100,100），返回它。
-/// 场景对象由调用方持有（`SceneLibrary` 不拥有场景）。
-ButtonSpy* MakeSpyButton(inking::InkingScene& scene, const char* name) {
-    inking::ButtonData data;
+/// 场景对象由调用方持有（`InkingSceneLibrary` 不拥有场景）。
+ButtonSpy* MakeSpyButton(InkingScene& scene, const char* name) {
+    InkingButtonData data;
     data.name = name;
     data.width = 200;
     data.height = 100;
     data.offsetX = 100.0f;
     data.offsetY = 100.0f;
-    data.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+    data.normal = InkingButtonAppearance(InkingAppearanceType::Color,
                                            0xFF204060u);
     data.hover = data.normal;
     data.onclicked = data.normal;
@@ -2598,18 +2601,18 @@ ButtonSpy* MakeSpyButton(inking::InkingScene& scene, const char* name) {
 void CheckRightButton() {
     std::printf("\n-- 右键：两种输入状态的对称（0.5.0）--\n");
 
-    const auto feed = [](inking::InkingScene& scene, float x, float y,
+    const auto feed = [](InkingScene& scene, float x, float y,
                          bool primary, bool secondary,
-                         inking::PointerSource source
-                             = inking::PointerSource::Mouse) {
-        scene.SetPointerState(x, y, inking::PointerDownState{primary, secondary},
+                         InkingPointerSource source
+                             = InkingPointerSource::Mouse) {
+        scene.SetPointerState(x, y, InkingPointerDownState{primary, secondary},
                               true, source);
         scene.DispatchPointer();
     };
 
     // ① 右键按下 / 抬起 = 一次次键点击，且**不点亮按钮**
     {
-        inking::InkingScene scene("right_click");
+        InkingScene scene("right_click");
         ButtonSpy* spy = MakeSpyButton(scene, "right_btn");
 
         feed(scene, 200.0f, 150.0f, false, false);
@@ -2618,7 +2621,7 @@ void CheckRightButton() {
                   && spy->counts.primaryPress == 0,
               "0.5.0：右键按下 → 只有次键 press");
         // 指针在按钮上 ⇒ 此刻是 Hover；关键是**不是 Pressed**。
-        Check(spy->GetState() != inking::ButtonState::Pressed,
+        Check(spy->GetState() != InkingButtonState::Pressed,
               "0.5.0：右键按下**不进 Pressed 态**（三态是主键手势的可视化）");
 
         feed(scene, 200.0f, 150.0f, false, false);
@@ -2630,12 +2633,12 @@ void CheckRightButton() {
 
     // ② 左键回归：语义与 0.5.0 之前一模一样
     {
-        inking::InkingScene scene("left_regression");
+        InkingScene scene("left_regression");
         ButtonSpy* spy = MakeSpyButton(scene, "left_btn");
 
         feed(scene, 200.0f, 150.0f, true, false);
         Check(spy->counts.primaryPress == 1
-                  && spy->GetState() == inking::ButtonState::Pressed,
+                  && spy->GetState() == InkingButtonState::Pressed,
               "0.5.0：左键按下 → 主键 press + Pressed 态（回归）");
         feed(scene, 200.0f, 150.0f, false, false);
         Check(spy->counts.primaryClick == 1 && spy->counts.secondaryClick == 0,
@@ -2647,7 +2650,7 @@ void CheckRightButton() {
     // 这是"分槽"的存在理由。共用一份 `wasDown` 时，抬起会在第一个键上把
     // `released` 算完，第二个键的 press(false) 就永远不来——按钮永久 Pressed。
     {
-        inking::InkingScene scene("both_buttons");
+        InkingScene scene("both_buttons");
         ButtonSpy* spy = MakeSpyButton(scene, "both_btn");
 
         feed(scene, 200.0f, 150.0f, true, false);
@@ -2670,11 +2673,11 @@ void CheckRightButton() {
 
     // ④ 右键不改 hover、不抢键盘焦点
     {
-        inking::InkingScene scene("right_no_hover");
+        InkingScene scene("right_no_hover");
         ButtonSpy* spy = MakeSpyButton(scene, "hover_btn");
 
         feed(scene, 200.0f, 150.0f, false, false);
-        inking::InkingWidget* before = scene.GetHoveredNode();
+        InkingWidget* before = scene.GetHoveredNode();
         feed(scene, 200.0f, 150.0f, false, true);
         Check(before == spy && scene.GetHoveredNode() == spy,
               "0.5.0：右键按下不改变悬停（hover 是“我指着谁”）");
@@ -2687,7 +2690,7 @@ void CheckRightButton() {
     //
     // 用右键验（鼠标路径）；触摸长按的同一条语义在下面 ⑨ 验。
     {
-        inking::InkingScene scene("press_origin");
+        InkingScene scene("press_origin");
         ButtonSpy* spy = MakeSpyButton(scene, "origin_btn");
 
         feed(scene, 150.0f, 130.0f, false, true);
@@ -2702,18 +2705,18 @@ void CheckRightButton() {
 void CheckTouchLongPress() {
     std::printf("\n-- 触摸：长按自动映射为次键（0.5.0）--\n");
 
-    const auto feed = [](inking::InkingScene& scene, float x, float y,
+    const auto feed = [](InkingScene& scene, float x, float y,
                          bool primary, bool secondary,
-                         inking::PointerSource source
-                             = inking::PointerSource::Touch) {
-        scene.SetPointerState(x, y, inking::PointerDownState{primary, secondary},
+                         InkingPointerSource source
+                             = InkingPointerSource::Touch) {
+        scene.SetPointerState(x, y, InkingPointerDownState{primary, secondary},
                               true, source);
         scene.DispatchPointer();
     };
 
     // ① 轻点（0.3s）→ 只有主键 click
     {
-        inking::InkingScene scene("touch_tap");
+        InkingScene scene("touch_tap");
         ButtonSpy* spy = MakeSpyButton(scene, "tap_btn");
 
         feed(scene, 200.0f, 150.0f, true, false);
@@ -2727,7 +2730,7 @@ void CheckTouchLongPress() {
 
     // ② 长按（0.5s）→ 主键作废 + 次键按下；抬手 → 次键 click
     {
-        inking::InkingScene scene("touch_long");
+        InkingScene scene("touch_long");
         ButtonSpy* spy = MakeSpyButton(scene, "long_btn");
 
         feed(scene, 200.0f, 150.0f, true, false);
@@ -2740,7 +2743,7 @@ void CheckTouchLongPress() {
               "0.5.0：长按成立 → 主键捕获作废（release）但**不发 click**");
         Check(spy->counts.secondaryPress == 1,
               "0.5.0：长按成立 → 次键 press");
-        Check(spy->GetState() != inking::ButtonState::Pressed,
+        Check(spy->GetState() != InkingButtonState::Pressed,
               "0.5.0：长按不把按钮点亮（次键不进三态）");
 
         feed(scene, 200.0f, 150.0f, false, false);
@@ -2753,7 +2756,7 @@ void CheckTouchLongPress() {
 
     // ③ 长按候选期内移动超 slop → 放弃长按（那是拖动 / 滚动）
     {
-        inking::InkingScene scene("touch_drag");
+        InkingScene scene("touch_drag");
         ButtonSpy* spy = MakeSpyButton(scene, "drag_btn");
 
         feed(scene, 200.0f, 150.0f, true, false);
@@ -2776,12 +2779,12 @@ void CheckTouchLongPress() {
     // 场景只在**按下那一刻**锁来源。若每帧照抄，触摸屏上"边按边动鼠标"
     // 就会把长按打断，而现象是"长按偶尔不成立"，极难复现。
     {
-        inking::InkingScene scene("source_lock");
+        InkingScene scene("source_lock");
         ButtonSpy* spy = MakeSpyButton(scene, "lock_btn");
 
         feed(scene, 200.0f, 150.0f, true, false);                  // Touch
         feed(scene, 200.0f, 150.0f, true, false,
-             inking::PointerSource::Mouse);                        // 抖成 Mouse
+             InkingPointerSource::Mouse);                        // 抖成 Mouse
         scene.TickLogic(0.5);
         scene.DispatchPointer();
         Check(spy->counts.secondaryPress == 1,
@@ -2791,7 +2794,7 @@ void CheckTouchLongPress() {
 
     // ⑤ 长按的 click 坐标也是**按下点**（长按后手指微动，菜单不该挪）
     {
-        inking::InkingScene scene("long_origin");
+        InkingScene scene("long_origin");
         ButtonSpy* spy = MakeSpyButton(scene, "long_origin_btn");
 
         feed(scene, 160.0f, 130.0f, true, false);
@@ -2809,10 +2812,10 @@ void CheckTouchLongPress() {
     // 而不是合成后的有效状态，长按在浮窗看来**从未发生**——"长按菜单外部"
     // 就永远关不掉菜单，而且完全没有报错。
     {
-        inking::InkingScene scene("long_dynamic_visible");
+        InkingScene scene("long_dynamic_visible");
         MakeSpyButton(scene, "behind_btn");
 
-        inking::AnchorData data;
+        InkingAnchorData data;
         data.width = 40;
         data.height = 40;
         data.offsetX = 600.0f;
@@ -2842,12 +2845,12 @@ void CheckTouchLongPress() {
 void CheckPopupPlacement() {
     std::printf("\n-- 定点浮窗：落位算术（T-05）--\n");
 
-    const inking::ShapeBounds screen{0.0f, 0.0f, 1280.0f, 720.0f};
-    const inking::AnchorPoint leftTop{0.0f, 0.0f};
+    const InkingShapeBounds screen{0.0f, 0.0f, 1280.0f, 720.0f};
+    const InkingAnchorPoint leftTop{0.0f, 0.0f};
 
     // ① 右下角：两轴都要翻到对侧
     {
-        const auto p = inking::detail::SolvePopupPlacement(
+        const auto p = inking_detail::SolvePopupPlacement(
             1200.0f, 700.0f, 200, 120, screen, leftTop);
         std::printf("         右下角 → x=%.1f y=%.1f side=(%d,%d)\n", p.x, p.y,
                     p.sideX, p.sideY);
@@ -2858,7 +2861,7 @@ void CheckPopupPlacement() {
 
     // ② 左上角：原地不动
     {
-        const auto p = inking::detail::SolvePopupPlacement(
+        const auto p = inking_detail::SolvePopupPlacement(
             10.0f, 10.0f, 200, 120, screen, leftTop);
         Check(p.x == 10.0f && p.y == 10.0f && p.sideX == 1 && p.sideY == 1,
               "T-05：左上角定点 → 不翻不夹（x=10, y=10）");
@@ -2866,7 +2869,7 @@ void CheckPopupPlacement() {
 
     // ③ 中部：不动
     {
-        const auto p = inking::detail::SolvePopupPlacement(
+        const auto p = inking_detail::SolvePopupPlacement(
             600.0f, 300.0f, 200, 120, screen, leftTop);
         Check(p.x == 600.0f && p.y == 300.0f && p.sideX == 1 && p.sideY == 1,
               "T-05：中部定点 → 不翻不夹");
@@ -2874,7 +2877,7 @@ void CheckPopupPlacement() {
 
     // ④ 两轴独立：x 翻、y 不翻（右下角那种"往下展开"的手感）
     {
-        const auto p = inking::detail::SolvePopupPlacement(
+        const auto p = inking_detail::SolvePopupPlacement(
             1200.0f, 10.0f, 200, 120, screen, leftTop);
         Check(p.x == 1000.0f && p.sideX == -1 && p.y == 10.0f
                   && p.sideY == 1,
@@ -2883,7 +2886,7 @@ void CheckPopupPlacement() {
 
     // ⑤ 比范围还大：贴住起始边、允许另一侧溢出
     {
-        const auto p = inking::detail::SolvePopupPlacement(
+        const auto p = inking_detail::SolvePopupPlacement(
             600.0f, 300.0f, 1400, 120, screen, leftTop);
         Check(p.clampedX && p.sideX == 0 && p.x == 0.0f && !p.clampedY,
               "T-05：比范围还宽的浮窗 → clampedX + x=0（允许右溢出）");
@@ -2891,8 +2894,8 @@ void CheckPopupPlacement() {
 
     // ⑥ 范围原点不是 (0,0)：整套算术在父级坐标里自洽
     {
-        const inking::ShapeBounds area{100.0f, 100.0f, 400.0f, 300.0f};
-        const auto p = inking::detail::SolvePopupPlacement(
+        const InkingShapeBounds area{100.0f, 100.0f, 400.0f, 300.0f};
+        const auto p = inking_detail::SolvePopupPlacement(
             450.0f, 350.0f, 200, 120, area, leftTop);
         Check(p.x == 250.0f && p.y == 230.0f && p.sideX == -1
                   && p.sideY == -1,
@@ -2901,7 +2904,7 @@ void CheckPopupPlacement() {
 
     // ⑦ 退化：尺寸还是 0（布局没算完就 OpenAt）→ 就放在定点上，不崩
     {
-        const auto p = inking::detail::SolvePopupPlacement(
+        const auto p = inking_detail::SolvePopupPlacement(
             600.0f, 300.0f, 0, 0, screen, leftTop);
         Check(p.x == 600.0f && p.y == 300.0f && p.sideX == 1
                   && !p.clampedX,
@@ -2919,19 +2922,19 @@ void CheckPopupPlacement() {
 void CheckFixedPopup() {
     std::printf("\n-- 定点浮窗：OpenAt / 吃掉 / 点外关闭（T-06）--\n");
 
-    inking::InkingScene scene("fixed_popup");
+    InkingScene scene("fixed_popup");
 
     const auto makePanel = [](const char* name) {
-        inking::PanelData data;
+        InkingPanelData data;
         data.name = name;
         data.width = 200;
         data.height = 120;
         data.closed.color = 0xFFFFFFFFu;
-        data.shape = inking::ShapeSpec::RoundedRect(16.0f);
+        data.shape = InkingShapeSpec::RoundedRect(16.0f);
         return data;
     };
 
-    inking::InkingFixedPopup popup(&scene, makePanel("popup"));
+    InkingFixedPopup popup(&scene, makePanel("popup"));
 
     // ① 定点落位：右下角 ⇒ 翻左翻上
     popup.OpenAt(1200.0f, 700.0f);
@@ -2948,24 +2951,24 @@ void CheckFixedPopup() {
           "T-06：OpenAt 之后键盘焦点在浮窗上");
 
     // ③ 浮窗里的静态按钮能被命中（动态容器深挖）
-    inking::ButtonData innerData;
+    InkingButtonData innerData;
     innerData.name = "popup_inner";
     innerData.width = 80;
     innerData.height = 40;
     innerData.offsetX = 10.0f;
     innerData.offsetY = 10.0f;
-    innerData.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+    innerData.normal = InkingButtonAppearance(InkingAppearanceType::Color,
                                                 0xFF204060u);
-    auto* inner = static_cast<inking::InkingStaticButton*>(
-        popup.AddItem(std::make_unique<inking::InkingStaticButton>(
+    auto* inner = static_cast<InkingStaticButton*>(
+        popup.AddItem(std::make_unique<InkingStaticButton>(
             nullptr, innerData)));
     // 按钮世界中心 = 1000 + 10 + 40, 580 + 10 + 20
     Check(scene.QueryHit(1050.0f, 610.0f).target == inner,
           "T-06：浮窗里的静态按钮能被命中");
 
     // ④ 空白区：命中浮窗且是 Block（吃掉，不透到下面）
-    const inking::HitResult blank = scene.QueryHit(1150.0f, 670.0f);
-    Check(blank.target == &popup && blank.kind == inking::HitKind::Block,
+    const InkingHitResult blank = scene.QueryHit(1150.0f, 670.0f);
+    Check(blank.target == &popup && blank.kind == InkingHitKind::Block,
           "T-06：点浮窗空白区 → 命中浮窗且 kind=Block");
 
     // ⑤ 外部按下 ⇒ 关闭
@@ -2974,9 +2977,9 @@ void CheckFixedPopup() {
     Check(!popup.IsOpen(), "T-06：外部按下 → 立即关闭");
 
     // ⑥ 比范围还宽：贴左边、允许右溢出
-    inking::PanelData wideData = makePanel("popup_wide");
+    InkingPanelData wideData = makePanel("popup_wide");
     wideData.width = 1400;
-    inking::InkingFixedPopup widePopup(&scene, wideData);
+    InkingFixedPopup widePopup(&scene, wideData);
     widePopup.OpenAt(600.0f, 300.0f);
     Check(widePopup.IsClampedX() && widePopup.GetX() == 0.0f,
           "T-06：比窗口还宽的浮窗 → 贴左边（IsClampedX，允许右溢出）");
@@ -2996,21 +2999,21 @@ void CheckFixedPopup() {
 void CheckMenuPopup() {
     std::printf("\n-- 菜单浮窗：布局 / 项 / 局部快捷键（T-07 / T-08）--\n");
 
-    inking::InkingScene scene("menu_popup");
+    InkingScene scene("menu_popup");
 
-    inking::prefab::MenuPopupStyle style =
-        inking::prefab::MenuPopupStyle::MakeDefault();
+    inking_prefab::MenuPopupStyle style =
+        inking_prefab::MenuPopupStyle::MakeDefault();
     style.itemWidth = 200;
     style.itemHeight = 36;
     style.padding = 6;
     style.gap = 2;
 
-    inking::prefab::MenuPopup menu(&scene, style);
+    inking_prefab::MenuPopup menu(&scene, style);
 
     // 只给颜色、宽高留 0：`AddButton` 应该补成菜单的默认尺寸。
-    inking::ButtonData look;
+    InkingButtonData look;
     look.normal =
-        inking::ButtonAppearance(inking::AppearanceType::Color, 0xFFFFFFFFu);
+        InkingButtonAppearance(InkingAppearanceType::Color, 0xFFFFFFFFu);
     look.hover = look.normal;
     look.onclicked = look.normal;
 
@@ -3019,20 +3022,20 @@ void CheckMenuPopup() {
     menu.AddButton(look, "另存为", [&] {});
     menu.AddButton(look, "退出", [&] {});
 
-    inking::AnchorData separatorData;
+    InkingAnchorData separatorData;
     separatorData.width = style.itemWidth;
     separatorData.height = 2;
     menu.AddItem(
-        std::make_unique<inking::InkingDynamicWidget>(nullptr, separatorData));
+        std::make_unique<InkingDynamicWidget>(nullptr, separatorData));
 
     // ① 项表：3 个按钮 + 1 个自定义件
     Check(menu.GetItemCount() == 4,
           "T-07：3 个按钮 + 1 个自定义项都进了项表");
 
     // ② 竖排布局：相邻项的 y 差 = itemHeight + gap
-    const inking::ShapeBounds r0 = menu.GetItemRect(0);
-    const inking::ShapeBounds r1 = menu.GetItemRect(1);
-    const inking::ShapeBounds r2 = menu.GetItemRect(2);
+    const InkingShapeBounds r0 = menu.GetItemRect(0);
+    const InkingShapeBounds r1 = menu.GetItemRect(1);
+    const InkingShapeBounds r2 = menu.GetItemRect(2);
     std::printf("         项矩形 y = %.1f / %.1f / %.1f\n", r0.y, r1.y, r2.y);
     Check(r1.y > r0.y && r2.y > r1.y
               && (r1.y - r0.y) == static_cast<float>(style.itemHeight + style.gap),
@@ -3050,10 +3053,10 @@ void CheckMenuPopup() {
     // ⑤ 局部快捷键：绑 F5，按下就命中并关闭
     int shortcutHits = 0;
     const bool bound = menu.BindLocalShortcut(
-        inking::Shortcut::Parse("F5"), [&] { ++shortcutHits; }, "F5");
+        InkingShortcut::Parse("F5"), [&] { ++shortcutHits; }, "F5");
     menu.OpenAt(100.0f, 100.0f);
 
-    inking::KeyEvent key{};
+    InkingKeyEvent key{};
     key.key = SDLK_F5;
     menu.PushKeyDown(key);
     Check(bound && shortcutHits == 1 && !menu.IsOpen(),
@@ -3071,17 +3074,17 @@ void CheckMenuPopup() {
     // ⑦ 重复绑定被拒（先到先得，不覆盖）
     const std::size_t before = menu.GetLocalShortcutCount();
     const bool duplicate = menu.BindLocalShortcut(
-        inking::Shortcut::Parse("F5"), [] {}, "F5");
+        InkingShortcut::Parse("F5"), [] {}, "F5");
     Check(!duplicate && menu.GetLocalShortcutCount() == before,
           "T-08：重复绑同一个组合被拒（先到先得）");
 
     // ⑧ 与全局表冲突：绑之前就拒（窗口层先跑全局表，局部永远收不到）
-    inking::ShortcutRegistry& global =
-        inking::InkingWindow::Instance().GetShortcuts();
-    const inking::ShortcutRegistry::Id id =
-        global.Bind(inking::Shortcut::Parse("Ctrl+Alt+F9"), [] {}, "probe");
+    InkingShortcutRegistry& global =
+        InkingWindow::Instance().GetShortcuts();
+    const InkingShortcutRegistry::Id id =
+        global.Bind(InkingShortcut::Parse("Ctrl+Alt+F9"), [] {}, "probe");
     const bool conflict = menu.BindLocalShortcut(
-        inking::Shortcut::Parse("Ctrl+Alt+F9"), [] {}, "conflict");
+        InkingShortcut::Parse("Ctrl+Alt+F9"), [] {}, "conflict");
     if (id != 0) {
         global.Unbind(id);
     }
@@ -3103,7 +3106,7 @@ void CheckFilePickerDrives() {
     std::printf("\n-- 文件选择：盘符栏 / 换盘符（C5 增补）--\n");
 
     const std::vector<std::filesystem::path> drives =
-        inking::prefab::FilePicker::EnumerateDrives();
+        inking_prefab::FilePicker::EnumerateDrives();
     if (drives.empty()) {
         // 非 Windows：盘符栏按设计整条不建。这里不是"跳过检查"，而是
         // "平台本来就没有盘符"这条契约本身要被看见。
@@ -3111,10 +3114,10 @@ void CheckFilePickerDrives() {
         return;
     }
 
-    inking::InkingScene scene("file_picker_drives");
-    const inking::prefab::FilePickerStyle style =
-        inking::prefab::FilePickerStyle::MakeDefault();
-    inking::prefab::FilePicker picker(&scene, style);
+    InkingScene scene("file_picker_drives");
+    const inking_prefab::FilePickerStyle style =
+        inking_prefab::FilePickerStyle::MakeDefault();
+    inking_prefab::FilePicker picker(&scene, style);
 
     // ① 项数 = 枚举结果（"列出来的"与"能换的"必须是同一份）
     Check(picker.GetDriveCount() == drives.size(),
@@ -3160,9 +3163,9 @@ void CheckFilePickerDrives() {
 // ---------------------------------------------------------------------------
 //
 // 反馈：「全屏后『添加』『取消』消失」。
-// 根因：底部那一栏当初为了"不新增底层词汇"复用了 `prefab::MenuBar`，而它的数据面
+// 根因：底部那一栏当初为了"不新增底层词汇"复用了 `inking_prefab::MenuBar`，而它的数据面
 // 捆着窗口语义——`hideInFullscreen` / `zoomWheel` 默认都是 true，实现里还订阅
-// `fullscreenChanged`。**布局该复用，策略不该复用**：现在换成普通 `PanelData` 横排。
+// `fullscreenChanged`。**布局该复用，策略不该复用**：现在换成普通 `InkingPanelData` 横排。
 //
 // 这里断的不是"按钮还在"（那是视觉），而是三条可量的：类型上不再是 MenuBar、
 // 全屏事件不从它这里过去、排列口径没变。
@@ -3170,15 +3173,15 @@ void CheckFilePickerDrives() {
 void CheckFilePickerButtonBar() {
     std::printf("\n-- 文件选择：按钮栏不带窗口语义（0.5.3）--\n");
 
-    inking::InkingWindow& window = inking::InkingWindow::Instance();
-    inking::InkingScene scene("file_picker_buttons");
-    const inking::prefab::FilePickerStyle style =
-        inking::prefab::FilePickerStyle::MakeDefault();
-    inking::prefab::FilePicker picker(&scene, style);
+    InkingWindow& window = InkingWindow::Instance();
+    InkingScene scene("file_picker_buttons");
+    const inking_prefab::FilePickerStyle style =
+        inking_prefab::FilePickerStyle::MakeDefault();
+    inking_prefab::FilePicker picker(&scene, style);
 
     // ① 结构上不再是菜单栏：全屏自隐 / 滚轮缩放都是 MenuBar 自己的行为，
     //    换成普通面板之后它们**按构造**不存在（不是靠开关关掉的）。
-    Check(dynamic_cast<inking::prefab::MenuBar*>(&picker.Buttons()) == nullptr,
+    Check(dynamic_cast<inking_prefab::MenuBar*>(&picker.Buttons()) == nullptr,
           "C5：按钮栏不是 MenuBar（窗口语义按构造不存在）");
     Check(picker.GetButtonCount() == 2, "C5：按钮栏建了两个按钮（确定 / 取消）");
 
@@ -3189,7 +3192,7 @@ void CheckFilePickerButtonBar() {
     {
         // 构造期就已经全屏那一路：MenuBar 是"构造时查一次 IsFullscreen()"，
         // 这里也必须新建即可见。
-        inking::prefab::FilePicker late(&scene, style);
+        inking_prefab::FilePicker late(&scene, style);
         Check(late.IsButtonBarVisible(), "C5：全屏状态下新建的选择器，按钮栏也可见");
     }
     window.SetFullscreen(wasFullscreen);
@@ -3198,8 +3201,8 @@ void CheckFilePickerButtonBar() {
     // ③ 排列口径没变：两个 96 宽按钮靠右、间隔 8、右边距 8。
     //    这条钉住"换了容器但排出来一样"——只验结构会把视觉改坏还全绿。
     const int barWidth = picker.Buttons().GetWidth();
-    const inking::InkingStaticButton* accept = picker.GetButton(0);
-    const inking::InkingStaticButton* cancel = picker.GetButton(1);
+    const InkingStaticButton* accept = picker.GetButton(0);
+    const InkingStaticButton* cancel = picker.GetButton(1);
     const bool layoutOk =
         accept != nullptr && cancel != nullptr && accept->GetWidth() == 96 && cancel->GetWidth() == 96
         && std::fabs((cancel->GetX() + static_cast<float>(cancel->GetWidth()))
@@ -3217,7 +3220,7 @@ void CheckFilePickerButtonBar() {
     Check(canceled, "C5：语义点「取消」→ canceled 事件发出");
     picker.canceled.Unsubscribe(token);
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -3234,32 +3237,32 @@ void CheckFilePickerButtonBar() {
 void CheckScrollContentMeasurement() {
     std::printf("\n-- 滚动：内容尺寸的口径（0.5.3）--\n");
 
-    inking::InkingScene scene("selftest-scroll-measure");
+    InkingScene scene("selftest-scroll-measure");
 
     // 容器放在父级 (0, 70)：这正是列表在 FilePicker 里的位置（② 的现场）。
-    inking::PanelData hostData;
+    InkingPanelData hostData;
     hostData.name = "measure_host";
     hostData.width = 300;
     hostData.height = 500;
-    auto* host = static_cast<inking::InkingStaticPanel*>(
-        scene.AddChild(std::make_unique<inking::InkingStaticPanel>(&scene, hostData)));
+    auto* host = static_cast<InkingStaticPanel*>(
+        scene.AddChild(std::make_unique<InkingStaticPanel>(&scene, hostData)));
 
-    inking::PanelData listData;
+    InkingPanelData listData;
     listData.name = "measure_list";
     listData.width = 300;
     listData.height = 200;
     listData.offsetY = 70.0f;
     listData.scroll.enabled = true;
-    auto* list = static_cast<inking::InkingStaticPanel*>(
-        host->AddChild(std::make_unique<inking::InkingStaticPanel>(host, listData)));
+    auto* list = static_cast<InkingStaticPanel*>(
+        host->AddChild(std::make_unique<InkingStaticPanel>(host, listData)));
 
     for (int i = 0; i < 10; ++i) {
-        inking::PanelData row;
+        InkingPanelData row;
         row.name = "measure_row" + std::to_string(i);
         row.width = 300;
         row.height = 26;
         row.offsetY = static_cast<float>(i) * 26.0f;
-        list->AddChild(std::make_unique<inking::InkingStaticPanel>(list, row));
+        list->AddChild(std::make_unique<InkingStaticPanel>(list, row));
     }
 
     list->UpdateScrollRange();
@@ -3294,17 +3297,17 @@ void CheckScrollContentMeasurement() {
         file << "x";
     }
 
-    inking::InkingScene popupScene("selftest-picker-popup");
-    inking::PanelData popupData;
+    InkingScene popupScene("selftest-picker-popup");
+    InkingPanelData popupData;
     popupData.name = "picker_popup";
     popupData.width = 920;
     popupData.height = 640;
     popupData.clipChildren = true;
     popupData.visible = false;  // 与 golding.popup 同序：先建成隐藏、create 返回后才显示
-    auto* popup = static_cast<inking::InkingStaticPanel*>(
-        popupScene.AddChild(std::make_unique<inking::InkingStaticPanel>(&popupScene, popupData)));
+    auto* popup = static_cast<InkingStaticPanel*>(
+        popupScene.AddChild(std::make_unique<InkingStaticPanel>(&popupScene, popupData)));
 
-    inking::prefab::FilePicker picker(popup, inking::prefab::FilePickerStyle::MakeDefault());
+    inking_prefab::FilePicker picker(popup, inking_prefab::FilePickerStyle::MakeDefault());
     picker.SetDirectory(dir);   // ← 此刻整棵子树不可见（反馈 2 的现场）
     popup->SetVisible(true);
 
@@ -3319,7 +3322,7 @@ void CheckScrollContentMeasurement() {
           "C5：转可见后滑块就出现（反馈 2：不必先点进子目录）");
 
     std::filesystem::remove_all(dir, ec);
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -3337,20 +3340,20 @@ void CheckScrollContentMeasurement() {
 void CheckInputScroll() {
     std::printf("\n-- 输入框：光标 clamp + 水平滚动 --\n");
 
-    inking::InkingScene scene;
-    inking::TextInputData data;
+    InkingScene scene;
+    InkingTextInputData data;
     data.name = "scroll_input";
     data.width = 120;
     data.height = 32;
-    data.selfAnchor = inking::InkingChangeAnchor::Center;
-    data.traceAnchor = inking::InkingChangeAnchor::Center;
+    data.selfAnchor = InkingChangeAnchor::Center;
+    data.traceAnchor = InkingChangeAnchor::Center;
     data.style.fontSize = 16.0f;
     data.style.fontPath = "";  // 机器默认字体：无头环境也能量到宽度
 
-    auto* input = static_cast<inking::InkingTextInput*>(scene.AddChild(
-        std::make_unique<inking::InkingTextInput>(&scene, data)));
+    auto* input = static_cast<InkingTextInput*>(scene.AddChild(
+        std::make_unique<InkingTextInput>(&scene, data)));
 
-    inking::SceneLibrary::SetActiveScene(&scene);
+    InkingSceneLibrary::SetActiveScene(&scene);
     scene.TickFrame(1.0f / 60.0f);
 
     input->SetFocused(true);
@@ -3359,11 +3362,11 @@ void CheckInputScroll() {
           "前置条件：文本确实比本体宽");
 
     // End：光标到末尾（这一下会触发滚动）。
-    inking::KeyEvent end;
+    InkingKeyEvent end;
     end.key = SDLK_END;
     Check(input->HandleKey(end), "End 被输入框吃掉（光标到末尾）");
 
-    const inking::TextInputRect caret = input->CaretBox();
+    const InkingTextInputRect caret = input->CaretBox();
     std::printf("         滚动量=%.1f 光标 x=%.1f 宽=%.1f 本体宽=%d\n",
                 input->GetScrollX(), caret.x, caret.width, input->GetWidth());
     Check(input->GetScrollX() > 0.0f, "文本超宽 + 光标在末尾 → 产生水平滚动");
@@ -3383,13 +3386,13 @@ void CheckInputScroll() {
     // 文本变短：滚动量必须回 0（否则下次输入会从"半句话"开始显示）。
     input->SetEditText("ab");
     Check(input->GetScrollX() == 0.0f, "文本变短后滚动量回 0");
-    const inking::TextInputRect shortCaret = input->CaretBox();
+    const InkingTextInputRect shortCaret = input->CaretBox();
     Check(shortCaret.x >= -0.01f
               && shortCaret.x + shortCaret.width
                      <= static_cast<float>(input->GetWidth()) + 0.01f,
           "短文本时光标也在本体里");
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -3405,7 +3408,7 @@ void CheckInputScroll() {
 // 第一帧落盘、尺寸等于窗口像素尺寸。
 void CheckCaptureContract() {
     std::printf("\n-- 截图：失败路径 --\n");
-    inking::InkingWindow& window = inking::InkingWindow::Instance();
+    InkingWindow& window = InkingWindow::Instance();
 
     Check(!window.Capture(""), "空路径：立即截图返回 false");
     Check(!window.Capture("/tmp/ink_should_not_exist.png"),
@@ -3433,11 +3436,11 @@ void CheckCaptureContract() {
 void CheckDynamicTree() {
     std::printf("\n-- 树的动态性（A 组） --\n");
 
-    struct ProbeScene : public inking::InkingScene {
-        ProbeScene() : inking::InkingScene("probe_dyntree") {}
+    struct ProbeScene : public InkingScene {
+        ProbeScene() : InkingScene("probe_dyntree") {}
     };
 
-    // 场景名不能和主场景撞：撞了会被 SceneLibrary 驳回，测试就变成"在停放态
+    // 场景名不能和主场景撞：撞了会被 InkingSceneLibrary 驳回，测试就变成"在停放态
     // 的场景上断言"——全绿但什么都没验（这种假绿最难发现）。
     ProbeScene scene;
     if (!scene.IsRegistered()) {
@@ -3447,25 +3450,25 @@ void CheckDynamicTree() {
 
     const auto makeButton = [](const char* name, int width, int height, int x,
                                int y) {
-        inking::ButtonData data;
+        InkingButtonData data;
         data.name = name;
         data.width = width;
         data.height = height;
         data.offsetX = static_cast<float>(x);
         data.offsetY = static_cast<float>(y);
-        data.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+        data.normal = InkingButtonAppearance(InkingAppearanceType::Color,
                                               0xFF112233u);
         return data;
     };
 
     // ---- A1：动态容器子树里的静态按钮 ----
-    inking::AnchorData outerData;
+    InkingAnchorData outerData;
     outerData.width = 400;
     outerData.height = 300;
-    auto* outer = static_cast<inking::InkingStaticPanel*>(
-        scene.AddChild(std::make_unique<inking::InkingStaticPanel>(
+    auto* outer = static_cast<InkingStaticPanel*>(
+        scene.AddChild(std::make_unique<InkingStaticPanel>(
             &scene, [] {
-                inking::PanelData data;
+                InkingPanelData data;
                 data.name = "a1_outer";
                 data.width = 400;
                 data.height = 300;
@@ -3475,15 +3478,15 @@ void CheckDynamicTree() {
                 return data;
             }())));
 
-    inking::AnchorData boxData;
+    InkingAnchorData boxData;
     boxData.width = 200;
     boxData.height = 150;
     boxData.offsetX = 10.0f;
     boxData.offsetY = 10.0f;
     auto* box = scene.AddChild(
-        std::make_unique<inking::InkingDynamicWidget>(outer, boxData));
-    auto* inner = static_cast<inking::InkingStaticButton*>(
-        box->AddChild(std::make_unique<inking::InkingStaticButton>(
+        std::make_unique<InkingDynamicWidget>(outer, boxData));
+    auto* inner = static_cast<InkingStaticButton*>(
+        box->AddChild(std::make_unique<InkingStaticButton>(
             box, makeButton("a1_inner", 80, 30, 20, 20))));
 
     Check(scene.QueryHit(inner->GetAbsX() + 5.0f, inner->GetAbsY() + 5.0f)
@@ -3493,9 +3496,9 @@ void CheckDynamicTree() {
 
     // ---- A2：离线建好的子树再挂进来 ----
     std::size_t before = scene.GetDrawItemCount();
-    auto offline = std::make_unique<inking::InkingStaticPanel>(
+    auto offline = std::make_unique<InkingStaticPanel>(
         nullptr, [] {
-            inking::PanelData data;
+            InkingPanelData data;
             data.name = "a2_offline";
             data.width = 120;
             data.height = 60;
@@ -3505,10 +3508,10 @@ void CheckDynamicTree() {
             data.Normalize();
             return data;
         }());
-    auto* offlineChild = static_cast<inking::InkingStaticButton*>(
-        offline->AddChild(std::make_unique<inking::InkingStaticButton>(
+    auto* offlineChild = static_cast<InkingStaticButton*>(
+        offline->AddChild(std::make_unique<InkingStaticButton>(
             offline.get(), makeButton("a2_child", 60, 20, 10, 10))));
-    auto* attached = static_cast<inking::InkingStaticPanel*>(
+    auto* attached = static_cast<InkingStaticPanel*>(
         scene.AddChild(std::move(offline)));
     (void)attached;
     Check(scene.GetDrawItemCount() == before + 2,
@@ -3520,7 +3523,7 @@ void CheckDynamicTree() {
           "A2：离线子树里的按钮也能被命中");
 
     // ---- A3：创建时隐藏、之后显示 ----
-    inking::PanelData hiddenData;
+    InkingPanelData hiddenData;
     hiddenData.name = "a3_hidden";
     hiddenData.width = 120;
     hiddenData.height = 60;
@@ -3529,8 +3532,8 @@ void CheckDynamicTree() {
     hiddenData.closed.color = 0xFF778899u;
     hiddenData.open.color = hiddenData.closed.color;
     hiddenData.Normalize();
-    auto* hidden = static_cast<inking::InkingStaticPanel*>(
-        scene.AddChild(std::make_unique<inking::InkingStaticPanel>(&scene,
+    auto* hidden = static_cast<InkingStaticPanel*>(
+        scene.AddChild(std::make_unique<InkingStaticPanel>(&scene,
                                                                    hiddenData)));
     Check(scene.QueryHit(60.0f, 430.0f).target == nullptr,
           "A3：隐藏的面板点不到（可见性在命中侧也生效）");
@@ -3539,26 +3542,26 @@ void CheckDynamicTree() {
           "A3：隐藏过再显示，立刻能点到（以前永远回不来）");
 
     // ---- A4 / B1：布局在"孩子挂了"和"容器改了"之后都要重跑 ----
-    inking::AnchorData columnData;
+    InkingAnchorData columnData;
     columnData.width = 300;
     columnData.height = 200;
     columnData.offsetX = 600.0f;
     columnData.offsetY = 400.0f;
-    columnData.layout.kind = inking::LayoutKind::Stack;
-    columnData.layout.axis = inking::LayoutAxis::Vertical;
+    columnData.layout.kind = InkingLayoutKind::Stack;
+    columnData.layout.axis = InkingLayoutAxis::Vertical;
     columnData.layout.gap = 4.0f;
-    auto* column = static_cast<inking::InkingDynamicWidget*>(
+    auto* column = static_cast<InkingDynamicWidget*>(
         scene.AddChild(
-            std::make_unique<inking::InkingDynamicWidget>(&scene, columnData)));
+            std::make_unique<InkingDynamicWidget>(&scene, columnData)));
 
-    inking::ButtonData fixed = makeButton("a4_fixed", 100, 40, 0, 0);
-    inking::ButtonData filler = makeButton("a4_filler", 0, 40, 0, 0);
+    InkingButtonData fixed = makeButton("a4_fixed", 100, 40, 0, 0);
+    InkingButtonData filler = makeButton("a4_filler", 0, 40, 0, 0);
     filler.layoutItem.fillMain = true;
-    auto* fixedButton = static_cast<inking::InkingStaticButton*>(
-        column->AddChild(std::make_unique<inking::InkingStaticButton>(
+    auto* fixedButton = static_cast<InkingStaticButton*>(
+        column->AddChild(std::make_unique<InkingStaticButton>(
             column, fixed)));
-    auto* fillerButton = static_cast<inking::InkingStaticButton*>(
-        column->AddChild(std::make_unique<inking::InkingStaticButton>(
+    auto* fillerButton = static_cast<InkingStaticButton*>(
+        column->AddChild(std::make_unique<InkingStaticButton>(
             column, filler)));
 
     Check(fixedButton->GetWidth() == 300,
@@ -3611,8 +3614,8 @@ void CheckDynamicTree() {
 void CheckLeafHoleRefresh() {
     std::printf("\n-- 移动的动态节点只刷洞（T-19） --\n");
 
-    struct ProbeScene : public inking::InkingScene {
-        ProbeScene() : inking::InkingScene("probe_leaf_hole") {}
+    struct ProbeScene : public InkingScene {
+        ProbeScene() : InkingScene("probe_leaf_hole") {}
     };
 
     ProbeScene scene;
@@ -3624,30 +3627,30 @@ void CheckLeafHoleRefresh() {
     // 铺一批静态节点：让"全量重建"真的有东西可重建（自检里只判计数，但若场景
     // 里一个静态节点都没有，两条路的差别会被摊平，测出来的东西没意义）。
     for (int i = 0; i < 32; ++i) {
-        inking::AnchorData cell;
+        InkingAnchorData cell;
         cell.width = 20;
         cell.height = 20;
         cell.offsetX = static_cast<float>((i % 8) * 24);
         cell.offsetY = static_cast<float>((i / 8) * 24 + 400);
         scene.AddChild(
-            std::make_unique<inking::InkingStaticWidget>(&scene, cell));
+            std::make_unique<InkingStaticWidget>(&scene, cell));
     }
 
     const auto makeButton = [](const char* name, int x, int y) {
-        inking::ButtonData data;
+        InkingButtonData data;
         data.name = name;
         data.width = 60;
         data.height = 40;
         data.offsetX = static_cast<float>(x);
         data.offsetY = static_cast<float>(y);
-        data.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+        data.normal = InkingButtonAppearance(InkingAppearanceType::Color,
                                               0xFF335577u);
         return data;
     };
 
     // ---- ① 叶子：每帧走位的动态按钮 ----
-    auto* leaf = static_cast<inking::InkingDynamicButton*>(
-        scene.AddChild(std::make_unique<inking::InkingDynamicButton>(
+    auto* leaf = static_cast<InkingDynamicButton*>(
+        scene.AddChild(std::make_unique<InkingDynamicButton>(
             &scene, makeButton("t19_leaf", 100, 100))));
 
     // 先把表建好：这一步一定是全量重建（构造到现在一直脏着）。
@@ -3681,17 +3684,17 @@ void CheckLeafHoleRefresh() {
           "T-19：**旧位置**不再命中它（洞真的跟着走了）");
 
     // ---- ② 带静态子孙的动态容器：必须走全量 ----
-    inking::AnchorData boxData;
+    InkingAnchorData boxData;
     boxData.width = 200;
     boxData.height = 150;
     boxData.offsetX = 700.0f;
     boxData.offsetY = 60.0f;
-    auto* box = static_cast<inking::InkingDynamicWidget*>(
+    auto* box = static_cast<InkingDynamicWidget*>(
         scene.AddChild(
-            std::make_unique<inking::InkingDynamicWidget>(&scene, boxData)));
-    inking::ButtonData innerData = makeButton("t19_inner", 20, 30);
-    auto* inner = static_cast<inking::InkingStaticButton*>(box->AddChild(
-        std::make_unique<inking::InkingStaticButton>(box, innerData)));
+            std::make_unique<InkingDynamicWidget>(&scene, boxData)));
+    InkingButtonData innerData = makeButton("t19_inner", 20, 30);
+    auto* inner = static_cast<InkingStaticButton*>(box->AddChild(
+        std::make_unique<InkingStaticButton>(box, innerData)));
 
     Check(box->HasStaticInSubtree(),
           "T-19：容器的子树判据认得出静态子（`HasStaticInSubtree`）");
@@ -3716,8 +3719,8 @@ void CheckLeafHoleRefresh() {
           "T-19：静态子的旧位置不再命中它");
 
     // ---- ③ 隐藏的动态节点不留洞（与 T-4 验收③同一条） ----
-    auto* hidden = static_cast<inking::InkingDynamicButton*>(
-        scene.AddChild(std::make_unique<inking::InkingDynamicButton>(
+    auto* hidden = static_cast<InkingDynamicButton*>(
+        scene.AddChild(std::make_unique<InkingDynamicButton>(
             &scene, makeButton("t19_hidden", 900, 500))));
     const std::size_t holesWithVisible = scene.GetHitTableHoleCount();
     hidden->SetVisible(false);
@@ -3751,8 +3754,8 @@ void CheckLeafHoleRefresh() {
 void CheckDynamicImage() {
     std::printf("\n-- 动态图片（G-01） --\n");
 
-    struct ProbeScene : public inking::InkingScene {
-        ProbeScene() : inking::InkingScene("probe_dynimage") {}
+    struct ProbeScene : public InkingScene {
+        ProbeScene() : InkingScene("probe_dynimage") {}
     };
 
     ProbeScene scene;
@@ -3762,26 +3765,26 @@ void CheckDynamicImage() {
     }
 
     // 一个静态参照物：让表里真的有条目，"一条都没多"才有意义。
-    inking::AnchorData refData;
+    InkingAnchorData refData;
     refData.width = 40;
     refData.height = 40;
     refData.offsetX = 20.0f;
     refData.offsetY = 560.0f;
     scene.AddChild(
-        std::make_unique<inking::InkingStaticWidget>(&scene, refData));
+        std::make_unique<InkingStaticWidget>(&scene, refData));
     const std::size_t entriesBefore = scene.GetHitTableEntryCount();
 
-    inking::ImageData data;
+    InkingImageData data;
     data.name = "g01_image";
     data.width = 100;
     data.height = 50;
     data.offsetX = 200.0f;
     data.offsetY = 100.0f;
     data.normal =
-        inking::ButtonAppearance(inking::AppearanceType::Color, 0xFF446688u);
+        InkingButtonAppearance(InkingAppearanceType::Color, 0xFF446688u);
 
-    auto* image = static_cast<inking::InkingDynamicImage*>(
-        scene.AddChild(std::make_unique<inking::InkingDynamicImage>(&scene,
+    auto* image = static_cast<InkingDynamicImage*>(
+        scene.AddChild(std::make_unique<InkingDynamicImage>(&scene,
                                                                    data)));
 
     // ---- ① 是动态档，且**不进命中表**（占地记成"洞"） ----
@@ -3829,7 +3832,7 @@ void CheckDynamicImage() {
 
     // ---- ④ A13 仍可用，且与几何**复合** ----
     image->ChangeOffset(30.0f, 0.0f);  // 几何先挪一次
-    inking::TransformSpec shift;
+    InkingTransformSpec shift;
     shift.translateX = 5.0f;
     Check(image->SetDisplayTransform(shift), "④：A13 仍可用（`SetDisplayTransform` 生效）");
     Check(!image->GetDisplayTransform().IsIdentity(),
@@ -3855,7 +3858,7 @@ void CheckDynamicImage() {
 // 所以本函数在 `main` 里排在"销毁裸窗口"之后。
 void CheckHeadlessPump() {
     std::printf("\n-- 非阻塞跑帧（D 组） --\n");
-    inking::InkingWindow& window = inking::InkingWindow::Instance();
+    InkingWindow& window = InkingWindow::Instance();
 
     // D4：固定 delta —— 截图与动画断言要在 CI 里稳定，就必须去掉墙上时钟。
     window.SetFixedDelta(1.0f / 60.0f);
@@ -3888,7 +3891,7 @@ void CheckHeadlessPump() {
 
     // D2：离屏渲染，不依赖窗口。
     const std::string offscreen = "selftest_offscreen.png";
-    Check(inking::InkingWindow::RenderToTexture(offscreen, 320, 180, "selftest"),
+    Check(InkingWindow::RenderToTexture(offscreen, 320, 180, "selftest"),
           "D2：RenderToTexture 不建窗口也能出图");
     {
         std::FILE* file = std::fopen(offscreen.c_str(), "rb");
@@ -3915,11 +3918,11 @@ void CheckHeadlessPump() {
     // 窗口刚关掉，所以这一次 `SetTransparent(false)` 能生效（它只在建窗前有效）。
     Check(window.SetTransparent(false), "静默失效用例：关窗后可以改回不透明");
     window.SetBackgroundColor(0x80112233u);
-    inking::InkLog::ResetStats();
+    InkLog::ResetStats();
     Check(window.Open("selftest"), "静默失效用例：重新开窗成功");
     Check(window.RunFrames(1) == 1, "静默失效用例：跑一帧（清屏那一笔真的发生）");
     const std::vector<std::string> alphaWarns =
-        inking::InkLog::grep("window.background", "InkingWindow");
+        InkLog::grep("window.background", "InkingWindow");
     Check(alphaWarns.size() == 1,
           "background_alpha_without_transparent：半透明底 + 不透明窗口恰好 1 条 WARN");
     NoteSilentFailure("background_alpha_without_transparent");
@@ -3939,60 +3942,60 @@ void CheckHeadlessPump() {
 //   切回 t_blue   → 蓝
 //   清空表        → 回到烘好的字面量（蓝）
 //
-// 验的是**整条链路**：主题版本 → `PanelLook::Advance` 重算 → 真渲染出来的像素。
-// 只验 `ResolveThemeColor` 不够——"查到了但没画出去"正是这类功能最容易出的错。
+// 验的是**整条链路**：主题版本 → `InkingPanelLook::Advance` 重算 → 真渲染出来的像素。
+// 只验 `InkingResolveThemeColor` 不够——"查到了但没画出去"正是这类功能最容易出的错。
 void CheckRuntimeTheme(SDL_Renderer* renderer) {
     std::printf("\n-- 运行期主题（颜色） --\n");
     if (renderer == nullptr) {
         return;
     }
 
-    inking::ClearThemeTables();
-    const std::uint64_t versionBeforeClear = inking::ThemeVersion();
+    InkingClearThemeTables();
+    const std::uint64_t versionBeforeClear = InkingThemeVersion();
 
-    inking::ThemeTable blue;
+    InkingThemeTable blue;
     blue.name = "t_blue";
     blue.colors = {{"surface", 0xFF0000FFu}};
-    inking::ThemeTable red;
+    InkingThemeTable red;
     red.name = "t_red";
     red.colors = {{"surface", 0xFFFF0000u}};
-    Check(inking::InstallThemeTable(std::move(blue)), "装第一张主题表");
-    Check(inking::InstallThemeTable(std::move(red)), "装第二张主题表");
-    Check(inking::ThemeTableCount() == 2, "运行期同时持有两张表（多主题）");
-    Check(inking::ThemeVersion() > versionBeforeClear, "装表让版本号前进");
+    Check(InkingInstallThemeTable(std::move(blue)), "装第一张主题表");
+    Check(InkingInstallThemeTable(std::move(red)), "装第二张主题表");
+    Check(InkingThemeTableCount() == 2, "运行期同时持有两张表（多主题）");
+    Check(InkingThemeVersion() > versionBeforeClear, "装表让版本号前进");
 
     // 没切主题时活跃主题是空的 → 一切照旧用烘好的字面量。
-    Check(inking::ActiveThemeName().empty(), "装表不等于切表（活跃主题仍为空）");
+    Check(InkingActiveThemeName().empty(), "装表不等于切表（活跃主题仍为空）");
 
     // 没有这张表时切不过去，而且**版本不许动**（界面不该白闪一下）。
-    const std::uint64_t versionBeforeBadSwitch = inking::ThemeVersion();
-    Check(!inking::SetActiveTheme("t_not_installed"),
+    const std::uint64_t versionBeforeBadSwitch = InkingThemeVersion();
+    Check(!InkingSetActiveTheme("t_not_installed"),
           "切一张没装过的主题：返回 false");
-    Check(inking::ThemeVersion() == versionBeforeBadSwitch,
+    Check(InkingThemeVersion() == versionBeforeBadSwitch,
           "切失败不动版本号（不会闪一下再回原样）");
 
-    inking::InkingScene scene;
-    inking::PanelData data;
+    InkingScene scene;
+    InkingPanelData data;
     data.name = "theme_probe";
     data.width = 200;
     data.height = 160;
-    data.selfAnchor = inking::InkingChangeAnchor::Center;
-    data.traceAnchor = inking::InkingChangeAnchor::Center;
+    data.selfAnchor = InkingChangeAnchor::Center;
+    data.traceAnchor = InkingChangeAnchor::Center;
     data.closed.color = 0xFF0000FFu;      // 烘好的字面量（蓝）
     data.closed.themeColor = "surface";   // 但它其实是语义色
-    inking::InkingWidget* panel = scene.AddChild(
-        std::make_unique<inking::InkingStaticPanel>(&scene, data));
+    InkingWidget* panel = scene.AddChild(
+        std::make_unique<InkingStaticPanel>(&scene, data));
     // 必须让它**活跃**：`TickFrame` 对非活跃场景直接返回（画面外的插值没有意义），
     // 而颜色重查恰恰发生在 `onAnimationTick` 里。
-    inking::SceneLibrary::SetActiveScene(&scene);
+    InkingSceneLibrary::SetActiveScene(&scene);
     scene.TickFrame(1.0f / 60.0f);
 
     const auto centerPixel = [&]() -> std::uint32_t {
-        SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
-                                         inking::DesignHeight(),
+        SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                         InkingDesignHeight(),
                                          SDL_LOGICAL_PRESENTATION_LETTERBOX);
-        inking::SceneLibrary::SetActiveScene(&scene);
-        const bool rendered = inking::SceneLibrary::RenderScene(renderer);
+        InkingSceneLibrary::SetActiveScene(&scene);
+        const bool rendered = InkingSceneLibrary::RenderScene(renderer);
         // 注意**不要**在这里清活跃场景：`TickFrame` 对非活跃场景直接返回，
         // 清了后面那个"切主题 → TickFrame"就白跑（第一版就是这么错的）。
         SDL_SetRenderLogicalPresentation(renderer, 0, 0,
@@ -4019,33 +4022,33 @@ void CheckRuntimeTheme(SDL_Renderer* renderer) {
           "不装表：用生成期烘好的字面量（蓝）");
 
     // 切到红色主题：**下一帧**就该变，不需要任何"通知组件"的动作。
-    Check(inking::SetActiveTheme("t_red"), "切到 t_red");
+    Check(InkingSetActiveTheme("t_red"), "切到 t_red");
     scene.TickFrame(1.0f / 60.0f);
     Check(centerPixel() == 0xFF0000u, "切主题后画面变红（颜色重查真的走到绘制）");
 
-    Check(inking::SetActiveTheme("t_blue"), "切回 t_blue");
+    Check(InkingSetActiveTheme("t_blue"), "切回 t_blue");
     scene.TickFrame(1.0f / 60.0f);
     Check(centerPixel() == 0x0000FFu, "切回去又是蓝");
 
     // 表里没有这个 token：用兜底色，并记一次 miss（不报错、不空白）。
-    inking::ThemeTable partial;
+    InkingThemeTable partial;
     partial.name = "t_partial";
     partial.colors = {{"other", 0xFF00FF00u}};
-    Check(inking::InstallThemeTable(std::move(partial)), "装一张不含 surface 的表");
-    Check(inking::SetActiveTheme("t_partial"), "切到那张不全的表");
-    const inking::ThemeStats before = inking::ThemeStatsSnapshot();
+    Check(InkingInstallThemeTable(std::move(partial)), "装一张不含 surface 的表");
+    Check(InkingSetActiveTheme("t_partial"), "切到那张不全的表");
+    const InkingThemeStats before = InkingThemeStatsSnapshot();
     scene.TickFrame(1.0f / 60.0f);
     const std::uint32_t fallbackPixel = centerPixel();
-    const inking::ThemeStats after = inking::ThemeStatsSnapshot();
+    const InkingThemeStats after = InkingThemeStatsSnapshot();
     Check(fallbackPixel == 0x0000FFu, "表里没有这个 token：退回烘好的字面量");
     Check(after.misses > before.misses, "没查到时记一次 miss（观测口看得见）");
 
     // 清空：回到"全用字面量"，组件也要跟着退回去。
-    inking::ClearThemeTables();
+    InkingClearThemeTables();
     scene.TickFrame(1.0f / 60.0f);
-    Check(inking::ThemeTableCount() == 0, "清空主题表");
+    Check(InkingThemeTableCount() == 0, "清空主题表");
     Check(centerPixel() == 0x0000FFu, "清空后画面回到烘好的字面量");
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
     (void)panel;
 }
 
@@ -4161,44 +4164,44 @@ const std::uint8_t* SvgBytes(const char* text) {
 }
 
 /// 在场景里摆一个 SVG 图片组件（调用方自己 `AddChild` 之后要 SetImageBytes）。
-inking::InkingStaticImage* AddSvgImage(inking::InkingScene& scene,
+InkingStaticImage* AddSvgImage(InkingScene& scene,
                                        const char* name, int width, int height,
                                        float offsetX, float offsetY,
                                        bool hitPassThrough = false) {
-    inking::ImageData data;
+    InkingImageData data;
     data.name = name;
     data.width = width;
     data.height = height;
     data.normal.source = name;
     data.hitPassThrough = hitPassThrough;
-    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.selfAnchor = InkingChangeAnchor::LeftTop;
+    data.traceAnchor = InkingChangeAnchor::LeftTop;
     data.offsetX = offsetX;
     data.offsetY = offsetY;
-    return static_cast<inking::InkingStaticImage*>(
-        scene.AddChild(std::make_unique<inking::InkingStaticImage>(&scene, data)));
+    return static_cast<InkingStaticImage*>(
+        scene.AddChild(std::make_unique<InkingStaticImage>(&scene, data)));
 }
 
-void SetSvgBytes(inking::InkingStaticImage* image, const char* svg) {
+void SetSvgBytes(InkingStaticImage* image, const char* svg) {
     image->SetImageBytes(SvgBytes(svg), std::strlen(svg), image->ImageName());
 }
 
 /// 一帧离屏渲染（清屏 + 逻辑呈现 + RenderScene）。
-bool RenderSvgFrame(SDL_Renderer* renderer, inking::InkingScene& scene) {
-    inking::SceneLibrary::SetActiveScene(&scene);
-    SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
-                                     inking::DesignHeight(),
+bool RenderSvgFrame(SDL_Renderer* renderer, InkingScene& scene) {
+    InkingSceneLibrary::SetActiveScene(&scene);
+    SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                     InkingDesignHeight(),
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
     SDL_RenderClear(renderer);
-    return inking::SceneLibrary::RenderScene(renderer);
+    return InkingSceneLibrary::RenderScene(renderer);
 }
 
 void EndSvgFrame(SDL_Renderer* renderer) {
     SDL_SetRenderLogicalPresentation(renderer, 0, 0,
                                      SDL_LOGICAL_PRESENTATION_DISABLED);
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -4207,7 +4210,7 @@ void EndSvgFrame(SDL_Renderer* renderer) {
 void CheckSvgRasterMatrix() {
     std::printf("\n-- SVG 光栅化矩阵：多元素 / 渐变 / 变换 / evenodd / 坏稿（0.5.1 T-01） --\n");
     const std::size_t size = std::strlen(kSvgDesignSample);
-    const inking::detail::SvgRasterResult full = inking::detail::RasterizeSvg(
+    const inking_detail::SvgRasterResult full = inking_detail::RasterizeSvg(
         SvgBytes(kSvgDesignSample), size, 200, 120, 16 * 1024 * 1024);
     Check(full.surface != nullptr && full.error.empty(), "整张稿光栅化成功");
     if (full.surface != nullptr) {
@@ -4226,7 +4229,7 @@ void CheckSvgRasterMatrix() {
         SDL_DestroySurface(full.surface);
     }
 
-    const inking::detail::SvgRasterResult tall = inking::detail::RasterizeSvg(
+    const inking_detail::SvgRasterResult tall = inking_detail::RasterizeSvg(
         SvgBytes(kSvgTall), std::strlen(kSvgTall), 200, 100, 16 * 1024 * 1024);
     Check(tall.surface != nullptr && tall.secondPasses == 1,
           "稿比框细长时二次解码一次（最多一次）");
@@ -4236,7 +4239,7 @@ void CheckSvgRasterMatrix() {
         SDL_DestroySurface(tall.surface);
     }
 
-    const inking::detail::SvgRasterResult broken = inking::detail::RasterizeSvg(
+    const inking_detail::SvgRasterResult broken = inking_detail::RasterizeSvg(
         SvgBytes(kSvgBroken), std::strlen(kSvgBroken), 100, 100,
         16 * 1024 * 1024);
     Check(broken.surface == nullptr && !broken.error.empty(),
@@ -4251,17 +4254,17 @@ void CheckSvgImage(SDL_Renderer* renderer) {
     if (renderer == nullptr) {
         return;
     }
-    inking::InkingScene scene;
-    inking::InkingStaticImage* image = AddSvgImage(scene, "svg_probe", 200, 120,
+    InkingScene scene;
+    InkingStaticImage* image = AddSvgImage(scene, "svg_probe", 200, 120,
                                                    20.0f, 20.0f);
     SetSvgBytes(image, kSvgDesignSample);
 
-    const inking::detail::TextCacheStats before =
-        inking::detail::TextCacheStatsSnapshot();
+    const inking_detail::TextCacheStats before =
+        inking_detail::TextCacheStatsSnapshot();
     scene.TickFrame(1.0f / 60.0f);
     const bool rendered = RenderSvgFrame(renderer, scene);
-    const inking::detail::TextCacheStats after =
-        inking::detail::TextCacheStatsSnapshot();
+    const inking_detail::TextCacheStats after =
+        inking_detail::TextCacheStatsSnapshot();
     Check(rendered, "SVG 图片组件渲染一帧");
     Check(after.svgRasters == before.svgRasters + 1,
           "首次绘制真的光栅化了 1 次");
@@ -4278,24 +4281,24 @@ void CheckSvgImage(SDL_Renderer* renderer) {
     // 第二帧：命中缓存，不再光栅化。
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
-    inking::SceneLibrary::RenderScene(renderer);
-    const inking::detail::TextCacheStats again =
-        inking::detail::TextCacheStatsSnapshot();
+    InkingSceneLibrary::RenderScene(renderer);
+    const inking_detail::TextCacheStats again =
+        inking_detail::TextCacheStatsSnapshot();
     Check(again.svgRasters == after.svgRasters, "第二帧不再光栅化（缓存生效）");
     Check(again.svgCacheHits == after.svgCacheHits + 1, "第二帧命中 SVG 档");
 
     // 坏稿：解码失败 → 计数 + 一条 WARN；组件仍按颜色渲染（不是洞）。
-    inking::InkingStaticImage* bad =
+    InkingStaticImage* bad =
         AddSvgImage(scene, "svg_broken", 100, 100, 300.0f, 20.0f);
     SetSvgBytes(bad, kSvgBroken);
-    inking::InkLog::ResetStats();
+    InkLog::ResetStats();
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
-    inking::SceneLibrary::RenderScene(renderer);
-    const inking::detail::TextCacheStats badStats =
-        inking::detail::TextCacheStatsSnapshot();
+    InkingSceneLibrary::RenderScene(renderer);
+    const inking_detail::TextCacheStats badStats =
+        inking_detail::TextCacheStatsSnapshot();
     Check(badStats.svgFailures == after.svgFailures + 1, "坏稿计一次失败");
-    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+    Check(InkLog::CountOf(InkingLogLevel::Warn) == 1,
           "坏稿只报一条 WARN（不每帧刷）");
 
     EndSvgFrame(renderer);
@@ -4312,17 +4315,17 @@ void CheckSvgCacheDensity(SDL_Renderer* renderer) {
 
     // ① 同一张图、同一尺寸的两个组件：一次光栅化 + 一次命中。
     {
-        inking::InkingScene scene;
+        InkingScene scene;
         SetSvgBytes(AddSvgImage(scene, "density_same", 100, 60, 20.0f, 20.0f),
                     kSvgDesignSample);
         SetSvgBytes(AddSvgImage(scene, "density_same", 100, 60, 200.0f, 20.0f),
                     kSvgDesignSample);
         scene.TickFrame(1.0f / 60.0f);
-        const inking::detail::TextCacheStats before =
-            inking::detail::TextCacheStatsSnapshot();
+        const inking_detail::TextCacheStats before =
+            inking_detail::TextCacheStatsSnapshot();
         RenderSvgFrame(renderer, scene);
-        const inking::detail::TextCacheStats after =
-            inking::detail::TextCacheStatsSnapshot();
+        const inking_detail::TextCacheStats after =
+            inking_detail::TextCacheStatsSnapshot();
         Check(after.svgRasters == before.svgRasters + 1,
               "同尺寸的两张图共用一次光栅化");
         Check(after.svgCacheHits == before.svgCacheHits + 1,
@@ -4332,7 +4335,7 @@ void CheckSvgCacheDensity(SDL_Renderer* renderer) {
 
     // ② 同一张图、四个不同尺寸：四档，第 4 档插入时淘汰最早的一档。
     {
-        inking::InkingScene scene;
+        InkingScene scene;
         const int sizes[4][2] = {{60, 36}, {80, 48}, {100, 60}, {120, 72}};
         for (int i = 0; i < 4; ++i) {
             SetSvgBytes(AddSvgImage(scene, "density_multi", sizes[i][0],
@@ -4340,11 +4343,11 @@ void CheckSvgCacheDensity(SDL_Renderer* renderer) {
                         kSvgDesignSample);
         }
         scene.TickFrame(1.0f / 60.0f);
-        const inking::detail::TextCacheStats before =
-            inking::detail::TextCacheStatsSnapshot();
+        const inking_detail::TextCacheStats before =
+            inking_detail::TextCacheStatsSnapshot();
         RenderSvgFrame(renderer, scene);
-        const inking::detail::TextCacheStats after =
-            inking::detail::TextCacheStatsSnapshot();
+        const inking_detail::TextCacheStats after =
+            inking_detail::TextCacheStatsSnapshot();
         Check(after.svgRasters == before.svgRasters + 4,
               "四个尺寸各光栅化一次");
         Check(after.svgEvictions >= before.svgEvictions + 1,
@@ -4354,7 +4357,7 @@ void CheckSvgCacheDensity(SDL_Renderer* renderer) {
 
     // ③ 竖稿进横框：二次解码（直接调内部件，不经过渲染）。
     {
-        inking::detail::SvgRasterResult tall = inking::detail::RasterizeSvg(
+        inking_detail::SvgRasterResult tall = inking_detail::RasterizeSvg(
             SvgBytes(kSvgTall), std::strlen(kSvgTall), 200, 100,
             16 * 1024 * 1024);
         Check(tall.secondPasses == 1, "竖稿进横框时二次解码");
@@ -4375,26 +4378,26 @@ void CheckSvgUnsupported(SDL_Renderer* renderer) {
     if (renderer == nullptr) {
         return;
     }
-    inking::InkingScene scene;
+    InkingScene scene;
     SetSvgBytes(AddSvgImage(scene, "unsupported_probe", 100, 100, 20.0f, 20.0f),
                 kSvgUnsupported);
     scene.TickFrame(1.0f / 60.0f);
-    const inking::detail::TextCacheStats before =
-        inking::detail::TextCacheStatsSnapshot();
-    inking::InkLog::ResetStats();
+    const inking_detail::TextCacheStats before =
+        inking_detail::TextCacheStatsSnapshot();
+    InkLog::ResetStats();
     RenderSvgFrame(renderer, scene);
-    const inking::detail::TextCacheStats after =
-        inking::detail::TextCacheStatsSnapshot();
+    const inking_detail::TextCacheStats after =
+        inking_detail::TextCacheStatsSnapshot();
     Check(after.svgUnsupportedElements == before.svgUnsupportedElements + 3,
           "text×2 + clip-path×1 计 3 次（大小写不敏感）");
-    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+    Check(InkLog::CountOf(InkingLogLevel::Warn) == 1,
           "汇总 WARN 恰好一条");
 
-    inking::InkLog::ResetStats();
+    InkLog::ResetStats();
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
-    inking::SceneLibrary::RenderScene(renderer);
-    Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 0,
+    InkingSceneLibrary::RenderScene(renderer);
+    Check(InkLog::CountOf(InkingLogLevel::Warn) == 0,
           "同一张图第二次绘制不再报（缓存命中）");
     EndSvgFrame(renderer);
 }
@@ -4407,47 +4410,47 @@ void CheckSvgBackgroundPassthrough() {
     // 场景名必须不同：同名场景的第二次构造会进"停放态"（`IsRegistered()` false），
     // 那会让命中表不按预期建。
     const auto build = [](const char* sceneName, bool passThrough,
-                          inking::InkingStaticImage** outImage,
-                          inking::InkingStaticButton** outButton) {
-        auto scene = std::make_unique<inking::InkingScene>(sceneName);
-        inking::InkingStaticImage* image =
+                          InkingStaticImage** outImage,
+                          InkingStaticButton** outButton) {
+        auto scene = std::make_unique<InkingScene>(sceneName);
+        InkingStaticImage* image =
             AddSvgImage(*scene, "bg_probe", 1280, 720, 0.0f, 0.0f, passThrough);
         SetSvgBytes(image, kSvgDesignSample);
-        inking::ButtonData data;
+        InkingButtonData data;
         data.name = "on_bg";
         data.width = 200;
         data.height = 60;
-        data.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+        data.normal = InkingButtonAppearance(InkingAppearanceType::Color,
                                               0xFF3F7FD6u);
-        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.selfAnchor = InkingChangeAnchor::LeftTop;
+        data.traceAnchor = InkingChangeAnchor::LeftTop;
         data.offsetX = 540.0f;
         data.offsetY = 330.0f;
-        auto* button = static_cast<inking::InkingStaticButton*>(
+        auto* button = static_cast<InkingStaticButton*>(
             scene->AddChild(
-                std::make_unique<inking::InkingStaticButton>(scene.get(), data)));
+                std::make_unique<InkingStaticButton>(scene.get(), data)));
         scene->TickFrame(1.0f / 60.0f);
         *outImage = image;
         *outButton = button;
         return scene;
     };
 
-    inking::InkingStaticImage* passImage = nullptr;
-    inking::InkingStaticButton* passButton = nullptr;
+    InkingStaticImage* passImage = nullptr;
+    InkingStaticButton* passButton = nullptr;
     auto passScene = build("bg_pass", true, &passImage, &passButton);
     Check(passScene->IsRegistered(), "穿透组场景登记成功");
     Check(passScene->QueryHit(640.0f, 360.0f).target == passButton,
           "点按钮 → 命中按钮（背景不挡）");
-    const inking::HitResult passBlank = passScene->QueryHit(100.0f, 100.0f);
-    Check(passBlank.kind == inking::HitKind::PassThrough,
+    const InkingHitResult passBlank = passScene->QueryHit(100.0f, 100.0f);
+    Check(passBlank.kind == InkingHitKind::PassThrough,
           "点空白 → 答案被判成 PassThrough（背景让过，不挡）");
 
-    inking::InkingStaticImage* blockImage = nullptr;
-    inking::InkingStaticButton* blockButton = nullptr;
+    InkingStaticImage* blockImage = nullptr;
+    InkingStaticButton* blockButton = nullptr;
     auto blockScene = build("bg_block", false, &blockImage, &blockButton);
     Check(blockScene->IsRegistered(), "对照组场景登记成功");
-    const inking::HitResult blockBlank = blockScene->QueryHit(100.0f, 100.0f);
-    Check(blockBlank.kind == inking::HitKind::Block
+    const InkingHitResult blockBlank = blockScene->QueryHit(100.0f, 100.0f);
+    Check(blockBlank.kind == InkingHitKind::Block
               && blockBlank.target == blockImage,
           "不穿透时背景照旧吃掉空白点击（默认行为不变）");
 }
@@ -4460,15 +4463,15 @@ void CheckSvgFullDesign(SDL_Renderer* renderer) {
     if (renderer == nullptr) {
         return;
     }
-    inking::InkingScene scene;
+    InkingScene scene;
     SetSvgBytes(AddSvgImage(scene, "design_full", 1280, 720, 0.0f, 0.0f),
                 kSvgFullDesign);
     scene.TickFrame(1.0f / 60.0f);
-    const inking::detail::TextCacheStats before =
-        inking::detail::TextCacheStatsSnapshot();
+    const inking_detail::TextCacheStats before =
+        inking_detail::TextCacheStatsSnapshot();
     const bool rendered = RenderSvgFrame(renderer, scene);
-    const inking::detail::TextCacheStats after =
-        inking::detail::TextCacheStatsSnapshot();
+    const inking_detail::TextCacheStats after =
+        inking_detail::TextCacheStatsSnapshot();
     Check(rendered, "整张稿渲染一帧");
     Check(after.svgRasters == before.svgRasters + 1, "整张稿光栅化一次");
 
@@ -4501,15 +4504,15 @@ void CheckSvgHiDpi() {
         return;
     }
 
-    inking::InkingScene scene;
+    InkingScene scene;
     SetSvgBytes(AddSvgImage(scene, "svg_hidpi", 200, 120, 20.0f, 20.0f),
                 kSvgDesignSample);
     scene.TickFrame(1.0f / 60.0f);
-    const inking::detail::TextCacheStats before =
-        inking::detail::TextCacheStatsSnapshot();
+    const inking_detail::TextCacheStats before =
+        inking_detail::TextCacheStatsSnapshot();
     const bool rendered = RenderSvgFrame(renderer, scene);
-    const inking::detail::TextCacheStats after =
-        inking::detail::TextCacheStatsSnapshot();
+    const inking_detail::TextCacheStats after =
+        inking_detail::TextCacheStatsSnapshot();
     Check(rendered, "2× 下渲染一帧");
     Check(after.svgRasters == before.svgRasters + 1,
           "2× 下重新光栅化一档（目标框 = 设计尺寸 × 2）");
@@ -4537,7 +4540,7 @@ void CheckSvgHiDpi() {
 //   1. 12fps × 1 秒用 60 帧 × 1/60 喂（**故意不整除**）：严格的浮点比较会
 //      少一步（11 次），这是 0.6.0 里唯一必须靠 epsilon 才对得上的数字；
 //   2. 一次喂 0.25s 要补发 3 次：既不能吞掉时间（"这一帧只算一次"），
-//      也不能进"追不上"计数（0.25s 是 `Timeline` 正常会给出的上限）；
+//      也不能进"追不上"计数（0.25s 是 `InkingTimeline` 正常会给出的上限）；
 //   3. 没有订阅者时钟照样走：否则组件读到的 `AnimationSeconds()` 会停在
 //      "最后一次有人订阅时"；
 //   4. 非活跃场景不推进：切走的场景动画冻结，不需要额外的暂停开关。
@@ -4547,7 +4550,7 @@ void CheckSvgHiDpi() {
 void CheckSceneAnimationClock() {
     std::printf("\n-- 场景动画时钟与频率订阅（0.6.0 T-01） --\n");
 
-    inking::InkingScene scene("anim_clock");
+    InkingScene scene("anim_clock");
     Check(scene.IsRegistered(), "T-01：动画时钟场景登记成功");
     Check(scene.AnimationSeconds() == 0.0, "T-01：初始时钟为 0");
 
@@ -4556,7 +4559,7 @@ void CheckSceneAnimationClock() {
     Check(scene.AnimationSeconds() == 0.0,
           "T-01：非活跃场景的时钟不推进（切走即冻结）");
 
-    inking::SceneLibrary::SetActiveScene(&scene);
+    InkingSceneLibrary::SetActiveScene(&scene);
 
     // ③ 无订阅者：时钟照走，每帧都走
     scene.TickFrame(0.5);
@@ -4565,7 +4568,7 @@ void CheckSceneAnimationClock() {
 
     // ① 12fps：60 帧 × 1/60 恰好派发 12 次
     int ticks = 0;
-    const inking::InkingScene::AnimationHandle handle =
+    const InkingScene::AnimationHandle handle =
         scene.SubscribeAnimation(1.0 / 12.0, [&ticks](double) { ++ticks; });
     Check(handle != 0 && scene.AnimationSubscriberCount() == 1,
           "T-01：订阅成功且计数为 1");
@@ -4602,22 +4605,22 @@ void CheckSceneAnimationClock() {
     Check(scene.UnsubscribeAnimation(handle), "T-01：退订成功");
     Check(!scene.UnsubscribeAnimation(handle), "T-01：重复退订返回 false");
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 
     // ⑦ 护栏：回调里增删节点（**违规操作**）不能让同帧的后继订阅踩空
     {
-        inking::InkingScene guard("anim_guard");
-        inking::SceneLibrary::SetActiveScene(&guard);
+        InkingScene guard("anim_guard");
+        InkingSceneLibrary::SetActiveScene(&guard);
 
         int firstHits = 0;
         int secondHits = 0;
         guard.SubscribeAnimation(1.0 / 60.0, [&guard, &firstHits](double) {
             ++firstHits;
-            inking::PanelData data;
+            InkingPanelData data;
             data.name = "anim_guard_panel";
             data.width = 10;
             data.height = 10;
-            guard.AddChild(std::make_unique<inking::InkingStaticPanel>(&guard, data));
+            guard.AddChild(std::make_unique<InkingStaticPanel>(&guard, data));
         });
         guard.SubscribeAnimation(1.0 / 60.0,
                                  [&secondHits](double) { ++secondHits; });
@@ -4629,12 +4632,12 @@ void CheckSceneAnimationClock() {
         Check(guard.GetDrawItemCount() == before + 1,
               "T-01：违规新建的节点没丢（下一帧照常重建绘制列表）");
 
-        inking::SceneLibrary::SetActiveScene(nullptr);
+        InkingSceneLibrary::SetActiveScene(nullptr);
     }
 }
 
 // ---------------------------------------------------------------------------
-// SpriteData：序列帧 / 图集二选一 + 校验（0.6.0 T-02）
+// InkingSpriteData：序列帧 / 图集二选一 + 校验（0.6.0 T-02）
 // ---------------------------------------------------------------------------
 //
 // 这一层**没有可画的像素**，所以断言只能落在"数据说了什么"上：帧数怎么算、
@@ -4644,19 +4647,19 @@ void CheckSceneAnimationClock() {
 // count 比格子多），夹取分支对应"美术少交了几帧"——那一类**必须还能看见画面**，
 // 所以修 + 记 WARN，而不是留一块空白。
 void CheckSpriteDataValidate() {
-    std::printf("\n-- SpriteData：序列帧 / 图集二选一与校验（0.6.0 T-02） --\n");
+    std::printf("\n-- InkingSpriteData：序列帧 / 图集二选一与校验（0.6.0 T-02） --\n");
 
     const auto makeFrame = [](const char* source) {
-        inking::ButtonAppearance frame(inking::AppearanceType::Image, 0xFF000000u);
+        InkingButtonAppearance frame(InkingAppearanceType::Image, 0xFF000000u);
         frame.source = source;
         return frame;
     };
 
     // ① 序列帧：4 帧合法，fps 缺省 12
     {
-        inking::SpriteData sprite;
+        InkingSpriteData sprite;
         sprite.name = "sprite_seq";
-        sprite.normal.type = inking::AppearanceType::Image;
+        sprite.normal.type = InkingAppearanceType::Image;
         sprite.normal.source = "frame0.png";
         for (int i = 0; i < 4; ++i) {
             sprite.frames.push_back(makeFrame("frame.png"));
@@ -4677,12 +4680,12 @@ void CheckSpriteDataValidate() {
         sprite.fps = 12.0;
 
         // ③ 帧里混进纯色
-        sprite.frames[2].type = inking::AppearanceType::Color;
+        sprite.frames[2].type = InkingAppearanceType::Color;
         Check(!sprite.Validate().empty(), "T-02：某一帧是纯色 → 报错（帧必须是图）");
         sprite.frames[2] = makeFrame("frame.png");
 
         // ④ 帧没有图像内容
-        sprite.frames[1] = inking::ButtonAppearance{};
+        sprite.frames[1] = InkingButtonAppearance{};
         Check(!sprite.Validate().empty(), "T-02：某一帧 source 空 → 报错");
         sprite.frames[1] = makeFrame("frame.png");
 
@@ -4699,7 +4702,7 @@ void CheckSpriteDataValidate() {
 
     // ⑥ 都不填
     {
-        inking::SpriteData sprite;
+        InkingSpriteData sprite;
         sprite.name = "sprite_empty";
         const std::string none = sprite.Validate();
         std::printf("         都不填时的报错：%s\n", none.c_str());
@@ -4709,28 +4712,28 @@ void CheckSpriteDataValidate() {
 
     // ⑦ startFrame 越界：夹到最后一帧 + 1 条 WARN，且幂等
     {
-        inking::SpriteData sprite;
+        InkingSpriteData sprite;
         sprite.name = "sprite_clamp";
         sprite.frames.push_back(makeFrame("a.png"));
         sprite.frames.push_back(makeFrame("b.png"));
         sprite.startFrame = 9;
-        inking::InkLog::ResetStats();
+        InkLog::ResetStats();
         sprite.Normalize();
         Check(sprite.startFrame == 1,
               "T-02：startFrame 越界 → 夹到最后一帧（9 → 1，不是静默归零）");
-        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 1,
+        Check(InkLog::CountOf(InkingLogLevel::Warn) == 1,
               "T-02：夹取同时产生 1 条 WARN");
-        inking::InkLog::ResetStats();
+        InkLog::ResetStats();
         sprite.Normalize();
-        Check(inking::InkLog::CountOf(inking::LogLevel::Warn) == 0,
+        Check(InkLog::CountOf(InkingLogLevel::Warn) == 0,
               "T-02：Normalize 幂等（第二次不再重复报）");
     }
 
     // ⑧ 图集：count 缺省取 rows × columns，显式更小值保留，超了报错
     {
-        inking::SpriteData sprite;
+        InkingSpriteData sprite;
         sprite.name = "sprite_sheet";
-        sprite.normal.type = inking::AppearanceType::Image;
+        sprite.normal.type = InkingAppearanceType::Image;
         sprite.normal.source = "walk.png";
         sprite.sheet.frameWidth = 64;
         sprite.sheet.frameHeight = 64;
@@ -4784,21 +4787,21 @@ const char* kSpriteFrameSvg[4] = {
 };
 
 /// 造一份序列帧配置（第 i 帧的名字唯一 ⇒ 每帧一个纹理槽位）。
-inking::SpriteData MakeSpriteData(const char* name, int frameCount, double fps,
+InkingSpriteData InkingMakeSpriteData(const char* name, int frameCount, double fps,
                                   bool loop) {
-    inking::SpriteData data;
+    InkingSpriteData data;
     data.name = name;
     data.width = 40;
     data.height = 40;
     data.fps = fps;
     data.loop = loop;
     data.autoplay = true;
-    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.selfAnchor = InkingChangeAnchor::LeftTop;
+    data.traceAnchor = InkingChangeAnchor::LeftTop;
     data.offsetX = 20.0f;
     data.offsetY = 20.0f;
     for (int i = 0; i < frameCount; ++i) {
-        inking::ButtonAppearance frame(inking::AppearanceType::Image,
+        InkingButtonAppearance frame(InkingAppearanceType::Image,
                                        0xFF000000u);
         frame.source = std::string(name) + "#" + std::to_string(i);
         const char* svg = kSpriteFrameSvg[i % 4];
@@ -4809,11 +4812,11 @@ inking::SpriteData MakeSpriteData(const char* name, int frameCount, double fps,
     return data;
 }
 
-inking::InkingSprite* AddSprite(inking::InkingScene& scene, const char* name,
+InkingSprite* AddSprite(InkingScene& scene, const char* name,
                                 int frameCount, double fps, bool loop) {
-    return static_cast<inking::InkingSprite*>(scene.AddChild(
-        std::make_unique<inking::InkingSprite>(
-            &scene, MakeSpriteData(name, frameCount, fps, loop))));
+    return static_cast<InkingSprite*>(scene.AddChild(
+        std::make_unique<InkingSprite>(
+            &scene, InkingMakeSpriteData(name, frameCount, fps, loop))));
 }
 
 void CheckSpriteSequence(SDL_Renderer* renderer) {
@@ -4821,11 +4824,11 @@ void CheckSpriteSequence(SDL_Renderer* renderer) {
 
     // ① 12fps × 1 秒 = 12 次换帧；4 帧循环回绕；两个同 fps 的 sprite 帧号恒等
     {
-        inking::InkingScene scene("sprite_seq");
-        inking::SceneLibrary::SetActiveScene(&scene);
+        InkingScene scene("sprite_seq");
+        InkingSceneLibrary::SetActiveScene(&scene);
 
-        inking::InkingSprite* sprite = AddSprite(scene, "spr_a", 4, 12.0, true);
-        inking::InkingSprite* twin = AddSprite(scene, "spr_b", 4, 12.0, true);
+        InkingSprite* sprite = AddSprite(scene, "spr_a", 4, 12.0, true);
+        InkingSprite* twin = AddSprite(scene, "spr_b", 4, 12.0, true);
         Check(sprite->IsValid() && sprite->GetFrameCount() == 4
                   && sprite->GetLoadedFrameCount() == 4,
               "T-03：4 帧的字节在构造期全部备齐");
@@ -4864,9 +4867,9 @@ void CheckSpriteSequence(SDL_Renderer* renderer) {
 
     // ② 慢帧：一次 0.25s 跨 3 帧（画面不慢放）+ skipped +2
     {
-        inking::InkingScene scene("sprite_slow");
-        inking::SceneLibrary::SetActiveScene(&scene);
-        inking::InkingSprite* sprite = AddSprite(scene, "spr_slow", 4, 12.0, true);
+        InkingScene scene("sprite_slow");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        InkingSprite* sprite = AddSprite(scene, "spr_slow", 4, 12.0, true);
 
         scene.TickFrame(0.25);
         std::printf("         喂 0.25s → 帧号=%zu 跳过=%llu\n",
@@ -4883,9 +4886,9 @@ void CheckSpriteSequence(SDL_Renderer* renderer) {
 
     // ③ 非循环：停在末帧并 finished，之后不再推进
     {
-        inking::InkingScene scene("sprite_once");
-        inking::SceneLibrary::SetActiveScene(&scene);
-        inking::InkingSprite* sprite = AddSprite(scene, "spr_once", 4, 12.0, false);
+        InkingScene scene("sprite_once");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        InkingSprite* sprite = AddSprite(scene, "spr_once", 4, 12.0, false);
 
         for (int i = 0; i < 4; ++i) {
             scene.TickFrame(1.0 / 12.0);
@@ -4907,9 +4910,9 @@ void CheckSpriteSequence(SDL_Renderer* renderer) {
 
     // ④ 暂停是"时间冻结"：暂停 3 秒后恢复，原地继续
     {
-        inking::InkingScene scene("sprite_pause");
-        inking::SceneLibrary::SetActiveScene(&scene);
-        inking::InkingSprite* sprite = AddSprite(scene, "spr_pause", 4, 12.0, true);
+        InkingScene scene("sprite_pause");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        InkingSprite* sprite = AddSprite(scene, "spr_pause", 4, 12.0, true);
 
         scene.TickFrame(1.0 / 12.0);
         scene.TickFrame(1.0 / 12.0);
@@ -4944,16 +4947,16 @@ void CheckSpriteSequence(SDL_Renderer* renderer) {
 
     // ⑤ 换帧不重建纹理：第一轮把 4 帧都画过，第二轮 texturesCreated 增量 0
     {
-        inking::InkingScene scene("sprite_tex");
-        inking::SceneLibrary::SetActiveScene(&scene);
-        inking::InkingSprite* sprite = AddSprite(scene, "spr_tex", 4, 12.0, true);
+        InkingScene scene("sprite_tex");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        InkingSprite* sprite = AddSprite(scene, "spr_tex", 4, 12.0, true);
 
-        const auto statsBeforeFirst = inking::detail::TextCacheStatsSnapshot();
+        const auto statsBeforeFirst = inking_detail::TextCacheStatsSnapshot();
         for (int i = 0; i < 5; ++i) {  // 走完一整圈多一点
             scene.TickFrame(1.0 / 12.0);
             RenderSvgFrame(renderer, scene);
         }
-        const auto statsAfterFirst = inking::detail::TextCacheStatsSnapshot();
+        const auto statsAfterFirst = inking_detail::TextCacheStatsSnapshot();
         const std::uint64_t firstPass =
             statsAfterFirst.texturesCreated - statsBeforeFirst.texturesCreated;
 
@@ -4961,7 +4964,7 @@ void CheckSpriteSequence(SDL_Renderer* renderer) {
             scene.TickFrame(1.0 / 12.0);
             RenderSvgFrame(renderer, scene);
         }
-        const auto statsAfterSecond = inking::detail::TextCacheStatsSnapshot();
+        const auto statsAfterSecond = inking_detail::TextCacheStatsSnapshot();
         const std::uint64_t secondPass =
             statsAfterSecond.texturesCreated - statsAfterFirst.texturesCreated;
 
@@ -4981,14 +4984,14 @@ void CheckSpriteSequence(SDL_Renderer* renderer) {
 
     // ⑥ 配置非法：图集连图都没有 → 明确报错，不假装播起来
     {
-        inking::InkingScene scene("sprite_bad");
-        inking::SceneLibrary::SetActiveScene(&scene);
+        InkingScene scene("sprite_bad");
+        InkingSceneLibrary::SetActiveScene(&scene);
 
-        inking::SpriteData data = MakeSpriteData("spr_sheet", 4, 12.0, true);
+        InkingSpriteData data = InkingMakeSpriteData("spr_sheet", 4, 12.0, true);
         data.frames.clear();
         // 只配切法、不给任何图（`sheet.source` 与 `normal.source` 都空）：
         // `Validate()` 必须拦在"没有可播的帧"之前就说清是"图集没有图"。
-        data.normal.type = inking::AppearanceType::Image;
+        data.normal.type = InkingAppearanceType::Image;
         data.normal.source.clear();
         data.sheet.source.clear();
         data.sheet.frameWidth = 40;
@@ -4996,20 +4999,20 @@ void CheckSpriteSequence(SDL_Renderer* renderer) {
         data.sheet.columns = 4;
         data.sheet.rows = 1;
 
-        inking::InkLog::ResetStats();
-        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
-            std::make_unique<inking::InkingSprite>(&scene, data)));
+        InkLog::ResetStats();
+        auto* sprite = static_cast<InkingSprite*>(scene.AddChild(
+            std::make_unique<InkingSprite>(&scene, data)));
         std::printf("         图集无图：IsValid=%d 错误=%s\n",
                     sprite->IsValid() ? 1 : 0,
                     sprite->GetConfigError().c_str());
         Check(!sprite->IsValid() && !sprite->GetConfigError().empty(),
               "T-03：配置非法时 `IsValid()` 为假且给出了原因");
-        Check(inking::InkLog::CountOf(inking::LogLevel::Error) >= 1,
+        Check(InkLog::CountOf(InkingLogLevel::Error) >= 1,
               "T-03：拒绝的同时有 ERROR（不是静默空白）");
         Check(sprite->GetFrameCount() == 0 && !sprite->SeekToFrame(0),
               "T-03：没有可播的帧时 SeekToFrame 返回 false");
 
-        inking::SceneLibrary::SetActiveScene(nullptr);
+        InkingSceneLibrary::SetActiveScene(nullptr);
     }
 }
 
@@ -5020,7 +5023,7 @@ void CheckSpriteSequence(SDL_Renderer* renderer) {
 // 这套断言的重点是**报错可用**：行号、重复键、路径前缀。解析成功本身不稀奇，
 // 而"配置写错了却只说'解析失败'"在几百行的文件里等于没有信息。
 void CheckJsonTool() {
-    std::printf("\n-- inking::json：解析 / 取值 / 转义（0.6.5 T-15） --\n");
+    std::printf("\n-- json：解析 / 取值 / 转义（0.6.5 T-15） --\n");
 
     // ① 好 json：Find 与 At 混着走三层
     {
@@ -5031,41 +5034,41 @@ void CheckJsonTool() {
                 { "name": "idle", "fps": 4, "loop": false }
             ] }
         })";
-        const inking::json::Result result = inking::json::Parse(text);
+        const inking_json::Result result = inking_json::Parse(text);
         Check(result.ok, "T-15：合法 json 解析成功");
         if (result.ok) {
-            const inking::json::Value& root = result.value;
-            const inking::json::Value* meta = root.Find("meta");
-            const inking::json::Value* animations =
+            const inking_json::Value& root = result.value;
+            const inking_json::Value* meta = root.Find("meta");
+            const inking_json::Value* animations =
                 meta != nullptr ? meta->Find("animations") : nullptr;
-            const inking::json::Value* second =
+            const inking_json::Value* second =
                 animations != nullptr ? animations->At(1) : nullptr;
             // 存成 `std::string` 而不是 `.c_str()`：临时串的指针立刻悬垂，
             // 打印出来的会是别的值（第一次跑正是这么红的）。
             const std::string secondName =
-                second != nullptr ? inking::json::ReadString(*second, "name", "")
+                second != nullptr ? inking_json::ReadString(*second, "name", "")
                                   : std::string();
             std::printf("         三层取值：name=%s 动画数=%zu 第 2 个=%s\n",
-                        inking::json::ReadString(root, "name", "").c_str(),
+                        inking_json::ReadString(root, "name", "").c_str(),
                         animations != nullptr ? animations->items.size() : 0u,
                         secondName.c_str());
-            Check(inking::json::ReadString(root, "name", "") == "atlas"
+            Check(inking_json::ReadString(root, "name", "") == "atlas"
                       && animations != nullptr
                       && animations->items.size() == 2
                       && secondName == "idle",
                   "T-15：Find + At 混用能取到三层嵌套的值");
 
-            const inking::json::Value* walk =
+            const inking_json::Value* walk =
                 animations != nullptr && animations->At(0) != nullptr
                     ? animations->At(0)
                     : nullptr;
             Check(walk != nullptr
-                      && inking::json::ReadNumber(*walk, "fps", 0.0) == 8.0
-                      && inking::json::ReadBool(*walk, "loop", true),
+                      && inking_json::ReadNumber(*walk, "fps", 0.0) == 8.0
+                      && inking_json::ReadBool(*walk, "loop", true),
                   "T-15：ReadNumber / ReadBool 取到值、缺字段给 fallback");
             Check(second != nullptr
-                      && !inking::json::ReadBool(*second, "loop", true)
-                      && inking::json::ReadNumber(*second, "missing", 7.0) == 7.0,
+                      && !inking_json::ReadBool(*second, "loop", true)
+                      && inking_json::ReadNumber(*second, "missing", 7.0) == 7.0,
                   "T-15：false 与 fallback 分得开（不会把 false 当成缺字段）");
         }
     }
@@ -5083,7 +5086,7 @@ void CheckJsonTool() {
             {"少右括号", "{\n  \"a\": 1\n", 3},
         };
         for (const BadCase& item : cases) {
-            const inking::json::Result result = inking::json::Parse(item.text);
+            const inking_json::Result result = inking_json::Parse(item.text);
             std::printf("         %s：ok=%d 错误=%s\n", item.label,
                         result.ok ? 1 : 0, result.error.c_str());
             Check(!result.ok && result.error.find("行") != std::string::npos,
@@ -5093,8 +5096,8 @@ void CheckJsonTool() {
 
     // ③ ParseAsset：不存在的路径 → ok=false 且错误带路径
     {
-        const inking::json::Result result =
-            inking::json::ParseAsset("__不存在__/atlas.json");
+        const inking_json::Result result =
+            inking_json::ParseAsset("__不存在__/atlas.json");
         std::printf("         ParseAsset 错误=%s\n", result.error.c_str());
         Check(!result.ok
                   && result.error.find("__不存在__/atlas.json") != std::string::npos,
@@ -5104,11 +5107,11 @@ void CheckJsonTool() {
     // ④ Escape 往返：引号 / 反斜杠 / 换行 / 制表 / 中文
     {
         const std::string original = "他说\"走\"\\path\\\n下一行\t制表，中文：帧动画";
-        const std::string escaped = inking::json::Escape(original);
-        const inking::json::Result result = inking::json::Parse(
+        const std::string escaped = inking_json::Escape(original);
+        const inking_json::Result result = inking_json::Parse(
             "{\"s\":\"" + escaped + "\"}");
         const std::string roundTrip =
-            result.ok ? inking::json::ReadString(result.value, "s", "?") : "?";
+            result.ok ? inking_json::ReadString(result.value, "s", "?") : "?";
         std::printf("         转义后=%s\n         往返相等=%d\n", escaped.c_str(),
                     roundTrip == original ? 1 : 0);
         Check(result.ok && roundTrip == original,
@@ -5121,7 +5124,7 @@ void CheckJsonTool() {
 // ---------------------------------------------------------------------------
 //
 // 验收就一句话：**图集里切出来的第 k 格，必须和"单独存的第 k 张小图"逐像素一致。**
-// 中间隔着三层（`ButtonAppearance::srcRect` → `PaintImage` → `ImageFitSpec` →
+// 中间隔着三层（`InkingButtonAppearance::srcRect` → `PaintImage` → `InkingImageFitSpec` →
 // `fillShapeTextured`），任何一层把值丢掉，画面都还"有东西"、只是切错块或整张拉伸
 // ——所以必须对像素，不能只断言"渲染成功"。
 
@@ -5129,9 +5132,9 @@ void CheckJsonTool() {
 ///
 /// `InkingSprite` 的图集模式（T-05）走的是同一个入口；T-04 先在自检里直接验绘制链，
 /// 否则要等 T-05 才第一次跑到这段代码。
-struct SheetProbeImage : inking::InkingStaticImage {
-    using inking::InkingStaticImage::InkingStaticImage;
-    using inking::InkingStaticImage::SetRenderSourceRect;
+struct SheetProbeImage : InkingStaticImage {
+    using InkingStaticImage::InkingStaticImage;
+    using InkingStaticImage::SetRenderSourceRect;
 };
 
 /**
@@ -5450,7 +5453,7 @@ void CheckRasterIsDeviceSpace() {
             SDL_SetRenderLogicalPresentation(renderer, 0, 0,
                                              SDL_LOGICAL_PRESENTATION_DISABLED);
         }
-        inking::ImageBytes image;
+        InkingImageBytes image;
         image.data = probeBmp.data();
         image.size = probeBmp.size();
         image.name = "raster_probe";
@@ -5459,11 +5462,11 @@ void CheckRasterIsDeviceSpace() {
         SDL_SetRenderDrawColor(renderer, 0xF0, 0x80, 0x10, 255);
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
         SDL_RenderClear(renderer);
-        inking::detail::BeginFrame(renderer);
-        const bool painted = inking::detail::PaintImage(
-            renderer, image, inking::ShapeSpec{}, quadSize, quadSize, 1.0f, 0.0f,
-            0.0f, inking::TransformSpec{}, inking::ImageFit::Fill, 0xFFFFFFFFu);
-        inking::detail::EndFrame();
+        inking_detail::BeginFrame(renderer);
+        const bool painted = inking_detail::PaintImage(
+            renderer, image, InkingShapeSpec{}, quadSize, quadSize, 1.0f, 0.0f,
+            0.0f, InkingTransformSpec{}, InkingImageFit::Fill, 0xFFFFFFFFu);
+        inking_detail::EndFrame();
         // 只读中间那一半：边缘那一圈有形状层自己的抗锯齿过渡，与本条无关
         // （第 33 列落在 16..47 之内，左右各留 17 / 14 列）。
         const SDL_Rect center{kScreen / 4, kScreen / 4, kScreen / 2, kScreen / 2};
@@ -5529,32 +5532,32 @@ void CheckRasterIsDeviceSpace() {
 void CheckImageUndersampledWarn() {
     std::printf("\n-- 素材分辨率：DEBUG 下才校验（0.7.1 T-04）--\n");
 
-    struct ProbeScene : inking::InkingScene {
-        ProbeScene() : inking::InkingScene("selftest-undersample") {}
+    struct ProbeScene : InkingScene {
+        ProbeScene() : InkingScene("selftest-undersample") {}
     };
     ProbeScene scene;
 
-    inking::ImageData data;
+    InkingImageData data;
     data.name = "undersample_probe";
     data.width = 128;
     data.height = 128;
-    data.normal.type = inking::AppearanceType::Image;
+    data.normal.type = InkingAppearanceType::Image;
     data.normal.source = "undersample_probe";
 
     const std::uint64_t before =
-        inking::detail::TextCacheStatsSnapshot().imageUndersampled;
-    inking::InkLog::ResetStats();
+        inking_detail::TextCacheStatsSnapshot().imageUndersampled;
+    InkLog::ResetStats();
 
-    auto* image = static_cast<inking::InkingStaticImage*>(
-        scene.AddChild(std::make_unique<inking::InkingStaticImage>(&scene, data)));
+    auto* image = static_cast<InkingStaticImage*>(
+        scene.AddChild(std::make_unique<InkingStaticImage>(&scene, data)));
     // 64×64 的素材铺进 128 宽的组件：任何一块屏上 σ 都不超过 0.5。
     const std::vector<std::uint8_t> small = MakeCheckerBmp(64, 64, 1);
     image->SetImageBytes(small.data(), small.size(), "undersample_probe");
 
     const std::uint64_t delta =
-        inking::detail::TextCacheStatsSnapshot().imageUndersampled - before;
+        inking_detail::TextCacheStatsSnapshot().imageUndersampled - before;
     const std::uint64_t warnings =
-        inking::InkLog::CountOf(inking::LogLevel::Warn);
+        InkLog::CountOf(InkingLogLevel::Warn);
 
 #if defined(INK_ISDEBUG)
     Check(delta == 1,
@@ -5573,13 +5576,13 @@ void CheckImageFitSrcRect(SDL_Renderer* renderer) {
 
     // ① 纯算术：UV 与等比都按"这一帧"算，不按整张纹理
     {
-        inking::ImageFitSpec spec;
-        spec.fit = inking::ImageFit::Fill;
+        InkingImageFitSpec spec;
+        spec.fit = InkingImageFit::Fill;
         spec.frameWidth = 40.0f;
         spec.frameHeight = 40.0f;
         spec.imageWidth = 160.0f;  // 整张 4×1 图集
         spec.imageHeight = 40.0f;
-        spec.srcRect = inking::ShapeBounds{80.0f, 0.0f, 40.0f, 40.0f};  // 第 2 格
+        spec.srcRect = InkingShapeBounds{80.0f, 0.0f, 40.0f, 40.0f};  // 第 2 格
 
         float u = 0.0f;
         float v = 0.0f;
@@ -5592,9 +5595,9 @@ void CheckImageFitSrcRect(SDL_Renderer* renderer) {
               "T-04：源矩形右下 = 纹理坐标 (0.75, 1)");
 
         // Contain 的等比必须用帧宽高（40×40）；用整张（160×40）会算成 20×20 的细条。
-        spec.fit = inking::ImageFit::Contain;
+        spec.fit = InkingImageFit::Contain;
         spec.frameWidth = 80.0f;
-        const inking::ShapeBounds drawn = spec.DrawnRect();
+        const InkingShapeBounds drawn = spec.DrawnRect();
         std::printf("         Contain 框 80×40 + 帧 40×40 → 画 %.1f×%.1f @ x=%.1f\n",
                     drawn.width, drawn.height, drawn.x);
         Check(std::fabs(drawn.width - 40.0f) < 1e-4f
@@ -5602,7 +5605,7 @@ void CheckImageFitSrcRect(SDL_Renderer* renderer) {
                   && std::fabs(drawn.x - 20.0f) < 1e-4f,
               "T-04：Contain 的等比按帧尺寸算（不是整张纹理，否则留白算错）");
 
-        spec.srcRect = inking::ShapeBounds{};
+        spec.srcRect = InkingShapeBounds{};
         Check(!spec.HasSourceRect()
                   && std::fabs(spec.SourceRect().width - 160.0f) < 1e-4f,
               "T-04：源矩形全零 = 整张纹理（既有图片走这条）");
@@ -5619,7 +5622,7 @@ void CheckImageFitSrcRect(SDL_Renderer* renderer) {
     const float pixelRatio =
         outputWidth > 0
             ? static_cast<float>(outputWidth)
-                / static_cast<float>(inking::DesignWidth())
+                / static_cast<float>(InkingDesignWidth())
             : 1.0f;
     // 组件摆设计坐标 (20,20)、40×40（与 `AddSvgImage` 同一套锚点约定）。
     const SDL_Rect region{static_cast<int>(std::lround(20.0f * pixelRatio)),
@@ -5634,20 +5637,20 @@ void CheckImageFitSrcRect(SDL_Renderer* renderer) {
 
     const auto shoot = [&](const char* sceneName, const char* imageName,
                            const std::vector<std::uint8_t>& bytes,
-                           const inking::ShapeBounds& sourceRect) {
-        inking::InkingScene scene(sceneName);
-        inking::SceneLibrary::SetActiveScene(&scene);
+                           const InkingShapeBounds& sourceRect) {
+        InkingScene scene(sceneName);
+        InkingSceneLibrary::SetActiveScene(&scene);
 
-        inking::ImageData data;
+        InkingImageData data;
         data.name = imageName;
         data.width = 40;
         data.height = 40;
-        data.normal.type = inking::AppearanceType::Image;
+        data.normal.type = InkingAppearanceType::Image;
         data.normal.source = imageName;
         data.normal.imageBytes = bytes.data();
         data.normal.imageSize = bytes.size();
-        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.selfAnchor = InkingChangeAnchor::LeftTop;
+        data.traceAnchor = InkingChangeAnchor::LeftTop;
         data.offsetX = 20.0f;
         data.offsetY = 20.0f;
 
@@ -5663,12 +5666,12 @@ void CheckImageFitSrcRect(SDL_Renderer* renderer) {
 
     const std::vector<std::uint32_t> fromSheet =
         shoot("img_src_sheet", "sheet_atlas", atlas,
-              inking::ShapeBounds{80.0f, 0.0f, 40.0f, 40.0f});
+              InkingShapeBounds{80.0f, 0.0f, 40.0f, 40.0f});
     const std::vector<std::uint32_t> fromSingle =
-        shoot("img_src_single", "cell2_alone", single, inking::ShapeBounds{});
+        shoot("img_src_single", "cell2_alone", single, InkingShapeBounds{});
     const std::vector<std::uint32_t> fromFullRect =
         shoot("img_src_full", "cell2_alone", single,
-              inking::ShapeBounds{0.0f, 0.0f, 40.0f, 40.0f});
+              InkingShapeBounds{0.0f, 0.0f, 40.0f, 40.0f});
 
     const auto diffCount = [](const std::vector<std::uint32_t>& a,
                               const std::vector<std::uint32_t>& b) {
@@ -5701,19 +5704,19 @@ void CheckImageFitSrcRect(SDL_Renderer* renderer) {
         std::uint64_t texturesBefore = 0;
         std::uint64_t texturesAfter = 0;
         {
-            inking::InkingScene scene("img_src_tex");
-            inking::SceneLibrary::SetActiveScene(&scene);
+            InkingScene scene("img_src_tex");
+            InkingSceneLibrary::SetActiveScene(&scene);
 
-            inking::ImageData data;
+            InkingImageData data;
             data.name = "sheet_atlas_tex";
             data.width = 40;
             data.height = 40;
-            data.normal.type = inking::AppearanceType::Image;
+            data.normal.type = InkingAppearanceType::Image;
             data.normal.source = "sheet_atlas_tex";
             data.normal.imageBytes = atlas.data();
             data.normal.imageSize = atlas.size();
-            data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-            data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.selfAnchor = InkingChangeAnchor::LeftTop;
+            data.traceAnchor = InkingChangeAnchor::LeftTop;
             data.offsetX = 20.0f;
             data.offsetY = 20.0f;
 
@@ -5722,14 +5725,14 @@ void CheckImageFitSrcRect(SDL_Renderer* renderer) {
             scene.TickFrame(1.0f / 60.0f);
 
             texturesBefore =
-                inking::detail::TextCacheStatsSnapshot().texturesCreated;
+                inking_detail::TextCacheStatsSnapshot().texturesCreated;
             for (int cell = 0; cell < 4; ++cell) {
-                image->SetRenderSourceRect(inking::ShapeBounds{
+                image->SetRenderSourceRect(InkingShapeBounds{
                     static_cast<float>(cell * 40), 0.0f, 40.0f, 40.0f});
                 RenderSvgFrame(renderer, scene);
             }
             texturesAfter =
-                inking::detail::TextCacheStatsSnapshot().texturesCreated;
+                inking_detail::TextCacheStatsSnapshot().texturesCreated;
             EndSvgFrame(renderer);
         }
         std::printf("         画 4 格：新建纹理 %llu 张\n",
@@ -5752,7 +5755,7 @@ void CheckSpriteSheet(SDL_Renderer* renderer) {
 
     // ① 纯算术：行优先 + margin/spacing（不必真画一张图就能验）
     {
-        inking::SpriteData::SpriteSheet sheet;
+        InkingSpriteData::SpriteSheet sheet;
         sheet.frameWidth = 40;
         sheet.frameHeight = 30;
         sheet.columns = 4;
@@ -5767,9 +5770,9 @@ void CheckSpriteSheet(SDL_Renderer* renderer) {
               "T-05：整张尺寸 = 格数×格宽 + spacing×(n−1) + 2×margin");
         Check(sheet.ResolveCount() == 12, "T-05：count 缺省 = columns × rows");
 
-        const inking::ShapeBounds first = sheet.CellRect(0);
-        const inking::ShapeBounds second = sheet.CellRect(1);
-        const inking::ShapeBounds nextRow = sheet.CellRect(4);
+        const InkingShapeBounds first = sheet.CellRect(0);
+        const InkingShapeBounds second = sheet.CellRect(1);
+        const InkingShapeBounds nextRow = sheet.CellRect(4);
         std::printf("         格 0=(%.0f,%.0f) 格 1=(%.0f,%.0f) 格 4=(%.0f,%.0f)\n",
                     first.x, first.y, second.x, second.y, nextRow.x, nextRow.y);
         Check(first.x == 2.0f && first.y == 2.0f && first.width == 40.0f
@@ -5787,18 +5790,18 @@ void CheckSpriteSheet(SDL_Renderer* renderer) {
     const std::vector<std::uint8_t> single = MakeSheetBmp(40, 40, 40, 1);
 
     const auto sheetData = [&atlas](bool autoplay) {
-        inking::SpriteData data;
+        InkingSpriteData data;
         data.name = "spr_sheet_px";
         data.width = 40;
         data.height = 40;
         data.fps = 12.0;
         data.loop = true;
         data.autoplay = autoplay;
-        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.selfAnchor = InkingChangeAnchor::LeftTop;
+        data.traceAnchor = InkingChangeAnchor::LeftTop;
         data.offsetX = 20.0f;
         data.offsetY = 20.0f;
-        data.normal.type = inking::AppearanceType::Image;
+        data.normal.type = InkingAppearanceType::Image;
         data.normal.source = "sheet_atlas_spr";  // 纹理缓存键
         data.normal.imageBytes = atlas.data();
         data.normal.imageSize = atlas.size();
@@ -5811,15 +5814,15 @@ void CheckSpriteSheet(SDL_Renderer* renderer) {
 
     // ② 构造期几何校验：columns=5 要 200 宽，图只有 160 → IsValid 假 + 1 条 ERROR
     {
-        inking::InkingScene scene("sprite_sheet_bad");
-        inking::SceneLibrary::SetActiveScene(&scene);
+        InkingScene scene("sprite_sheet_bad");
+        InkingSceneLibrary::SetActiveScene(&scene);
 
-        inking::SpriteData data = sheetData(false);
+        InkingSpriteData data = sheetData(false);
         data.sheet.columns = 5;  // 期望 5×40 = 200，真实 160
 
-        inking::InkLog::ResetStats();
-        auto* sprite = static_cast<inking::InkingSprite*>(
-            scene.AddChild(std::make_unique<inking::InkingSprite>(&scene, data)));
+        InkLog::ResetStats();
+        auto* sprite = static_cast<InkingSprite*>(
+            scene.AddChild(std::make_unique<InkingSprite>(&scene, data)));
         std::printf("         columns=5 / 图宽 160 → IsValid=%d\n%s\n",
                     sprite->IsValid() ? 1 : 0,
                     sprite->GetConfigError().c_str());
@@ -5828,40 +5831,40 @@ void CheckSpriteSheet(SDL_Renderer* renderer) {
                   && sprite->GetConfigError().find("图集尺寸对不上")
                          != std::string::npos,
               "T-05：切格与图宽不符在构造期就被拦下（不是播起来才发现）");
-        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+        Check(InkLog::CountOf(InkingLogLevel::Error) == 1,
               "T-05：恰好一条 ERROR（不重复刷）");
 
-        inking::SceneLibrary::SetActiveScene(nullptr);
+        InkingSceneLibrary::SetActiveScene(nullptr);
     }
 
     // ②b 图集没字节（生成器忘了烘）→ 不能静默退回纯色填
     {
-        inking::InkingScene scene("sprite_sheet_nobytes");
-        inking::SceneLibrary::SetActiveScene(&scene);
+        InkingScene scene("sprite_sheet_nobytes");
+        InkingSceneLibrary::SetActiveScene(&scene);
 
-        inking::SpriteData data = sheetData(false);
+        InkingSpriteData data = sheetData(false);
         data.normal.imageBytes = nullptr;
         data.normal.imageSize = 0;
 
-        auto* sprite = static_cast<inking::InkingSprite*>(
-            scene.AddChild(std::make_unique<inking::InkingSprite>(&scene, data)));
+        auto* sprite = static_cast<InkingSprite*>(
+            scene.AddChild(std::make_unique<InkingSprite>(&scene, data)));
         std::printf("         图集无字节：IsValid=%d\n", sprite->IsValid() ? 1 : 0);
         Check(!sprite->IsValid()
                   && sprite->GetConfigError().find("没有字节") != std::string::npos,
               "T-05：图集没烘字节时构造期报错（不是静默一块底色）");
 
-        inking::SceneLibrary::SetActiveScene(nullptr);
+        InkingSceneLibrary::SetActiveScene(nullptr);
     }
 
     // ③ 像素：图集第 1 格 = 单独存的第 1 张小图
     {
-        inking::InkingScene scene("sprite_sheet_px");
-        inking::SceneLibrary::SetActiveScene(&scene);
+        InkingScene scene("sprite_sheet_px");
+        InkingSceneLibrary::SetActiveScene(&scene);
 
-        inking::SpriteData data = sheetData(false);
-        inking::InkLog::ResetStats();
-        auto* sprite = static_cast<inking::InkingSprite*>(
-            scene.AddChild(std::make_unique<inking::InkingSprite>(&scene, data)));
+        InkingSpriteData data = sheetData(false);
+        InkLog::ResetStats();
+        auto* sprite = static_cast<InkingSprite*>(
+            scene.AddChild(std::make_unique<InkingSprite>(&scene, data)));
         Check(sprite->IsValid() && sprite->GetFrameCount() == 4
                   && sprite->GetLoadedFrameCount() == 4,
               "T-05：4×1 图集切出 4 帧，几何校验通过");
@@ -5873,7 +5876,7 @@ void CheckSpriteSheet(SDL_Renderer* renderer) {
             const float pixelRatio =
                 outputWidth > 0
                     ? static_cast<float>(outputWidth)
-                        / static_cast<float>(inking::DesignWidth())
+                        / static_cast<float>(InkingDesignWidth())
                     : 1.0f;
             const SDL_Rect region{
                 static_cast<int>(std::lround(20.0f * pixelRatio)),
@@ -5883,7 +5886,7 @@ void CheckSpriteSheet(SDL_Renderer* renderer) {
 
             // 图集：落在第 1 格，然后连画 4 格看纹理建了几张
             const std::uint64_t texturesBefore =
-                inking::detail::TextCacheStatsSnapshot().texturesCreated;
+                inking_detail::TextCacheStatsSnapshot().texturesCreated;
             sprite->SeekToFrame(1);
             RenderSvgFrame(renderer, scene);
             const std::vector<std::uint32_t> fromSheet =
@@ -5893,25 +5896,25 @@ void CheckSpriteSheet(SDL_Renderer* renderer) {
                 RenderSvgFrame(renderer, scene);
             }
             const std::uint64_t texturesAfter =
-                inking::detail::TextCacheStatsSnapshot().texturesCreated;
+                inking_detail::TextCacheStatsSnapshot().texturesCreated;
             EndSvgFrame(renderer);
 
             // 单独的第 1 张小图（同一个位置、同一个尺寸）
-            inking::InkingScene singleScene("sprite_sheet_single");
-            inking::SceneLibrary::SetActiveScene(&singleScene);
-            inking::ImageData imageData;
+            InkingScene singleScene("sprite_sheet_single");
+            InkingSceneLibrary::SetActiveScene(&singleScene);
+            InkingImageData imageData;
             imageData.name = "cell1_alone";
             imageData.width = 40;
             imageData.height = 40;
-            imageData.normal.type = inking::AppearanceType::Image;
+            imageData.normal.type = InkingAppearanceType::Image;
             imageData.normal.source = "cell1_alone";
             imageData.normal.imageBytes = single.data();
             imageData.normal.imageSize = single.size();
-            imageData.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-            imageData.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            imageData.selfAnchor = InkingChangeAnchor::LeftTop;
+            imageData.traceAnchor = InkingChangeAnchor::LeftTop;
             imageData.offsetX = 20.0f;
             imageData.offsetY = 20.0f;
-            singleScene.AddChild(std::make_unique<inking::InkingStaticImage>(
+            singleScene.AddChild(std::make_unique<InkingStaticImage>(
                 &singleScene, imageData));
             singleScene.TickFrame(1.0f / 60.0f);
             RenderSvgFrame(renderer, singleScene);
@@ -5944,11 +5947,11 @@ void CheckSpriteSheet(SDL_Renderer* renderer) {
 
     // ④ 图集模式的帧号照常走（与序列帧同一套时间 → 帧号映射）
     {
-        inking::InkingScene scene("sprite_sheet_clock");
-        inking::SceneLibrary::SetActiveScene(&scene);
+        InkingScene scene("sprite_sheet_clock");
+        InkingSceneLibrary::SetActiveScene(&scene);
 
-        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
-            std::make_unique<inking::InkingSprite>(&scene, sheetData(true))));
+        auto* sprite = static_cast<InkingSprite*>(scene.AddChild(
+            std::make_unique<InkingSprite>(&scene, sheetData(true))));
         for (int i = 0; i < 12; ++i) {
             scene.TickFrame(1.0 / 12.0);
         }
@@ -5976,7 +5979,7 @@ void CheckSpriteSheetFirstFrame(SDL_Renderer* renderer) {
 
     // ① 纯算术：起点只影响"帧号 → 格号"的换算，不改切格本身
     {
-        inking::SpriteData::SpriteSheet sheet;
+        InkingSpriteData::SpriteSheet sheet;
         sheet.frameWidth = 40;
         sheet.frameHeight = 40;
         sheet.columns = 6;
@@ -5984,7 +5987,7 @@ void CheckSpriteSheetFirstFrame(SDL_Renderer* renderer) {
         sheet.firstFrame = 12;  // 第 2 行第 0 格
         sheet.count = 6;
 
-        const inking::ShapeBounds cell = sheet.CellRect(12);
+        const InkingShapeBounds cell = sheet.CellRect(12);
         std::printf("         6×4 图集，起点 12 → 格 12 = (%.0f,%.0f,%.0f×%.0f)；"
                     "整张 %d×%d\n",
                     cell.x, cell.y, cell.width, cell.height, sheet.SheetWidth(),
@@ -5996,7 +5999,7 @@ void CheckSpriteSheetFirstFrame(SDL_Renderer* renderer) {
               "T-11：整张尺寸与起点无关（它描述整张图，不是从哪格起）");
 
         // 只写起点不算"配了图集"——否则一处笔误就让整张图片变成图集模式。
-        inking::SpriteData::SpriteSheet lone;
+        InkingSpriteData::SpriteSheet lone;
         lone.firstFrame = 12;
         Check(!lone.IsConfigured(),
               "T-11：只写 firstFrame 不算配了图集（IsConfigured 仍为假）");
@@ -6005,17 +6008,17 @@ void CheckSpriteSheetFirstFrame(SDL_Renderer* renderer) {
     const std::vector<std::uint8_t> atlas = MakeSheetBmp(240, 160, 40, 0);
 
     const auto sheetData = [&atlas](int firstFrame, int count) {
-        inking::SpriteData data;
+        InkingSpriteData data;
         data.name = "spr_first_frame";
         data.width = 40;
         data.height = 40;
         data.fps = 12.0;
         data.autoplay = false;
-        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.selfAnchor = InkingChangeAnchor::LeftTop;
+        data.traceAnchor = InkingChangeAnchor::LeftTop;
         data.offsetX = 20.0f;
         data.offsetY = 20.0f;
-        data.normal.type = inking::AppearanceType::Image;
+        data.normal.type = InkingAppearanceType::Image;
         data.normal.source = "sheet_first_frame";
         data.normal.imageBytes = atlas.data();
         data.normal.imageSize = atlas.size();
@@ -6030,13 +6033,13 @@ void CheckSpriteSheetFirstFrame(SDL_Renderer* renderer) {
 
     // ② 换算落在组件上：起始帧与末帧的源矩形
     {
-        inking::InkingScene scene("sprite_first_frame");
-        inking::SceneLibrary::SetActiveScene(&scene);
+        InkingScene scene("sprite_first_frame");
+        InkingSceneLibrary::SetActiveScene(&scene);
 
-        inking::InkLog::ResetStats();
-        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
-            std::make_unique<inking::InkingSprite>(&scene, sheetData(12, 6))));
-        const inking::ShapeBounds first = sprite->GetAppearance().srcRect;
+        InkLog::ResetStats();
+        auto* sprite = static_cast<InkingSprite*>(scene.AddChild(
+            std::make_unique<InkingSprite>(&scene, sheetData(12, 6))));
+        const InkingShapeBounds first = sprite->GetAppearance().srcRect;
         std::printf("         起点 12 / 6 帧：IsValid=%d 帧数=%zu 第 0 帧矩形"
                     " (%.0f,%.0f,%.0f×%.0f)\n",
                     sprite->IsValid() ? 1 : 0, sprite->GetFrameCount(), first.x,
@@ -6049,23 +6052,23 @@ void CheckSpriteSheetFirstFrame(SDL_Renderer* renderer) {
               "T-11：第 0 帧的源矩形 = CellRect(12)（起点进了换算，不是被忽略）");
 
         sprite->SeekToFrame(5);
-        const inking::ShapeBounds last = sprite->GetAppearance().srcRect;
+        const InkingShapeBounds last = sprite->GetAppearance().srcRect;
         std::printf("         第 5 帧矩形 (%.0f,%.0f,%.0f×%.0f)\n", last.x, last.y,
                     last.width, last.height);
         Check(last.x == 200.0f && last.y == 80.0f,
               "T-11：末帧落回格 17（起点 + 帧号，不是只偏移第一帧）");
 
-        inking::SceneLibrary::SetActiveScene(nullptr);
+        InkingSceneLibrary::SetActiveScene(nullptr);
     }
 
     // ③ 越界：要 6 格但从第 20 格起（只剩 4 格）→ 构造期一条 ERROR
     {
-        inking::InkingScene scene("sprite_first_frame_bad");
-        inking::SceneLibrary::SetActiveScene(&scene);
+        InkingScene scene("sprite_first_frame_bad");
+        InkingSceneLibrary::SetActiveScene(&scene);
 
-        inking::InkLog::ResetStats();
-        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
-            std::make_unique<inking::InkingSprite>(&scene, sheetData(20, 6))));
+        InkLog::ResetStats();
+        auto* sprite = static_cast<InkingSprite*>(scene.AddChild(
+            std::make_unique<InkingSprite>(&scene, sheetData(20, 6))));
         std::printf("         起点 20 / 6 帧 / 共 24 格 → IsValid=%d：%s\n",
                     sprite->IsValid() ? 1 : 0,
                     sprite->GetConfigError().c_str());
@@ -6073,10 +6076,10 @@ void CheckSpriteSheetFirstFrame(SDL_Renderer* renderer) {
                   && sprite->GetConfigError().find("超出格子总数")
                          != std::string::npos,
               "T-11：起点 + 帧数超过格子总数在构造期被拦下");
-        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+        Check(InkLog::CountOf(InkingLogLevel::Error) == 1,
               "T-11：恰好一条 ERROR（不重复刷）");
 
-        inking::SceneLibrary::SetActiveScene(nullptr);
+        InkingSceneLibrary::SetActiveScene(nullptr);
     }
 
     // ④ 像素：起点 12 的第 0 帧 vs 不设起点、Seek 到第 12 帧
@@ -6087,7 +6090,7 @@ void CheckSpriteSheetFirstFrame(SDL_Renderer* renderer) {
         const float pixelRatio =
             outputWidth > 0
                 ? static_cast<float>(outputWidth)
-                    / static_cast<float>(inking::DesignWidth())
+                    / static_cast<float>(InkingDesignWidth())
                 : 1.0f;
         const SDL_Rect region{static_cast<int>(std::lround(20.0f * pixelRatio)),
                               static_cast<int>(std::lround(20.0f * pixelRatio)),
@@ -6096,17 +6099,17 @@ void CheckSpriteSheetFirstFrame(SDL_Renderer* renderer) {
 
         const auto shoot = [&](const char* sceneName, int firstFrame, int count,
                                std::size_t seekTo) {
-            inking::InkingScene scene(sceneName);
-            inking::SceneLibrary::SetActiveScene(&scene);
-            auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
-                std::make_unique<inking::InkingSprite>(&scene,
+            InkingScene scene(sceneName);
+            InkingSceneLibrary::SetActiveScene(&scene);
+            auto* sprite = static_cast<InkingSprite*>(scene.AddChild(
+                std::make_unique<InkingSprite>(&scene,
                                                        sheetData(firstFrame, count))));
             sprite->SeekToFrame(seekTo);
             scene.TickFrame(1.0f / 60.0f);
             RenderSvgFrame(renderer, scene);
             std::vector<std::uint32_t> pixels = ReadPixelRegion(renderer, region);
             EndSvgFrame(renderer);
-            inking::SceneLibrary::SetActiveScene(nullptr);
+            InkingSceneLibrary::SetActiveScene(nullptr);
             return pixels;
         };
 
@@ -6158,18 +6161,18 @@ void CheckImageSampling(SDL_Renderer* renderer) {
 
     // ① 开关本身：默认线性，能读回、能改
     {
-        const inking::detail::ImageSampling saved =
-            inking::detail::GetImageSampling();
-        inking::detail::SetImageSampling(inking::detail::ImageSampling::Nearest);
+        const inking_detail::ImageSampling saved =
+            inking_detail::GetImageSampling();
+        inking_detail::SetImageSampling(inking_detail::ImageSampling::Nearest);
         const bool nearest =
-            inking::detail::GetImageSampling()
-            == inking::detail::ImageSampling::Nearest;
-        inking::detail::SetImageSampling(inking::detail::ImageSampling::Linear);
+            inking_detail::GetImageSampling()
+            == inking_detail::ImageSampling::Nearest;
+        inking_detail::SetImageSampling(inking_detail::ImageSampling::Linear);
         const bool linear =
-            inking::detail::GetImageSampling()
-            == inking::detail::ImageSampling::Linear;
+            inking_detail::GetImageSampling()
+            == inking_detail::ImageSampling::Linear;
         Check(nearest && linear, "T-12：采样开关写得进也读得回");
-        inking::detail::SetImageSampling(saved);
+        inking_detail::SetImageSampling(saved);
     }
 
     if (renderer == nullptr) {
@@ -6179,22 +6182,22 @@ void CheckImageSampling(SDL_Renderer* renderer) {
     // 2 色棋盘（每格 1 像素）画进 40×40 的组件：放大 5~10 倍，插值一定看得出来。
     const std::vector<std::uint8_t> checker = MakeCheckerBmp(4, 4, 1);
 
-    inking::InkingScene scene("image_sampling");
-    inking::SceneLibrary::SetActiveScene(&scene);
+    InkingScene scene("image_sampling");
+    InkingSceneLibrary::SetActiveScene(&scene);
 
-    inking::ImageData data;
+    InkingImageData data;
     data.name = "sampling_checker";
     data.width = 40;
     data.height = 40;
-    data.normal.type = inking::AppearanceType::Image;
+    data.normal.type = InkingAppearanceType::Image;
     data.normal.source = "sampling_checker";
     data.normal.imageBytes = checker.data();
     data.normal.imageSize = checker.size();
-    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.selfAnchor = InkingChangeAnchor::LeftTop;
+    data.traceAnchor = InkingChangeAnchor::LeftTop;
     data.offsetX = 20.0f;
     data.offsetY = 20.0f;
-    scene.AddChild(std::make_unique<inking::InkingStaticImage>(&scene, data));
+    scene.AddChild(std::make_unique<InkingStaticImage>(&scene, data));
     scene.TickFrame(1.0f / 60.0f);
 
     int outputWidth = 0;
@@ -6202,7 +6205,7 @@ void CheckImageSampling(SDL_Renderer* renderer) {
     SDL_GetRenderOutputSize(renderer, &outputWidth, &outputHeight);
     const float pixelRatio =
         outputWidth > 0
-            ? static_cast<float>(outputWidth) / static_cast<float>(inking::DesignWidth())
+            ? static_cast<float>(outputWidth) / static_cast<float>(InkingDesignWidth())
             : 1.0f;
     // 读**内圈**：边缘那一条有形状网格的 1px 羽化（0.6.2 T-08），它本来就不是
     // "图片的像素"，混进来会让"恰好 2 色"假红。
@@ -6230,14 +6233,14 @@ void CheckImageSampling(SDL_Renderer* renderer) {
     // ② 单笔路径：Linear 多色 → Nearest 恰好 2 色 → 切回 Linear 又多色。
     // 第三档是关键——它证明**已经建好的纹理**也被重设了（不是只影响新建的纹理）。
     {
-        inking::detail::SetImageBatchingEnabled(false);
-        inking::detail::SetImageSampling(inking::detail::ImageSampling::Linear);
+        inking_detail::SetImageBatchingEnabled(false);
+        inking_detail::SetImageSampling(inking_detail::ImageSampling::Linear);
         const int linear = colorCount();
-        inking::detail::SetImageSampling(inking::detail::ImageSampling::Nearest);
+        inking_detail::SetImageSampling(inking_detail::ImageSampling::Nearest);
         const int nearest = colorCount();
-        inking::detail::SetImageSampling(inking::detail::ImageSampling::Linear);
+        inking_detail::SetImageSampling(inking_detail::ImageSampling::Linear);
         const int back = colorCount();
-        inking::detail::SetImageBatchingEnabled(true);
+        inking_detail::SetImageBatchingEnabled(true);
 
         std::printf("         单笔路径：Linear %d 色 / Nearest %d 色 / 切回 %d 色\n",
                     linear, nearest, back);
@@ -6249,9 +6252,9 @@ void CheckImageSampling(SDL_Renderer* renderer) {
 
     // ③ 默认路径（并批 + 矩形 + Fill，也就是 `InkingSprite` 最常走的那条）
     {
-        inking::detail::SetImageSampling(inking::detail::ImageSampling::Linear);
+        inking_detail::SetImageSampling(inking_detail::ImageSampling::Linear);
         const int batchedLinear = colorCount();
-        inking::detail::SetImageSampling(inking::detail::ImageSampling::Nearest);
+        inking_detail::SetImageSampling(inking_detail::ImageSampling::Nearest);
         const int batchedNearest = colorCount();
         std::printf("         并批路径：Linear %d 色 / Nearest %d 色\n",
                     batchedLinear, batchedNearest);
@@ -6259,8 +6262,8 @@ void CheckImageSampling(SDL_Renderer* renderer) {
               "T-12：并批路径下 Nearest 恰好 2 色（像素素材的主场）");
     }
 
-    inking::detail::SetImageSampling(inking::detail::ImageSampling::Linear);
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    inking_detail::SetImageSampling(inking_detail::ImageSampling::Linear);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -6278,8 +6281,8 @@ void CheckImageSampling(SDL_Renderer* renderer) {
 // 并不存在的问题。
 void CheckTextureBytes(SDL_Renderer* renderer) {
     std::printf("\n-- 纹理字节账本：建 → 放 → 归零 → 峰值不回退（0.8.2 T-05） --\n");
-    using inking::detail::TextCacheStats;
-    using inking::detail::TextCacheStatsSnapshot;
+    using inking_detail::TextCacheStats;
+    using inking_detail::TextCacheStatsSnapshot;
 
     if (renderer == nullptr) {
         // 没有渲染器就没有纹理，账本无从验；上面"创建渲染器"那条已经红了，
@@ -6290,7 +6293,7 @@ void CheckTextureBytes(SDL_Renderer* renderer) {
 
     // 先放一次：让"账上有什么"从一个确定的 0 开始（前面十几个用例留下的纹理
     // 不可枚举，拿它们当基线就只能验"变大了"）。
-    inking::detail::ReleaseTextCache();
+    inking_detail::ReleaseTextCache();
     const TextCacheStats empty = TextCacheStatsSnapshot();
     std::printf("         释放后：%llu 字节 / %llu 张\n",
                 static_cast<unsigned long long>(empty.textureBytes),
@@ -6302,19 +6305,19 @@ void CheckTextureBytes(SDL_Renderer* renderer) {
     constexpr std::uint64_t kOneTexture = 64ull * 64ull * 4ull;  // 16,384
 
     const auto paint = [&](const char* name) {
-        inking::InkingScene scene("texture_bytes");
-        inking::SceneLibrary::SetActiveScene(&scene);
-        inking::ImageData data;
+        InkingScene scene("texture_bytes");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        InkingImageData data;
         data.name = name;
         data.width = 64;
         data.height = 64;
-        data.normal.type = inking::AppearanceType::Image;
+        data.normal.type = InkingAppearanceType::Image;
         data.normal.source = name;
         data.normal.imageBytes = bmp.data();
         data.normal.imageSize = bmp.size();
-        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
-        scene.AddChild(std::make_unique<inking::InkingStaticImage>(&scene, data));
+        data.selfAnchor = InkingChangeAnchor::LeftTop;
+        data.traceAnchor = InkingChangeAnchor::LeftTop;
+        scene.AddChild(std::make_unique<InkingStaticImage>(&scene, data));
         scene.TickFrame(1.0f / 60.0f);
         RenderSvgFrame(renderer, scene);
         EndSvgFrame(renderer);
@@ -6344,7 +6347,7 @@ void CheckTextureBytes(SDL_Renderer* renderer) {
 
     const std::uint64_t peakBefore = third.textureBytesPeak;
 
-    inking::detail::ReleaseTextCache();
+    inking_detail::ReleaseTextCache();
     const TextCacheStats released = TextCacheStatsSnapshot();
     std::printf("         再释放：%llu 字节 / %llu 张（峰值 %llu）\n",
                 static_cast<unsigned long long>(released.textureBytes),
@@ -6363,7 +6366,7 @@ void CheckTextureBytes(SDL_Renderer* renderer) {
     Check(again.textureBytes >= kOneTexture && again.textureBytesPeak >= peakBefore,
           "T-05：释放后再建，当前值重新涨起、峰值不回退");
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -6381,17 +6384,17 @@ void CheckSpriteRuntimeSwap(SDL_Renderer* renderer) {
     const std::vector<std::uint8_t> atlas = MakeSheetBmp(240, 160, 40, 0);
 
     const auto sheetConfig = [&atlas]() {
-        inking::SpriteData data;
+        InkingSpriteData data;
         data.name = "swap_sheet";
         data.width = 64;   // 故意与序列帧不同：组件尺寸**不该**跟着变
         data.height = 64;
         data.fps = 12.0;
         data.autoplay = true;
-        data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-        data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        data.selfAnchor = InkingChangeAnchor::LeftTop;
+        data.traceAnchor = InkingChangeAnchor::LeftTop;
         data.offsetX = 20.0f;
         data.offsetY = 20.0f;
-        data.normal.type = inking::AppearanceType::Image;
+        data.normal.type = InkingAppearanceType::Image;
         data.normal.source = "swap_atlas";
         data.normal.imageBytes = atlas.data();
         data.normal.imageSize = atlas.size();
@@ -6402,13 +6405,13 @@ void CheckSpriteRuntimeSwap(SDL_Renderer* renderer) {
         return data;
     };
 
-    inking::InkingScene scene("sprite_swap");
-    inking::SceneLibrary::SetActiveScene(&scene);
+    InkingScene scene("sprite_swap");
+    InkingSceneLibrary::SetActiveScene(&scene);
 
-    inking::SpriteData sequence = MakeSpriteData("swap_seq", 4, 12.0, true);
+    InkingSpriteData sequence = InkingMakeSpriteData("swap_seq", 4, 12.0, true);
     sequence.autoplay = false;  // 停在指定帧，别让 tick 把帧号推走
-    auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
-        std::make_unique<inking::InkingSprite>(&scene, sequence)));
+    auto* sprite = static_cast<InkingSprite*>(scene.AddChild(
+        std::make_unique<InkingSprite>(&scene, sequence)));
 
     int events = 0;
     sprite->frameChanged.Subscribe(
@@ -6444,9 +6447,9 @@ void CheckSpriteRuntimeSwap(SDL_Renderer* renderer) {
     std::uint64_t texturesAfter = 0;
     if (renderer != nullptr) {
         scene.TickFrame(1.0f / 60.0f);
-        texturesBefore = inking::detail::TextCacheStatsSnapshot().texturesCreated;
+        texturesBefore = inking_detail::TextCacheStatsSnapshot().texturesCreated;
         RenderSvgFrame(renderer, scene);
-        texturesAfter = inking::detail::TextCacheStatsSnapshot().texturesCreated;
+        texturesAfter = inking_detail::TextCacheStatsSnapshot().texturesCreated;
         EndSvgFrame(renderer);
         std::printf("         换图集后新建纹理 %llu 张\n",
                     static_cast<unsigned long long>(texturesAfter
@@ -6501,9 +6504,9 @@ void CheckSpriteRuntimeSwap(SDL_Renderer* renderer) {
           "T-13：序列帧 ↔ 图集来回三次，帧数与已加载数每次都完整（无悬垂）");
 
     // ---- ⑤ 坏配置：照常换，但 IsValid 为假（不让界面停摆） ----
-    inking::SpriteData broken = sheetConfig();
+    InkingSpriteData broken = sheetConfig();
     broken.sheet.columns = 5;  // 期望 200 宽，真实 240
-    inking::InkLog::ResetStats();
+    InkLog::ResetStats();
     sprite->SetSpriteData(broken);
     std::printf("         换到坏配置：IsValid=%d 错误=%s\n",
                 sprite->IsValid() ? 1 : 0, sprite->GetConfigError().c_str());
@@ -6514,7 +6517,7 @@ void CheckSpriteRuntimeSwap(SDL_Renderer* renderer) {
     // 真正"没有可播的帧"的那一种（`Validate()` 就过不去：图集连格宽都没有）：
     // 换过去后帧数为 0，播放状态必须被拉回 false——否则组件会"在播什么也没有"。
     sprite->Play();
-    inking::SpriteData noFrames = sheetConfig();
+    InkingSpriteData noFrames = sheetConfig();
     noFrames.sheet.frameWidth = 0;
     sprite->SetSpriteData(noFrames);
     std::printf("         换到无帧配置：帧数=%zu 播放=%d 错误=%s\n",
@@ -6524,7 +6527,7 @@ void CheckSpriteRuntimeSwap(SDL_Renderer* renderer) {
               && !sprite->IsPlaying(),
           "T-13：没有可播的帧时播放状态被拉回 false（不空转）");
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -6549,33 +6552,33 @@ void CheckSpriteUnevenFrames(SDL_Renderer* renderer) {
     constexpr int kAtlasHeight = 96;
 
     // ① 纯算术（在下面那份 `data` 上做）：CellRect 原样返回、帧数由表定、越界给全零
-    inking::SpriteData data;
+    InkingSpriteData data;
     data.name = "uneven_frames";
     data.width = 56;
     data.height = 56;
     data.fps = 12.0;
     data.autoplay = false;
-    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.selfAnchor = InkingChangeAnchor::LeftTop;
+    data.traceAnchor = InkingChangeAnchor::LeftTop;
     data.offsetX = 20.0f;
     data.offsetY = 20.0f;
-    data.normal.type = inking::AppearanceType::Image;
+    data.normal.type = InkingAppearanceType::Image;
     data.normal.source = "uneven_atlas";
     for (const FrameCase& frame : kFrames) {
-        data.sheet.frameRects.push_back(inking::ShapeBounds{
+        data.sheet.frameRects.push_back(InkingShapeBounds{
             static_cast<float>(frame.x), static_cast<float>(frame.y),
             static_cast<float>(frame.width), static_cast<float>(frame.height)});
     }
 
     {
-        inking::SpriteData normalized = data;
+        InkingSpriteData normalized = data;
         normalized.sheet.count = 99;  // 帧表在时 count 会被覆盖（不是"两套各说一套"）
         normalized.Normalize();
         Check(normalized.sheet.count == 3 && normalized.FrameCount() == 3,
               "T-14：帧表非空时帧数由表定（count 被覆盖，不出现两套真相）");
         Check(normalized.Validate().empty(), "T-14：帧表配置本身合法");
 
-        const inking::ShapeBounds second = normalized.sheet.CellRect(1);
+        const InkingShapeBounds second = normalized.sheet.CellRect(1);
         std::printf("         表里第 1 帧 = (%.0f,%.0f,%.0f×%.0f)；表外第 3 帧宽=%.0f\n",
                     second.x, second.y, second.width, second.height,
                     normalized.sheet.CellRect(3).width);
@@ -6588,34 +6591,34 @@ void CheckSpriteUnevenFrames(SDL_Renderer* renderer) {
 
     // ② 互斥：帧表 + 网格字段同时给 → 构造期一条 ERROR
     {
-        inking::InkingScene scene("uneven_exclusive");
-        inking::SceneLibrary::SetActiveScene(&scene);
+        InkingScene scene("uneven_exclusive");
+        InkingSceneLibrary::SetActiveScene(&scene);
 
-        inking::SpriteData both = data;
+        InkingSpriteData both = data;
         both.sheet.columns = 4;
         both.sheet.frameWidth = 40;
         both.sheet.frameHeight = 40;
 
-        inking::InkLog::ResetStats();
-        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
-            std::make_unique<inking::InkingSprite>(&scene, both)));
+        InkLog::ResetStats();
+        auto* sprite = static_cast<InkingSprite*>(scene.AddChild(
+            std::make_unique<InkingSprite>(&scene, both)));
         std::printf("         帧表 + 网格同给：IsValid=%d 错误=%s\n",
                     sprite->IsValid() ? 1 : 0, sprite->GetConfigError().c_str());
         Check(!sprite->IsValid()
                   && sprite->GetConfigError().find("互斥") != std::string::npos,
               "T-14：帧表与网格互斥（不静默选一套）");
-        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+        Check(InkLog::CountOf(InkingLogLevel::Error) == 1,
               "T-14：恰好一条 ERROR");
 
-        inking::SceneLibrary::SetActiveScene(nullptr);
+        InkingSceneLibrary::SetActiveScene(nullptr);
     }
 
     // ③ 越界：第 2 帧的 40×56 超出 96 高 → 构造期一条 ERROR，文案带帧号
     {
-        inking::InkingScene scene("uneven_out_of_bounds");
-        inking::SceneLibrary::SetActiveScene(&scene);
+        InkingScene scene("uneven_out_of_bounds");
+        InkingSceneLibrary::SetActiveScene(&scene);
 
-        inking::SpriteData out = data;
+        InkingSpriteData out = data;
         // 必须带上字节：没有字节时构造期会先报"图集没有字节"，越界那条就永远轮不到
         // （自检第一次跑正是这么红的——两条错有先后，验错的那条被前一条挡住了）。
         const std::vector<std::uint8_t> atlasBytes =
@@ -6623,18 +6626,18 @@ void CheckSpriteUnevenFrames(SDL_Renderer* renderer) {
                                kAtlasHeight);
         out.normal.imageBytes = atlasBytes.data();
         out.normal.imageSize = atlasBytes.size();
-        out.sheet.frameRects[2] = inking::ShapeBounds{0.0f, 80.0f, 40.0f, 56.0f};
+        out.sheet.frameRects[2] = InkingShapeBounds{0.0f, 80.0f, 40.0f, 56.0f};
 
-        inking::InkLog::ResetStats();
-        auto* sprite = static_cast<inking::InkingSprite*>(scene.AddChild(
-            std::make_unique<inking::InkingSprite>(&scene, out)));
+        InkLog::ResetStats();
+        auto* sprite = static_cast<InkingSprite*>(scene.AddChild(
+            std::make_unique<InkingSprite>(&scene, out)));
         std::printf("         越界帧：IsValid=%d 错误=%s\n",
                     sprite->IsValid() ? 1 : 0, sprite->GetConfigError().c_str());
         Check(!sprite->IsValid()
                   && sprite->GetConfigError().find("第 2 帧") != std::string::npos,
               "T-14：帧表越界在构造期被拦下（文案带帧号与矩形）");
 
-        inking::SceneLibrary::SetActiveScene(nullptr);
+        InkingSceneLibrary::SetActiveScene(nullptr);
     }
 
     // ④ 像素：帧表切出来的每一帧，与"直接造那块矩形"逐像素一致
@@ -6646,7 +6649,7 @@ void CheckSpriteUnevenFrames(SDL_Renderer* renderer) {
     SDL_GetRenderOutputSize(renderer, &outputWidth, &outputHeight);
     const float pixelRatio =
         outputWidth > 0
-            ? static_cast<float>(outputWidth) / static_cast<float>(inking::DesignWidth())
+            ? static_cast<float>(outputWidth) / static_cast<float>(InkingDesignWidth())
             : 1.0f;
 
     // 大图与"裁出来的小图"来自同一个生成器（绝对坐标），所以内容必然可对。
@@ -6665,16 +6668,16 @@ void CheckSpriteUnevenFrames(SDL_Renderer* renderer) {
             static_cast<int>(std::lround(static_cast<float>(frame.height) * pixelRatio))};
 
         // 帧表那一侧：组件尺寸 = 该帧宽高（两边同比例才比得起来）
-        inking::SpriteData sheetData = data;
+        InkingSpriteData sheetData = data;
         sheetData.width = frame.width;
         sheetData.height = frame.height;
         sheetData.normal.imageBytes = atlas.data();
         sheetData.normal.imageSize = atlas.size();
 
-        inking::InkingScene sheetScene(std::string("uneven_sheet_") + frame.label);
-        inking::SceneLibrary::SetActiveScene(&sheetScene);
-        auto* sprite = static_cast<inking::InkingSprite*>(sheetScene.AddChild(
-            std::make_unique<inking::InkingSprite>(&sheetScene, sheetData)));
+        InkingScene sheetScene(std::string("uneven_sheet_") + frame.label);
+        InkingSceneLibrary::SetActiveScene(&sheetScene);
+        auto* sprite = static_cast<InkingSprite*>(sheetScene.AddChild(
+            std::make_unique<InkingSprite>(&sheetScene, sheetData)));
         sprite->SeekToFrame(index);
         sheetScene.TickFrame(1.0f / 60.0f);
         RenderSvgFrame(renderer, sheetScene);
@@ -6682,22 +6685,22 @@ void CheckSpriteUnevenFrames(SDL_Renderer* renderer) {
         EndSvgFrame(renderer);
 
         // 参照侧：同一块矩形的独立小图
-        inking::InkingScene singleScene(std::string("uneven_single_") + frame.label);
-        inking::SceneLibrary::SetActiveScene(&singleScene);
-        inking::ImageData imageData;
+        InkingScene singleScene(std::string("uneven_single_") + frame.label);
+        InkingSceneLibrary::SetActiveScene(&singleScene);
+        InkingImageData imageData;
         imageData.name = std::string("uneven_cell_") + frame.label;
         imageData.width = frame.width;
         imageData.height = frame.height;
-        imageData.normal.type = inking::AppearanceType::Image;
+        imageData.normal.type = InkingAppearanceType::Image;
         imageData.normal.source = imageData.name;
         imageData.normal.imageBytes = cell.data();
         imageData.normal.imageSize = cell.size();
-        imageData.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-        imageData.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        imageData.selfAnchor = InkingChangeAnchor::LeftTop;
+        imageData.traceAnchor = InkingChangeAnchor::LeftTop;
         imageData.offsetX = 20.0f;
         imageData.offsetY = 20.0f;
         singleScene.AddChild(
-            std::make_unique<inking::InkingStaticImage>(&singleScene, imageData));
+            std::make_unique<InkingStaticImage>(&singleScene, imageData));
         singleScene.TickFrame(1.0f / 60.0f);
         RenderSvgFrame(renderer, singleScene);
         const std::vector<std::uint32_t> fromSingle = ReadPixelRegion(renderer, region);
@@ -6732,37 +6735,37 @@ void CheckSpriteUnevenFrames(SDL_Renderer* renderer) {
         Check(diffInside == 0, "T-14：帧表切出的那一帧与独立小图逐像素一致（内部）");
     }
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
-// T-16（0.6.5）：图集描述 → SpriteData
+// T-16（0.6.5）：图集描述 → InkingSpriteData
 // ---------------------------------------------------------------------------
 //
 // 这一层是**纯函数**（描述 + 字节视图 → 配置），所以验收的重点是"转过去的字段
 // 逐项对得上"，再加上一条像素（转出来的东西真的能画对那块）。
 void CheckAtlasData(SDL_Renderer* renderer) {
-    std::printf("\n-- 图集描述 AtlasData → SpriteData（0.6.5 T-16） --\n");
+    std::printf("\n-- 图集描述 InkingAtlasData → InkingSpriteData（0.6.5 T-16） --\n");
 
-    inking::AtlasData atlas;
+    InkingAtlasData atlas;
     atlas.name = "slime";
 
-    inking::AtlasAnimation walk;
+    InkingAtlasAnimation walk;
     walk.name = "walk";
     walk.source = "slime.png";
     walk.fps = 8.0;
     walk.loop = false;
-    walk.frames = {inking::ShapeBounds{0.0f, 0.0f, 40.0f, 40.0f},
-                   inking::ShapeBounds{40.0f, 0.0f, 56.0f, 40.0f},
-                   inking::ShapeBounds{0.0f, 40.0f, 40.0f, 56.0f}};
-    walk.events = {inking::SpriteData::SpriteEvent{1, "step"}};
+    walk.frames = {InkingShapeBounds{0.0f, 0.0f, 40.0f, 40.0f},
+                   InkingShapeBounds{40.0f, 0.0f, 56.0f, 40.0f},
+                   InkingShapeBounds{0.0f, 40.0f, 40.0f, 56.0f}};
+    walk.events = {InkingSpriteData::SpriteEvent{1, "step"}};
     atlas.animations.push_back(walk);
 
-    inking::AtlasAnimation idle;
+    InkingAtlasAnimation idle;
     idle.name = "idle";
     idle.source = "slime.png";
     idle.fps = 4.0;
-    idle.frames = {inking::ShapeBounds{96.0f, 0.0f, 32.0f, 32.0f}};
+    idle.frames = {InkingShapeBounds{96.0f, 0.0f, 32.0f, 32.0f}};
     atlas.animations.push_back(idle);
 
     // ① 查找与校验
@@ -6770,10 +6773,10 @@ void CheckAtlasData(SDL_Renderer* renderer) {
         Check(atlas.Validate().empty(), "T-16：合法的图集描述通过 Validate");
         Check(atlas.FindIndex("walk") == 0 && atlas.FindIndex("idle") == 1,
               "T-16：FindIndex 按名字找到下标");
-        Check(atlas.FindIndex("run") == inking::AtlasData::kNotFound,
+        Check(atlas.FindIndex("run") == InkingAtlasData::kNotFound,
               "T-16：找不到时给 kNotFound（不是 0，0 是“walk”）");
 
-        inking::AtlasData duplicated = atlas;
+        InkingAtlasData duplicated = atlas;
         duplicated.animations[1].name = "walk";
         std::printf("         重名：%s\n", duplicated.Validate().c_str());
         Check(!duplicated.Validate().empty(),
@@ -6782,8 +6785,8 @@ void CheckAtlasData(SDL_Renderer* renderer) {
 
     // ② 转换：字段逐项对得上
     {
-        const inking::SpriteData data =
-            inking::MakeSpriteData(atlas, atlas.FindIndex("walk"), nullptr, 0);
+        const InkingSpriteData data =
+            InkingMakeSpriteData(atlas, atlas.FindIndex("walk"), nullptr, 0);
         std::printf("         转出来：name=%s 帧数=%zu fps=%.1f loop=%d 事件=%zu "
                     "尺寸=%d×%d\n",
                     data.name.c_str(), data.FrameCount(), data.fps,
@@ -6800,23 +6803,23 @@ void CheckAtlasData(SDL_Renderer* renderer) {
               "T-16：路径只写一处（normal.source，sheet.source 留空沿用）");
         Check(data.runtimeAsset && data.width == 40 && data.height == 40,
               "T-16：没给字节时走运行期读图；尺寸默认跟第一帧（40×40）");
-        Check(data.Validate().empty(), "T-16：转出来的配置通过 SpriteData::Validate");
+        Check(data.Validate().empty(), "T-16：转出来的配置通过 InkingSpriteData::Validate");
     }
 
     // ③ 越界下标：给一份非法配置 + 一条 ERROR（不崩、不静默空白）
     {
-        inking::InkLog::ResetStats();
-        const inking::SpriteData bad =
-            inking::MakeSpriteData(atlas, inking::AtlasData::kNotFound, nullptr, 0);
+        InkLog::ResetStats();
+        const InkingSpriteData bad =
+            InkingMakeSpriteData(atlas, InkingAtlasData::kNotFound, nullptr, 0);
         Check(!bad.Validate().empty(),
               "T-16：下标越界转出的是非法配置（Validate 能说清楚）");
-        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+        Check(InkLog::CountOf(InkingLogLevel::Error) == 1,
               "T-16：越界同时有一条 ERROR（不是静默空白）");
     }
 
-    // ④ 像素：`MakeSpriteData` 产出的配置画出来的第 1 帧 == 同一块矩形的独立小图。
+    // ④ 像素：`InkingMakeSpriteData` 产出的配置画出来的第 1 帧 == 同一块矩形的独立小图。
     // 与 T-14 同一套对拍法（大图与裁片来自同一个按绝对坐标生成器），区别只在于
-    // 这里的帧表是**从 `AtlasData` 转过来的**，走完了"描述 → 配置 → 组件"全程。
+    // 这里的帧表是**从 `InkingAtlasData` 转过来的**，走完了"描述 → 配置 → 组件"全程。
     if (renderer == nullptr) {
         return;
     }
@@ -6827,18 +6830,18 @@ void CheckAtlasData(SDL_Renderer* renderer) {
             MakeAtlasRegionBmp(kAtlasWidth, kAtlasHeight, 0, 0, kAtlasWidth,
                                kAtlasHeight);
 
-        inking::AtlasData pixelAtlas;
+        InkingAtlasData pixelAtlas;
         pixelAtlas.name = "atlas_pixels";
-        inking::AtlasAnimation anim;
+        InkingAtlasAnimation anim;
         anim.name = "walk";
         anim.source = "atlas_pixels_src";
-        anim.frames = {inking::ShapeBounds{0.0f, 0.0f, 40.0f, 40.0f},
-                       inking::ShapeBounds{40.0f, 0.0f, 56.0f, 40.0f},
-                       inking::ShapeBounds{0.0f, 40.0f, 40.0f, 56.0f}};
+        anim.frames = {InkingShapeBounds{0.0f, 0.0f, 40.0f, 40.0f},
+                       InkingShapeBounds{40.0f, 0.0f, 56.0f, 40.0f},
+                       InkingShapeBounds{0.0f, 40.0f, 40.0f, 56.0f}};
         pixelAtlas.animations.push_back(anim);
         Check(pixelAtlas.Validate().empty(), "T-16：像素用例的描述合法");
 
-        const inking::ShapeBounds rect = anim.frames[1];  // 56×40，故意不等宽
+        const InkingShapeBounds rect = anim.frames[1];  // 56×40，故意不等宽
         const std::vector<std::uint8_t> cell =
             MakeAtlasRegionBmp(kAtlasWidth, kAtlasHeight, 40, 0, 56, 40);
 
@@ -6848,7 +6851,7 @@ void CheckAtlasData(SDL_Renderer* renderer) {
         const float pixelRatio =
             outputWidth > 0
                 ? static_cast<float>(outputWidth)
-                    / static_cast<float>(inking::DesignWidth())
+                    / static_cast<float>(InkingDesignWidth())
                 : 1.0f;
         const SDL_Rect region{
             static_cast<int>(std::lround(20.0f * pixelRatio)),
@@ -6856,26 +6859,26 @@ void CheckAtlasData(SDL_Renderer* renderer) {
             static_cast<int>(std::lround(56.0f * pixelRatio)),
             static_cast<int>(std::lround(40.0f * pixelRatio))};
 
-        inking::SpriteData sheetData = inking::MakeSpriteData(
+        InkingSpriteData sheetData = InkingMakeSpriteData(
             pixelAtlas, 0, bytes.data(), bytes.size());
         sheetData.autoplay = false;
-        sheetData.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-        sheetData.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        sheetData.selfAnchor = InkingChangeAnchor::LeftTop;
+        sheetData.traceAnchor = InkingChangeAnchor::LeftTop;
         sheetData.offsetX = 20.0f;
         sheetData.offsetY = 20.0f;
         Check(sheetData.width == 40 && sheetData.height == 40,
               "T-16：尺寸取第一帧（40×40），不是 56×40 那一帧");
 
         // 要跟 56×40 那一帧对拍，组件尺寸就得按这一帧给：图集比第一帧宽时**调用方
-        // 自己调 `width/height`**（`MakeSpriteData` 不替你改尺寸——那会触发重布局）。
+        // 自己调 `width/height`**（`InkingMakeSpriteData` 不替你改尺寸——那会触发重布局）。
         // 不改的话这一帧会被压进 40×40，与独立小图当然对不上。
         sheetData.width = 56;
         sheetData.height = 40;
 
-        inking::InkingScene sheetScene("atlas_sheet_px");
-        inking::SceneLibrary::SetActiveScene(&sheetScene);
-        auto* sprite = static_cast<inking::InkingSprite*>(sheetScene.AddChild(
-            std::make_unique<inking::InkingSprite>(&sheetScene, sheetData)));
+        InkingScene sheetScene("atlas_sheet_px");
+        InkingSceneLibrary::SetActiveScene(&sheetScene);
+        auto* sprite = static_cast<InkingSprite*>(sheetScene.AddChild(
+            std::make_unique<InkingSprite>(&sheetScene, sheetData)));
         sprite->SeekToFrame(1);
         sheetScene.TickFrame(1.0f / 60.0f);
         RenderSvgFrame(renderer, sheetScene);
@@ -6883,22 +6886,22 @@ void CheckAtlasData(SDL_Renderer* renderer) {
             ReadPixelRegion(renderer, region);
         EndSvgFrame(renderer);
 
-        inking::InkingScene singleScene("atlas_single_px");
-        inking::SceneLibrary::SetActiveScene(&singleScene);
-        inking::ImageData imageData;
+        InkingScene singleScene("atlas_single_px");
+        InkingSceneLibrary::SetActiveScene(&singleScene);
+        InkingImageData imageData;
         imageData.name = "atlas_cell11";
         imageData.width = 56;
         imageData.height = 40;
-        imageData.normal.type = inking::AppearanceType::Image;
+        imageData.normal.type = InkingAppearanceType::Image;
         imageData.normal.source = imageData.name;
         imageData.normal.imageBytes = cell.data();
         imageData.normal.imageSize = cell.size();
-        imageData.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-        imageData.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+        imageData.selfAnchor = InkingChangeAnchor::LeftTop;
+        imageData.traceAnchor = InkingChangeAnchor::LeftTop;
         imageData.offsetX = 20.0f;
         imageData.offsetY = 20.0f;
         singleScene.AddChild(
-            std::make_unique<inking::InkingStaticImage>(&singleScene, imageData));
+            std::make_unique<InkingStaticImage>(&singleScene, imageData));
         singleScene.TickFrame(1.0f / 60.0f);
         RenderSvgFrame(renderer, singleScene);
         const std::vector<std::uint32_t> fromSingle =
@@ -6924,12 +6927,695 @@ void CheckAtlasData(SDL_Renderer* renderer) {
                 }
             }
         }
-        std::printf("         AtlasData 第 1 帧 vs 独立小图：内部差异 %d（含边框 %d）\n",
+        std::printf("         InkingAtlasData 第 1 帧 vs 独立小图：内部差异 %d（含边框 %d）\n",
                     diffInside, diffAll);
         Check(diffInside == 0,
-              "T-16：AtlasData 转出来的第 1 帧与独立小图逐像素一致（内部）");
+              "T-16：InkingAtlasData 转出来的第 1 帧与独立小图逐像素一致（内部）");
     }
 
+}
+
+// ---------------------------------------------------------------------------
+// 动态精灵（G-03）：帧机同源、几何能改
+// ---------------------------------------------------------------------------
+//
+// 四条验收对应 `TaskGuide-G.md` G-03 的"验收"四项。第 4 项（`src/inking.cpp` 的
+// 镜像断言）是**编译期**的，这里只留它的运行时回声——真正拦住"静态档被顺手改成
+// 动态"的是那几条 `static_assert`，它们红了连 exe 都出不来。
+//
+// 第 1 条（100 帧后三项计数逐一相等）是本任务唯一能证明"帧逻辑同源"的客观判据：
+// 两份帧机是**复制**来的，"看着一样"不算数。让它们在**同一个场景、同一个时钟**
+// 上各跑 100 帧，落点与两个计数必须一个个对上。G-04 抽 `InkingSpriteLike` 之后这条断言
+// **一个字都不改**照样要过——那正是"纯重构"的判据。
+//
+// 另加一条任务书没列的 ⑤：静态 / 动态各画一次同一个图集格，**逐像素对拍**。上面
+// 那些都在读状态，而"动态节点真的进了绘制列表并画出来"只有画面能证明。
+void CheckDynamicSprite(SDL_Renderer* renderer) {
+    std::printf("\n-- 动态精灵（G-03） --\n");
+
+    // ---- ① 是动态档，且**不进命中表**（占地记成"洞"） ----
+    //
+    // 判据与 G-01 同构：构造本身是骨架变化（代次会涨），所以判的是**条目数不变**、
+    // **洞多一个**——那才是"动态节点不进表"的可断言形态。
+    // ---- ③ 顺带在这里做：Resize 改几何，命中跟着变（洞也得跟着刷） ----
+    {
+        InkingScene scene("g03_spr_tier");
+        InkingSceneLibrary::SetActiveScene(&scene);
+
+        // 一个静态参照物：让表里真的有条目，"一条都没多"才有意义。
+        InkingAnchorData refData;
+        refData.width = 40;
+        refData.height = 40;
+        refData.offsetX = 20.0f;
+        refData.offsetY = 560.0f;
+        scene.AddChild(
+            std::make_unique<InkingStaticWidget>(&scene, refData));
+        const std::size_t entriesBefore = scene.GetHitTableEntryCount();
+
+        const InkingSpriteData data = InkingMakeSpriteData("g03_spr", 4, 12.0, true);
+        auto* sprite = static_cast<InkingDynamicSprite*>(
+            scene.AddChild(std::make_unique<InkingDynamicSprite>(
+                &scene, data)));
+
+        Check(sprite->IsDynamic(), "①：新类是动态档（`IsDynamic()` 为真）");
+        Check(scene.GetHitTableEntryCount() == entriesBefore,
+              "①：动态精灵**不进命中表**（条目数不变）");
+        Check(scene.GetHitTableHoleCount() == 1,
+              "①：它的占地记成**一个洞**（点落在洞里才会问动态层）");
+        Check(sprite->IsValid() && sprite->GetFrameCount() == 4
+                  && sprite->GetLoadedFrameCount() == 4,
+              "①：4 帧的字节在构造期全部备齐（与静态版同一个入口）");
+        Check(sprite->IsPlaying() && sprite->GetFrameIndex() == 0,
+              "①：autoplay 默认开且落在第 0 帧");
+
+        // ---- ③ Resize 之后 HitTest 跟着变 ----
+        //
+        // 取一个"贴着旧右边界外侧"的世界点：宽 40 时在外，宽 60 时在内。同一个点
+        // 结果翻转，才证明"命中读的是当前几何"，不是构造时那份。
+        const float edgeX = 65.0f;  // 本地 x = 45
+        const float edgeY = 25.0f;  // 本地 y = 5
+        Check(!sprite->HitTest(edgeX, edgeY),
+              "③：Resize 之前，越出右边界的点不在精灵上（基线）");
+        Check(sprite->Resize(60, 40), "③：`Resize(60, 40)` 真的改了");
+        Check(sprite->GetWidth() == 60 && sprite->GetHeight() == 40,
+              "③：`GetWidth()/GetHeight()` 跟着变成 60/40");
+        Check(sprite->HitTest(edgeX, edgeY),
+              "③：同一个世界点在 Resize 后命中（几何驱动命中）");
+        // 场景那一侧同样要跟上：洞过期 = 那一片**点不到**（T-19 的静默失效形态）。
+        // 几何入口走 `MarkGeometryMoved()` 才有这一条 —— 少写一句就只剩上面那条
+        // 自判命中是绿的。
+        Check(scene.QueryHit(edgeX, edgeY).target == sprite,
+              "③：洞跟着刷新（场景在这一点的查询也命中它，不是只 `HitTest` 自判）");
+
+        // ---- 偏离项：`SetSpriteData` **仍不动尺寸** ----
+        //
+        // 静态版的语义是"换配置不动几何"（`InkingSprite.h` 那段：改尺寸属布局层）。
+        // 动态档多了"随手 Resize"的能力，但那必须是**调用方**喊的，不能藏在换配置
+        // 的副作用里——否则一次"切动作"就变成一次看不见的重排。
+        InkingSpriteData bigger = InkingMakeSpriteData("g03_spr_big", 4, 12.0, true);
+        bigger.width = 100;
+        bigger.height = 100;
+        sprite->SetSpriteData(bigger);
+        Check(sprite->GetWidth() == 60 && sprite->GetHeight() == 40,
+              "③：`SetSpriteData` 不改尺寸（100×100 的配置没有悄悄覆盖几何）");
+        Check(sprite->GetFrameIndex() == 0 && sprite->IsPlaying(),
+              "③：换配置落到第 0 帧且播放状态保持（与静态版同一条）");
+
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ---- ② 帧逻辑同源的硬证据：同一份配置，100 帧后三项计数逐一相等 ----
+    //
+    // 两档放进**同一个场景**：时钟只有一个（`AnimationSeconds()`），所以"帧号恒等"
+    // 是结构保证；真正要验的是"两份帧机对同一个时间算出同一个东西"——落点、累计
+    // 换帧次数、跳帧次数。
+    {
+        InkingScene scene("g03_spr_parity");
+        InkingSceneLibrary::SetActiveScene(&scene);
+
+        const InkingSpriteData data =
+            InkingMakeSpriteData("g03_parity", 4, 12.0, true);
+        auto* stat = static_cast<InkingSprite*>(
+            scene.AddChild(
+                std::make_unique<InkingSprite>(&scene, data)));
+        auto* dyn = static_cast<InkingDynamicSprite*>(
+            scene.AddChild(std::make_unique<InkingDynamicSprite>(
+                &scene, data)));
+        Check(stat->IsValid() && dyn->IsValid(),
+              "②：同一份配置两档都认（都合法，帧数也一样）");
+
+        for (int i = 0; i < 100; ++i) {
+            scene.TickFrame(1.0 / 12.0);
+        }
+        std::printf("         100×1/12 → 静态 %zu/%llu/%llu，动态 %zu/%llu/%llu\n",
+                    stat->GetFrameIndex(),
+                    static_cast<unsigned long long>(stat->GetFrameAdvanceCount()),
+                    static_cast<unsigned long long>(stat->GetSkippedFrameCount()),
+                    dyn->GetFrameIndex(),
+                    static_cast<unsigned long long>(dyn->GetFrameAdvanceCount()),
+                    static_cast<unsigned long long>(dyn->GetSkippedFrameCount()));
+        Check(dyn->GetFrameIndex() == stat->GetFrameIndex(),
+              "②：100 帧后帧号相等（时间 → 帧号是同一个纯函数）");
+        Check(dyn->GetFrameAdvanceCount() == stat->GetFrameAdvanceCount(),
+              "②：100 帧后换帧次数相等");
+        Check(dyn->GetSkippedFrameCount() == stat->GetSkippedFrameCount(),
+              "②：100 帧后跳帧次数相等");
+        // 顺带钉住"不是两边一起错"：100 次 1/12 推进每次都该换一帧。
+        Check(stat->GetFrameAdvanceCount() == 100,
+              "②：基线正确（100 次 1/12 推进 = 100 次换帧，不是两边一起错）");
+        // 档位的运行时回声：`src/inking.cpp` 的 `!HasResize<InkingSprite>` 无法
+        // 在运行期直接断言，但"它仍是静态档"这条等价事实可以。
+        Check(!stat->IsDynamic(),
+              "②：静态精灵仍是静态档（这一笔没有把旧类改成动态）");
+
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ---- ④ 图集模式：Resize 之后仍按 SheetWidth/SheetHeight 切格 ----
+    //
+    // 这一条盯的是"几何与切格是两个坐标系统"：`Resize` 改的是**画多大**，源矩形
+    // 仍是图集里的那块像素（40×40 的格）。如果谁把源矩形跟着几何缩放，画面会变成
+    // "整张图集的左上角被拉大"，而 `IsValid()` 依然为真——静默错。
+    {
+        // 同一张图集（4×1 格、每格 40×40），④ 与 ⑤ 共用一份构造方式。
+        const std::vector<std::uint8_t> atlas = MakeSheetBmp(160, 40, 40, 0);
+        const auto makeSheetData = [&atlas](const char* name) {
+            InkingSpriteData data;
+            data.name = name;
+            data.width = 40;
+            data.height = 40;
+            data.fps = 12.0;
+            data.loop = true;
+            data.autoplay = false;  // 只验切格：不播，帧号由 `SeekToFrame` 指定
+            data.selfAnchor = InkingChangeAnchor::LeftTop;
+            data.traceAnchor = InkingChangeAnchor::LeftTop;
+            data.offsetX = 200.0f;
+            data.offsetY = 100.0f;
+            data.normal.type = InkingAppearanceType::Image;
+            data.normal.source = std::string(name) + "_atlas";
+            data.normal.imageBytes = atlas.data();
+            data.normal.imageSize = atlas.size();
+            data.sheet.frameWidth = 40;
+            data.sheet.frameHeight = 40;
+            data.sheet.columns = 4;
+            data.sheet.rows = 1;
+            return data;
+        };
+
+        InkingScene scene("g03_spr_sheet");
+        InkingSceneLibrary::SetActiveScene(&scene);
+
+        const InkingSpriteData data = makeSheetData("g03_sheet_spr");
+        auto* sprite = static_cast<InkingDynamicSprite*>(
+            scene.AddChild(std::make_unique<InkingDynamicSprite>(
+                &scene, data)));
+        Check(sprite->IsSheetMode() && sprite->IsValid()
+                  && sprite->GetFrameCount() == 4,
+              "④：图集模式构造成功（切格与图宽对上，量图校验通过）");
+
+        const InkingShapeBounds before = sprite->GetAppearance().srcRect;
+        Check(before.width == 40.0f && before.height == 40.0f,
+              "④：初始源矩形 = 第 0 格（40×40）");
+
+        Check(sprite->Resize(120, 90), "④：`Resize(120, 90)` 改了绘制尺寸");
+        Check(sprite->IsValid() && sprite->IsSheetMode(),
+              "④：Resize 之后配置仍然合法（切格几何与本体尺寸无关）");
+        const InkingShapeBounds after = sprite->GetAppearance().srcRect;
+        Check(after.x == before.x && after.y == before.y
+                  && after.width == before.width
+                  && after.height == before.height,
+              "④：源矩形不随几何变（仍取图集里的 40×40 格，不是被拉成 120×90）");
+
+        Check(sprite->SeekToFrame(2), "④：`SeekToFrame(2)` 成功");
+        const InkingShapeBounds cell = data.sheet.CellRect(2);
+        const InkingShapeBounds now = sprite->GetAppearance().srcRect;
+        Check(now.x == cell.x && now.y == cell.y && now.width == cell.width
+                  && now.height == cell.height,
+              "④：第 2 帧的源矩形 == `CellRect(2)`（帧号→格号换算没被几何带偏）");
+
+        // ---- A13 保留（与 G-01 同一条决定）：外部变换与几何正交、在命中处复合 ----
+        InkingTransformSpec shift;
+        shift.translateX = 5.0f;
+        Check(sprite->SetDisplayTransform(shift),
+              "④：A13 仍可用（外部显示变换被接受）");
+        Check(sprite->HitTest(sprite->GetAbsX() + 10.0f, sprite->GetAbsY() + 10.0f),
+              "④：命中按「几何 + 外部变换」的合成结果判");
+        Check(sprite->GetDisplayTransformRejectedCount() == 0,
+              "④：动态精灵认外部变换（拒绝计数保持 0）");
+
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ---- ⑤ 绘制同源：同一格、同一位置，两档画出来的像素一致 ----
+    //
+    // 上面每一条都是"读状态"。动态档最容易的静默失效不在状态里，而在**画面**上：
+    // 节点在、`IsDynamic()` 真、命中查得到，就是不渲染（漏登记）。而"切格生效"
+    // 这件事同样只有像素能证明——`GetAppearance().srcRect` 对不对，与
+    // `PaintButtonAppearance` 有没有用它，是两件事。
+    //
+    // 所以这里摆两个场景，静态 / 动态各画一次第 2 格，逐像素对拍。
+    if (renderer != nullptr) {
+        int outputWidth = 0;
+        int outputHeight = 0;
+        SDL_GetRenderOutputSize(renderer, &outputWidth, &outputHeight);
+        const float pixelRatio =
+            outputWidth > 0
+                ? static_cast<float>(outputWidth)
+                    / static_cast<float>(InkingDesignWidth())
+                : 1.0f;
+        const SDL_Rect region{static_cast<int>(std::lround(200.0f * pixelRatio)),
+                              static_cast<int>(std::lround(100.0f * pixelRatio)),
+                              static_cast<int>(std::lround(40.0f * pixelRatio)),
+                              static_cast<int>(std::lround(40.0f * pixelRatio))};
+
+        const std::vector<std::uint8_t> atlas = MakeSheetBmp(160, 40, 40, 0);
+        const auto makeSheetData = [&atlas](const char* name) {
+            InkingSpriteData data;
+            data.name = name;
+            data.width = 40;
+            data.height = 40;
+            data.fps = 12.0;
+            data.autoplay = false;
+            data.selfAnchor = InkingChangeAnchor::LeftTop;
+            data.traceAnchor = InkingChangeAnchor::LeftTop;
+            data.offsetX = 200.0f;
+            data.offsetY = 100.0f;
+            data.normal.type = InkingAppearanceType::Image;
+            data.normal.source = std::string(name) + "_atlas";
+            data.normal.imageBytes = atlas.data();
+            data.normal.imageSize = atlas.size();
+            data.sheet.frameWidth = 40;
+            data.sheet.frameHeight = 40;
+            data.sheet.columns = 4;
+            data.sheet.rows = 1;
+            return data;
+        };
+
+        std::vector<std::uint32_t> fromDynamic;
+        {
+            InkingScene dynScene("g03_px_dyn");
+            InkingSceneLibrary::SetActiveScene(&dynScene);
+            auto* dyn = static_cast<InkingDynamicSprite*>(
+                dynScene.AddChild(std::make_unique<InkingDynamicSprite>(
+                    &dynScene, makeSheetData("g03_px_dyn_spr"))));
+            dyn->SeekToFrame(2);
+            dynScene.TickFrame(1.0f / 60.0f);
+            RenderSvgFrame(renderer, dynScene);
+            fromDynamic = ReadPixelRegion(renderer, region);
+            EndSvgFrame(renderer);
+        }
+        std::vector<std::uint32_t> fromStatic;
+        {
+            InkingScene statScene("g03_px_stat");
+            InkingSceneLibrary::SetActiveScene(&statScene);
+            auto* stat = static_cast<InkingSprite*>(
+                statScene.AddChild(std::make_unique<InkingSprite>(
+                    &statScene, makeSheetData("g03_px_stat_spr"))));
+            stat->SeekToFrame(2);
+            statScene.TickFrame(1.0f / 60.0f);
+            RenderSvgFrame(renderer, statScene);
+            fromStatic = ReadPixelRegion(renderer, region);
+            EndSvgFrame(renderer);
+        }
+        InkingSceneLibrary::SetActiveScene(nullptr);
+
+        int diff = -1;
+        if (!fromDynamic.empty() && fromDynamic.size() == fromStatic.size()) {
+            diff = 0;
+            for (std::size_t i = 0; i < fromDynamic.size(); ++i) {
+                if (fromDynamic[i] != fromStatic[i]) {
+                    ++diff;
+                }
+            }
+        }
+        // "差异 0"只在那一格**真的画了东西**时才有意义：两边都没画的话也是 0。
+        // 图集图案逐像素不同，所以"颜色种类 > 1"就是"画出来了"的判据。
+        int distinct = 0;
+        for (std::size_t i = 0; i < fromStatic.size(); ++i) {
+            bool seen = false;
+            for (std::size_t j = 0; j < i; ++j) {
+                if (fromStatic[j] == fromStatic[i]) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen) {
+                ++distinct;
+            }
+        }
+        std::printf("        第 2 格：动态 vs 静态 差异像素 %d / %zu（颜色 %d 种）\n",
+                    diff, fromStatic.size(), distinct);
+        Check(distinct > 1,
+              "⑤：那一格真的画了东西（不是两边都空，否则差异 0 没有意义）");
+        Check(diff == 0,
+              "⑤：动态精灵与静态精灵同一格逐像素一致（画出来了，且切格生效）");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// G-05：动态标签（文字与几何都能改，改尺寸的时机是**显式**的）
+// ---------------------------------------------------------------------------
+//
+// 这一组盯的三件事，静态版一条都答不了：
+//   ① `SetText` **不**隐式撑高（静态版会——它是复制时最容易被顺手带过来的一行）；
+//   ② 只有 `FitToContent()` 改几何，且写完与 `MeasureLayout()` 自洽；
+//   ③ 在布局容器里 `FitToContent()` **不生效，但要喊一声**（写了也会被覆盖）。
+//
+// 另加一条"进没进绘制列表"：动态档最容易的静默失效是**漏登记**——状态全对、
+// 就是不画。画文字那一笔与静态版逐字相同（同一个 `inking_detail::PaintText`），所以
+// 这里不做像素对拍，改用 `GetDrawItemCount()` 钉住"登记"这一步。
+void CheckDynamicLabel() {
+    std::printf("\n-- 动态标签（G-05） --\n");
+
+    // ---- ① / ② / ③ / ④：档位、不进表、SetText 不改几何、FitToContent 才改 ----
+    {
+        InkingScene scene("g05_dynlabel");
+        InkingSceneLibrary::SetActiveScene(&scene);
+
+        // 一个静态参照物：让表里真的有条目，"一条都没多"才有意义。
+        InkingAnchorData refData;
+        refData.width = 40;
+        refData.height = 40;
+        refData.offsetX = 20.0f;
+        refData.offsetY = 560.0f;
+        scene.AddChild(
+            std::make_unique<InkingStaticWidget>(&scene, refData));
+        const std::size_t entriesBefore = scene.GetHitTableEntryCount();
+        const std::size_t drawsBefore = scene.GetDrawItemCount();
+
+        InkingLabelData data;
+        data.name = "g05_dyn_label";
+        data.width = 200;   // 换行基准（不是"必须占 200"：见 ③ 之后那句）
+        data.height = 0;    // 内容驱动：高度由自测量补
+        data.offsetX = 40.0f;
+        data.offsetY = 80.0f;
+        data.selfAnchor = InkingChangeAnchor::LeftTop;
+        data.traceAnchor = InkingChangeAnchor::LeftTop;
+        data.text = "短";
+        data.style.fontSize = 20.0f;
+
+        auto* label = static_cast<InkingDynamicLabel*>(
+            scene.AddChild(std::make_unique<InkingDynamicLabel>(
+                &scene, data)));
+
+        Check(label->IsDynamic(), "①：新类是动态档（`IsDynamic()` 为真）");
+        Check(scene.GetHitTableEntryCount() == entriesBefore,
+              "①：动态标签**不进命中表**（条目数不变）");
+        Check(scene.GetHitTableHoleCount() == 1,
+              "①：它的占地记成**一个洞**（点落在洞里才会问动态层）");
+        Check(scene.GetDrawItemCount() == drawsBefore + 1,
+              "①：它进了绘制列表（漏登记就不会画——动态档最容易的静默失效）");
+        Check(label->GetWidth() == 200 && label->GetHeight() > 0,
+              "①：构造期补了自测量（`height:0` 的标签不会留在 0×0）");
+
+        // ---- ② SetText 不改几何（静态版会隐式撑高） ----
+        const int widthBefore = label->GetWidth();
+        const int heightBefore = label->GetHeight();
+        Check(label->SetText(
+                  "这是一段明显更长的文字，用来验证 SetText 不会隐式撑高"),
+              "②：`SetText()` 真的换了内容");
+        Check(label->GetHeight() == heightBefore,
+              "②：`SetText()` 之后高度**不变**（没有隐式撑高）");
+        Check(label->GetWidth() == widthBefore, "②：宽度也不变");
+
+        // ---- ③ FitToContent 才改尺寸，且改完与 MeasureLayout 自洽 ----
+        Check(label->FitToContent(), "③：`FitToContent()` 真的改了几何");
+        const InkingLayoutSize measured =
+            label->MeasureLayout(InkingLayoutConstraints{0.0f, 0.0f});
+        std::printf("         FitToContent → %d×%d；事后再量 → %.1f×%.1f\n",
+                    label->GetWidth(), label->GetHeight(), measured.width,
+                    measured.height);
+        Check(std::fabs(static_cast<float>(label->GetHeight()) - measured.height)
+                  <= 1.0f,
+              "③：写进去的高度 == `MeasureLayout().height`（±1：量到自洽才写）");
+        Check(std::fabs(static_cast<float>(label->GetWidth()) - measured.width)
+                  <= 1.0f,
+              "③：宽度也是内容宽（±1）");
+        Check(label->GetHeight() > heightBefore,
+              "③：长文本比短文本高（撑高真的发生了，不是量了个原地踏步）");
+        // 幂等：同样的内容再喊一次，几何没变 ⇒ false。
+        Check(!label->FitToContent(),
+              "③：再喊一次是幂等的（`Resize` 没变 ⇒ false，一个脏都不标）");
+
+        // ---- ④ Resize 之后排版按新宽度重排（`availableWidth` 进缓存键） ----
+        Check(label->Resize(300, 120), "④：`Resize(300, 120)` 改了");
+        const float wide = label->GetTextLayout().width;
+        Check(label->Resize(100, 120), "④：再 `Resize(100, 120)`");
+        const float narrow = label->GetTextLayout().width;
+        std::printf("         排版宽度：300 框 → %.1f；100 框 → %.1f\n", wide,
+                    narrow);
+        Check(narrow <= 100.5f,
+              "④：窄框里排版宽度不超过框（真的按 100 重排了）");
+        Check(narrow < wide,
+              "④：宽→窄之后排版宽度变了（`availableWidth` 进缓存键，不是吃老缓存）");
+
+        // ---- ⑤ 标签仍默认不参与命中；洞不改变遮挡策略；A13 保留 ----
+        Check(!label->HitTest(label->GetAbsX() + 5.0f, label->GetAbsY() + 5.0f),
+              "⑤：`HitTest` 恒 false（标签不吃点击，与静态版一致）");
+        Check(label->IsHitPassThrough(),
+              "⑤：策略是 PassThrough（看得见、点得穿）");
+        Check(scene.QueryHit(label->GetAbsX() + 5.0f, label->GetAbsY() + 5.0f)
+                      .target
+                  == nullptr,
+              "⑤：洞不挡事件（点落在标签上时静态表的答案原样保留）");
+        InkingTransformSpec shift;
+        shift.translateX = 5.0f;
+        Check(label->SetDisplayTransform(shift),
+              "⑤：A13 仍可用（外部显示变换被接受）");
+        Check(label->GetDisplayTransformRejectedCount() == 0,
+              "⑤：动态标签认外部变换（拒绝计数保持 0）");
+
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ---- ⑥ 布局容器内不生效：返回 false + 几何不动 + 一条 WARN ----
+    //
+    // 这是 G-05 唯一"写了等于没写"的坑：`ApplyLayoutRect` 会在下一次 `Relayout()`
+    // 时把 `_width/_height` 整体重写，所以自己量的尺寸活不过一帧。规矩是
+    // **宁可喊一声，也不要写一个下一帧就消失的尺寸**——三条断言各钉一角。
+    {
+        InkingScene scene("g05_dynlabel_layout");
+        InkingSceneLibrary::SetActiveScene(&scene);
+
+        InkingAnchorData columnData;
+        columnData.width = 400;
+        columnData.height = 300;
+        columnData.offsetX = 20.0f;
+        columnData.offsetY = 20.0f;
+        columnData.layout.kind = InkingLayoutKind::Stack;
+        columnData.layout.axis = InkingLayoutAxis::Vertical;
+        columnData.layout.gap = 4.0f;
+        auto* column = static_cast<InkingDynamicWidget*>(
+            scene.AddChild(std::make_unique<InkingDynamicWidget>(
+                &scene, columnData)));
+
+        InkingLabelData data;
+        data.name = "g05_in_layout";
+        data.text = "布局容器里的标签";
+        data.style.fontSize = 20.0f;
+        data.layoutItem.margin.left = 8.0f;
+        auto* inner = static_cast<InkingDynamicLabel*>(
+            column->AddChild(std::make_unique<InkingDynamicLabel>(
+                column, data)));
+
+        Check(inner->IsManagedByLayout(),
+              "⑥：它认得出自己被布局管着（父链上有有效 `InkingLayoutSpec`）");
+        const int widthBefore = inner->GetWidth();
+        const int heightBefore = inner->GetHeight();
+        std::printf("         布局给的尺寸 %d×%d\n", widthBefore, heightBefore);
+        Check(widthBefore > 0 && heightBefore > 0,
+              "⑥：布局先给了它一个尺寸（下面那条「不变」才有意义）");
+
+        InkLog::ResetStats();
+        Check(!inner->FitToContent(),
+              "⑥：`FitToContent()` 返回 false（不写一个下一帧就消失的尺寸）");
+        Check(inner->GetWidth() == widthBefore
+                  && inner->GetHeight() == heightBefore,
+              "⑥：几何一个字节都没动");
+        const std::vector<std::string> warns =
+            InkLog::grep("FitToContent", "InkingDynamicLabel");
+        Check(warns.size() == 1,
+              "⑥：日志里恰好一条 WARN（不静默——这条正是静默失效的形态）");
+
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// G-07：动态面板（几何可变 + 可滚动的容器）
+// ---------------------------------------------------------------------------
+//
+// 六条验收各钉一角，其中三条是"静态版答不了"的：
+//   ① 滚动条拖动是**自判**的（动态档收不到 `PushPointer*`，只有指针变化通知）；
+//   ② 与静态滚动容器**不串台**（同场景并存，一边拖另一边不动）；
+//   ③ 裁剪与命中同源（`Resize` 之后裁剪区跟着变；超出的子节点那一段点不到，
+//      而子节点自己的 `HitTest` 在那一点是 true —— 证明"是容器在剪"）；
+//   ④ 子树变换含滚动位移；
+//   ⑤ 包络调用计数（动态容器的包络是整棵子树并集，§2.1 第 3 条要求可观测）；
+//   ⑥ 编译期那条镜像断言在 `src/inking.cpp`，这里做运行期回声。
+//
+// **不做滚轮**：滚轮在动态档没有可靠的读取时机（见 `InkingDynamicPanel.h`
+// 顶上"关键决定二"），所以这一组里一条滚轮断言都不该有——顺手加回来会让
+// "丢了 / 滚双倍"这种偶发问题变成常态。
+void CheckDynamicPanel() {
+    std::printf("\n-- 动态面板（G-07） --\n");
+
+    InkingScene scene("g07_dynpanel");
+    InkingSceneLibrary::SetActiveScene(&scene);
+
+    // ---- 对照物：一个**静态**滚动容器（② 拿它验"不串台"） ----
+    InkingPanelData staticData;
+    staticData.name = "g07_static_scroll";
+    staticData.width = 200;
+    staticData.height = 200;
+    staticData.offsetX = 400.0f;
+    staticData.offsetY = 100.0f;
+    staticData.closed.color = 0xFF223344u;
+    staticData.scroll.enabled = true;
+    auto* staticPanel = static_cast<InkingStaticPanel*>(
+        scene.AddChild(std::make_unique<InkingStaticPanel>(
+            &scene, staticData)));
+    InkingAnchorData staticContentData;
+    staticContentData.width = 160;
+    staticContentData.height = 800;
+    staticPanel->AddChild(std::make_unique<InkingStaticWidget>(
+        staticPanel, staticContentData));
+    staticPanel->UpdateScrollRange();
+
+    // ---- 被测：动态面板（200×200，内容 160×300 ⇒ 竖直可滚 100px） ----
+    InkingPanelData data;
+    data.name = "g07_dyn_panel";
+    data.width = 200;
+    data.height = 200;
+    data.offsetX = 100.0f;
+    data.offsetY = 100.0f;
+    data.closed.color = 0xFF445566u;
+    data.clipChildren = true;  // ③ 要验"裁剪与命中同源"
+    data.scroll.enabled = true;
+    auto* panel = static_cast<InkingDynamicPanel*>(
+        scene.AddChild(std::make_unique<InkingDynamicPanel>(
+            &scene, data)));
+
+    Check(panel->IsDynamic(),
+          "⑥：新类是动态档（编译期镜像断言在 `src/inking.cpp`）");
+    Check(panel->OwnsSubtreeHit(),
+          "①：容器语义（子孙不进全局命中表，由 `HitTest` 递归解答）");
+
+    // 内容用一个**能命中**的子节点（静态按钮）：③ 要证明"子节点自己覆盖那一点、
+    // 但容器裁掉了它"。普通的 `InkingStaticWidget` 不参与命中（`HitTest` 恒 false），
+    // 用它就分不清"被剪掉了"和"本来就不占那儿"。
+    InkingButtonData contentData;
+    contentData.name = "g07_content";
+    contentData.width = 160;
+    contentData.height = 300;
+    contentData.normal =
+        InkingButtonAppearance(InkingAppearanceType::Color, 0xFF888888u);
+    auto* content = static_cast<InkingStaticButton*>(
+        panel->AddChild(std::make_unique<InkingStaticButton>(
+            panel, contentData)));
+    panel->UpdateScrollRange();
+    Check(panel->GetContentHeight() == 300.0f,
+          "①：内容高 300（`UpdateScrollRange` 显式量，框架不隐式扫描）");
+    Check(panel->GetScrollRangeY() == 100.0f,
+          "①：可滚范围 = 300 − 200 = 100");
+
+    // ---- ① 滚动条拖动：按在滑块上 + 拖 40px + 抬起 ----
+    //
+    // 动态档收不到 `PushPointer*`，全部判定都在 `onPointerStateChanged` 里，
+    // 所以这里必须走**真路径**（喂指针状态 + `DispatchPointer`），
+    // 而不是直接调 `PressScrollAt` —— 直接调只能证明算术对，证明不了"入口接上了"。
+    const InkingScrollBarMetrics bar = panel->GetBarMetrics(true);
+    Check(bar.visible, "①：竖直条可见（内容 300 > 视口 200）");
+    const float thumbCenterX = bar.thumbX + bar.thumbWidth * 0.5f;
+    const float thumbCenterY = bar.thumbY + bar.thumbHeight * 0.5f;
+    const float pressX = panel->GetAbsX() + thumbCenterX;
+    const float pressY = panel->GetAbsY() + thumbCenterY;
+    Check(panel->HitTest(pressX, pressY),
+          "①：按点落在面板上（捕获的前提：`HitTest` 在按下那一刻为真）");
+
+    scene.SetPointerState(pressX, pressY, true, true);
+    scene.DispatchPointer();
+    Check(panel->DraggingAxis() == 1,
+          "①：按在滑块上就进入**竖直**拖动（`onPointerStateChanged` 自判）");
+
+    scene.SetPointerState(pressX, pressY + 40.0f, true, true);
+    scene.DispatchPointer();
+    // 拖动是"滑块中心对到指针上"，所以滚动量按**条几何**换算：
+    //   40px × range / (轨道长 − 滑块长)。range 100、行程 192−128=64 ⇒ 62.5。
+    const float travel = bar.trackHeight - bar.thumbHeight;
+    const float expected = travel > 0.0f
+                               ? std::min(40.0f * panel->GetScrollRangeY() / travel,
+                                          panel->GetScrollRangeY())
+                               : 0.0f;
+    std::printf("         拖 40px → GetScrollY()=%.1f（按条几何换算应为 %.1f）\n",
+                panel->GetScrollY(), expected);
+    Check(std::fabs(panel->GetScrollY() - expected) < 0.5f,
+          "①：滚动量按 `InkingPanelData::scroll` 的换算变化（滑块中心跟手）");
+
+    // ---- ② 不与静态滚动容器串台 ----
+    Check(staticPanel->GetScrollY() == 0.0f,
+          "②：同场景的静态滚动容器没有跟着动（推通道 / 拉通道各管各的）");
+
+    scene.SetPointerState(pressX, pressY + 40.0f, false, true);
+    scene.DispatchPointer();
+    Check(panel->DraggingAxis() == 0, "①：抬手后不再跟随（捕获释放）");
+    const float settled = panel->GetScrollY();
+    scene.SetPointerState(pressX, pressY + 120.0f, false, true);
+    scene.DispatchPointer();
+    Check(panel->GetScrollY() == settled,
+          "①：松手之后再动指针，滚动量一个字节都不变");
+
+    // ---- ④ 子树变换含滚动位移 ----
+    panel->SetScroll(0.0f, 60.0f);
+    const InkingTransformSpec subtree = panel->GetSubtreeTransform();
+    std::printf("         滚动 60 → 子树变换 translateY=%.1f\n",
+                subtree.translateY);
+    Check(std::fabs(subtree.translateY + panel->GetScrollY()) < 0.001f,
+          "④：`GetSubtreeTransform().translateY == -GetScrollY()`");
+    Check(std::fabs(panel->GetClipTransform().translateY) < 0.001f,
+          "④：裁剪变换**不含**滚动位移（否则滚出去的内容还看得见）");
+
+    // ---- ③ Resize 之后裁剪区跟着变；超出的子节点那一段点不到 ----
+    const InkingShapeBounds clipBefore = panel->GetSubtreeClipBounds();
+    Check(panel->Resize(300, 200), "③：`Resize(300, 200)` 改了绘制尺寸");
+    const InkingShapeBounds clipAfter = panel->GetSubtreeClipBounds();
+    std::printf("         裁剪区：%0.0f×%0.0f → %0.0f×%0.0f\n",
+                clipBefore.width, clipBefore.height, clipAfter.width,
+                clipAfter.height);
+    Check(clipAfter.width > clipBefore.width,
+          "③：裁剪区跟着 `Resize` 变宽（内容视口 = 本体扣掉条带）");
+    Check(std::fabs(clipAfter.width - (300.0f - 16.0f)) < 0.5f,
+          "③：裁剪区宽度 = 300 − 条带 16（`barInset × 2 + barWidth`）");
+
+    // 取子节点**自己的**世界坐标往下 280px 那一点：它在子节点本体里（300 高），
+    // 但已经越过面板 200 高的裁剪区（此刻滚动 60，子节点整体在面板上方 60）。
+    // 用它而不是"面板绝对位置 + 250"，正是因为**滚动位移真实存在**——
+    // 按面板坐标硬算会落到子节点之外，那就分不清"被剪"和"没占住"了。
+    // 注意 `GetAbsX/Y` 是**布局**位置，不含子树变换里的滚动位移——所以世界坐标
+    // 要自己减一次滚动量（少减这一下正是"画在这儿、点在那儿"的经典成因）。
+    const float overX = content->GetAbsX() - panel->GetScrollX() + 80.0f;
+    const float overY = content->GetAbsY() - panel->GetScrollY() + 280.0f;
+    Check(content->HitTest(overX, overY),
+          "③：子节点自己的几何覆盖这一点（它确实溢出了本体）");
+    Check(!panel->HitTest(overX, overY),
+          "③：超出本体那一段在容器上点不到（裁剪与命中同源）");
+    Check(panel->HitTestNode(overX, overY) == nullptr,
+          "③：深挖子树也拿不到它（`HitTestNode` 的裁剪那条先拦住）");
+    Check(panel->HitTest(panel->GetAbsX() + 80.0f, panel->GetAbsY() + 150.0f),
+          "③：本体之内的点照常命中（裁剪只剪超出的那一段）");
+    Check(panel->HitTestNode(panel->GetAbsX() + 80.0f,
+                             panel->GetAbsY() + 150.0f) == content,
+          "③：深挖拿到的是那个子节点（子树优先，容器语义）");
+
+    // ---- ⑤ 包络成本有观测口：一帧内不超过 1 次/节点 ----
+    //
+    // 用一次**真实的几何移动**（实体层每帧走位就是这条）来制造"洞要刷"的脏——
+    // 不能用 `SetScroll`：本类的洞按滚动范围扩过，与滚动量无关（见
+    // `InkingDynamicPanel.cpp` 的 `SetScroll`），它**不该**触发包络重算。
+    panel->ChangeOffset(panel->GetOffsetX() + 5.0f, panel->GetOffsetY());
+    panel->ResetHitEnvelopeCallCount();
+    scene.TickFrame(1.0f / 60.0f);
+    scene.QueryHit(panel->GetAbsX() + 10.0f, panel->GetAbsY() + 10.0f);
+    const std::uint64_t once = panel->GetHitEnvelopeCallCount();
+    scene.QueryHit(panel->GetAbsX() + 20.0f, panel->GetAbsY() + 20.0f);
+    std::printf("         一帧内包络调用：%llu（再查一次仍为 %llu）\n",
+                static_cast<unsigned long long>(once),
+                static_cast<unsigned long long>(
+                    panel->GetHitEnvelopeCallCount()));
+    Check(once == 1,
+          "⑤：这一帧算了一次包络（动态容器的包络 = 整棵子树并集，要能被数出来）");
+    Check(panel->GetHitEnvelopeCallCount() == once,
+          "⑤：同一帧再查不重复算（洞刷一次就够）");
+
+    // ---- 开合与静态版同一份 `InkingPanelLook`（借这里的场景顺手验一条） ----
+    Check(panel->SetOpen(true), "开合：`SetOpen(true)` 真的改了状态");
+    // 注意读 `panel->GetData()` 而不是本地那份 `data`：`Normalize()` 在组件里做，
+    // 省略的 `open` 段由它继承 `closed`（本地那份还没继承）。
+    Check(panel->IsOpen()
+              && panel->GetAppearance().color == panel->GetData().open.color,
+          "开合：目标态与外观取的是 `open` 那一份");
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -6942,7 +7628,7 @@ void CheckSpriteGroup() {
     std::printf("\n-- 动画组 InkingSpriteGroup（0.6.6 T-18） --\n");
 
     const auto makeGroup = []() {
-        inking::SpriteGroupData group;
+        InkingSpriteGroupData group;
         struct Spec {
             const char* name;
             int frames;
@@ -6955,8 +7641,8 @@ void CheckSpriteGroup() {
                                {"run", 6, 16.0, true, 48, 56},
                                {"attack", 8, 10.0, false, 56, 48}};
         for (const Spec& spec : specs) {
-            inking::SpriteData data =
-                MakeSpriteData(spec.name, spec.frames, spec.fps, spec.loop);
+            InkingSpriteData data =
+                InkingMakeSpriteData(spec.name, spec.frames, spec.fps, spec.loop);
             data.width = spec.width;
             data.height = spec.height;
             group.animations.emplace_back(spec.name, data);
@@ -6966,30 +7652,30 @@ void CheckSpriteGroup() {
 
     // ① 数据层：查找 / 重名 / 空表
     {
-        const inking::SpriteGroupData group = makeGroup();
+        const InkingSpriteGroupData group = makeGroup();
         Check(group.Validate().empty(), "T-18：合法的动作表通过 Validate");
         Check(group.FindIndex("run") == 1
-                  && group.FindIndex("nope") == inking::SpriteGroupData::kNotFound,
+                  && group.FindIndex("nope") == InkingSpriteGroupData::kNotFound,
               "T-18：FindIndex 按名字找、找不到给 kNotFound");
 
-        inking::SpriteGroupData duplicated = group;
+        InkingSpriteGroupData duplicated = group;
         duplicated.animations[2].first = "idle";
         std::printf("         重名：%s\n", duplicated.Validate().c_str());
         Check(!duplicated.Validate().empty(),
               "T-18：重名动作在 Validate 里报错");
 
-        inking::SpriteGroupData empty;
+        InkingSpriteGroupData empty;
         Check(!empty.Validate().empty(), "T-18：空动作表报错");
     }
 
-    inking::InkingScene scene("sprite_group");
-    inking::SceneLibrary::SetActiveScene(&scene);
+    InkingScene scene("sprite_group");
+    InkingSceneLibrary::SetActiveScene(&scene);
 
     // ② 构造 + 切换
     {
-        inking::InkLog::ResetStats();
-        auto* group = static_cast<inking::InkingSpriteGroup*>(scene.AddChild(
-            std::make_unique<inking::InkingSpriteGroup>(&scene, makeGroup(), "run")));
+        InkLog::ResetStats();
+        auto* group = static_cast<InkingSpriteGroup*>(scene.AddChild(
+            std::make_unique<InkingSpriteGroup>(&scene, makeGroup(), "run")));
 
         int changes = 0;
         std::string lastNew;
@@ -7036,13 +7722,13 @@ void CheckSpriteGroup() {
               "T-18：切到当前动作是空操作（不重建、不发事件）");
 
         // 不存在的名字：false + 恰好一条 ERROR + 停在原动作
-        inking::InkLog::ResetStats();
+        InkLog::ResetStats();
         Check(!group->SwitchTo("nope"),
               "T-18：SwitchTo 不存在的动作返回 false");
         std::printf("         切到 nope：错误=%s（当前仍是 %s）\n",
                     group->IsValid() ? "无" : "见日志",
                     group->GetCurrentAnimation().c_str());
-        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+        Check(InkLog::CountOf(InkingLogLevel::Error) == 1,
               "T-18：恰好一条 ERROR（不静默停在旧动作）");
         Check(group->GetCurrentAnimation() == "attack" && changes == 2,
               "T-18：切换失败后动作与事件计数都不变");
@@ -7072,19 +7758,19 @@ void CheckSpriteGroup() {
 
     // ③ 初始名字写错：退回第 0 个 + 一条 ERROR（不是空白）
     {
-        inking::InkLog::ResetStats();
-        auto* group = static_cast<inking::InkingSpriteGroup*>(scene.AddChild(
-            std::make_unique<inking::InkingSpriteGroup>(&scene, makeGroup(),
+        InkLog::ResetStats();
+        auto* group = static_cast<InkingSpriteGroup*>(scene.AddChild(
+            std::make_unique<InkingSpriteGroup>(&scene, makeGroup(),
                                                         "typo")));
         std::printf("         初始名写错：动作=%s 帧数=%zu\n",
                     group->GetCurrentAnimation().c_str(), group->GetFrameCount());
         Check(group->GetCurrentAnimation() == "idle" && group->GetFrameCount() == 4,
               "T-18：初始名字不存在时退回第 0 个动作");
-        Check(inking::InkLog::CountOf(inking::LogLevel::Error) == 1,
+        Check(InkLog::CountOf(InkingLogLevel::Error) == 1,
               "T-18：退回的同时有一条 ERROR（不是静默播错动作）");
     }
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -7112,8 +7798,8 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
         std::uint64_t draws = 0;
     };
     const auto snapshot = []() {
-        const inking::detail::BatchStats stats =
-            inking::detail::BatchStatsSnapshot();
+        const inking_detail::BatchStats stats =
+            inking_detail::BatchStatsSnapshot();
         return Counts{stats.geometrySubmissions, stats.textureSubmissions,
                       stats.textureDraws};
     };
@@ -7122,20 +7808,20 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
     constexpr int kSpriteCount = 50;
 
     const auto buildScene = [&](const char* sceneName) {
-        auto scene = std::make_unique<inking::InkingScene>(sceneName);
+        auto scene = std::make_unique<InkingScene>(sceneName);
         for (int i = 0; i < kSpriteCount; ++i) {
-            inking::SpriteData data;
+            InkingSpriteData data;
             data.name = std::string(sceneName) + "_" + std::to_string(i);
             data.width = 40;
             data.height = 40;
             data.fps = 12.0;
             data.autoplay = false;  // 停在第 0 格：像素才可比
-            data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-            data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.selfAnchor = InkingChangeAnchor::LeftTop;
+            data.traceAnchor = InkingChangeAnchor::LeftTop;
             // 10×5 的网格，格距 44 设计像素。
             data.offsetX = 20.0f + static_cast<float>(i % 10) * 44.0f;
             data.offsetY = 20.0f + static_cast<float>(i / 10) * 44.0f;
-            data.normal.type = inking::AppearanceType::Image;
+            data.normal.type = InkingAppearanceType::Image;
             data.normal.source = "batch_atlas";  // 同一个键 ⇒ 同一张纹理
             data.normal.imageBytes = atlas.data();
             data.normal.imageSize = atlas.size();
@@ -7144,7 +7830,7 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
             data.sheet.columns = 4;
             data.sheet.rows = 1;
             scene->AddChild(
-                std::make_unique<inking::InkingSprite>(scene.get(), data));
+                std::make_unique<InkingSprite>(scene.get(), data));
         }
         return scene;
     };
@@ -7156,7 +7842,7 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
     const float pixelRatio =
         outputWidth > 0
             ? static_cast<float>(outputWidth)
-                / static_cast<float>(inking::DesignWidth())
+                / static_cast<float>(InkingDesignWidth())
             : 1.0f;
     const SDL_Rect region{
         static_cast<int>(std::lround(20.0f * pixelRatio)),
@@ -7174,8 +7860,8 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
     Counts onDelta{};
     Counts offDelta{};
     {
-        std::unique_ptr<inking::InkingScene> scene = buildScene("sprite_batch_on");
-        inking::SceneLibrary::SetActiveScene(scene.get());
+        std::unique_ptr<InkingScene> scene = buildScene("sprite_batch_on");
+        InkingSceneLibrary::SetActiveScene(scene.get());
         scene->TickFrame(1.0f / 60.0f);
 
         const Counts before = snapshot();
@@ -7189,18 +7875,18 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
                          after.draws - before.draws};
     }
     {
-        std::unique_ptr<inking::InkingScene> scene = buildScene("sprite_batch_off");
-        inking::SceneLibrary::SetActiveScene(scene.get());
+        std::unique_ptr<InkingScene> scene = buildScene("sprite_batch_off");
+        InkingSceneLibrary::SetActiveScene(scene.get());
         scene->TickFrame(1.0f / 60.0f);
 
-        inking::detail::SetImageBatchingEnabled(false);
+        inking_detail::SetImageBatchingEnabled(false);
         const Counts before = snapshot();
         RenderSvgFrame(renderer, *scene);
         const Counts after = snapshot();
         immediate = ReadPixelRegion(renderer, region);
         immediateInterior = ReadPixelRegion(renderer, interior);
         EndSvgFrame(renderer);
-        inking::detail::SetImageBatchingEnabled(true);  // 立刻恢复默认
+        inking_detail::SetImageBatchingEnabled(true);  // 立刻恢复默认
         offDelta = Counts{after.geometry - before.geometry,
                           after.texture - before.texture,
                           after.draws - before.draws};
@@ -7302,43 +7988,43 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
             }
         }
         const auto buildSolid = [&](const char* sceneName) {
-            auto scene = std::make_unique<inking::InkingScene>(sceneName);
-            inking::ImageData data;
+            auto scene = std::make_unique<InkingScene>(sceneName);
+            InkingImageData data;
             data.name = std::string(sceneName);
             data.width = kSide;
             data.height = kSide;
-            data.normal.type = inking::AppearanceType::Image;
+            data.normal.type = InkingAppearanceType::Image;
             data.normal.source = std::string(sceneName) + "_bytes";
             data.normal.imageBytes = solid.data();
             data.normal.imageSize = solid.size();
-            data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-            data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.selfAnchor = InkingChangeAnchor::LeftTop;
+            data.traceAnchor = InkingChangeAnchor::LeftTop;
             data.offsetX = 20.0f;
             data.offsetY = 20.0f;
             scene->AddChild(
-                std::make_unique<inking::InkingStaticImage>(scene.get(), data));
+                std::make_unique<InkingStaticImage>(scene.get(), data));
             return scene;
         };
         const SDL_Rect inner{region.x + 2, region.y + 2, 16, 16};
         std::vector<std::uint32_t> batchedSolid;
         std::vector<std::uint32_t> immediateSolid;
         {
-            std::unique_ptr<inking::InkingScene> scene = buildSolid("img_batch_solid_on");
-            inking::SceneLibrary::SetActiveScene(scene.get());
+            std::unique_ptr<InkingScene> scene = buildSolid("img_batch_solid_on");
+            InkingSceneLibrary::SetActiveScene(scene.get());
             scene->TickFrame(1.0f / 60.0f);
             RenderSvgFrame(renderer, *scene);
             batchedSolid = ReadPixelRegion(renderer, inner);
             EndSvgFrame(renderer);
         }
         {
-            std::unique_ptr<inking::InkingScene> scene = buildSolid("img_batch_solid_off");
-            inking::SceneLibrary::SetActiveScene(scene.get());
+            std::unique_ptr<InkingScene> scene = buildSolid("img_batch_solid_off");
+            InkingSceneLibrary::SetActiveScene(scene.get());
             scene->TickFrame(1.0f / 60.0f);
-            inking::detail::SetImageBatchingEnabled(false);
+            inking_detail::SetImageBatchingEnabled(false);
             RenderSvgFrame(renderer, *scene);
             immediateSolid = ReadPixelRegion(renderer, inner);
             EndSvgFrame(renderer);
-            inking::detail::SetImageBatchingEnabled(true);
+            inking_detail::SetImageBatchingEnabled(true);
         }
         const int solidDiff = diffCount(batchedSolid, immediateSolid);
         std::printf("         纯色图 并批 vs 单笔：内部差异 %d / %zu\n", solidDiff,
@@ -7354,39 +8040,39 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
             "<rect x=\"0\" y=\"0\" width=\"20\" height=\"40\" fill=\"#CC3333\"/>"
             "</svg>";
         const auto buildSvg = [&](const char* sceneName) {
-            auto scene = std::make_unique<inking::InkingScene>(sceneName);
-            inking::ImageData data;
+            auto scene = std::make_unique<InkingScene>(sceneName);
+            InkingImageData data;
             data.name = std::string(sceneName);
             data.width = 40;
             data.height = 40;
-            data.normal.type = inking::AppearanceType::Image;
+            data.normal.type = InkingAppearanceType::Image;
             data.normal.source = std::string(sceneName) + "_svg";
             data.normal.imageBytes = SvgBytes(kHalfTransparent);
             data.normal.imageSize = std::strlen(kHalfTransparent);
-            data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-            data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.selfAnchor = InkingChangeAnchor::LeftTop;
+            data.traceAnchor = InkingChangeAnchor::LeftTop;
             data.offsetX = 20.0f;
             data.offsetY = 20.0f;
             scene->AddChild(
-                std::make_unique<inking::InkingStaticImage>(scene.get(), data));
+                std::make_unique<InkingStaticImage>(scene.get(), data));
             return scene;
         };
         // 背景用 0x4E4C71（T-07 探针里的同一个值），透明区读回它才算对。
-        const auto renderOnLightBackground = [&](inking::InkingScene& scene) {
-            inking::SceneLibrary::SetActiveScene(&scene);
-            SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
-                                             inking::DesignHeight(),
+        const auto renderOnLightBackground = [&](InkingScene& scene) {
+            InkingSceneLibrary::SetActiveScene(&scene);
+            SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                             InkingDesignHeight(),
                                              SDL_LOGICAL_PRESENTATION_LETTERBOX);
             SDL_SetRenderDrawColor(renderer, 0x4E, 0x4C, 0x71, 255);
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
             SDL_RenderClear(renderer);
-            return inking::SceneLibrary::RenderScene(renderer);
+            return InkingSceneLibrary::RenderScene(renderer);
         };
         std::vector<std::uint32_t> shot;
         {
-            std::unique_ptr<inking::InkingScene> scene =
+            std::unique_ptr<InkingScene> scene =
                 buildSvg("img_batch_alpha");
-            inking::SceneLibrary::SetActiveScene(scene.get());
+            InkingSceneLibrary::SetActiveScene(scene.get());
             scene->TickFrame(1.0f / 60.0f);
             renderOnLightBackground(*scene);
             // 右半（设计 30..50 ⇒ 设备 15..25）在图里是**透明的**。
@@ -7405,21 +8091,21 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
     {
         const std::vector<std::uint8_t> wide = MakeSheetBmp(80, 20, 80, 0);
         const auto buildRotated = [&](const char* sceneName) {
-            auto scene = std::make_unique<inking::InkingScene>(sceneName);
-            inking::ImageData data;
+            auto scene = std::make_unique<InkingScene>(sceneName);
+            InkingImageData data;
             data.name = std::string(sceneName) + "_img";
             data.width = 80;
             data.height = 20;
-            data.normal.type = inking::AppearanceType::Image;
+            data.normal.type = InkingAppearanceType::Image;
             data.normal.source = std::string(sceneName) + "_wide";
             data.normal.imageBytes = wide.data();
             data.normal.imageSize = wide.size();
             data.normal.transform.rotate = 90.0f;  // 度，顺时针
-            data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-            data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+            data.selfAnchor = InkingChangeAnchor::LeftTop;
+            data.traceAnchor = InkingChangeAnchor::LeftTop;
             data.offsetX = 100.0f;
             data.offsetY = 100.0f;
-            scene->AddChild(std::make_unique<inking::InkingStaticImage>(
+            scene->AddChild(std::make_unique<InkingStaticImage>(
                 scene.get(), data));
             return scene;
         };
@@ -7431,24 +8117,24 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
         std::vector<std::uint32_t> rotated;
         std::vector<std::uint32_t> unbatched;
         {
-            std::unique_ptr<inking::InkingScene> scene =
+            std::unique_ptr<InkingScene> scene =
                 buildRotated("sprite_batch_rot_on");
-            inking::SceneLibrary::SetActiveScene(scene.get());
+            InkingSceneLibrary::SetActiveScene(scene.get());
             scene->TickFrame(1.0f / 60.0f);
             RenderSvgFrame(renderer, *scene);
             rotated = ReadPixelRegion(renderer, probe);
             EndSvgFrame(renderer);
         }
         {
-            std::unique_ptr<inking::InkingScene> scene =
+            std::unique_ptr<InkingScene> scene =
                 buildRotated("sprite_batch_rot_off");
-            inking::SceneLibrary::SetActiveScene(scene.get());
+            InkingSceneLibrary::SetActiveScene(scene.get());
             scene->TickFrame(1.0f / 60.0f);
-            inking::detail::SetImageBatchingEnabled(false);
+            inking_detail::SetImageBatchingEnabled(false);
             RenderSvgFrame(renderer, *scene);
             unbatched = ReadPixelRegion(renderer, probe);
             EndSvgFrame(renderer);
-            inking::detail::SetImageBatchingEnabled(true);
+            inking_detail::SetImageBatchingEnabled(true);
         }
         const std::uint32_t onPixel = rotated.empty() ? 0u : rotated[0];
         const std::uint32_t offPixel = unbatched.empty() ? 0u : unbatched[0];
@@ -7478,10 +8164,10 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
 
     // 造一份带事件的 4 帧配置（第 0 / 1 / 3 帧各挂一个）。
     const auto makeData = [](const char* name, bool loop) {
-        inking::SpriteData data = MakeSpriteData(name, 4, 12.0, loop);
-        data.events.push_back(inking::SpriteData::SpriteEvent{0, "zero"});
-        data.events.push_back(inking::SpriteData::SpriteEvent{1, "one"});
-        data.events.push_back(inking::SpriteData::SpriteEvent{3, "three"});
+        InkingSpriteData data = InkingMakeSpriteData(name, 4, 12.0, loop);
+        data.events.push_back(InkingSpriteData::SpriteEvent{0, "zero"});
+        data.events.push_back(InkingSpriteData::SpriteEvent{1, "one"});
+        data.events.push_back(InkingSpriteData::SpriteEvent{3, "three"});
         return data;
     };
     const auto names = [](const std::vector<std::string>& log) {
@@ -7494,7 +8180,7 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
         }
         return out;
     };
-    const auto subscribe = [](inking::InkingSprite* sprite,
+    const auto subscribe = [](InkingSprite* sprite,
                               std::vector<std::string>* log) {
         sprite->frameEvent.Subscribe(
             [log](const std::string& name, std::size_t frame) {
@@ -7504,10 +8190,10 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
 
     // ① 正常播放：逐帧按顺序各发一次，播满一圈回绕时第 0 帧的事件也发
     {
-        inking::InkingScene scene("sprite_events_play");
-        inking::SceneLibrary::SetActiveScene(&scene);
-        auto* sprite = static_cast<inking::InkingSprite*>(
-            scene.AddChild(std::make_unique<inking::InkingSprite>(
+        InkingScene scene("sprite_events_play");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        auto* sprite = static_cast<InkingSprite*>(
+            scene.AddChild(std::make_unique<InkingSprite>(
                 &scene, makeData("spr_evt_play", true))));
         std::vector<std::string> log;
         subscribe(sprite, &log);
@@ -7530,10 +8216,10 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
 
     // ② 慢帧跨 3 帧：中间的 1、3 两个事件都不许吞
     {
-        inking::InkingScene scene("sprite_events_slow");
-        inking::SceneLibrary::SetActiveScene(&scene);
-        auto* sprite = static_cast<inking::InkingSprite*>(
-            scene.AddChild(std::make_unique<inking::InkingSprite>(
+        InkingScene scene("sprite_events_slow");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        auto* sprite = static_cast<InkingSprite*>(
+            scene.AddChild(std::make_unique<InkingSprite>(
                 &scene, makeData("spr_evt_slow", true))));
         std::vector<std::string> log;
         subscribe(sprite, &log);
@@ -7548,10 +8234,10 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
 
     // ③ Seek / Stop 不发事件（"跳过去"不是"播过去"）
     {
-        inking::InkingScene scene("sprite_events_seek");
-        inking::SceneLibrary::SetActiveScene(&scene);
-        auto* sprite = static_cast<inking::InkingSprite*>(
-            scene.AddChild(std::make_unique<inking::InkingSprite>(
+        InkingScene scene("sprite_events_seek");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        auto* sprite = static_cast<InkingSprite*>(
+            scene.AddChild(std::make_unique<InkingSprite>(
                 &scene, makeData("spr_evt_seek", true))));
         std::vector<std::string> log;
         subscribe(sprite, &log);
@@ -7565,10 +8251,10 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
 
     // ④ 非循环：finished 恰好一次；Play() 再来一遍才发第二次
     {
-        inking::InkingScene scene("sprite_events_finished");
-        inking::SceneLibrary::SetActiveScene(&scene);
-        auto* sprite = static_cast<inking::InkingSprite*>(
-            scene.AddChild(std::make_unique<inking::InkingSprite>(
+        InkingScene scene("sprite_events_finished");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        auto* sprite = static_cast<InkingSprite*>(
+            scene.AddChild(std::make_unique<InkingSprite>(
                 &scene, makeData("spr_evt_once", false))));
         int finishedCount = 0;
         bool finishedSawPlaying = true;
@@ -7594,10 +8280,10 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
         Check(finishedCount == 2, "T-09：Play() 之后能再播一遍并再发一次 finished");
 
         // 循环动画永远不发 finished
-        inking::InkingScene loopScene("sprite_events_loop");
-        inking::SceneLibrary::SetActiveScene(&loopScene);
-        auto* loopSprite = static_cast<inking::InkingSprite*>(
-            loopScene.AddChild(std::make_unique<inking::InkingSprite>(
+        InkingScene loopScene("sprite_events_loop");
+        InkingSceneLibrary::SetActiveScene(&loopScene);
+        auto* loopSprite = static_cast<InkingSprite*>(
+            loopScene.AddChild(std::make_unique<InkingSprite>(
                 &loopScene, makeData("spr_evt_loop", true))));
         int loopFinished = 0;
         loopSprite->finished.Subscribe([&loopFinished] { ++loopFinished; });
@@ -7609,14 +8295,14 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
 
     // ⑤ 事件帧越界：配置不合法，构造期就报（与运行期同一份 Validate()）
     {
-        inking::InkingScene scene("sprite_events_bad");
-        inking::SceneLibrary::SetActiveScene(&scene);
-        inking::SpriteData data = makeData("spr_evt_bad", true);
-        data.events.push_back(inking::SpriteData::SpriteEvent{9, "nowhere"});
+        InkingScene scene("sprite_events_bad");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        InkingSpriteData data = makeData("spr_evt_bad", true);
+        data.events.push_back(InkingSpriteData::SpriteEvent{9, "nowhere"});
 
-        inking::InkLog::ResetStats();
-        auto* sprite = static_cast<inking::InkingSprite*>(
-            scene.AddChild(std::make_unique<inking::InkingSprite>(&scene, data)));
+        InkLog::ResetStats();
+        auto* sprite = static_cast<InkingSprite*>(
+            scene.AddChild(std::make_unique<InkingSprite>(&scene, data)));
         std::printf("         事件指向第 9 帧（只有 4 帧）→ IsValid=%d\n%s\n",
                     sprite->IsValid() ? 1 : 0,
                     sprite->GetConfigError().c_str());
@@ -7624,7 +8310,7 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
                   && sprite->GetConfigError().find("只有 4 帧")
                          != std::string::npos,
               "T-09：事件帧越界在构造期被拦下（不是播到那儿才发现）");
-        Check(inking::InkLog::CountOf(inking::LogLevel::Error) >= 1,
+        Check(InkLog::CountOf(InkingLogLevel::Error) >= 1,
               "T-09：越界事件同时有一条 ERROR");
     }
 }
@@ -7653,9 +8339,9 @@ int main() {
     // 阶段单独打出来（`0.4.0` + `release`）：当前是哪个阶段要在运行期看得见，
     // 不能只写在 README 里（别人抓到一份日志时，第一行就该知道它是什么版本）。
     std::printf("   版本 %s-%s / SDL3 %s / 消息队列编译期%s\n",
-                inking::kVersion, inking::kVersionStage,
-                inking::sdl3_version().c_str(),
-                inking::kMessageEnabled ? "开" : "关");
+                InkingVersion, InkingVersionStage,
+                InkingSdl3_version().c_str(),
+                InkingMessageEnabled ? "开" : "关");
     // 日志要自证**跑了哪一个后端**：同一份"失败项：0"在两种后端下含义不同。
     std::printf("   视频驱动 = %s（环境变量 INKING_SELFTEST_DRIVER 可改）\n",
                 videoDriver.c_str());
@@ -7664,7 +8350,7 @@ int main() {
     CheckDesignSizeDefault();
 
     TestScene scene;
-    Check(scene.IsRegistered(), "场景「构造即登记」进 SceneLibrary");
+    Check(scene.IsRegistered(), "场景「构造即登记」进 InkingSceneLibrary");
     Check(scene.GetDrawItemCount() >= 2, "绘制列表里有两个组件");
     CheckDesignSizeLocked();  // 场景已按设计尺寸定型 → 之后不许再改
 
@@ -7696,8 +8382,8 @@ int main() {
           (std::string("创建渲染器（") + videoDriver + "）").c_str());
 
     scene.TickFrame(1.0f / 60.0f);
-    inking::SceneLibrary::SetActiveScene(&scene);
-    Check(inking::SceneLibrary::RenderScene(rnd),
+    InkingSceneLibrary::SetActiveScene(&scene);
+    Check(InkingSceneLibrary::RenderScene(rnd),
           "RenderScene 走通（渲染提交成功）");
     Check(scene.GetHitTableEntryCount() > 0,
           "静态组件进了命中表（动态组件不进）");
@@ -7706,18 +8392,18 @@ int main() {
     // ---- 静态按钮：三态 + 点击（场景推过来） ----
     scene.SetPointerState(640.0f, 360.0f, false, true);
     scene.DispatchPointer();
-    Check(scene.button->GetState() == inking::ButtonState::Hover,
+    Check(scene.button->GetState() == InkingButtonState::Hover,
           "指针移入 → 悬停态");
 
     scene.SetPointerState(640.0f, 360.0f, true, true);
     scene.DispatchPointer();
-    Check(scene.button->GetState() == inking::ButtonState::Pressed,
+    Check(scene.button->GetState() == InkingButtonState::Pressed,
           "按下 → 按下态");
 
     scene.SetPointerState(640.0f, 360.0f, false, true);
     scene.DispatchPointer();
     Check(scene.clicked, "抬起 → 点击回调真的被触发");
-    Check(scene.button->GetState() == inking::ButtonState::Hover,
+    Check(scene.button->GetState() == InkingButtonState::Hover,
           "抬起后回到悬停态");
 
     // ---- 动态按钮：Tick 派发 + 几何写入 ----
@@ -7726,10 +8412,10 @@ int main() {
     const float afterX = scene.mover->GetX();
     Check(afterX > beforeX + 0.5f,
           "动态组件的 onTick 被派发且几何真的改了（ChangeOffset 生效）");
-    Check(inking::SceneLibrary::RenderScene(rnd),
+    Check(InkingSceneLibrary::RenderScene(rnd),
           "动态几何变化后再渲染一帧成功");
 
-    // ---- InkingMesh × ShapeContains 对账（纯几何，与窗口无关） ----
+    // ---- InkingMesh × InkingShapeContains 对账（纯几何，与窗口无关） ----
     Check(ReconcileShapeMesh() == 0,
           "轮廓采样与形状判定同源（8 种形状逐点对账）");
 
@@ -7778,19 +8464,19 @@ int main() {
     CheckTextureBudgetEviction(rnd);
 
     // ---- 消息队列 ----
-    inking::MessageQueue::addMessage(inking::MessageType::Pass, 0.0f, "hi");
-    const std::vector<inking::Message> msgs =
-        inking::MessageQueue::drainMessages();
+    InkingMessageQueue::addMessage(InkingMessageType::Pass, 0.0f, "hi");
+    const std::vector<InkingMessage> msgs =
+        InkingMessageQueue::drainMessages();
     Check(msgs.size() == 1 && msgs[0].message == "hi", "消息队列入队 / 出队");
 
     // ---- 任务队列：单例在 DLL 里，管家线程真的在跑 ----
     std::atomic<int> ran{0};
-    inking::Task<std::any> task;
+    InkingTask<std::any> task;
     task.action = [&ran](const std::vector<std::any>&) -> std::any {
         ran.fetch_add(1, std::memory_order_relaxed);
         return {};
     };
-    inking::TaskQueue::instance().addTask(std::move(task));
+    InkingTaskQueue::instance().addTask(std::move(task));
     for (int i = 0; i < 200 && ran.load() == 0; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -7856,7 +8542,7 @@ int main() {
     // ---- 场景动画时钟与频率订阅（0.6.0 T-01）----
     CheckSceneAnimationClock();
 
-    // ---- SpriteData：序列帧 / 图集二选一与校验（0.6.0 T-02）----
+    // ---- InkingSpriteData：序列帧 / 图集二选一与校验（0.6.0 T-02）----
     CheckSpriteDataValidate();
 
     // ---- 库内 JSON 小工具：解析 / 取值 / 转义（0.6.5 T-15）----
@@ -7864,6 +8550,15 @@ int main() {
 
     // ---- InkingSprite：序列帧播放 / 暂停 / 定位 / 纹理复用（0.6.0 T-03）----
     CheckSpriteSequence(rnd);
+
+    // ---- 动态精灵：帧机同源 + 几何能改（G-03）----
+    CheckDynamicSprite(rnd);
+
+    // ---- 动态标签：SetText 不改几何、FitToContent 才改、布局容器里喊一声（G-05）----
+    CheckDynamicLabel();
+
+    // ---- 动态面板：滚动条自判拖动 / 裁剪与命中同源 / 包络计数（G-07）----
+    CheckDynamicPanel();
 
     // ---- 图集源矩形：切格与单独小图逐像素一致（0.6.1 T-04）----
     CheckImageFitSrcRect(rnd);
@@ -7889,7 +8584,7 @@ int main() {
     // ---- 不规则帧矩形：一页多动作、帧宽高不等（0.6.5 T-14）----
     CheckSpriteUnevenFrames(rnd);
 
-    // ---- 图集描述 → SpriteData：具名动画表（0.6.5 T-16）----
+    // ---- 图集描述 → InkingSpriteData：具名动画表（0.6.5 T-16）----
     CheckAtlasData(rnd);
 
     // ---- 动画组：一个节点承载多个动作（0.6.6 T-18）----
@@ -7898,7 +8593,7 @@ int main() {
     // ---- 纹理字节账本：建→放→归零→峰值（0.8.2 T-05，放在最后：会清空纹理缓存）----
     CheckTextureBytes(rnd);
 
-    inking::SceneLibrary::SetActiveScene(nullptr);
+    InkingSceneLibrary::SetActiveScene(nullptr);
     if (rnd != nullptr) {
         SDL_DestroyRenderer(rnd);
     }

@@ -25,24 +25,23 @@
 #include <cstdint>
 #include <vector>
 
-namespace inking {
 
 class InkingWidget;
 
 /// 命中的三态（`docs/InputDesign.md` §6）。
-enum class HitKind {
+enum class InkingHitKind {
     Block,        ///< 事件到此为止（半透明遮罩也属于这一类，遮挡 ≠ 未命中）
     PassThrough,  ///< 有东西，但它让过（继续往下找）
     Miss,         ///< 这里没东西
 };
 
 /// 一次 query 的答案：**三态 + 目标**（§6：投递需要目标，所以两样一起给）。
-struct HitResult {
-    HitKind kind = HitKind::Miss;
+struct InkingHitResult {
+    InkingHitKind kind = InkingHitKind::Miss;
     InkingWidget* target = nullptr;
 
     bool IsHit() const noexcept {
-        return kind != HitKind::Miss && target != nullptr;
+        return kind != InkingHitKind::Miss && target != nullptr;
     }
 };
 
@@ -52,7 +51,7 @@ struct HitResult {
  * 用法：`Clear()` → 逐条 `AddEntry(...)` / `AddHole(...)` → `Build()` → 反复 `Query()`。
  * 重建的成本正比于**条目数 × 覆盖格数**，与画布面积无关。
  */
-class HitTable {
+class InkingHitTable {
 public:
     /// 一条静态条目。
     struct Entry {
@@ -64,7 +63,7 @@ public:
         /// 违背 §11「变换通道不改表」。所以这里存的是**组件上报的包络**
         /// （= 它所有可能变换的并集），表因此真正冻结；
         /// 候选的**精筛**与最终判定用的是那一刻的当前值。
-        ShapeBounds envelope;
+        InkingShapeBounds envelope;
 
         bool passThrough = false;  ///< 命中后让不让过（三态里的 PassThrough）
     };
@@ -89,7 +88,7 @@ public:
      *
      * 可以按任意顺序加：`Build()` 里会按 z 降序重排。
      */
-    void AddEntry(InkingWidget* node, const ShapeBounds& envelope,
+    void AddEntry(InkingWidget* node, const InkingShapeBounds& envelope,
                   bool passThrough) noexcept;
 
     /**
@@ -104,7 +103,7 @@ public:
      *     所以动态组件每次移动都必须刷新自己的洞（见 `TaskGuide.md` `T-19`），
      *     "洞少登一个也不点错"是错的。
      */
-    void AddHole(const ShapeBounds& envelope) noexcept;
+    void AddHole(const InkingShapeBounds& envelope) noexcept;
 
     /**
      * 只清洞，**不动条目 / 簇 / 格子 / 候选**（T-19）。
@@ -127,7 +126,7 @@ public:
      *
      * @param holeHit 可选出参：点是否落在某个动态洞里（为真时调用方还要问动态层）。
      */
-    HitResult Query(float x, float y, bool* holeHit = nullptr) const noexcept;
+    InkingHitResult Query(float x, float y, bool* holeHit = nullptr) const noexcept;
 
     /// 点是否落在某个动态洞的包络里。
     bool IsInDynamicHole(float x, float y) const noexcept;
@@ -150,7 +149,7 @@ private:
     };
 
     std::vector<Entry> _entries;        ///< 按 z 降序（Build 之后）
-    std::vector<ShapeBounds> _holes;    ///< 动态洞（线性扫：动态组件通常很少）
+    std::vector<InkingShapeBounds> _holes;    ///< 动态洞（线性扫：动态组件通常很少）
     std::vector<Cluster> _clusters;     ///< 按 (blockY, blockX) 升序（二分定位）
     std::vector<CellRange> _cells;      ///< 各簇的格子，簇内按行优先
     std::vector<std::uint32_t> _candidates;  ///< 格子里存的条目下标
@@ -158,4 +157,3 @@ private:
     std::size_t _maxCellCandidates = 0;
 };
 
-}  // namespace inking

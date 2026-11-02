@@ -3,7 +3,7 @@
 // 过渡的**缓动曲线**：把"线性进度"变成"实际画出来的进度"。
 //
 // 一条硬约定：缓动**只改变进度**，不改变时长、起点、终点。
-//   - `ApplyEasing(..., 0) == 0`、`ApplyEasing(..., 1) == 1` 是精确的（不是
+//   - `InkingApplyEasing(..., 0) == 0`、`InkingApplyEasing(..., 1) == 1` 是精确的（不是
 //     "约等于"）——起点和终点必须由曲线本身对齐，不能指望调用方补偿；
 //   - 时长与曲线**互相独立**：同一段 0.15s 的过渡，换曲线不改时长。
 //
@@ -27,10 +27,8 @@
 
 #include <cstdint>
 
-namespace inking {
-
 /// 一组具名缓动曲线。`Linear` 是缺省（= 配置里不写 `easing`）。
-enum class Easing : std::uint8_t {
+enum class InkingEasing : std::uint8_t {
     Linear = 0,
     EaseIn,
     EaseOut,
@@ -38,15 +36,15 @@ enum class Easing : std::uint8_t {
 };
 
 /// 曲线在配置里的写法。报错信息要列取值、自检要打印，都用它。
-inline const char* EasingName(Easing easing) {
+inline const char* InkingEasingName(InkingEasing easing) {
     switch (easing) {
-        case Easing::EaseIn:
+        case InkingEasing::EaseIn:
             return "easeIn";
-        case Easing::EaseOut:
+        case InkingEasing::EaseOut:
             return "easeOut";
-        case Easing::EaseInOut:
+        case InkingEasing::EaseInOut:
             return "easeInOut";
-        case Easing::Linear:
+        case InkingEasing::Linear:
         default:
             return "linear";
     }
@@ -62,7 +60,7 @@ inline const char* EasingName(Easing easing) {
  * 单调递增、`f(k) <= k` 还是 `>= k` 由曲线决定（easeIn 前段 <= k、
  * easeOut 前段 >= k），这正是"手感"的来源，也是自检里最能钉住的一条。
  */
-inline float ApplyEasing(Easing easing, float k) {
+inline float InkingApplyEasing(InkingEasing easing, float k) {
     if (k <= 0.0f) {
         return 0.0f;
     }
@@ -71,15 +69,15 @@ inline float ApplyEasing(Easing easing, float k) {
     }
 
     switch (easing) {
-        case Easing::EaseIn:
+        case InkingEasing::EaseIn:
             return k * k;
 
-        case Easing::EaseOut: {
+        case InkingEasing::EaseOut: {
             const float inverse = 1.0f - k;
             return 1.0f - inverse * inverse;
         }
 
-        case Easing::EaseInOut: {
+        case InkingEasing::EaseInOut: {
             // 关于中点对称的两段抛物线：在 k = 0.5 处两边都等于 0.5、斜率也
             // 都是 2（连续可导），所以中点不会出现"折一下"的观感。
             if (k < 0.5f) {
@@ -89,10 +87,9 @@ inline float ApplyEasing(Easing easing, float k) {
             return 1.0f - 2.0f * inverse * inverse;
         }
 
-        case Easing::Linear:
+        case InkingEasing::Linear:
         default:
             return k;
     }
 }
 
-}  // namespace inking

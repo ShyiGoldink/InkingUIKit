@@ -38,16 +38,14 @@
 #include <utility>
 #include <vector>
 
-namespace inking {
-
 /**
  * @brief 一个可订阅的事件槽：组件的公开成员，使用者 `Subscribe` 挂回调。
  *
  * ```cpp
- * class Slider : public inking::InkingStaticWidget {
+ * class Slider : public InkingStaticWidget {
  * public:
- *     inking::InkingEvent<float, float> valueChanged;  // ← 声明事件（新值, 旧值）
- *     inking::InkingEvent<> committed;                 // ← 无参事件
+ *     InkingEvent<float, float> valueChanged;  // ← 声明事件（新值, 旧值）
+ *     InkingEvent<> committed;                 // ← 无参事件
  *
  *     bool SetValue(float v) {          // 写入口：先改、再标脏、最后发事件
  *         if (v == _value) return false;
@@ -162,4 +160,3 @@ private:
     Token _nextToken = 1;
 };
 
-}  // namespace inking

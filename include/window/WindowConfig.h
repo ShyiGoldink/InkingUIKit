@@ -10,19 +10,18 @@
 //
 // 用法（生成的 `ApplyConfig()` 就是这么写的）：
 //
-//   inking::WindowConfig window;
+//   InkingWindowConfig window;
 //   window.borderless = true;          // 只写 json 里真的有的那几项
 //   window.background = 0xFF1B1B24u;
-//   if (inking::ApplyWindowConfig(window) != 0) { /* 有字段没生效 */ }
+//   if (InkingApplyWindowConfig(window) != 0) { /* 有字段没生效 */ }
 //
 // **时机**：必须在 `Show()` 之前。设计尺寸另有一条入口
-// （`config/window_config.h` 的 `SetDesignSize`），且设计尺寸要**更早**——
+// （`config/window_config.h` 的 `InkingSetDesignSize`），且设计尺寸要**更早**——
 // 窗口第一次构造时就按它定型。生成的 `ApplyConfig()` 里顺序是写死的。
 
 #include <cstdint>
 #include <optional>
 
-namespace inking {
 
 /**
  * @brief 启动时要应用的窗口设置。**没写的字段不动**（`std::optional` 空着即跳过）。
@@ -31,7 +30,7 @@ namespace inking {
  * 抄第二遍到生成器里，库哪天改默认值，生成器抄的那份就成了错的那份。
  * 空着 = 不碰 = 永远是库的默认值，只有一份真相。
  */
-struct WindowConfig {
+struct InkingWindowConfig {
     /// 无边框（自绘标题栏）。`Show()` 之前设 → 建窗直接带 `SDL_WINDOW_BORDERLESS`。
     std::optional<bool> borderless;
 
@@ -58,8 +57,7 @@ struct WindowConfig {
  *         把"json 写的"和"窗口实际的"一起说出来。
  *
  * 会**构造窗口单例**（`InkingWindow::Instance()`）——所以必须排在
- * `SetDesignSize()` 之后：窗口根锚点按设计尺寸定型，顺序反了设计尺寸会被拒。
+ * `InkingSetDesignSize()` 之后：窗口根锚点按设计尺寸定型，顺序反了设计尺寸会被拒。
  */
-int ApplyWindowConfig(const WindowConfig& config);
+int InkingApplyWindowConfig(const InkingWindowConfig& config);
 
-}  // namespace inking

@@ -47,7 +47,7 @@
 #include <inkgen/button_service.h>   // 生成的头文件
 
 int main() {
-    if (!inking::cxxcss::ApplyConfig()) {
+    if (!cxxcss::ApplyConfig()) {
         return 1;                    // 有字段没生效，日志里写着是哪一项
     }
     // …… 建场景、开窗口
@@ -59,21 +59,21 @@ int main() {
 
 ### 1.2 使用 API
 
-在 `main()` 的第一行直接调用 `SetDesignSize(宽, 高)`：
+在 `main()` 的第一行直接调用 `InkingSetDesignSize(宽, 高)`：
 
 ```cpp
 #include <config/window_config.h>
 #include <window/InkingWindow.h>
 
 int main() {
-    if (!inking::SetDesignSize(1600, 900)) {
+    if (!InkingSetDesignSize(1600, 900)) {
         // 没生效：参数不合法（允许 1..16384），
         // 或者场景 / 窗口已经按旧尺寸构造过了
         return 1;
     }
 
     MyScene scene;
-    inking::InkingWindow::Instance().Show("main");
+    InkingWindow::Instance().Show("main");
 }
 ```
 
@@ -81,11 +81,11 @@ int main() {
 坐标系和缩放档位；过了这个点就改不动了——它会返回 `false` 并打一条错误日志，不会出现
 "一半旧尺寸、一半新尺寸"的半生效状态。
 
-不调用就是 1280×720（等价于 `SetDesignSize(1280, 720)`）。读回当前值用
-`inking::DesignWidth()` / `inking::DesignHeight()`；**不要**用 `inking::kDesignWidth`，
-那是默认值，不随 `SetDesignSize` 变化。
+不调用就是 1280×720（等价于 `InkingSetDesignSize(1280, 720)`）。读回当前值用
+`InkingDesignWidth()` / `InkingDesignHeight()`；**不要**用 `InkingLegacyDesignWidth`，
+那是默认值，不随 `InkingSetDesignSize` 变化。
 
-> ⚠️ 两条路线不要混着设：用了 CXXCSS，`ApplyConfig()` 已经替你调过 `SetDesignSize`，
+> ⚠️ 两条路线不要混着设：用了 CXXCSS，`ApplyConfig()` 已经替你调过 `InkingSetDesignSize`，
 > 再手写一个不同的值会被拒绝。幂等设同一个值才会返回 `true`。
 
 ---
@@ -99,7 +99,7 @@ int main() {
 #pragma once
 #include <scene/InkingScene.h>
 
-class MainScene : public inking::InkingScene {
+class MainScene : public InkingScene {
 public:
     MainScene();
 };
@@ -111,7 +111,7 @@ public:
 // src/MainScene.cpp
 #include "MainScene.h"
 
-MainScene::MainScene() : inking::InkingScene("main") {}
+MainScene::MainScene() : InkingScene("main") {}
 ```
 
 `"main"` 就是场景名，后面 `Show("main")` 按这个名字找它。
@@ -175,12 +175,12 @@ MainScene::MainScene() : inking::InkingScene("main") {}
 #include <inkgen/button_service.h>   // 生成类 Nina 的声明
 #include <scene/InkingScene.h>
 
-class MainScene : public inking::InkingScene {
+class MainScene : public InkingScene {
 public:
     MainScene();
 
 private:
-    inking::cxxcss::Nina _nina;
+    cxxcss::Nina _nina;
 };
 ```
 
@@ -188,7 +188,7 @@ private:
 // src/MainScene.cpp
 #include "MainScene.h"
 
-MainScene::MainScene() : inking::InkingScene("main"), _nina(this) {}
+MainScene::MainScene() : InkingScene("main"), _nina(this) {}
 ```
 
 三个要点：
@@ -204,21 +204,21 @@ MainScene::MainScene() : inking::InkingScene("main"), _nina(this) {}
 
 ```cpp
 // include/MainScene.h
-class MainScene : public inking::InkingScene {
+class MainScene : public InkingScene {
 public:
     MainScene();
 
 private:
-    inking::cxxcss::Nina* _nina = nullptr;   // 裸指针：不拥有
+    cxxcss::Nina* _nina = nullptr;   // 裸指针：不拥有
 };
 
 // src/MainScene.cpp
 #include "MainScene.h"
 #include <memory>
 
-MainScene::MainScene() : inking::InkingScene("main") {
-    _nina = static_cast<inking::cxxcss::Nina*>(
-        AddChild(std::make_unique<inking::cxxcss::Nina>(this)));
+MainScene::MainScene() : InkingScene("main") {
+    _nina = static_cast<cxxcss::Nina*>(
+        AddChild(std::make_unique<cxxcss::Nina>(this)));
 }
 ```
 
@@ -238,16 +238,16 @@ MainScene::MainScene() : inking::InkingScene("main") {
 // include/MainScene.h
 #pragma once
 
-#include <image/ImageData.h>
+#include <image/InkingImageData.h>
 #include <image/InkingStaticImage.h>
 #include <scene/InkingScene.h>
 
-class MainScene : public inking::InkingScene {
+class MainScene : public InkingScene {
 public:
     MainScene();
 
 private:
-    inking::InkingStaticImage _nina;   // 借用型成员：生命周期 = 场景
+    InkingStaticImage _nina;   // 借用型成员：生命周期 = 场景
 };
 ```
 
@@ -260,27 +260,27 @@ private:
 namespace {
 
 // 成员初始化列表里写不了多行语句，所以数据用自由函数造。
-inking::ImageData MakeNinaData() {
-    inking::ImageData data;
+InkingImageData MakeNinaData() {
+    InkingImageData data;
     data.name = "nina";
     data.width = 1024;
     data.height = 1024;
 
     // 手写路线没有"生成期烘字节"这一步，所以必须走运行期读图。
     data.runtimeAsset = true;
-    data.normal.type = inking::AppearanceType::Image;
+    data.normal.type = InkingAppearanceType::Image;
     data.normal.source = "nina/nina.png";   // 相对 exe 旁的 assets/
-    data.normal.imageFit = inking::ImageFit::Cover;
+    data.normal.imageFit = InkingImageFit::Cover;
 
-    data.selfAnchor = inking::InkingChangeAnchor::Center;
-    data.traceAnchor = inking::InkingChangeAnchor::Center;
-    data.shape = inking::ShapeSpec::RoundedRect(12.0f);
+    data.selfAnchor = InkingChangeAnchor::Center;
+    data.traceAnchor = InkingChangeAnchor::Center;
+    data.shape = InkingShapeSpec::RoundedRect(12.0f);
     return data;
 }
 
 }  // namespace
 
-MainScene::MainScene() : inking::InkingScene("main"), _nina(this, MakeNinaData()) {}
+MainScene::MainScene() : InkingScene("main"), _nina(this, MakeNinaData()) {}
 ```
 
 图片要放在 **exe 所在目录下的 `assets/`**（资源根可以改，默认就是这里）：
@@ -338,7 +338,7 @@ endif()
 add_executable(MyWindow ${MY_SOURCES})
 # 这一行是 #include "MainScene.h" 能成立的前提
 target_include_directories(MyWindow PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
-target_link_libraries(MyWindow PRIVATE inking::inking)
+target_link_libraries(MyWindow PRIVATE inking)
 
 # ③ CXXCSS → C++（纯 API 路线整段删掉）
 include("${INKING_INKGEN_CMAKE}")
@@ -352,7 +352,7 @@ ink_add_generated(MyWindow
 # ④ 运行期要的东西：把库 DLL 拷到 exe 旁边
 add_custom_command(TARGET MyWindow POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "$<TARGET_FILE:inking::inking>" "$<TARGET_FILE_DIR:MyWindow>")
+            "$<TARGET_FILE:inking>" "$<TARGET_FILE_DIR:MyWindow>")
 
 # ⑤ 资源目录也拷过去（只有 API 路线需要；目录不存在时跳过，免得报错）
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets")
@@ -414,7 +414,7 @@ $env:PATH = "C:\msys64\ucrt64\bin;build;$env:PATH"
 | 现象 | 原因 |
 | --- | --- |
 | 编译报 `No such file or directory: InkingScene.h` | include 路径少了层级，应写 `<scene/InkingScene.h>` |
-| 链接报 `undefined reference to inking::...` | 没链接 `inking::inking`，或漏了 `src/` 下的 `.cpp` |
+| 链接报 `undefined reference to ...` | 没链接 `inking`，或漏了 `src/` 下的 `.cpp` |
 | 窗口没出现、无任何输出、退出码 `0xC0000135` | `PATH` 里缺 SDL3 / FFmpeg 的 DLL |
 | 场景建了但窗口一片空白 | 场景名与 `Show("...")` 不一致，或同名场景已被占（`IsRegistered()` 为 false） |
 | 图片不显示，只有一块纯色圆角矩形 | 手写路线 `runtimeAsset` 写成了 `false`，或文件不在 `assets/` 下 |

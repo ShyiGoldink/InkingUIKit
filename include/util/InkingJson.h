@@ -29,7 +29,7 @@
 #include <utility>
 #include <vector>
 
-namespace inking::json {
+namespace inking_json {
 
 /// 一个值在源文本里的位置。1 起；`0` 表示"没有来源"（解析器自己造的中间对象）。
 struct SourceLocation {
@@ -100,7 +100,7 @@ struct Result {
 Result Parse(const std::string& text);
 
 /**
- * @brief 从**资源根**读一个相对路径并解析（`AssetLoadText` + `Parse`）。
+ * @brief 从**资源根**读一个相对路径并解析（`InkingAssetLoadText` + `Parse`）。
  *
  * 与工具里的 `LoadJsonFile` 的区别就是路径基准：这里相对资源根（exe 旁的
  * `assets/`），那里相对当前目录。实现放在资产层（`src/asset/InkingAsset.cpp`）——
@@ -137,4 +137,4 @@ bool ReadBool(const Value& object, const std::string& key, bool fallback);
  */
 std::string Escape(const std::string& text);
 
-}  // namespace inking::json
+}  // namespace inking_json

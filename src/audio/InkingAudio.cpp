@@ -28,12 +28,11 @@
 //      为什么不用 mixer 自带的 fade：自带的那条曲线**读不回来**，而"淡入到
 //      一半时增益正好是 0.5"是要被自检断言的。自己算还顺带把交叉淡入淡出
 //      变成了同一套账本的自然结果。
-//   3. **异步加载走 TaskQueue**（框架现成的 4 条管家线程 + 音频任务并发上限 2）：
+//   3. **异步加载走 InkingTaskQueue**（框架现成的 4 条管家线程 + 音频任务并发上限 2）：
 //      worker 只做"打开文件 + 解码"（`MIX_LoadAudio` 明确标注可从任意线程调用），
-//      结果放进一个互斥保护的小队列，**主线程在 `AudioTick` 里消费**。
+//      结果放进一个互斥保护的小队列，**主线程在 `InkingAudioTick` 里消费**。
 //      于是主线程从不阻塞，而播放状态（轨道、增益、淡入淡出）仍然只有一个线程碰。
 
-namespace inking {
 
 namespace {
 
@@ -52,7 +51,7 @@ struct Sound {
     MIX_Audio* audio = nullptr;
     std::string name;
     float durationSeconds = 0.0f;
-    AudioLoadState state = AudioLoadState::Loading;
+    InkingAudioLoadState state = InkingAudioLoadState::Loading;
     bool streaming = false;
     /// 从内存加载时后端是**零拷贝**接过去的，所以这份字节要活到声音销毁。
     std::vector<std::uint8_t> ownedBytes;
@@ -61,7 +60,7 @@ struct Sound {
 /// 一条 SE 轨道的记账。
 struct SeVoice {
     MIX_Track* track = nullptr;
-    SoundId sound = kInvalidSound;
+    InkingSoundId sound = InkingInvalidSound;
     float volume = 1.0f;
     bool active = false;
     std::uint64_t serial = 0;  ///< 起播顺序，池满时抢最旧的那条
@@ -109,13 +108,13 @@ struct AudioState {
     /**
      * 混音器句柄。**后台线程也会读它**（解码要用），所以是原子的：
      * 关掉的一瞬间它变成 nullptr，而已经在跑的那个任务读到的要么是旧值
-     * （那时 `AudioShutdown` 正在等它回来，句柄还有效），要么是新值（直接放弃）。
+     * （那时 `InkingAudioShutdown` 正在等它回来，句柄还有效），要么是新值（直接放弃）。
      */
     std::atomic<MIX_Mixer*> mixer{nullptr};
-    std::vector<Sound> sounds;  ///< 下标 + 1 = SoundId
+    std::vector<Sound> sounds;  ///< 下标 + 1 = InkingSoundId
 
     MIX_Track* bgmTrack = nullptr;
-    SoundId bgmSound = kInvalidSound;
+    InkingSoundId bgmSound = InkingInvalidSound;
     float bgmVolume = 1.0f;   ///< 这一笔的音量
     float bgmGain = 1.0f;     ///< 淡入淡出的当前增益
     float bgmFadeTarget = 1.0f;
@@ -135,18 +134,18 @@ struct AudioState {
      * 而分开只需要一条轨道。
      */
     MIX_Track* voiceTrack = nullptr;
-    SoundId voiceSound = kInvalidSound;
+    InkingSoundId voiceSound = InkingInvalidSound;
     float voiceVolume = 1.0f;    ///< 这一笔的音量
     bool voiceRequested = false; ///< 我们请求它响着（播完了它自己也还是 true）
 
     /// "等就绪再播"的那一句（与 BGM 那条同源：迟到的语音要补上）。
     bool hasPendingVoice = false;
-    SoundId pendingVoice = kInvalidSound;
+    InkingSoundId pendingVoice = InkingInvalidSound;
     float pendingVoiceVolume = 1.0f;
 
     /**
-     * 外部 PCM 流轨道池（A14）：下标 + 1 = `PcmStreamId`；`stream == nullptr`
-     * 表示这个槽空着（轨道在 `AudioInit` 里一次建好，stream 开着才建）。
+     * 外部 PCM 流轨道池（A14）：下标 + 1 = `InkingPcmStreamId`；`stream == nullptr`
+     * 表示这个槽空着（轨道在 `InkingAudioInit` 里一次建好，stream 开着才建）。
      *
      * **只在主线程动**——理由写在 `InkingAudio.h` 那段线程前提里：解码 worker
      * 只把 PCM 块交回主线程，和 BGM / SE 同一套分工。
@@ -156,26 +155,26 @@ struct AudioState {
     // ⚠️ 这里**每一项都要写满**：改成 `{1.0f, 1.0f}` 的话，新加的 `Voice` 通道
     // 会被值初始化成 **0**——症状是"视频音轨怎么调都没声音"，而且不报错
     // （A14 加第三路通道时差点就这么漏过去）。
-    float channelVolume[kAudioChannelCount] = {1.0f, 1.0f, 1.0f};
+    float channelVolume[InkingAudioChannelCount] = {1.0f, 1.0f, 1.0f};
     float master = 1.0f;
 
     // ---- 异步加载 ----
     struct Request {
-        SoundId id = kInvalidSound;
+        InkingSoundId id = InkingInvalidSound;
         std::string path;
-        AudioLoadMode mode = AudioLoadMode::Auto;
+        InkingAudioLoadMode mode = InkingAudioLoadMode::Auto;
     };
     std::vector<Request> waiting;   ///< 还没投递出去的（主线程独占）
     /**
      * 已经投出去、还没回来的任务数。
      *
      * **由后台线程自减**（结果入队之后），所以它反映的是"真在跑的任务"——
-     * `AudioShutdown` 靠它等任务排空（那时才敢销毁混音器）。
+     * `InkingAudioShutdown` 靠它等任务排空（那时才敢销毁混音器）。
      */
     std::atomic<std::uint32_t> inFlight{0};
 
     struct Completed {
-        SoundId id = kInvalidSound;
+        InkingSoundId id = InkingInvalidSound;
         MIX_Audio* audio = nullptr;
         float durationSeconds = 0.0f;
         bool streaming = false;
@@ -190,11 +189,11 @@ struct AudioState {
 
     // ---- 等就绪再播的 BGM ----
     bool hasPendingBgm = false;
-    SoundId pendingBgm = kInvalidSound;
+    InkingSoundId pendingBgm = InkingInvalidSound;
     float pendingBgmFade = 0.0f;
     float pendingBgmVolume = 1.0f;
 
-    AudioStats stats;
+    InkingAudioStats stats;
 };
 
 /**
@@ -203,15 +202,15 @@ struct AudioState {
  * **但它故意"永不析构"**：这里是堆对象，进程退出时**不** delete。
  * 理由是一次实测出来的崩溃（`AGENTS.md` §6 第 88 条，源项目自检
  * `tests/test_shutdown.cpp`——该套件未搬入本仓库）：
- * `InkingWindow` 的静态单例析构时会调 `AudioShutdown()`，而"只开窗、不预先
- * `AudioInit()`"的程序里，音频状态是在 `Show()` 内部才构造的 ⇒ 它比窗口单例
- * **后**构造 ⇒ 按"后构造先析构"它**先**析构，于是那次 `AudioShutdown()` 会去
+ * `InkingWindow` 的静态单例析构时会调 `InkingAudioShutdown()`，而"只开窗、不预先
+ * `InkingAudioInit()`"的程序里，音频状态是在 `Show()` 内部才构造的 ⇒ 它比窗口单例
+ * **后**构造 ⇒ 按"后构造先析构"它**先**析构，于是那次 `InkingAudioShutdown()` 会去
  * lock 一把已经不存在的 mutex（`std::system_error` → `terminate`；
  * `panel_demo` 关窗时就是这么死的）。
  *
  * 这块状态本来就是**进程级**记账（设备、混音器、缓存的声音），真正的收尾是
- * 显式的 `AudioShutdown()`（关设备、销毁混音器）；退出时把这几百字节交还给
- * 操作系统即可，没必要在析构顺序上赌一把。`AudioInit()` / `AudioShutdown()`
+ * 显式的 `InkingAudioShutdown()`（关设备、销毁混音器）；退出时把这几百字节交还给
+ * 操作系统即可，没必要在析构顺序上赌一把。`InkingAudioInit()` / `InkingAudioShutdown()`
  * 反复调用仍然幂等。
  */
 AudioState& state() {
@@ -219,45 +218,45 @@ AudioState& state() {
     return *instance;
 }
 
-const Sound* FindSound(SoundId id) {
+const Sound* FindSound(InkingSoundId id) {
     AudioState& audio = state();
-    if (id == kInvalidSound || id > audio.sounds.size()) {
+    if (id == InkingInvalidSound || id > audio.sounds.size()) {
         return nullptr;
     }
     return &audio.sounds[id - 1];
 }
 
-Sound* MutableSound(SoundId id) {
+Sound* MutableSound(InkingSoundId id) {
     AudioState& audio = state();
-    if (id == kInvalidSound || id > audio.sounds.size()) {
+    if (id == InkingInvalidSound || id > audio.sounds.size()) {
         return nullptr;
     }
     return &audio.sounds[id - 1];
 }
 
 /// 同名（同路径）只解一次。
-SoundId FindLoaded(const std::string& name) {
+InkingSoundId FindLoaded(const std::string& name) {
     AudioState& audio = state();
     for (std::size_t i = 0; i < audio.sounds.size(); ++i) {
         if (audio.sounds[i].name == name
-            && audio.sounds[i].state != AudioLoadState::Failed) {
-            return static_cast<SoundId>(i + 1);
+            && audio.sounds[i].state != InkingAudioLoadState::Failed) {
+            return static_cast<InkingSoundId>(i + 1);
         }
     }
-    return kInvalidSound;
+    return InkingInvalidSound;
 }
 
 /// 真要解的时候用哪个模式：Auto 先按流式打开，读到时长再决定要不要重载。
-bool ShouldPredecode(AudioLoadMode mode, float durationSeconds) {
+bool ShouldPredecode(InkingAudioLoadMode mode, float durationSeconds) {
     switch (mode) {
-        case AudioLoadMode::InMemory:
+        case InkingAudioLoadMode::InMemory:
             return true;
-        case AudioLoadMode::Streaming:
+        case InkingAudioLoadMode::Streaming:
             return false;
-        case AudioLoadMode::Auto:
+        case InkingAudioLoadMode::Auto:
         default:
             return durationSeconds > 0.0f
-                && durationSeconds <= kStreamingThresholdSeconds;
+                && durationSeconds <= InkingStreamingThresholdSeconds;
     }
 }
 
@@ -280,7 +279,7 @@ float DurationOfAudio(MIX_Audio* audio) {
  * 长文件省下一次整段解码。
  */
 MIX_Audio* LoadAudioFor(MIX_Mixer* mixer, const std::string& path,
-                        AudioLoadMode mode, float* durationOut,
+                        InkingAudioLoadMode mode, float* durationOut,
                         bool* streamingOut) {
     if (mixer == nullptr) {
         return nullptr;
@@ -315,7 +314,7 @@ void ApplyVolumes() {
     }
     MIX_SetMixerGain(mixer, audio.master);
 
-    const float bgmChannel = audio.channelVolume[static_cast<int>(AudioChannel::Bgm)];
+    const float bgmChannel = audio.channelVolume[static_cast<int>(InkingAudioChannel::Bgm)];
     if (audio.bgmTrack != nullptr) {
         MIX_SetTrackGain(audio.bgmTrack,
                          bgmChannel * audio.bgmVolume * audio.bgmGain);
@@ -323,7 +322,7 @@ void ApplyVolumes() {
     if (audio.fading.active && audio.fading.track != nullptr) {
         MIX_SetTrackGain(audio.fading.track, bgmChannel * audio.fading.gain);
     }
-    const float seChannel = audio.channelVolume[static_cast<int>(AudioChannel::Se)];
+    const float seChannel = audio.channelVolume[static_cast<int>(InkingAudioChannel::Se)];
     for (SeVoice& voice : audio.seVoices) {
         if (voice.active && voice.track != nullptr) {
             MIX_SetTrackGain(voice.track, seChannel * voice.volume);
@@ -332,7 +331,7 @@ void ApplyVolumes() {
     // A14：外部 PCM 流也算一路（视频音轨 / 语音）——主音量或通道音量一变，
     // 它要跟着走，所以增益统一在这里算，别在推数据那条路上自己写一套。
     const float voiceChannel =
-        audio.channelVolume[static_cast<int>(AudioChannel::Voice)];
+        audio.channelVolume[static_cast<int>(InkingAudioChannel::Voice)];
     // B13：角色语音与 PCM 流共用 `Voice` 这一路通道音量（玩家眼里的"语音"就一处）。
     if (audio.voiceTrack != nullptr && audio.voiceRequested) {
         MIX_SetTrackGain(audio.voiceTrack, voiceChannel * audio.voiceVolume);
@@ -345,7 +344,7 @@ void ApplyVolumes() {
 }
 
 /// 起播一段 BGM（内部用；调用方负责把旧的处理掉）。
-void StartBgm(SoundId sound, float fadeInSeconds, float volume) {
+void StartBgm(InkingSoundId sound, float fadeInSeconds, float volume) {
     AudioState& audio = state();
     const Sound* loaded = FindSound(sound);
     if (loaded == nullptr || loaded->audio == nullptr || audio.bgmTrack == nullptr) {
@@ -429,7 +428,7 @@ void RetireBgm(float fadeOutSeconds) {
     }
     audio.bgmGain = 0.0f;
     audio.bgmVolume = 0.0f;
-    audio.bgmSound = kInvalidSound;
+    audio.bgmSound = InkingInvalidSound;
     ApplyVolumes();
 }
 
@@ -458,9 +457,9 @@ MIX_Track* AcquireSeTrack(SeVoice** outVoice) {
 // ---------------------------------------------------------------------------
 // 后台加载：只做"打开 + 解码"，结果丢进一个小队列，主线程消费
 // ---------------------------------------------------------------------------
-void QueueDecode(SoundId id, const std::string& path, AudioLoadMode mode) {
+void QueueDecode(InkingSoundId id, const std::string& path, InkingAudioLoadMode mode) {
     state().inFlight.fetch_add(1);
-    auto task = Task<std::any>{};
+    auto task = InkingTask<std::any>{};
     task.action = [id, path, mode](const std::vector<std::any>&) -> std::any {
         AudioState& audio = state();
         const std::uint64_t generation = audio.generation.load();
@@ -492,19 +491,19 @@ void QueueDecode(SoundId id, const std::string& path, AudioLoadMode mode) {
             std::lock_guard<std::mutex> lock(audio.doneMutex);
             audio.done.push_back(completed);
         }
-        // 自减放在结果入队**之后**：`AudioShutdown` 等它归零，等的就是
+        // 自减放在结果入队**之后**：`InkingAudioShutdown` 等它归零，等的就是
         // "再也不会有人碰混音器了"这件事。
         audio.inFlight.fetch_sub(1);
         return {};
     };
 
-    TaskQueue::instance().addTask(std::move(task));
+    InkingTaskQueue::instance().addTask(std::move(task));
 }
 
 #else  // 没有 SDL3_mixer：整层空转
 
 struct AudioState {
-    AudioStats stats;
+    InkingAudioStats stats;
 };
 
 AudioState& state() {
@@ -521,7 +520,7 @@ AudioState& state() {
 
 #if defined(INK_HAS_SDL3_MIXER)
 
-bool AudioInit() {
+bool InkingAudioInit() {
     AudioState& audio = state();
     if (audio.mixer.load() != nullptr) {
         return true;
@@ -565,12 +564,12 @@ bool AudioInit() {
     INK_LOG_PASS("Audio",
                  "混音器起来了：解码器 "
                      + std::to_string(audio.stats.decoderCount) + " 个"
-                     + "（" + AudioDecoderName(0) + " …），轨道 "
+                     + "（" + InkingAudioDecoderName(0) + " …），轨道 "
                      + std::to_string(kSeTrackCount + 3) + " 条");
     return true;
 }
 
-void AudioShutdown() {
+void InkingAudioShutdown() {
     AudioState& audio = state();
     // 1. 先让"还没投递的"失效，再 +1 代数让**已经在跑的**任务回来时被丢弃。
     audio.waiting.clear();
@@ -627,24 +626,24 @@ void AudioShutdown() {
     audio.seVoices.clear();
     audio.bgmTrack = nullptr;
     audio.fading = FadingBgm{};
-    audio.bgmSound = kInvalidSound;
+    audio.bgmSound = InkingInvalidSound;
     audio.bgmRequested = false;
     audio.bgmGain = 0.0f;
     audio.bgmVolume = 0.0f;
     audio.hasPendingBgm = false;
-    audio.pendingBgm = kInvalidSound;
+    audio.pendingBgm = InkingInvalidSound;
     audio.voiceTrack = nullptr;  // 轨道随混音器一起销毁
-    audio.voiceSound = kInvalidSound;
+    audio.voiceSound = InkingInvalidSound;
     audio.voiceVolume = 1.0f;
     audio.voiceRequested = false;
     audio.hasPendingVoice = false;
-    audio.pendingVoice = kInvalidSound;
-    audio.stats = AudioStats{};
+    audio.pendingVoice = InkingInvalidSound;
+    audio.stats = InkingAudioStats{};
 }
 
-bool AudioReady() { return state().mixer.load() != nullptr; }
+bool InkingAudioReady() { return state().mixer.load() != nullptr; }
 
-AudioStats AudioStatsSnapshot() {
+InkingAudioStats InkingAudioStatsSnapshot() {
     AudioState& audio = state();
     audio.stats.masterVolume = audio.master;
     audio.stats.soundsResident = static_cast<std::uint32_t>(audio.sounds.size());
@@ -674,7 +673,7 @@ AudioStats AudioStatsSnapshot() {
     return audio.stats;
 }
 
-std::string AudioDecoderName(int index) {
+std::string InkingAudioDecoderName(int index) {
     if (index < 0) {
         return {};
     }
@@ -686,14 +685,14 @@ std::string AudioDecoderName(int index) {
 // 加载
 // ---------------------------------------------------------------------------
 
-SoundId AudioLoad(const std::string& path, AudioLoadMode mode) {
+InkingSoundId InkingAudioLoad(const std::string& path, InkingAudioLoadMode mode) {
     AudioState& audio = state();
     MIX_Mixer* mixer = audio.mixer.load();
     if (path.empty() || mixer == nullptr) {
-        return kInvalidSound;
+        return InkingInvalidSound;
     }
-    const SoundId cached = FindLoaded(path);
-    if (cached != kInvalidSound) {
+    const InkingSoundId cached = FindLoaded(path);
+    if (cached != InkingInvalidSound) {
         return cached;
     }
 
@@ -703,7 +702,7 @@ SoundId AudioLoad(const std::string& path, AudioLoadMode mode) {
     if (decoded == nullptr) {
         ++audio.stats.loadFailures;
         INK_LOG_WARN("Audio", "加载失败：" + path + "（" + SDL_GetError() + "）");
-        return kInvalidSound;
+        return InkingInvalidSound;
     }
 
     Sound sound;
@@ -711,29 +710,29 @@ SoundId AudioLoad(const std::string& path, AudioLoadMode mode) {
     sound.name = path;
     sound.durationSeconds = duration;
     sound.streaming = streaming;
-    sound.state = AudioLoadState::Ready;
+    sound.state = InkingAudioLoadState::Ready;
     audio.sounds.push_back(std::move(sound));
     ++audio.stats.loads;
     ++audio.stats.loadsCompleted;
-    return static_cast<SoundId>(audio.sounds.size());
+    return static_cast<InkingSoundId>(audio.sounds.size());
 }
 
-SoundId AudioLoadAsync(const std::string& path, AudioLoadMode mode) {
+InkingSoundId InkingAudioLoadAsync(const std::string& path, InkingAudioLoadMode mode) {
     AudioState& audio = state();
     if (path.empty() || audio.mixer.load() == nullptr) {
-        return kInvalidSound;
+        return InkingInvalidSound;
     }
-    const SoundId cached = FindLoaded(path);
-    if (cached != kInvalidSound) {
+    const InkingSoundId cached = FindLoaded(path);
+    if (cached != InkingInvalidSound) {
         return cached;
     }
 
     // 立刻占一个句柄（状态 Loading），后台解码完再把它变成 Ready。
     Sound sound;
     sound.name = path;
-    sound.state = AudioLoadState::Loading;
+    sound.state = InkingAudioLoadState::Loading;
     audio.sounds.push_back(std::move(sound));
-    const SoundId id = static_cast<SoundId>(audio.sounds.size());
+    const InkingSoundId id = static_cast<InkingSoundId>(audio.sounds.size());
 
     AudioState::Request request;
     request.id = id;
@@ -743,18 +742,18 @@ SoundId AudioLoadAsync(const std::string& path, AudioLoadMode mode) {
     return id;
 }
 
-SoundId AudioLoadFromMemory(const void* data, std::size_t size,
+InkingSoundId InkingAudioLoadFromMemory(const void* data, std::size_t size,
                             const std::string& name) {
-    // 0.8.5 删掉了 `AudioLoadMode mode` 这个参数：从内存加载只有"整段解进内存"
+    // 0.8.5 删掉了 `InkingAudioLoadMode mode` 这个参数：从内存加载只有"整段解进内存"
     // 这一种，`Streaming` 无从谈起（字节本来就在 RAM 里，再"流"只会多一层拷贝）。
     // 传进来也没人读——而"传了 Streaming、实际是 InMemory"正是最难查的静默差异。
     AudioState& audio = state();
     MIX_Mixer* mixer = audio.mixer.load();
     if (data == nullptr || size == 0 || mixer == nullptr) {
-        return kInvalidSound;
+        return InkingInvalidSound;
     }
-    const SoundId cached = FindLoaded(name);
-    if (cached != kInvalidSound) {
+    const InkingSoundId cached = FindLoaded(name);
+    if (cached != InkingInvalidSound) {
         return cached;
     }
 
@@ -769,35 +768,35 @@ SoundId AudioLoadFromMemory(const void* data, std::size_t size,
         ++audio.stats.loadFailures;
         INK_LOG_WARN("Audio",
                      "从内存加载失败：" + name + "（" + SDL_GetError() + "）");
-        return kInvalidSound;
+        return InkingInvalidSound;
     }
     sound.durationSeconds = DurationOfAudio(sound.audio);
     sound.streaming = false;
-    sound.state = AudioLoadState::Ready;
+    sound.state = InkingAudioLoadState::Ready;
     audio.sounds.push_back(std::move(sound));
     ++audio.stats.loads;
     ++audio.stats.loadsCompleted;
-    return static_cast<SoundId>(audio.sounds.size());
+    return static_cast<InkingSoundId>(audio.sounds.size());
 }
 
-void AudioPreload(const std::vector<std::string>& paths) {
+void InkingAudioPreload(const std::vector<std::string>& paths) {
     for (const std::string& path : paths) {
-        AudioLoadAsync(path, AudioLoadMode::Auto);
+        InkingAudioLoadAsync(path, InkingAudioLoadMode::Auto);
     }
 }
 
-AudioLoadState AudioLoadStateOf(SoundId id) {
+InkingAudioLoadState InkingAudioLoadStateOf(InkingSoundId id) {
     const Sound* sound = FindSound(id);
-    return sound != nullptr ? sound->state : AudioLoadState::None;
+    return sound != nullptr ? sound->state : InkingAudioLoadState::None;
 }
 
-bool AudioIsReady(SoundId id) {
+bool InkingAudioIsReady(InkingSoundId id) {
     const Sound* sound = FindSound(id);
-    return sound != nullptr && sound->state == AudioLoadState::Ready
+    return sound != nullptr && sound->state == InkingAudioLoadState::Ready
         && sound->audio != nullptr;
 }
 
-float AudioDurationSeconds(SoundId id) {
+float InkingAudioDurationSeconds(InkingSoundId id) {
     const Sound* sound = FindSound(id);
     return sound != nullptr ? sound->durationSeconds : 0.0f;
 }
@@ -806,9 +805,9 @@ float AudioDurationSeconds(SoundId id) {
 // BGM
 // ---------------------------------------------------------------------------
 
-void AudioPlayBgm(SoundId sound, float fadeInSeconds, float volume) {
+void InkingAudioPlayBgm(InkingSoundId sound, float fadeInSeconds, float volume) {
     AudioState& audio = state();
-    if (!AudioIsReady(sound) || audio.bgmTrack == nullptr) {
+    if (!InkingAudioIsReady(sound) || audio.bgmTrack == nullptr) {
         return;
     }
     if (audio.bgmRequested) {
@@ -817,32 +816,32 @@ void AudioPlayBgm(SoundId sound, float fadeInSeconds, float volume) {
     StartBgm(sound, fadeInSeconds, volume);
 }
 
-void AudioPlayBgmAsync(SoundId sound, float fadeInSeconds, float volume) {
+void InkingAudioPlayBgmAsync(InkingSoundId sound, float fadeInSeconds, float volume) {
     AudioState& audio = state();
-    if (sound == kInvalidSound) {
+    if (sound == InkingInvalidSound) {
         return;
     }
-    if (AudioIsReady(sound)) {
-        AudioPlayBgm(sound, fadeInSeconds, volume);
+    if (InkingAudioIsReady(sound)) {
+        InkingAudioPlayBgm(sound, fadeInSeconds, volume);
         return;
     }
-    if (AudioLoadStateOf(sound) != AudioLoadState::Loading) {
+    if (InkingAudioLoadStateOf(sound) != InkingAudioLoadState::Loading) {
         return;  // 压根没这个句柄 / 已经失败：不排队
     }
-    // 记住这次请求，`AudioTick` 里等它 Ready 的那一帧起播。
+    // 记住这次请求，`InkingAudioTick` 里等它 Ready 的那一帧起播。
     audio.hasPendingBgm = true;
     audio.pendingBgm = sound;
     audio.pendingBgmFade = fadeInSeconds;
     audio.pendingBgmVolume = volume;
 }
 
-void AudioStopBgm(float fadeOutSeconds) {
+void InkingAudioStopBgm(float fadeOutSeconds) {
     AudioState& audio = state();
     audio.hasPendingBgm = false;  // 还没起播就喊停：连待播请求一起撤掉
     RetireBgm(fadeOutSeconds);
 }
 
-void AudioPauseBgm() {
+void InkingAudioPauseBgm() {
     AudioState& audio = state();
     if (audio.bgmTrack != nullptr && audio.bgmRequested) {
         MIX_PauseTrack(audio.bgmTrack);
@@ -852,7 +851,7 @@ void AudioPauseBgm() {
     }
 }
 
-void AudioResumeBgm() {
+void InkingAudioResumeBgm() {
     AudioState& audio = state();
     if (audio.bgmTrack != nullptr && audio.bgmRequested) {
         MIX_ResumeTrack(audio.bgmTrack);
@@ -862,27 +861,27 @@ void AudioResumeBgm() {
     }
 }
 
-bool AudioIsBgmPlaying() {
+bool InkingAudioIsBgmPlaying() {
     AudioState& audio = state();
     return audio.bgmRequested && audio.bgmTrack != nullptr
         && MIX_TrackPlaying(audio.bgmTrack);
 }
 
-bool AudioIsBgmPaused() {
+bool InkingAudioIsBgmPaused() {
     AudioState& audio = state();
     return audio.bgmTrack != nullptr && MIX_TrackPaused(audio.bgmTrack);
 }
 
-float AudioBgmVolume() {
+float InkingAudioBgmVolume() {
     const AudioState& audio = state();
     if (!audio.bgmRequested) {
         return 0.0f;
     }
-    return audio.channelVolume[static_cast<int>(AudioChannel::Bgm)] * audio.bgmVolume
+    return audio.channelVolume[static_cast<int>(InkingAudioChannel::Bgm)] * audio.bgmVolume
          * audio.bgmGain;
 }
 
-float AudioBgmPositionSeconds() {
+float InkingAudioBgmPositionSeconds() {
     AudioState& audio = state();
     if (audio.bgmTrack == nullptr) {
         return 0.0f;
@@ -898,10 +897,10 @@ float AudioBgmPositionSeconds() {
 // SE
 // ---------------------------------------------------------------------------
 
-void AudioPlaySe(SoundId sound, float volume) {
+void InkingAudioPlaySe(InkingSoundId sound, float volume) {
     AudioState& audio = state();
     // **未就绪就丢弃**：迟到的音效不如不响。
-    if (!AudioIsReady(sound)) {
+    if (!InkingAudioIsReady(sound)) {
         return;
     }
     const Sound* loaded = FindSound(sound);
@@ -927,9 +926,9 @@ void AudioPlaySe(SoundId sound, float volume) {
     ApplyVolumes();
 }
 
-void AudioPlaySeAsync(SoundId sound, float volume) { AudioPlaySe(sound, volume); }
+void InkingAudioPlaySeAsync(InkingSoundId sound, float volume) { InkingAudioPlaySe(sound, volume); }
 
-std::uint32_t AudioActiveSeCount() {
+std::uint32_t InkingAudioActiveSeCount() {
     std::uint32_t count = 0;
     for (const SeVoice& voice : state().seVoices) {
         if (voice.active) {
@@ -943,11 +942,11 @@ std::uint32_t AudioActiveSeCount() {
 // 角色语音（B13）
 // ---------------------------------------------------------------------------
 
-void AudioPlayVoice(SoundId sound, float volume) {
+void InkingAudioPlayVoice(InkingSoundId sound, float volume) {
     AudioState& audio = state();
-    // 与 SE 不同：语音**未就绪时不丢**——但那条路由 `AudioPlayVoiceAsync` 负责，
+    // 与 SE 不同：语音**未就绪时不丢**——但那条路由 `InkingAudioPlayVoiceAsync` 负责，
     // 这个函数只做"现在就能播"的那一半。
-    if (!AudioIsReady(sound) || audio.voiceTrack == nullptr) {
+    if (!InkingAudioIsReady(sound) || audio.voiceTrack == nullptr) {
         return;
     }
     const Sound* loaded = FindSound(sound);
@@ -967,18 +966,18 @@ void AudioPlayVoice(SoundId sound, float volume) {
     ApplyVolumes();
 }
 
-void AudioPlayVoiceAsync(SoundId sound, float volume) {
+void InkingAudioPlayVoiceAsync(InkingSoundId sound, float volume) {
     AudioState& audio = state();
     // 先把上一句停掉：语义是"现在这一屏该说的是哪句"，不是"再叠一句"。
-    AudioStopVoice();
-    if (sound == kInvalidSound) {
+    InkingAudioStopVoice();
+    if (sound == InkingInvalidSound) {
         return;
     }
-    if (AudioIsReady(sound)) {
-        AudioPlayVoice(sound, volume);
+    if (InkingAudioIsReady(sound)) {
+        InkingAudioPlayVoice(sound, volume);
         return;
     }
-    if (AudioLoadStateOf(sound) != AudioLoadState::Loading) {
+    if (InkingAudioLoadStateOf(sound) != InkingAudioLoadState::Loading) {
         return;  // 压根没这个句柄 / 已经失败：不排队
     }
     audio.hasPendingVoice = true;
@@ -986,24 +985,24 @@ void AudioPlayVoiceAsync(SoundId sound, float volume) {
     audio.pendingVoiceVolume = volume;
 }
 
-void AudioStopVoice() {
+void InkingAudioStopVoice() {
     AudioState& audio = state();
     audio.hasPendingVoice = false;
-    audio.pendingVoice = kInvalidSound;
+    audio.pendingVoice = InkingInvalidSound;
     if (audio.voiceTrack != nullptr) {
         MIX_StopTrack(audio.voiceTrack, 0);
     }
-    audio.voiceSound = kInvalidSound;
+    audio.voiceSound = InkingInvalidSound;
     audio.voiceRequested = false;
 }
 
-bool AudioIsVoicePlaying() {
+bool InkingAudioIsVoicePlaying() {
     AudioState& audio = state();
     return audio.voiceRequested && audio.voiceTrack != nullptr
         && MIX_TrackPlaying(audio.voiceTrack);
 }
 
-float AudioVoicePositionSeconds() {
+float InkingAudioVoicePositionSeconds() {
     AudioState& audio = state();
     if (audio.voiceTrack == nullptr) {
         return 0.0f;
@@ -1015,12 +1014,12 @@ float AudioVoicePositionSeconds() {
     return static_cast<float>(MIX_TrackFramesToMS(audio.voiceTrack, frames)) / 1000.0f;
 }
 
-float AudioVoiceVolume() {
+float InkingAudioVoiceVolume() {
     const AudioState& audio = state();
     if (!audio.voiceRequested) {
         return 0.0f;
     }
-    return audio.channelVolume[static_cast<int>(AudioChannel::Voice)]
+    return audio.channelVolume[static_cast<int>(InkingAudioChannel::Voice)]
          * audio.voiceVolume;
 }
 
@@ -1033,9 +1032,9 @@ float AudioVoiceVolume() {
 // ---------------------------------------------------------------------------
 
 /// 取一条**已经开着**的流（`stream != nullptr`）；否则 nullptr。
-PcmStream* OpenPcmStream(PcmStreamId id) {
+PcmStream* OpenPcmStream(InkingPcmStreamId id) {
     AudioState& audio = state();
-    if (id == kInvalidPcmStream) {
+    if (id == InkingInvalidPcmStream) {
         return nullptr;
     }
     const std::size_t index = static_cast<std::size_t>(id) - 1u;
@@ -1046,11 +1045,11 @@ PcmStream* OpenPcmStream(PcmStreamId id) {
     return slot.stream != nullptr ? &slot : nullptr;
 }
 
-PcmStreamId AudioOpenPcmStream(int sampleRate, int channels) {
+InkingPcmStreamId InkingAudioOpenPcmStream(int sampleRate, int channels) {
     AudioState& audio = state();
     MIX_Mixer* mixer = audio.mixer.load();
     if (mixer == nullptr || sampleRate <= 0 || channels <= 0 || channels > 2) {
-        return kInvalidPcmStream;  // 后端不在 / 参数非法：调用方照空转处理
+        return InkingInvalidPcmStream;  // 后端不在 / 参数非法：调用方照空转处理
     }
     for (std::size_t i = 0; i < audio.pcmStreams.size(); ++i) {
         PcmStream& slot = audio.pcmStreams[i];
@@ -1074,13 +1073,13 @@ PcmStreamId AudioOpenPcmStream(int sampleRate, int channels) {
         if (stream == nullptr) {
             INK_LOG_ERROR("Audio",
                           std::string("建 PCM 流失败：") + SDL_GetError());
-            return kInvalidPcmStream;
+            return InkingInvalidPcmStream;
         }
         if (!MIX_SetTrackAudioStream(slot.track, stream)) {
             INK_LOG_ERROR("Audio", std::string("把 PCM 流挂上轨道失败：")
                                        + SDL_GetError());
             SDL_DestroyAudioStream(stream);
-            return kInvalidPcmStream;
+            return InkingInvalidPcmStream;
         }
         slot.stream = stream;
         slot.volume = 1.0f;
@@ -1091,7 +1090,7 @@ PcmStreamId AudioOpenPcmStream(int sampleRate, int channels) {
         // 而且位置要从 0 开始算（音画同步的主时钟靠它）。
         MIX_SetTrackGain(
             slot.track,
-            audio.channelVolume[static_cast<int>(AudioChannel::Voice)]);
+            audio.channelVolume[static_cast<int>(InkingAudioChannel::Voice)]);
         if (MIX_PlayTrack(slot.track, 0)) {
             MIX_PauseTrack(slot.track);
         } else {
@@ -1099,14 +1098,14 @@ PcmStreamId AudioOpenPcmStream(int sampleRate, int channels) {
                          std::string("PCM 流轨道起播失败：") + SDL_GetError());
         }
         slot.playing = false;
-        return static_cast<PcmStreamId>(i + 1u);
+        return static_cast<InkingPcmStreamId>(i + 1u);
     }
     INK_LOG_WARN("Audio", "PCM 流池满了（最多 "
                               + std::to_string(kPcmStreamCount) + " 条）");
-    return kInvalidPcmStream;
+    return InkingInvalidPcmStream;
 }
 
-std::size_t AudioPushPcm(PcmStreamId id, const void* data, std::size_t bytes) {
+std::size_t InkingAudioPushPcm(InkingPcmStreamId id, const void* data, std::size_t bytes) {
     PcmStream* slot = OpenPcmStream(id);
     if (slot == nullptr || data == nullptr || bytes == 0) {
         return bytes;  // 没吃下：调用方攒着下次再推（空转也是这个语义）
@@ -1126,7 +1125,7 @@ std::size_t AudioPushPcm(PcmStreamId id, const void* data, std::size_t bytes) {
     return bytes - take;
 }
 
-bool AudioPcmStreamWantsData(PcmStreamId id) {
+bool InkingAudioPcmStreamWantsData(InkingPcmStreamId id) {
     PcmStream* slot = OpenPcmStream(id);
     if (slot == nullptr) {
         return false;
@@ -1137,7 +1136,7 @@ bool AudioPcmStreamWantsData(PcmStreamId id) {
     return queued < PcmQueueTargetBytes(*slot);
 }
 
-void AudioSetPcmStreamPlaying(PcmStreamId id, bool playing) {
+void InkingAudioSetPcmStreamPlaying(InkingPcmStreamId id, bool playing) {
     PcmStream* slot = OpenPcmStream(id);
     if (slot == nullptr || slot->playing == playing) {
         return;  // 幂等：状态没变就不惊动 mixer
@@ -1150,7 +1149,7 @@ void AudioSetPcmStreamPlaying(PcmStreamId id, bool playing) {
     slot->playing = playing;
 }
 
-float AudioPcmStreamPositionSeconds(PcmStreamId id) {
+float InkingAudioPcmStreamPositionSeconds(InkingPcmStreamId id) {
     PcmStream* slot = OpenPcmStream(id);
     if (slot == nullptr) {
         return 0.0f;
@@ -1169,7 +1168,7 @@ float AudioPcmStreamPositionSeconds(PcmStreamId id) {
     return ms > 0 ? static_cast<float>(ms) / 1000.0f : 0.0f;
 }
 
-void AudioSetPcmStreamVolume(PcmStreamId id, float volume) {
+void InkingAudioSetPcmStreamVolume(InkingPcmStreamId id, float volume) {
     PcmStream* slot = OpenPcmStream(id);
     if (slot == nullptr) {
         return;
@@ -1178,15 +1177,15 @@ void AudioSetPcmStreamVolume(PcmStreamId id, float volume) {
     AudioState& audio = state();
     MIX_SetTrackGain(
         slot->track,
-        audio.channelVolume[static_cast<int>(AudioChannel::Voice)] * slot->volume);
+        audio.channelVolume[static_cast<int>(InkingAudioChannel::Voice)] * slot->volume);
 }
 
-float AudioPcmStreamVolume(PcmStreamId id) {
+float InkingAudioPcmStreamVolume(InkingPcmStreamId id) {
     PcmStream* slot = OpenPcmStream(id);
     return slot != nullptr ? slot->volume : 0.0f;
 }
 
-void AudioClosePcmStream(PcmStreamId id) {
+void InkingAudioClosePcmStream(InkingPcmStreamId id) {
     PcmStream* slot = OpenPcmStream(id);
     if (slot == nullptr) {
         return;  // 幂等
@@ -1202,7 +1201,7 @@ void AudioClosePcmStream(PcmStreamId id) {
     slot->channels = 0;
 }
 
-std::uint32_t AudioPcmStreamCount() {
+std::uint32_t InkingAudioPcmStreamCount() {
     AudioState& audio = state();
     std::uint32_t count = 0;
     for (const PcmStream& slot : audio.pcmStreams) {
@@ -1213,25 +1212,25 @@ std::uint32_t AudioPcmStreamCount() {
     return count;
 }
 
-void AudioSetMasterVolume(float volume) {
+void InkingAudioSetMasterVolume(float volume) {
     state().master = Clamp01(volume);
     ApplyVolumes();
 }
 
-float AudioMasterVolume() { return state().master; }
+float InkingAudioMasterVolume() { return state().master; }
 
-void AudioSetChannelVolume(AudioChannel channel, float volume) {
+void InkingAudioSetChannelVolume(InkingAudioChannel channel, float volume) {
     const int index = static_cast<int>(channel);
-    if (index < 0 || index >= kAudioChannelCount) {
+    if (index < 0 || index >= InkingAudioChannelCount) {
         return;
     }
     state().channelVolume[index] = Clamp01(volume);
     ApplyVolumes();
 }
 
-float AudioChannelVolume(AudioChannel channel) {
+float InkingAudioChannelVolume(InkingAudioChannel channel) {
     const int index = static_cast<int>(channel);
-    if (index < 0 || index >= kAudioChannelCount) {
+    if (index < 0 || index >= InkingAudioChannelCount) {
         return 0.0f;
     }
     return state().channelVolume[index];
@@ -1241,7 +1240,7 @@ float AudioChannelVolume(AudioChannel channel) {
 // 每帧
 // ---------------------------------------------------------------------------
 
-void AudioTick(float deltaSeconds) {
+void InkingAudioTick(float deltaSeconds) {
     AudioState& audio = state();
     if (audio.mixer.load() == nullptr) {
         return;
@@ -1272,7 +1271,7 @@ void AudioTick(float deltaSeconds) {
                 continue;
             }
             if (completed.audio == nullptr) {
-                slot->state = AudioLoadState::Failed;
+                slot->state = InkingAudioLoadState::Failed;
                 ++audio.stats.loadFailures;
                 INK_LOG_WARN("Audio", "异步加载失败：" + slot->name);
                 continue;
@@ -1280,7 +1279,7 @@ void AudioTick(float deltaSeconds) {
             slot->audio = completed.audio;
             slot->durationSeconds = completed.durationSeconds;
             slot->streaming = completed.streaming;
-            slot->state = AudioLoadState::Ready;
+            slot->state = InkingAudioLoadState::Ready;
             ++audio.stats.loads;
         }
     }
@@ -1325,37 +1324,37 @@ void AudioTick(float deltaSeconds) {
         }
         if (voice.track == nullptr || !MIX_TrackPlaying(voice.track)) {
             voice.active = false;
-            voice.sound = kInvalidSound;
+            voice.sound = InkingInvalidSound;
         }
     }
 
     // 5. "等就绪再播"的 BGM。
     if (audio.hasPendingBgm) {
-        if (AudioIsReady(audio.pendingBgm)) {
-            const SoundId id = audio.pendingBgm;
+        if (InkingAudioIsReady(audio.pendingBgm)) {
+            const InkingSoundId id = audio.pendingBgm;
             const float fade = audio.pendingBgmFade;
             const float volume = audio.pendingBgmVolume;
             audio.hasPendingBgm = false;
-            audio.pendingBgm = kInvalidSound;
-            AudioPlayBgm(id, fade, volume);
-        } else if (AudioLoadStateOf(audio.pendingBgm) != AudioLoadState::Loading) {
+            audio.pendingBgm = InkingInvalidSound;
+            InkingAudioPlayBgm(id, fade, volume);
+        } else if (InkingAudioLoadStateOf(audio.pendingBgm) != InkingAudioLoadState::Loading) {
             audio.hasPendingBgm = false;  // 失败了就别一直等
-            audio.pendingBgm = kInvalidSound;
+            audio.pendingBgm = InkingInvalidSound;
         }
     }
 
     // 6. "等就绪再播"的语音（B13，理由与 BGM 那条一模一样：这一屏该有的配音
     //    迟到也要补上——它常常还在后台解码时就轮到这一屏了）。
     if (audio.hasPendingVoice) {
-        if (AudioIsReady(audio.pendingVoice)) {
-            const SoundId id = audio.pendingVoice;
+        if (InkingAudioIsReady(audio.pendingVoice)) {
+            const InkingSoundId id = audio.pendingVoice;
             const float volume = audio.pendingVoiceVolume;
             audio.hasPendingVoice = false;
-            audio.pendingVoice = kInvalidSound;
-            AudioPlayVoice(id, volume);
-        } else if (AudioLoadStateOf(audio.pendingVoice) != AudioLoadState::Loading) {
+            audio.pendingVoice = InkingInvalidSound;
+            InkingAudioPlayVoice(id, volume);
+        } else if (InkingAudioLoadStateOf(audio.pendingVoice) != InkingAudioLoadState::Loading) {
             audio.hasPendingVoice = false;  // 失败了就别一直等
-            audio.pendingVoice = kInvalidSound;
+            audio.pendingVoice = InkingInvalidSound;
         }
     }
 
@@ -1366,104 +1365,103 @@ void AudioTick(float deltaSeconds) {
 
 #else  // 没有 SDL3_mixer：整层空转（每个入口都是安全的空操作）
 
-bool AudioInit() { return false; }
+bool InkingAudioInit() { return false; }
 
-void AudioShutdown() { state().stats = AudioStats{}; }
+void InkingAudioShutdown() { state().stats = InkingAudioStats{}; }
 
-bool AudioReady() { return false; }
+bool InkingAudioReady() { return false; }
 
-AudioStats AudioStatsSnapshot() { return state().stats; }
+InkingAudioStats InkingAudioStatsSnapshot() { return state().stats; }
 
-std::string AudioDecoderName(int) { return {}; }
+std::string InkingAudioDecoderName(int) { return {}; }
 
-SoundId AudioLoad(const std::string&, AudioLoadMode) { return kInvalidSound; }
+InkingSoundId InkingAudioLoad(const std::string&, InkingAudioLoadMode) { return InkingInvalidSound; }
 
-SoundId AudioLoadAsync(const std::string&, AudioLoadMode) { return kInvalidSound; }
+InkingSoundId InkingAudioLoadAsync(const std::string&, InkingAudioLoadMode) { return InkingInvalidSound; }
 
-SoundId AudioLoadFromMemory(const void*, std::size_t, const std::string&) {
-    return kInvalidSound;
+InkingSoundId InkingAudioLoadFromMemory(const void*, std::size_t, const std::string&) {
+    return InkingInvalidSound;
 }
 
-void AudioPreload(const std::vector<std::string>&) {}
+void InkingAudioPreload(const std::vector<std::string>&) {}
 
-AudioLoadState AudioLoadStateOf(SoundId) { return AudioLoadState::None; }
+InkingAudioLoadState InkingAudioLoadStateOf(InkingSoundId) { return InkingAudioLoadState::None; }
 
-bool AudioIsReady(SoundId) { return false; }
+bool InkingAudioIsReady(InkingSoundId) { return false; }
 
-float AudioDurationSeconds(SoundId) { return 0.0f; }
+float InkingAudioDurationSeconds(InkingSoundId) { return 0.0f; }
 
-void AudioPlayBgm(SoundId, float, float) {}
+void InkingAudioPlayBgm(InkingSoundId, float, float) {}
 
-void AudioPlayBgmAsync(SoundId, float, float) {}
+void InkingAudioPlayBgmAsync(InkingSoundId, float, float) {}
 
-void AudioStopBgm(float) {}
+void InkingAudioStopBgm(float) {}
 
-void AudioPauseBgm() {}
+void InkingAudioPauseBgm() {}
 
-void AudioResumeBgm() {}
+void InkingAudioResumeBgm() {}
 
-bool AudioIsBgmPlaying() { return false; }
+bool InkingAudioIsBgmPlaying() { return false; }
 
-bool AudioIsBgmPaused() { return false; }
+bool InkingAudioIsBgmPaused() { return false; }
 
-float AudioBgmVolume() { return 0.0f; }
+float InkingAudioBgmVolume() { return 0.0f; }
 
-float AudioBgmPositionSeconds() { return 0.0f; }
+float InkingAudioBgmPositionSeconds() { return 0.0f; }
 
-void AudioPlaySe(SoundId, float) {}
+void InkingAudioPlaySe(InkingSoundId, float) {}
 
-void AudioPlaySeAsync(SoundId, float) {}
+void InkingAudioPlaySeAsync(InkingSoundId, float) {}
 
-std::uint32_t AudioActiveSeCount() { return 0; }
+std::uint32_t InkingAudioActiveSeCount() { return 0; }
 
 // B13：角色语音——没有后端时全部空转。
-void AudioPlayVoice(SoundId, float) {}
+void InkingAudioPlayVoice(InkingSoundId, float) {}
 
-void AudioPlayVoiceAsync(SoundId, float) {}
+void InkingAudioPlayVoiceAsync(InkingSoundId, float) {}
 
-void AudioStopVoice() {}
+void InkingAudioStopVoice() {}
 
-bool AudioIsVoicePlaying() { return false; }
+bool InkingAudioIsVoicePlaying() { return false; }
 
-float AudioVoicePositionSeconds() { return 0.0f; }
+float InkingAudioVoicePositionSeconds() { return 0.0f; }
 
-float AudioVoiceVolume() { return 0.0f; }
+float InkingAudioVoiceVolume() { return 0.0f; }
 
 // A14：外部 PCM 流——没有后端时同样是**安全空转**：开流拿不到句柄，
 // 推数据原样退回（调用方按"推不进去"处理即可，不需要写"如果没声音"的分支）。
-PcmStreamId AudioOpenPcmStream(int, int) { return kInvalidPcmStream; }
+InkingPcmStreamId InkingAudioOpenPcmStream(int, int) { return InkingInvalidPcmStream; }
 
-std::size_t AudioPushPcm(PcmStreamId, const void*, std::size_t bytes) {
+std::size_t InkingAudioPushPcm(InkingPcmStreamId, const void*, std::size_t bytes) {
     return bytes;
 }
 
-bool AudioPcmStreamWantsData(PcmStreamId) { return false; }
+bool InkingAudioPcmStreamWantsData(InkingPcmStreamId) { return false; }
 
-void AudioSetPcmStreamPlaying(PcmStreamId, bool) {}
+void InkingAudioSetPcmStreamPlaying(InkingPcmStreamId, bool) {}
 
-float AudioPcmStreamPositionSeconds(PcmStreamId) { return 0.0f; }
+float InkingAudioPcmStreamPositionSeconds(InkingPcmStreamId) { return 0.0f; }
 
-void AudioSetPcmStreamVolume(PcmStreamId, float) {}
+void InkingAudioSetPcmStreamVolume(InkingPcmStreamId, float) {}
 
-float AudioPcmStreamVolume(PcmStreamId) { return 0.0f; }
+float InkingAudioPcmStreamVolume(InkingPcmStreamId) { return 0.0f; }
 
-void AudioClosePcmStream(PcmStreamId) {}
+void InkingAudioClosePcmStream(InkingPcmStreamId) {}
 
-std::uint32_t AudioPcmStreamCount() { return 0; }
+std::uint32_t InkingAudioPcmStreamCount() { return 0; }
 
-void AudioSetMasterVolume(float volume) {
+void InkingAudioSetMasterVolume(float volume) {
     const float clamped = volume < 0.0f ? 0.0f : (volume > 1.0f ? 1.0f : volume);
     state().stats.masterVolume = clamped;
 }
 
-float AudioMasterVolume() { return state().stats.masterVolume; }
+float InkingAudioMasterVolume() { return state().stats.masterVolume; }
 
-void AudioSetChannelVolume(AudioChannel, float) {}
+void InkingAudioSetChannelVolume(InkingAudioChannel, float) {}
 
-float AudioChannelVolume(AudioChannel) { return 0.0f; }
+float InkingAudioChannelVolume(InkingAudioChannel) { return 0.0f; }
 
-void AudioTick(float) {}
+void InkingAudioTick(float) {}
 
 #endif  // INK_HAS_SDL3_MIXER
 
-}  // namespace inking

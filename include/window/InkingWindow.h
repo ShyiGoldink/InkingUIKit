@@ -10,7 +10,6 @@
 #include <string>
 #include <vector>
 
-namespace inking {
 
 // 只做前向声明：公开头里不拖场景实现进来。
 class InkingScene;
@@ -29,7 +28,7 @@ class InkingScene;
  * 等比换算，换算倍率由窗口层通过基类的 SetMagnification 写进来（不标脏）。
  *
  * 注意窗口**不是**渲染树的根——渲染树以场景为根（docs/API.md）。窗口只负责
- * 开出来、把事件泵进 MouseInput、每帧把展示倍率刷一遍，然后把当前场景的
+ * 开出来、把事件泵进 InkingMouseInput、每帧把展示倍率刷一遍，然后把当前场景的
  * 绘制列表交给渲染器。
  */
 class InkingWindow : public InkingStaticWidget {
@@ -48,7 +47,7 @@ public:
     /**
      * 当前正在展示（渲染）的场景；没有时为 nullptr。
      *
-     * 活跃态由 `SceneLibrary` 统一维护，窗口**不缓存**场景指针——
+     * 活跃态由 `InkingSceneLibrary` 统一维护，窗口**不缓存**场景指针——
      * 缓存了就得在场景关闭 / 析构时回头清掉，而现查一次更省心，
      * 也不会留下指向已销毁场景的野指针。
      */
@@ -58,7 +57,7 @@ public:
      * @brief 跑主循环（**阻塞**）到窗口关闭，返回**进程退出码**（D5）。
      *
      * 以前返回 void，自检只能自己数失败项再 `return`；现在 `RequestClose(code)`
-     * 记下的那个码会原样传出来，`return inking::InkingWindow::Instance().Show();`
+     * 记下的那个码会原样传出来，`return InkingWindow::Instance().Show();`
      * 就是 CI 要的那条信号。
      *
      * 需要"跑几帧就回来"的非阻塞写法见 `PumpOnce()` / `RunFrames(n)`（D1）。
@@ -141,7 +140,7 @@ public:
      * @brief **离屏渲染一张图**（D2）：不建窗口、不需要 dummy 视频驱动。
      *
      * 做法是一条最短路径：`SDL_CreateSurface` 出目标位图 → `SDL_CreateSoftwareRenderer`
-     * 出一个软渲染器 → 走**与真窗口同一条** `SceneLibrary::RenderScene` →
+     * 出一个软渲染器 → 走**与真窗口同一条** `InkingSceneLibrary::RenderScene` →
      * 存成图片。所以它验的是真实提交路径（形状 / 文字 / 裁剪 / 装饰笔全在内），
      * 不是"另画一份"。
      *
@@ -243,7 +242,7 @@ public:
     /**
      * **请求值**：我们让窗口透明，与"合成器是否照做"分开。
      *
-     * `window/WindowConfig.h` 的回读校验比的是这一个——透明到底透没透读不回来，
+     * `window/InkingWindowConfig.h` 的回读校验比的是这一个——透明到底透没透读不回来，
      * 拿 `IsTransparentApplied()` 去比会把"后端不支持"误报成"配置没生效"。
      */
     bool IsTransparentRequested() const noexcept;
@@ -364,7 +363,7 @@ public:
     // 比例——那就是等比改窗口尺寸。改内容倍率只会把黑边换成裁剪或拉伸。
     //
     // 档位（`GetZoomLadder`）是**运行时生成**的：设计尺寸由 `CXXCSS/config.json`
-    // 决定（运行期落在 `config/window_config.h` 的 `DesignWidth()` 上），所以
+    // 决定（运行期落在 `config/window_config.h` 的 `InkingDesignWidth()` 上），所以
     // "能不能到 2 倍"取决于**当前显示器**装不装得下（设计尺寸 × 2）。
     // 写死一张表在换设计尺寸 / 换小屏的那天就会错。
 
@@ -444,7 +443,7 @@ public:
      * **请求值**（我们让系统做什么），与"系统是否照做"分开。
      *
      * 为什么两个都要：`IsRoundedCornersApplied` 在 Win10 上恒为 false，那是
-     * **系统不支持**，不是"配置没应用"。`window/WindowConfig.h` 的回读校验比的
+     * **系统不支持**，不是"配置没应用"。`window/InkingWindowConfig.h` 的回读校验比的
      * 是这一个——拿 `Applied` 去比会把"系统不支持"误报成"配置没生效"。
      */
     bool IsRoundedCornersRequested() const noexcept;
@@ -485,13 +484,13 @@ public:
     // ---------------- 全局快捷键 ----------------
     //
     // 表住在窗口层：场景的键盘派发是"给焦点"，天生不全局；而快捷键要求
-    // "不管焦点在哪都响应"。详见 `input/ShortcutRegistry.h` 顶上那段。
+    // "不管焦点在哪都响应"。详见 `input/InkingShortcutRegistry.h` 顶上那段。
     //
-    // 注册者（例如 `prefab::MenuBar`）**必须**在析构时 `Unbind`——
+    // 注册者（例如 `inking_prefab::MenuBar`）**必须**在析构时 `Unbind`——
     // 这张表比它们活得久，挂着已死的 `this` 就是悬垂。
 
-    ShortcutRegistry& GetShortcuts() noexcept { return _shortcuts; }
-    const ShortcutRegistry& GetShortcuts() const noexcept { return _shortcuts; }
+    InkingShortcutRegistry& GetShortcuts() noexcept { return _shortcuts; }
+    const InkingShortcutRegistry& GetShortcuts() const noexcept { return _shortcuts; }
 
 private:
     InkingWindow();
@@ -507,8 +506,8 @@ private:
     float maxUsableZoom() const noexcept;
 
 
-    int _windowWidth  = inking::DesignWidth();
-    int _windowHeight = inking::DesignHeight();
+    int _windowWidth  = InkingDesignWidth();
+    int _windowHeight = InkingDesignHeight();
 
     /// 无边框开关（C2）。`Show()` 之前设置就是"建窗口时带上标志"。
     bool _borderless = false;
@@ -556,13 +555,13 @@ private:
     ExitConfirmHandler _exitConfirm{};
 
     /// 全进程的快捷键表（窗口是它的唯一持有者，见 §全局快捷键）。
-    ShortcutRegistry _shortcuts{};
+    InkingShortcutRegistry _shortcuts{};
 
-    MouseInput _mouseInput;
+    InkingMouseInput _mouseInput;
 
     /// 键盘输入（A3）：与 `_mouseInput` 对称——窗口层负责"收事件、攒状态"，
     /// 谁收到（焦点归属）与什么时候收到（每帧一次）都由场景层决定。
-    KeyboardInput _keyboardInput;
+    InkingKeyboardInput _keyboardInput;
 };
 
 /**
@@ -572,6 +571,5 @@ private:
  * 所以"窗口确实按名字解析到了场景并把它渲染出来了"只能靠这个记录来验。
  * 窗口从没跑过主循环时也是 nullptr。
  */
-InkingScene* GetLastRenderedScene() noexcept;
+InkingScene* InkingGetLastRenderedScene() noexcept;
 
-}  // namespace inking

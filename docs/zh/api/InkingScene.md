@@ -11,9 +11,9 @@
 | 头文件 | 内容 |
 | --- | --- |
 | `scene/InkingScene.h` | 场景本体（生命周期、两组逻辑、绘制列表、命中、输入派发） |
-| `scene/SceneLibrary.h` | 进程级场景登记表（静态类） |
+| `scene/InkingSceneLibrary.h` | 进程级场景登记表（静态类） |
 | `scene/SceneRegisterToken.h` | RAII 登记令牌（模板） |
-| `scene/HitTable.h` | 静态命中表（簇 + 格子 + CSR 候选） |
+| `scene/InkingHitTable.h` | 静态命中表（簇 + 格子 + CSR 候选） |
 
 `#include <scene/InkingScene.h>` 一处即可把前三个带进来。
 
@@ -21,12 +21,12 @@
 
 场景**构造即登记**（`registerToSceneLibrary()` 在构造函数末尾）。名字被占了就**当场驳回**
 ——对象照样构造出来了，但它没进库，所以既不会渲染也不会被 tick，是一块"停放"的荒地。
-想用这个名字，得先把占用者 `SceneLibrary::CloseScene(名字)` 关掉。
+想用这个名字，得先把占用者 `InkingSceneLibrary::CloseScene(名字)` 关掉。
 
 **库不拥有场景对象**：关掉也不析构它，生命周期始终归调用方。于是
 "从库里拿指针 → 关掉 → 再自己决定何时析构"不会踩野指针。
 
-登记本身用 RAII 令牌（`RegisterToken<InkingScene, SceneLibrary>`），令牌是场景的成员，
+登记本身用 RAII 令牌（`InkingRegisterToken<InkingScene, InkingSceneLibrary>`），令牌是场景的成员，
 析构时一定先于场景走完——**注销不会漏，也不会晚**。令牌必须记住"我到底进没进库"
 （`_active`）：驳回的令牌是空转的，析构时**绝不能**去注销，那会把正主从库里摘掉。
 
@@ -64,7 +64,7 @@
 为什么扁平而不是递归：
 
 - 绝对坐标必须走父链，而 `GetAbsX()` 是 O(深度)；扁平列表里父指针是现成的；
-- 命中侧已经定了"压平成 HitTable + 平铺 `_drawList`"，渲染跟着扁平，两边遍历才不会越走越远；
+- 命中侧已经定了"压平成 InkingHitTable + 平铺 `_drawList`"，渲染跟着扁平，两边遍历才不会越走越远；
 - 线性遍历对缓存友好，也没有深递归的栈风险。
 
 顺序的维护方式是**标脏 + 帧末惰性重建**：骨架变化只把场景标脏，不立刻排序；
@@ -87,7 +87,7 @@
 
 ## 五、命中：烘焙表 + 动态洞 + 三态
 
-`HitTable` 的形态是 **簇（粗块）→ 簇内均匀格子 → CSR 候选**：
+`InkingHitTable` 的形态是 **簇（粗块）→ 簇内均匀格子 → CSR 候选**：
 
 - **格子只负责缩小范围**：命中与否仍由节点自己的 `HitTest` 回答，所以格子算粗了只是候选
   多几个，**不会误命中**。
@@ -112,7 +112,7 @@
 每帧顺序（窗口层调，见 [InkingWindow.md](InkingWindow.md)）：
 
 ```
-ResetFrameFlags → 事件泵（MouseInput / KeyboardInput）
+ResetFrameFlags → 事件泵（InkingMouseInput / InkingKeyboardInput）
    → 快捷键 Dispatch（命中就消费本帧 Down 事件）
    → Scene::SetPointerState / SetPointerWheel / SetKeyboardInput
    → Scene::DispatchPointer       （按位置：hover / press / click / wheel / drag）
@@ -124,7 +124,7 @@ ResetFrameFlags → 事件泵（MouseInput / KeyboardInput）
 
 **为什么快捷键排在最前**：快捷键是"不管焦点在哪都响应"，它必须住在焦点**之上**。
 命中之后那一下按键不该再推给焦点组件（否则输入框里冒出一个控制字符）。
-`KeyboardInput::ConsumeFrameEvent` 只消费**本帧 Down 事件**，不动跨帧的 `IsKeyDown`。
+`InkingKeyboardInput::ConsumeFrameEvent` 只消费**本帧 Down 事件**，不动跨帧的 `IsKeyDown`。
 
 **为什么键盘派发排在指针之后**：先按位置把焦点算好（可能刚因为点击换了人），
 再把这一帧的按键推给**新的**焦点节点——否则"点进输入框并立刻打字"的第一下会丢。
@@ -139,7 +139,7 @@ ResetFrameFlags → 事件泵（MouseInput / KeyboardInput）
 
 ## 七、动画时钟与频率订阅（0.6.0 T-01）
 
-组件需要"按我自己的频率推进"（12fps 的帧动画、24fps 的采样）。`inking::Timeline`
+组件需要"按我自己的频率推进"（12fps 的帧动画、24fps 的采样）。`InkingTimeline`
 虽然有自定义频率订阅，但**实例在窗口里**（`WindowState` 成员），重开窗口就重建
 ——把句柄发给组件等于把生命周期事故发给组件。所以时钟挪到场景这一级。
 
@@ -166,7 +166,7 @@ ResetFrameFlags → 事件泵（MouseInput / KeyboardInput）
 的节点。场景会在每次回调后比对结构代次，变了就停掉本轮剩下的订阅并记一条 DEBUG
 ——那是**护栏，不是许可**（能拦住崩溃，但当帧剩下的动画少走一步）。
 
-单帧补发上限 64 步；撞上就按自己的间隔截断累加器并计一次 drop（同 `Timeline` 的
+单帧补发上限 64 步；撞上就按自己的间隔截断累加器并计一次 drop（同 `InkingTimeline` 的
 catch-up 处理）。累加器比较带 1e-9 容差：`1/60` 在二进制浮点里是无限循环小数，
 60 次相加不恰好等于 1，严格比较会让"12fps 跑满 1 秒"只派发 11 次。
 
@@ -176,7 +176,7 @@ catch-up 处理）。累加器比较带 1e-9 容差：`1/60` 在二进制浮点�
 
 | 走哪条路 | `onPreload` 跑在 | 收尾在哪 |
 | --- | --- | --- |
-| `SceneLibrary::PreloadScene(名)` | **管家线程** | UI 线程帧首（`DrainPreloadCompletions`） |
+| `InkingSceneLibrary::PreloadScene(名)` | **管家线程** | UI 线程帧首（`DrainPreloadCompletions`） |
 | `InkingWindow::Show(名)` | UI 线程（同步） | 紧随其后 |
 
 两条路**共用同一套状态机**（`Idle → Queued → Done / Failed`，一次 CAS 推进），
@@ -215,7 +215,7 @@ enum class PreloadState : std::uint8_t { Idle = 0, Queued, Done, Failed };
 
 跨线程（管家线程写、UI 线程读），所以是原子量。
 
->**SceneLibrary::RegisterResult**
+>**InkingSceneLibrary::RegisterResult**
 
 ```C++
 enum class RegisterResult { Ok, NameTaken, Invalid };
@@ -224,32 +224,32 @@ enum class RegisterResult { Ok, NameTaken, Invalid };
 `NameTaken` = 同名被占（停放态）；`Invalid` = 名字为空或指针为空。
 "被关过就不能再注册"由 `IsClosed()` 表达，不在 `RegisterResult` 里。
 
->**HitKind / HitResult**（`scene/HitTable.h`）
+>**InkingHitKind / InkingHitResult**（`scene/InkingHitTable.h`）
 
 ```C++
-enum class HitKind { Miss, Static, Dynamic };
-struct HitResult {
-    HitKind kind = HitKind::Miss;
+enum class InkingHitKind { Miss, Static, Dynamic };
+struct InkingHitResult {
+    InkingHitKind kind = InkingHitKind::Miss;
     InkingWidget* node = nullptr;
     bool IsHit() const noexcept;
 };
 ```
 
-`HitTable::Query(x, y, bool* holeHit)` 返回的就是它；`holeHit` 顺带告诉调用方
+`InkingHitTable::Query(x, y, bool* holeHit)` 返回的就是它；`holeHit` 顺带告诉调用方
 "这个点落在动态洞里"。
 
->**HitTable::Entry / Cluster**
+>**InkingHitTable::Entry / Cluster**
 
 ```C++
 struct Entry {               // 一条静态条目
     InkingWidget* node;
-    ShapeBounds envelope;    // 相对场景左上角（设计坐标）
+    InkingShapeBounds envelope;    // 相对场景左上角（设计坐标）
     bool passThrough;
 };
 struct Cluster { float cellSize; ... };   // 一个粗块 + 它自己的格子尺寸
 ```
 
-`HitTable` **不认识场景**：它只收"条目（节点 + 包络 + 让不让过）"和"动态洞的包络"，
+`InkingHitTable` **不认识场景**：它只收"条目（节点 + 包络 + 让不让过）"和"动态洞的包络"，
 由 `InkingScene` 负责在帧首重建、在派发时查询。所以表可以单独被自检对账。
 
 ## APIS
@@ -287,7 +287,7 @@ bool Activate(const std::string& name) noexcept;
 ```C++
 InkingScene();
 explicit InkingScene(const std::string& sceneName);
-explicit InkingScene(const std::string& sceneName, const AnchorData& anchorData);
+explicit InkingScene(const std::string& sceneName, const InkingAnchorData& anchorData);
 ```
 
 第一条：不绑定场景名，**不登记进场景库**（运行期自建场景用）。
@@ -307,7 +307,7 @@ bool IsClosed() const noexcept;
 bool IsActive() const noexcept;
 ```
 
-`IsActive()` 由 `SceneLibrary::SetActiveScene` 维护：同一时刻最多一个为 true，
+`IsActive()` 由 `InkingSceneLibrary::SetActiveScene` 维护：同一时刻最多一个为 true，
 切场景时旧的自动变 false（静默）。
 
 >**TickLogic(fixedStepSeconds) / TickFrame(deltaSeconds)**
@@ -355,7 +355,7 @@ bool IsPointerDirty() const noexcept;
 >**QueryHit(designX, designY)**
 
 ```C++
-HitResult QueryHit(float designX, float designY) noexcept;
+InkingHitResult QueryHit(float designX, float designY) noexcept;
 ```
 
 查一次命中：命中的最上面那个 + 三态。坐标是**设计坐标**。悬停与点击共用它。
@@ -437,8 +437,8 @@ std::uint64_t GetStructureGeneration() const noexcept;
 ```C++
 // 完整版（窗口层用）：两个**语义键** + 来源
 void SetPointerState(float designX, float designY,
-                     const PointerDownState& down, bool inside,
-                     PointerSource source) noexcept;
+                     const InkingPointerDownState& down, bool inside,
+                     InkingPointerSource source) noexcept;
 // 便捷版（只关心主键的调用方 / 自检用）：转发到上面那个
 void SetPointerState(float designX, float designY, bool primaryDown,
                      bool inside) noexcept;
@@ -450,7 +450,7 @@ void SetPointerWheel(float deltaX, float deltaY) noexcept;
 滚轮一帧里调多次会**累加**；它是**一次性量**——本帧没派发出去也照样在帧末被清掉
 （"滚了但没人要"就是丢掉，不该攒到下一帧）。
 
-`down` 是 `PointerDownState{primary, secondary}`：**语义键**，不是设备键。
+`down` 是 `InkingPointerDownState{primary, secondary}`：**语义键**，不是设备键。
 鼠标左右键一一对应；触摸轻点 = `primary`，**长按由场景自己转义成 `secondary`**
 （见下面的"触摸长按"）。
 
@@ -488,8 +488,8 @@ float GetPointerX() const noexcept;
 float GetPointerY() const noexcept;
 bool IsPointerDown() const noexcept;                 // 主键（语义同 0.4.x 的"左键"）
 bool IsSecondaryPointerDown() const noexcept;        // 次键（右键 / 长按）
-const PointerDownState& GetPointerDown() const noexcept;
-MousePoint GetPressOrigin(PointerButton button) const noexcept;
+const InkingPointerDownState& GetPointerDown() const noexcept;
+InkingMousePoint GetPressOrigin(InkingPointerButton button) const noexcept;
 bool IsPointerInside() const noexcept;
 float GetPointerWheelX() const noexcept;
 float GetPointerWheelY() const noexcept;
@@ -513,11 +513,11 @@ InkingWidget* GetHoveredNode() const noexcept;
 >**SetKeyboardInput(input) / GetKeyboardState()**
 
 ```C++
-void SetKeyboardInput(const KeyboardInput& input) noexcept;
-const KeyboardState& GetKeyboardState() const noexcept;
+void SetKeyboardInput(const InkingKeyboardInput& input) noexcept;
+const InkingKeyboardState& GetKeyboardState() const noexcept;
 ```
 
-组件不必自己认识 `KeyboardInput`（那是窗口层的东西），与"指针状态由 `SetPointerState`
+组件不必自己认识 `InkingKeyboardInput`（那是窗口层的东西），与"指针状态由 `SetPointerState`
 喂进来"同一条思路。想"按住就持续做"（方向键移动）或"现在在不在打字"就读这份状态。
 
 >**SetKeyboardFocus(node) / GetKeyboardFocus() / ClearKeyboardFocus()**
@@ -580,7 +580,7 @@ bool IsPreloaded() const noexcept;
 bool IsPreloadFailed() const noexcept;
 bool IsPreloadFinished() const noexcept;
 
-bool RequestPreload();      // 异步：任务丢进 TaskQueue，onPreload 在管家线程跑
+bool RequestPreload();      // 异步：任务丢进 InkingTaskQueue，onPreload 在管家线程跑
 bool PreloadNow();          // 同步：在 UI 线程直接跑完并当场收尾
 bool ConsumePreloadFinish();// 有结果且没通知过 → 调一次 onPreloadFinished(ok)
 ```
@@ -599,10 +599,10 @@ void Render(SDL_Renderer* renderer);                    // 框架调：按 z 序
 void registerToSceneLibrary();                          // 构造末尾登记
 ```
 
-`Render` 是 `protected`：只有框架该调它（窗口层经 `SceneLibrary::RenderScene` 走一道，
+`Render` 是 `protected`：只有框架该调它（窗口层经 `InkingSceneLibrary::RenderScene` 走一道，
 保证"只有活跃场景会被渲染"这条规矩有唯一落点）。
 
-### SceneLibrary — 全部 static
+### InkingSceneLibrary — 全部 static
 
 >**RegisterScene(name, scene) / UnregisterScene(name, scene)**
 
@@ -611,7 +611,7 @@ static RegisterResult RegisterScene(const std::string& sceneName, InkingScene* s
 static void UnregisterScene(const std::string& sceneName, InkingScene* scene);
 ```
 
-一般不用直接调——`RegisterToken` 在构造 / 析构时替你调。
+一般不用直接调——`InkingRegisterToken` 在构造 / 析构时替你调。
 
 >**FindScene(name) / GetAllSceneNames() / SceneCount() / IsNameTaken(name)**
 
@@ -665,16 +665,16 @@ static bool RenderScene(SDL_Renderer* renderer);
 
 ### SceneRegisterToken
 
->**RegisterToken&lt;Registered, Library&gt;**
+>**InkingRegisterToken&lt;Registered, Library&gt;**
 
 ```C++
 template <typename Registered, typename Library>
-class RegisterToken {
+class InkingRegisterToken {
 public:
-    RegisterToken(std::string name, Registered* object);
-    ~RegisterToken() noexcept;                        // 只有 _active 时才注销
-    RegisterToken(RegisterToken&& other) noexcept;
-    RegisterToken& operator=(RegisterToken&& other) noexcept;
+    InkingRegisterToken(std::string name, Registered* object);
+    ~InkingRegisterToken() noexcept;                        // 只有 _active 时才注销
+    InkingRegisterToken(InkingRegisterToken&& other) noexcept;
+    InkingRegisterToken& operator=(InkingRegisterToken&& other) noexcept;
 
     const std::string& GetName() const noexcept;
     Registered* GetObject() const noexcept;
@@ -685,15 +685,15 @@ public:
 
 拷贝禁、移动可。**被登记的对象不是拥有关系**。
 
-### HitTable
+### InkingHitTable
 
 >**Clear() / AddHole(envelope) / Build() / Query(x, y, holeHit)**
 
 ```C++
 void Clear() noexcept;
-void AddHole(const ShapeBounds& envelope) noexcept;
+void AddHole(const InkingShapeBounds& envelope) noexcept;
 void Build() noexcept;
-HitResult Query(float x, float y, bool* holeHit = nullptr) const noexcept;
+InkingHitResult Query(float x, float y, bool* holeHit = nullptr) const noexcept;
 bool IsInDynamicHole(float x, float y) const noexcept;
 ```
 

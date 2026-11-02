@@ -9,12 +9,10 @@
 // 这里没有任何锁：语言切换是"启动时 / 设置界面"里的动作，和渲染 / 布局同在
 // UI 线程。真要在别的线程换语言，那时再谈同步（现在加锁只会掩盖设计问题）。
 
-namespace inking {
-
 namespace {
 
 struct TextTableState {
-    TextTable table;
+    InkingTextTable table;
     std::string language;
     std::size_t languageIndex = 0;
     std::uint64_t version = 0;
@@ -30,7 +28,7 @@ TextTableState& State() noexcept {
 
 }  // namespace
 
-int TextTable::LanguageIndex(const std::string& language) const noexcept {
+int InkingTextTable::LanguageIndex(const std::string& language) const noexcept {
     for (std::size_t i = 0; i < languages.size(); ++i) {
         if (languages[i] == language) {
             return static_cast<int>(i);
@@ -39,8 +37,8 @@ int TextTable::LanguageIndex(const std::string& language) const noexcept {
     return -1;
 }
 
-const TextEntry* TextTable::Find(const std::string& key) const noexcept {
-    for (const TextEntry& entry : entries) {
+const InkingTextEntry* InkingTextTable::Find(const std::string& key) const noexcept {
+    for (const InkingTextEntry& entry : entries) {
         if (entry.key == key) {
             return &entry;
         }
@@ -48,7 +46,7 @@ const TextEntry* TextTable::Find(const std::string& key) const noexcept {
     return nullptr;
 }
 
-bool InstallTextTable(TextTable table, const std::string& language) {
+bool InkingInstallTextTable(InkingTextTable table, const std::string& language) {
     TextTableState& state = State();
 
     // 语言代号：给了就用它（必须是表里有的），没给就用第一门。
@@ -68,7 +66,7 @@ bool InstallTextTable(TextTable table, const std::string& language) {
     return true;
 }
 
-bool SetTextLanguage(const std::string& language) {
+bool InkingSetTextLanguage(const std::string& language) {
     TextTableState& state = State();
     const int index = state.table.LanguageIndex(language);
     if (index < 0) {
@@ -83,21 +81,21 @@ bool SetTextLanguage(const std::string& language) {
     return true;
 }
 
-const std::string& CurrentTextLanguage() noexcept { return State().language; }
+const std::string& InkingCurrentTextLanguage() noexcept { return State().language; }
 
-std::size_t CurrentTextLanguageIndex() noexcept {
+std::size_t InkingCurrentTextLanguageIndex() noexcept {
     return State().languageIndex;
 }
 
-std::uint64_t TextLanguageVersion() noexcept { return State().version; }
+std::uint64_t InkingTextLanguageVersion() noexcept { return State().version; }
 
-std::string ResolveText(const std::string& key) {
+std::string InkingResolveText(const std::string& key) {
     TextTableState& state = State();
     if (state.table.entries.empty()) {
         ++state.misses;
         return key;  // 没装表：key 就是字面量
     }
-    const TextEntry* entry = state.table.Find(key);
+    const InkingTextEntry* entry = state.table.Find(key);
     if (entry == nullptr || state.languageIndex >= entry->translations.size()
         || entry->translations[state.languageIndex].empty()) {
         ++state.misses;
@@ -107,21 +105,20 @@ std::string ResolveText(const std::string& key) {
     return entry->translations[state.languageIndex];
 }
 
-TextTableStats TextTableStatsSnapshot() noexcept {
+InkingTextTableStats InkingTextTableStatsSnapshot() noexcept {
     const TextTableState& state = State();
-    TextTableStats stats;
+    InkingTextTableStats stats;
     stats.hits = state.hits;
     stats.misses = state.misses;
     stats.version = state.version;
     return stats;
 }
 
-void ClearTextTable() noexcept {
+void InkingClearTextTable() noexcept {
     TextTableState& state = State();
-    state.table = TextTable{};
+    state.table = InkingTextTable{};
     state.language.clear();
     state.languageIndex = 0;
     ++state.version;
 }
 
-}  // namespace inking

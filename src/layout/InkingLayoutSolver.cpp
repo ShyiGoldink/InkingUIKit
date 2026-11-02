@@ -13,9 +13,7 @@
 //   3. **溢出不做特殊处理**：内容超出容器时按 Start 排、让它露出去，由容器的
 //      裁剪（A5）去剪。求解器"自己缩一缩"那种聪明做法，只会让布局在边界上
 //      出现没法解释的结果。
-
-namespace inking {
-namespace detail {
+namespace inking_detail {
 namespace layout {
 
 namespace {
@@ -35,37 +33,37 @@ float ClampSize(float value, float minValue, float maxValue) {
 struct AxisAccessor {
     bool vertical = true;
 
-    float Main(const LayoutSize& size) const {
+    float Main(const InkingLayoutSize& size) const {
         return vertical ? size.height : size.width;
     }
-    float Cross(const LayoutSize& size) const {
+    float Cross(const InkingLayoutSize& size) const {
         return vertical ? size.width : size.height;
     }
-    float MainSpacing(const LayoutSpacing& spacing) const {
+    float MainSpacing(const InkingLayoutSpacing& spacing) const {
         return vertical ? spacing.top + spacing.bottom
                         : spacing.left + spacing.right;
     }
-    float MainLeading(const LayoutSpacing& spacing) const {
+    float MainLeading(const InkingLayoutSpacing& spacing) const {
         return vertical ? spacing.top : spacing.left;
     }
-    float MainTrailing(const LayoutSpacing& spacing) const {
+    float MainTrailing(const InkingLayoutSpacing& spacing) const {
         return vertical ? spacing.bottom : spacing.right;
     }
-    float CrossLeading(const LayoutSpacing& spacing) const {
+    float CrossLeading(const InkingLayoutSpacing& spacing) const {
         return vertical ? spacing.left : spacing.top;
     }
-    float CrossTrailing(const LayoutSpacing& spacing) const {
+    float CrossTrailing(const InkingLayoutSpacing& spacing) const {
         return vertical ? spacing.right : spacing.bottom;
     }
-    float CrossSpacing(const LayoutSpacing& spacing) const {
+    float CrossSpacing(const InkingLayoutSpacing& spacing) const {
         return CrossLeading(spacing) + CrossTrailing(spacing);
     }
 };
 
-/// 把"主轴位置 + 交叉轴位置 + 尺寸"组装回 `LayoutRect`。
-LayoutRect MakeRect(const AxisAccessor& axis, float mainPos, float crossPos,
+/// 把"主轴位置 + 交叉轴位置 + 尺寸"组装回 `InkingLayoutRect`。
+InkingLayoutRect MakeRect(const AxisAccessor& axis, float mainPos, float crossPos,
                     float mainSize, float crossSize) {
-    LayoutRect rect{};
+    InkingLayoutRect rect{};
     if (axis.vertical) {
         rect.x = crossPos;
         rect.y = mainPos;
@@ -81,28 +79,28 @@ LayoutRect MakeRect(const AxisAccessor& axis, float mainPos, float crossPos,
 }
 
 /// 交叉轴上的摆放：给"项占的交叉轴长度"和"可用交叉轴长度"，算起点偏移。
-float CrossOffset(LayoutAlign align, float available, float used) {
+float CrossOffset(InkingLayoutAlign align, float available, float used) {
     switch (align) {
-        case LayoutAlign::Center:
+        case InkingLayoutAlign::Center:
             return (available - used) * 0.5f;
-        case LayoutAlign::End:
+        case InkingLayoutAlign::End:
             return available - used;
-        case LayoutAlign::Start:
-        case LayoutAlign::Stretch:
+        case InkingLayoutAlign::Start:
+        case InkingLayoutAlign::Stretch:
         default:
             return 0.0f;
     }
 }
 
-LayoutAlign AlignOf(const LayoutItem& item, LayoutAlign containerAlign) {
+InkingLayoutAlign AlignOf(const InkingLayoutItem& item, InkingLayoutAlign containerAlign) {
     return item.hasSelfAlign ? item.selfAlign : containerAlign;
 }
 
 /// 一列 / 一行的解。
-void SolveStack(const LayoutSpec& spec, const LayoutSize& containerSize,
+void SolveStack(const InkingLayoutSpec& spec, const InkingLayoutSize& containerSize,
                 const std::vector<LayoutInput>& items,
                 std::vector<LayoutOutput>& out) {
-    const AxisAccessor axis{spec.axis == LayoutAxis::Vertical};
+    const AxisAccessor axis{spec.axis == InkingLayoutAxis::Vertical};
     const float contentMain = axis.Main(containerSize)
                             - axis.MainSpacing(spec.padding);
     const float contentCross = axis.Cross(containerSize)
@@ -125,8 +123,8 @@ void SolveStack(const LayoutSpec& spec, const LayoutSize& containerSize,
                                  axis.vertical ? input.item.maxHeight
                                                : input.item.maxWidth);
         // 交叉轴：Stretch 先按"拉满"记，等剩余空间定了再回填。
-        const LayoutAlign align = AlignOf(input.item, spec.align);
-        crossSizes[i] = align == LayoutAlign::Stretch
+        const InkingLayoutAlign align = AlignOf(input.item, spec.align);
+        crossSizes[i] = align == InkingLayoutAlign::Stretch
                             ? 0.0f
                             : ClampSize(axis.Cross(input.desired),
                                         axis.vertical ? input.item.minWidth
@@ -165,28 +163,28 @@ void SolveStack(const LayoutSpec& spec, const LayoutSize& containerSize,
     float extraGap = 0.0f;
     if (remaining > 0.0f && fillCount == 0) {
         switch (spec.justify) {
-            case LayoutJustify::Center:
+            case InkingLayoutJustify::Center:
                 cursor += remaining * 0.5f;
                 break;
-            case LayoutJustify::End:
+            case InkingLayoutJustify::End:
                 cursor += remaining;
                 break;
-            case LayoutJustify::SpaceBetween:
+            case InkingLayoutJustify::SpaceBetween:
                 if (count > 1) {
                     extraGap = remaining / static_cast<float>(count - 1);
                 } else {
                     cursor += remaining * 0.5f;  // 只有一个：居中更好看
                 }
                 break;
-            case LayoutJustify::SpaceAround:
+            case InkingLayoutJustify::SpaceAround:
                 cursor += remaining / (2.0f * static_cast<float>(count));
                 extraGap = remaining / static_cast<float>(count);
                 break;
-            case LayoutJustify::SpaceEvenly:
+            case InkingLayoutJustify::SpaceEvenly:
                 cursor += remaining / (static_cast<float>(count) + 1.0f);
                 extraGap = remaining / (static_cast<float>(count) + 1.0f);
                 break;
-            case LayoutJustify::Start:
+            case InkingLayoutJustify::Start:
             default:
                 break;
         }
@@ -195,14 +193,14 @@ void SolveStack(const LayoutSpec& spec, const LayoutSize& containerSize,
     // 4. 逐项落位。
     for (std::size_t i = 0; i < count; ++i) {
         const LayoutInput& input = items[i];
-        const LayoutAlign align = AlignOf(input.item, spec.align);
+        const InkingLayoutAlign align = AlignOf(input.item, spec.align);
         const float mainPos = cursor + axis.MainLeading(input.item.margin);
         const float mainSize = mainSizes[i];
 
         const float crossAvailable =
             contentCross - axis.CrossSpacing(input.item.margin);
         float crossSize = crossSizes[i];
-        if (align == LayoutAlign::Stretch) {
+        if (align == InkingLayoutAlign::Stretch) {
             crossSize = ClampSize(crossAvailable, 0.0f,
                                   axis.vertical ? input.item.maxWidth
                                                 : input.item.maxHeight);
@@ -211,14 +209,14 @@ void SolveStack(const LayoutSpec& spec, const LayoutSize& containerSize,
                              + CrossOffset(align, crossAvailable, crossSize);
 
         out[i].rect = MakeRect(axis, mainPos, crossPos, mainSize, crossSize);
-        out[i].size = LayoutSize{out[i].rect.width, out[i].rect.height};
+        out[i].size = InkingLayoutSize{out[i].rect.width, out[i].rect.height};
         cursor += mainSize + axis.MainTrailing(input.item.margin) + spec.gap
                 + extraGap;
     }
 }
 
 /// 网格的解：定列数、逐行填；行高取该行最高的一项。
-void SolveGrid(const LayoutSpec& spec, const LayoutSize& containerSize,
+void SolveGrid(const InkingLayoutSpec& spec, const InkingLayoutSize& containerSize,
                const std::vector<LayoutInput>& items,
                std::vector<LayoutOutput>& out) {
     const int columns = spec.columns > 0 ? spec.columns : 1;
@@ -257,11 +255,11 @@ void SolveGrid(const LayoutSpec& spec, const LayoutSize& containerSize,
                                        * (columnWidth + spec.columnGap);
             const float cellWidth =
                 columnWidth - input.item.margin.left - input.item.margin.right;
-            const LayoutAlign align = AlignOf(input.item, spec.align);
+            const InkingLayoutAlign align = AlignOf(input.item, spec.align);
             const float desiredWidth = ClampSize(input.desired.width,
                                                  input.item.minWidth,
                                                  input.item.maxWidth);
-            const float width = align == LayoutAlign::Stretch
+            const float width = align == InkingLayoutAlign::Stretch
                                     ? std::max(0.0f, cellWidth)
                                     : std::min(desiredWidth,
                                                std::max(0.0f, cellWidth));
@@ -272,22 +270,22 @@ void SolveGrid(const LayoutSpec& spec, const LayoutSize& containerSize,
                                                   input.item.maxHeight);
             // 单元格里的高度也用同一套 `align`：Stretch = 拉满这一行，
             // 否则用期望高度 + 对齐偏移（这样"一格里内容怎么摆"与栈是同一套语义）。
-            const bool stretch = align == LayoutAlign::Stretch;
+            const bool stretch = align == InkingLayoutAlign::Stretch;
             const float finalHeight = stretch ? std::max(0.0f, cellHeight)
                                               : std::min(desiredHeight,
                                                          std::max(0.0f, cellHeight));
             const float x = cellLeft + input.item.margin.left
                           + CrossOffset(align, cellWidth, width);
             const float y = rowTop + input.item.margin.top
-                          + CrossOffset(stretch ? LayoutAlign::Stretch : align,
+                          + CrossOffset(stretch ? InkingLayoutAlign::Stretch : align,
                                         cellHeight, finalHeight);
-            LayoutRect rect{};
+            InkingLayoutRect rect{};
             rect.x = x;
             rect.y = y;
             rect.width = width;
             rect.height = finalHeight;
             out[i].rect = rect;
-            out[i].size = LayoutSize{width, finalHeight};
+            out[i].size = InkingLayoutSize{width, finalHeight};
         }
         rowTop += height + spec.rowGap;
     }
@@ -295,25 +293,25 @@ void SolveGrid(const LayoutSpec& spec, const LayoutSize& containerSize,
 
 }  // namespace
 
-std::vector<LayoutOutput> Solve(const LayoutSpec& spec,
-                                const LayoutSize& containerSize,
+std::vector<LayoutOutput> Solve(const InkingLayoutSpec& spec,
+                                const InkingLayoutSize& containerSize,
                                 const std::vector<LayoutInput>& items) {
     std::vector<LayoutOutput> out(items.size());
     if (items.empty()) {
         return out;
     }
 
-    if (spec.kind == LayoutKind::None) {
+    if (spec.kind == InkingLayoutKind::None) {
         // 不布局：原样返回期望尺寸、位置全 0（调用方本该先判 `Valid()`）。
         for (std::size_t i = 0; i < items.size(); ++i) {
             out[i].size = items[i].desired;
-            out[i].rect = LayoutRect{0.0f, 0.0f, items[i].desired.width,
+            out[i].rect = InkingLayoutRect{0.0f, 0.0f, items[i].desired.width,
                                      items[i].desired.height};
         }
         return out;
     }
 
-    if (spec.kind == LayoutKind::Grid) {
+    if (spec.kind == InkingLayoutKind::Grid) {
         SolveGrid(spec, containerSize, items, out);
         return out;
     }
@@ -322,5 +320,4 @@ std::vector<LayoutOutput> Solve(const LayoutSpec& spec,
     return out;
 }
 }  // namespace layout
-}  // namespace detail
-}  // namespace inking
+}  // namespace inking_detail

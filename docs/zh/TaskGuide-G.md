@@ -6,6 +6,7 @@
 > - **编号来源**：`docs/zh/TaskGuide.md` §1.1 的系列表已登记 `G` 一行。`G-00`…`G-08` 只增不改；废止的编号保留并注明"未落地"。
 > - **上游依据**：`docs/zh/TaskGuide-Dynamic.md` 的附录 A / B / C（`MD-01`~`MD-03` 的执行结果）。本文所有"现状 / 兼容 / 为什么这么做"都能在那三份附录里找到带行号的证据，本文不重复举证。
 > - **本系列不改名字**：`InkingStaticImage` / `InkingStaticLabel` / `InkingStaticPanel` / `InkingSprite` 四个旧名一个都不动（附录 C.4）。
+> - **优先级**：本系列是**能力补齐**，不是 1.0 前的主线。四个组件都**必须**有动态档——只有 Button 一个有，组件能力是残缺的；但排期上让位于纯静态 UI 的完善，不抢主线资源。批次之间允许拉长，不要求连续做完。
 
 ---
 
@@ -230,6 +231,13 @@ public:
 
 ### G-02 抽 `ImageLike`（纯重构）
 
+- 状态：**已完成**（2026-11-02，**纯重构**）。新增 `include/image/ImageLike.h`，承载图片数据、
+  资源字节、绘制外观、源矩形与全部共用观测；两个图片类都继承它。两档保留原公开声明为
+  ABI 薄转发，重绘标脏仍留在各自类里；拖 / 缩按任务书不抽。
+  - 证据：`ctest` **7/7**（debug 与 Release 两套）、`inking_strict` 过；`selftest.cpp` 与基线
+    逐字 diff 为空；静态版 public 段签名 diff 为空；`InkingStaticImage` 的 **44 个导出符号**
+    `nm` diff 为空。首轮曾因 `ImageLike` 虚析构新增两个 thunk、并删掉私有
+    `refreshRenderAppearance` 符号而不满足判据——改成受保护非虚析构 + 保留私有转发后归零。
 - **目标**：把 G-01 与 `InkingStaticImage` 里共用的东西收进 `ImageLike`，两个类都继承它。**行为零变化。**
 - **落点**：新增 `include/image/ImageLike.h`；改 `include/image/InkingStaticImage.h`、`src/image/InkingStaticImage.cpp`、`InkingDynamicImage.*`
 - **API**：`ImageLike` 承载数据与观测（`ImageData _data`、`ButtonAppearance _renderAppearance`、`_assetBytes`、`_renderSourceRect`）+ `SetRenderSourceRect` / `LoadAsset` / `SetImageBytes` / `GetShape` / `GetAppearance` / `GetDisplayColor` / `GetHitEnvelope` / `AssetByteCount` / `UsingAssetBytes` / `refreshRenderAppearance`。**无纯虚函数**（第 4 节第 2 条）。`onRender` 留在两档各自类里（各 3 行，接 `PaintButtonAppearance`）。
@@ -244,6 +252,30 @@ public:
 
 ### G-03 `InkingDynamicSprite`（新增，复制静态版）
 
+- 状态：**已完成**（2026-11-02）。第 1 笔（复制）交付：`include/image/InkingDynamicSprite.h` +
+  `src/image/InkingDynamicSprite.cpp`；`InkingSprite` / `InkingStaticImage` **一个字没动**。
+  - 证据：`ctest` **7/7**（debug 与 Release 两套，含 `strict_warnings` `-Werror` 与两档 `selftest`）；
+    `selftest` **失败项 0**，新增 `CheckDynamicSprite()` **30 条**断言：覆盖下面四项验收，
+    另有几条任务书没列但会踩的边界（见后两条），既有断言一条未改；`src/inking.cpp` 补 7 条
+    镜像断言（`HasSetDisplayTransform` 那条也在，与 G-01 同一条"外部变换保留"的决定）。
+  - **帧机同源的机械证据**（不靠"看着一样"）：两份 `.cpp` 各取 `rebuildFromData` → `fps` 那一段，
+    用 `g++ -fpreprocessed -E` 去注释、类名归一、再去掉全部空白后 **`cmp` 逐字节相同（8808 B）**
+    ——覆盖 `rebuildFromData` / `validateSheetGeometry` / `loadFrameBytes` / `syncSheetBytes` /
+    `SetSpriteData` / 全部观测口 / `Play`~`SeekToFrame` / `onAnimationTick` /
+    `fireEventsBetween` / `applyFrame`。剩下的行级差异**只有换行位置**（这个类名长 10 个字符，
+    80 列放不下），没有一处 token 差异。范围外唯一的一段是 `applyData`：两档写几何的方式本来
+    就不同（静态直写基类成员、动态走写入口），那正是"复制"这一笔的落点。
+  - **落地时补的两条判断**（任务书没写、但容易踩）：
+    1. **没有内置拖动**。G-03 的 API 里没有 `SetDraggable`，所以没有把 G-01 那套拖 / 缩复制
+       过来——精灵的"每帧走位"是实体层调 `ChangeOffset`，不是用户拽着走。头文件里写明了这条，
+       免得后来者以为漏了一笔。
+    2. **`SetSpriteData` 不动尺寸**被单独钉了一条断言（验收清单里没有）：配置里带
+       `width/height`，而动态档多了 `Resize`，很容易被"顺手"实现成"换配置时套用配置尺寸"。
+       自检拿 100×100 的配置喂给一个已经 `Resize` 到 60×40 的精灵，断言宽高不变。
+  - **另加一条像素对拍**（任务书没列）：静态 / 动态各画一次同一个图集格，逐像素
+    **差异 0 / 400（颜色 400 种）**。理由：上面 30 条里 28 条在读状态，而"动态节点真的进了
+    绘制列表并画出来"只有画面能证明（动态档最容易的静默失效就是漏登记：状态全对、就是
+    不渲染）；"切格生效"同理——`srcRect` 值对不对与绘制有没有用它，是两件事。
 - **目标**：可每帧走位的帧动画。帧推进逻辑与 `InkingSprite` **逐字相同**（同一套 `applyFrame` / `ensureTimeBase` / `fireEventsBetween`），差别只有几何与输入。
 - **落点**：新增 `include/image/InkingDynamicSprite.h`、`src/image/InkingDynamicSprite.cpp`；`src/inking.cpp` 补断言
 - **API**：`InkingDynamicSprite(InkingWidget*, const SpriteData&)`；`Play` / `Pause` / `Stop` / `SeekToFrame` / `SetSpriteData(data, keepPhase)`；三个事件槽 `frameChanged` / `frameEvent` / `finished`；观测口 `IsPlaying` / `GetFrameIndex` / `GetFrameCount` / `GetFrameAdvanceCount` / `GetSkippedFrameCount` / `IsSheetMode` / `IsValid` / `GetConfigError`。绘制复用 `PaintButtonAppearance`（图集切格仍走 `SetRenderSourceRect`）。
@@ -253,12 +285,43 @@ public:
   3. `Resize` 后 `HitTest` 跟着变（几何驱动命中）。
   4. `src/inking.cpp`：`static_assert(std::is_base_of_v<InkingDynamicWidget, InkingDynamicSprite>)` + `static_assert(!HasResize<InkingSprite>)` 仍在（后者证明静态档没被顺手改成动态）。
 - **命中表与登记影响**：**不进表**，自己维护；占地记"洞"。
-- **偏离**：`SetSpriteData` **仍不动尺寸**（沿 `InkingSprite.h:145-147` 的既有语义："改尺寸属布局层"）。动态档把这件事交给调用方：要跟着动作改尺寸，就自己调 `Resize`。
+- **偏离**：`SetSpriteData` **仍不动尺寸**（沿 `InkingSprite.h:145-147` 的既有语义："改尺寸属布局层"）。动态档把这件事交给调用方：要跟着动作改尺寸，就自己调 `Resize`。**不做内置拖动**：G-03 的 API 没有 `SetDraggable`，精灵的走位由实体层调几何入口，不复制 G-01 的拖 / 缩（"差别只有几何与输入"里的"输入"在本任务＝**没有新的输入**，不是漏做）。
 
 ---
 
 ### G-04 抽 `SpriteLike`（纯重构）
 
+- 状态：**已完成**（2026-11-02，**纯重构**）。新增 `include/image/SpriteLike.h`；实现落在
+  `src/image/InkingSprite.cpp`（**不新增 TU**，同 G-02）。两档都继承它，帧机只剩一份。
+  - 三条客观判据全过：
+    1. `ctest` **7/7**（debug 与 Release 两套，含 `strict_warnings` `-Werror`），`inking_strict` 过；
+       `examples/demo/selftest.cpp` **逐字节未改**（`md5sum -c` 为 OK，321 行 G-03 的断言一字不动）。
+    2. 导出符号：`nm -g --defined-only build/bin/libinking.dll` 里 `InkingSprite*` 的 **56 个符号名
+       一个不少**，只新增 1 个（`InkingSprite::hooksFor`）与 32 个 `SpriteLike::*`。
+       **地址列必然变**（重排后布局不同），所以判据按**符号名**比——任务书那句"diff 为空"要这样读，
+       照字面比地址只会得到 56 行全变。
+    3. 静态版公开面：`include/image/InkingSprite.h` 的 public 段函数签名 **18 行 diff 为空**。
+  - 第四条门槛（`InkingSpriteGroup` 的帧相关自检一条不改就过）：`CheckSpriteGroup` 在 `ctest` 里
+    原样通过；`InkingSpriteGroup` 只用到 `SetSpriteData` / `ApplySelfSize`（`InkingWidget` 的
+    friend），没有一处碰私有帧机。
+  - **"搬家没改语义"的机械证据**：帧机那 349 行逐行对比，只有 **10 处机械替换**——3 个绘制钩子的
+    4 处调用（`setBytes` ×2、`loadAsset`、`setSourceRect`）、3 个事件钩子（`frameChanged` /
+    `frameEvent` / `finished`）、2 个访问器（`GetAppearance` → `_image->`、`GetScene` → `_host->`）、
+    1 个改名（`onAnimationTick` → `advanceFrame`）。把这 10 处替换掉、去掉空白后
+    **8865 B `cmp` 逐字节相同**。
+  - **关键决定：`SpriteLike` 里一个虚函数都没有**（连析构都是受保护非虚）。理由是 G-02 踩过的坑：
+    给**次基类**一张 vtable，`InkingSprite` 的析构就会多出 thunk，`nm` 判据当场红。于是
+    "要组件替它做的事"不用虚函数，用**构造期注入的 `Hooks`**（6 个 `std::function`）：
+    它们是 `SetImageBytes` / `LoadAsset` / `SetRenderSourceRect` 与三个 `Emit` 的绑定，
+    在**调用时机**上与原来写在 `applyFrame` / `onAnimationTick` 里的那几行完全等价。
+    `src/inking.cpp` 加了两条编译期断言把这条钉住：`!is_abstract_v<SpriteLike>`（§4 第 2 条的
+    "不许有纯虚"）与 `!has_virtual_destructor_v<SpriteLike>`（不许有 vtable）。
+  - **代价照实写**：每个精灵多 6 个 `std::function`（约 190 B）；每次换帧多 1~2 次间接调用
+    （12fps 下每帧 12 次，可忽略）。换来的是"帧机只有一份实现"，G-03 那条"改一处必须改两处"
+    的纪律**从今天起作废**。
+  - **两档保留转发的差别**：静态档 9 个私有函数在头里留了"只为符号存在"的一行转发（判据 2 要求）；
+    动态档没有历史 ABI，私有段只留 `applyData` / `refreshRenderAppearance` / `hooksFor`，
+    **公开面 17 个函数保留一行转发**（`selftest` 因此一个字都不用改）。
 - **目标**：把 G-03 与 `InkingSprite` 共用的帧机（`_sprite` / `_frames` / `_frameBytes` / 时间基准 / 计数 / 事件派发）收进 `SpriteLike`。**行为零变化。**
 - **落点**：新增 `include/image/SpriteLike.h`；改 `include/image/InkingSprite.h`、`src/image/InkingSprite.cpp`、`InkingDynamicSprite.*`
 - **API**：`SpriteLike` 承载整套帧推进与观测口，**无纯虚函数**；`onAnimationTick` 的实现在 Like 里（两档都走 `onAnimationTick`，见六项差异第 5 项）。
@@ -270,6 +333,32 @@ public:
 
 ### G-05 `InkingDynamicLabel`（新增，复制静态版）
 
+- 状态：**已完成**（2026-11-02）。第 1 笔（复制）交付：`include/text/InkingDynamicLabel.h` +
+  `src/text/InkingDynamicLabel.cpp`；`InkingStaticLabel.h/.cpp` 与 `LabelData.h` **一个字没动**
+  （`git diff --stat` 对这三个路径为空）。
+  - 证据：`ctest` **7/7**（`build` 与 `build-release` 两套，含 `strict_warnings` `-Werror`）；
+    `selftest` **失败项 0**，新增 `CheckDynamicLabel()` **27 条**断言，逐条对应下面六项验收；
+    `src/inking.cpp` 补 6 条镜像断言（含 `HasSetDisplayTransform`，与 G-01 / G-03 同一条
+    "A13 保留"的决定）。
+  - **复制同源的机械证据**（不靠"看着一样"）：两份 `.cpp` 各取 `EffectiveTextColor` → `GetHitEnvelope`
+    那一段（7 个函数，含 `LayoutForWidth` / `CacheMatches` / `MeasureLayout` / `onRender`），
+    用 `g++ -fpreprocessed -E` 去注释、类名归一、`tr -d '[:space:]'` 后 **`cmp` 逐字节相同
+    （3793 B）**；`MeasureWithTextLayer` 那 10 行也相同（329 B）。剩下的差异只有本类自己
+    多出来的构造 / 写入口 / `FitToContent`。
+  - **落地时改掉的原稿判断**：原稿说 `FitToContent()` = "按 `MeasureLayout` 的结果写一次几何"。
+    实际要**量到自洽才写**：排版交出的 `width` 是**内容宽**（`InkingTextLayout.cpp:443-446`），
+    写回去就变成新的换行基准 ⇒ 于是高度可能是按旧宽排的。现在的实现量到"在这个整数宽下再量
+    还是这个宽"（实测 1~2 趟，上限 4 趟防病态输入），自检第 3 条正是拿它对的账。
+    **代价照实写**：`width` 也会被收到内容宽，配置里的宽只是第一趟的换行基准——头文件与
+    `docs/zh/api/` 都写了"要只撑高就自己 `Resize(width, h)`"。
+  - **没有像素对拍**（G-03 有）：文字那一笔在机械证据那 3793 B 里、与静态版逐字节同源，
+    所以改用 `GetDrawItemCount()` +1 钉住"漏登记"这个静默失效形态（状态全对、就是不画）。
+  - **静默失效清单没新增条目**（§4 第 4 条那两个候选的处置）：`FitToContent()` 在布局容器里
+    现在是"返回 false + 一条 WARN + `IsManagedByLayout()` 可查"⇒ **不静默**，不入表
+    （入表的是"写不出触发条件 / 出错了不发声"的那一类）；"`SetText` 不撑高 ⇒ 多出的行被裁"
+    属 `text_clip_by_height`（0.8.3）的既定语义，也不新增。
+  - **没有配置驱动的构造函数**（静态版有一个）：与 G-01 / G-03 一致，生成器那条路等 G-08
+    打通 `dynamic` 之后再定（生成的类自己取 `LabelData` 喂进来）。
 - **目标**：文字与几何都能在运行期改的标签。排版、主题取色、`MeasureLayout` 与静态版一致。
 - **落点**：新增 `include/text/InkingDynamicLabel.h`、`src/text/InkingDynamicLabel.cpp`；`src/inking.cpp` 补断言
 - **API**：`InkingDynamicLabel(InkingWidget*, const LabelData&)`；`SetText` / `SetTextColor` / `GetTextLayout` / `MeasureLayout`；**新增 `bool FitToContent()`**——按 `MeasureLayout` 的结果写一次几何（`Resize` 到测量宽高）。
@@ -291,6 +380,33 @@ public:
 
 ### G-06 抽 `LabelLike`（纯重构）
 
+- 状态：**已完成**（2026-11-02）。落点：新增 `include/text/LabelLike.h` + `src/text/LabelLike.cpp`；
+  改 `InkingStaticLabel.h/.cpp`、`InkingDynamicLabel.h/.cpp`，`src/inking.cpp` 补 4 条静态断言。
+  **`InkingTextInput.h/.cpp` 一个字没动**（`git status` 里两个路径都不出现）——它是
+  `InkingStaticLabel` 的派生类、自己重写了 `onRender` 与 `TextScrollX()`，重编即过。
+  - 证据一（行为零变化）：`ctest` **7/7**（`build` 与 `build-release` 两套，含 `strict_warnings`
+    `-Werror`）；`selftest` **失败项 0**，**一条断言都没改**（G-05 的 `CheckDynamicLabel` 27 条、
+    输入框那几十条、`font_fallback_chain`、`label_self_size` 全原样通过）。
+  - 证据二（机械判据，同 G-04）：从重构**前**的 `InkingStaticLabel.cpp`（`git show HEAD:`）切出
+    `EffectiveTextColor` → `onRender` 那一整段，与 `LabelLike.cpp` 的对应段做
+    `g++ -fpreprocessed -E` + 去空白后 `cmp`：**3526 B 逐字节相同**。归一只做了 8 处机械替换，
+    逐条可复算：类名（`InkingStaticLabel` / `LabelLike` → `CLS`）、`MeasureLayout` ↔ `MeasureLabel`、
+    `onRender` ↔ `paintLabelText`、`TextScrollX()` ↔ `scrollX`、`_host->GetWidth()` ↔ `_width`、
+    `_host->GetHeight()` ↔ `_height`、`_host->GetMagnification()` ↔ `GetMagnification()`、
+    `_host->GetExternalTransform()` ↔ `GetExternalTransform()`；另加一处"签名多出的 `float` 参数"
+    归一（`paintLabelText` 比 `onRender` 多一个 `scrollX`）。**语义改动为零**。
+  - 证据三（ABI）：重构前后 `nm -g --defined-only libinking.dll` 对三个标签类取符号名集合，
+    **只少两条**：`InkingStaticLabel::LayoutCache::~LayoutCache` 与 `InkingDynamicLabel::…`——
+    它们随嵌套类型搬进了 `LabelLike`，同名符号以 `LabelLike::LayoutCache::~LayoutCache` 仍在
+    （一条不少地"改名"，不是消失）。**多出来的符号为 0**：两档留的那三个私有转发与原来
+    **同签名同名字**，于是同一批符号原样复用。
+  - **对任务书 API 列表的一处扩充**：`SetText` / `SetTextColor` 的**数据手术**
+    （`assignText` / `assignTextColor`：改字段 + 让排版缓存失效 / 刷新主题色缓存）也收进了
+    `LabelLike`。理由：那几行两档逐字相同，复制第二份就是 G-04 之前那种"改一处必须改两处"；
+    而"之后做什么"（静态档 `RelayoutParent()`、动态档只标重绘脏）**仍留在各自的薄转发里**，
+    所以 G-05 的关键决定一没有被抹掉。
+  - **`TextScrollX()` 在动态档保留**（任务书列表里没有它）：G-05 为它导出过符号，nm 判据要求"一条都不少"；
+    而且 G-06 之后它正好是 `paintLabelText(..., scrollX)` 那个参数的来源。
 - **目标**：把 G-05 与 `InkingStaticLabel` 共用的排版缓存与取色收进 `LabelLike`。**行为零变化。**
 - **落点**：新增 `include/text/LabelLike.h`；改 `include/text/InkingStaticLabel.h`、`src/text/InkingStaticLabel.cpp`、`InkingDynamicLabel.*`
 - **API**：`LabelLike` 承载 `LabelData _data`、`LayoutCache _cache`、`LayoutForWidth` / `CacheMatches` / `EffectiveTextColor` / `MeasureLayout` / `onRender`（文字那一笔），**无纯虚函数**。
@@ -302,6 +418,33 @@ public:
 
 ### G-07 `InkingDynamicPanel`（新增，独立实现，不抽 `Like`）
 
+- 状态：**已完成**（2026-11-02）。落点：新增 `include/panel/InkingDynamicPanel.h` +
+  `src/panel/InkingDynamicPanel.cpp`；`src/inking.cpp` 补 **7 条**断言（3 条档位 +
+  4 条写入口，含 `!std::is_base_of_v<InkingStaticPanel, InkingDynamicPanel>`——两档是兄弟）。
+  - 证据：`ctest` **7/7**（`build` 与 `build-release` 两套，含 `strict_warnings` `-Werror`，
+    新 TU 的 strict obj 已按 `-Werror` 编过）；`selftest` **失败项 0**，新增
+    `CheckDynamicPanel()` **25 条**断言，六项验收逐条对上（拖动 → `GetScrollY()`=62.5 与
+    条几何换算一致；松开后再动指针一个字节不变；同场景静态滚动容器保持 0；`Resize` 后裁剪区
+    184→284；`GetSubtreeTransform().translateY == -60 == -GetScrollY()`；一帧内包络调用恰好 1 次）。
+- **落地时对原稿的三处修正**（都写进了代码注释）：
+  1. **`SetScroll()` 只标重绘脏，不标几何移动**。动态档要交"洞"，而本类的
+     `GetHitEnvelope()` 已经按滚动范围把洞扩过（内容能滚到本体之外，洞必须盖住所有滚动位置），
+     所以**洞与滚动量无关**——每滚一像素白付一次"整棵子树并集"没有任何收益。反过来说：
+     谁把那段扩范围的代码删了，症状是"滚过去点不动"，且不报错。
+  2. **`PressScrollAt()` / `DragScrollTo()` 收世界坐标并走三步换算**（撤祖先仿射 → 减绝对
+     位置 → 过自身显示变换的逆），不复用静态版那两行减法——那两行只在"父级在原点且无变换"
+     时等价，而本档两样都可能不成立（它能被 `ChangeOffset` / `Resize` 搬走）。
+  3. **`HitTestNode()` 不重写**：基类那份已经是"子树优先"的容器语义（静态版抄的那一份是
+     0.4.0 之前基类还没有它时留下的）。少一份重写就少一处会走形的地方。
+- **照抄的部分**（本系列"先复制、再抽取"的纪律）：`onRender` / `onRenderDecoration` 是三笔接线
+  （`PanelPaint.cpp` 实现，与静态版共用）；`UpdateScrollRange` / `GetBarMetrics` /
+  `ContentViewport*` / `paintScrollBars` 与静态版逐字同源（`paintScrollBars` 是那 45 行的第二份
+  ——它纯绘制、无时序依赖，**第三个能滚的容器出现时再抽进 `PanelPaint.h`**）。
+- **自检里踩到的一条**（值得记住）：算世界坐标时要**自己减滚动量**——`GetAbsX/Y` 是**布局**
+  位置，滚动位移在子树变换里。第一版写成"面板绝对位置 + 250"，落到子节点之外，
+  于是"被剪掉"与"本来就不占那儿"分不清（那条断言红了，另一条却是绿的）。
+- **不做滚轮**（按原稿）：也没重写 `HandlesSubtreeWheel()`——它是推通道的机制，对动态档无效。
+- **不变**：`InkingStaticPanel` / `InkingFixedPopup` / `MenuPopup` 一行没改。
 - **目标**：几何可变、可滚动的容器。填 / 影 / 描边三笔照抄静态版那 11 行接线；滚动、裁剪、容器命中三组**自己实现**。
 - **落点**：新增 `include/panel/InkingDynamicPanel.h`、`src/panel/InkingDynamicPanel.cpp`；`src/inking.cpp` 补断言
 - **API**：`InkingDynamicPanel(InkingWidget*, const PanelData&)`；`PanelLook _look`（与静态版同一份两态外观 / 过渡）；观测口照静态版：`GetShape` / `GetAppearance` / `GetDisplayColor` / `ContentViewportWidth/Height` / `GetScrollX/Y`；容器契约：`OwnsSubtreeHit() = true`、`GetSubtreeTransform()` 含滚动位移、`GetSubtreeClipBounds()` 扣掉滚动条、`onRender` + `onRenderDecoration`（三笔走 `detail::PaintPanelAppearance` / `PaintSurfaceShadow` / `PaintSurfaceStroke`）。
@@ -327,6 +470,43 @@ public:
 
 ### G-08 代码生成器支持四个类型的 `dynamic`
 
+- 状态：**已完成**（2026-11-02）。五处落点全改：`Fields.h` 三张白名单各加 `dynamic` + Image
+  描述串去掉"没有 dynamic"；`Cxxcss.cpp` 的 `kRejectedImageFields` 删掉 `dynamic`、三个 reader
+  各加一段 `key == "dynamic"`（只认 bool）；`Cxxcss.h` 三个 Config 各加 `bool dynamic`；
+  `Emit.cpp` 的 include 与基类选择；`CXXCSS.md` 正文 + 支持矩阵 + §9 锚点块重生成。
+  - 证据一（旧产物不变）：把现有 18 份配置（去掉四个新样例）喂给新生成器，与改动前的产物
+    逐字对比——**去掉注释行后 `diff` 为空**（`.h` 与 `_register.cpp` 两份各自为空）；换
+    「按类比」更硬：旧产物里的 **14 个类逐个逐字节相同**，新增的正好是 4 个动态类。
+    剩下的行差异只有两类，都不是行为：新增的 `#include` 与段落注释，和"来源路径"那一行
+    （临时目录生成，路径前缀不同）。
+  - 证据二（生成物真的换了基类）：`inkgen_compile_check` 里四条
+    `static_assert(is_base_of_v<InkingDynamicImage, DynamicWalker>)` / `…Sprite, DynamicRunner` /
+    `…Label, DynamicTitle` / `…Panel, DynamicDrawer`，外加**四条反向**断言
+    （没写 `dynamic` 的 `CardArt` / `Walker` / `MenuTitle` / `DrawerPanel` **不得**是动态档）
+    ——反向那四条是这次加的：光验正向，把默认值改成 true 也照样绿。
+  - 证据三（判据齐）：`ctest` **7/7**（`build` 与 `build-release` 两套，含 `strict_warnings`
+    `-Werror`）；`inkgen_validate_cxxcss` / `inkgen_compile_check` / `field_table_in_sync` 三条
+    全绿；`grep "只有静态档"` 与 `grep "没有 dynamic"` 对 `CXXCSS.md` 均无输出。
+  - 证据四（错法不静默）：`"dynamic": "yes"` 报
+    `dynamic 必须是 true 或 false（它决定生成的类继承哪一档：静态 / 动态 × 图片 / 帧动画）`，
+    带文件与行号。
+  - **落地时对原稿的两处增补**（都写进了代码/文档注释）：
+    1. **样例补到四个**（原稿只要求 Image + Sprite）：`Label/dynamicTitle.json` 与
+       `Panel/dynamicDrawer.json` 也各加一份。理由：`Emit` 对四种组件是**四段独立代码**，
+       只验图片那两条，标签 / 面板的基类选择写错照样绿——而它们的验收证据只有"能生成、
+       能编过"这一条。四个样例让 `inkgen_compile_check` 一次覆盖全部四条分支。
+    2. **`main.cpp` 的配置摘要改成报真实档位**：原来硬写"静态面板"/"静态标签"，加了
+       `dynamic` 之后它会**说谎**（画面上是动态档、日志说静态，人就去查"为什么几何改不动"）。
+       现在按配置报 `静态` / `动态`；Image 那个计数不动（它报的是"帧动画几张"，与档位正交）。
+  - **踩到的一个 CMake 坑**：`inking_strict` 的门是 `file(GLOB tools/inkgen/*.cpp)`，而
+    `compile_check.cpp` 现在 include **构建期生成**的头（`inkgen/all/button_service.h`）——
+    干净树里那个头还不存在，门会以 `No such file or directory` 红。已在 `CMakeLists.txt`
+    里用 `list(REMOVE_ITEM …)` 显式排除并写明理由：这道门是**纯源码**的门，那个 TU 由
+    `inkgen_compile_check` 每次构建真编一遍。别把这条当成"顺手绕过 `-Werror`"——它只有
+    几十行断言、没有逻辑。
+  - **偏离**：样例文件名用仓库既有的 camelCase（`dynamicWalker` 等）而不是原稿的
+    `dynamic_walker`——`MakeNameConstant` 只把首字母大写，下划线名会生成 `Dynamic_walker`
+    这种类名；`Canvas` / `Video` 不加 `dynamic`（§0）；`tools/package.sh` 未动。
 - **目标**：`"dynamic": true` 在 Image / Sprite / Label / Panel 的 json 里生效，生成的类继承对应的 `InkingDynamicXxx`。
 - **落点**（五处，初稿只写了两处——这是本任务最容易漏的地方）：
 
@@ -369,13 +549,13 @@ public:
 | - | - | - |
 | G-00 | 修两组、共四处错注释 | **已完成**（2026-11-02） |
 | G-01 | `InkingDynamicImage`（复制） | **已完成**（2026-11-02） |
-| G-02 | 抽 `ImageLike`（纯重构） | 未开始 |
-| G-03 | `InkingDynamicSprite`（复制） | 未开始 |
-| G-04 | 抽 `SpriteLike`（纯重构） | 未开始 |
-| G-05 | `InkingDynamicLabel`（复制） | 未开始 |
-| G-06 | 抽 `LabelLike`（纯重构） | 未开始 |
-| G-07 | `InkingDynamicPanel`（独立实现） | 未开始 |
-| G-08 | 生成器支持 `dynamic` | 未开始 |
+| G-02 | 抽 `ImageLike`（纯重构） | **已完成**（2026-11-02） |
+| G-03 | `InkingDynamicSprite`（复制） | **已完成**（2026-11-02） |
+| G-04 | 抽 `SpriteLike`（纯重构） | **已完成**（2026-11-02） |
+| G-05 | `InkingDynamicLabel`（复制） | **已完成**（2026-11-02） |
+| G-06 | 抽 `LabelLike`（纯重构） | **已完成**（2026-11-02） |
+| G-07 | `InkingDynamicPanel`（独立实现） | **已完成**（2026-11-02） |
+| G-08 | 生成器支持 `dynamic` | **已完成**（2026-11-02） |
 
 完成任务后，本节状态改 `已完成`，正文对应段落按压缩规则收成一行——两处必须同时改。
 

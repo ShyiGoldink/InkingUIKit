@@ -7,7 +7,7 @@
 //
 // 为什么不给按钮加"第四态"：三态是**指针状态**（悬停 / 按下），选中是**内容状态**
 // （业务决定的），两者在按钮的状态机里是两个维度。真要把它们合起来得动底层
-// （`ButtonLook` 的状态机），那是"每类词汇一次"的活，不在"用现有配件组装"这条
+// （`InkingButtonLook` 的状态机），那是"每类词汇一次"的活，不在"用现有配件组装"这条
 // C 系列的路上。所以这里用最薄的一层覆盖：重写 `onRender`，换一个颜色画。
 //
 // 它是 `prefab` 命名空间里的**内部件**（装配件），不是给人单独用的组件——
@@ -17,7 +17,7 @@
 
 #include <cstdint>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 /**
  * @brief 列表里的一行：按钮 + 一个"选中"标志。
@@ -27,7 +27,7 @@ namespace inking::prefab {
  */
 class ListRow : public InkingStaticButton {
 public:
-    ListRow(InkingWidget* parent, const ButtonData& data,
+    ListRow(InkingWidget* parent, const InkingButtonData& data,
             std::uint32_t selectedColor);
 
     /**
@@ -44,7 +44,7 @@ public:
 
 protected:
     /// 选中时换填充色重画一遍（**只有一份画法**：形状 / 描边 / 阴影 / 文字
-    /// 都走与按钮完全相同的那两个 `detail::` 入口，见 `include/button/ButtonPaint.h`）。
+    /// 都走与按钮完全相同的那两个 `inking_detail::` 入口，见 `include/button/ButtonPaint.h`）。
     void onRender(float pixelX, float pixelY) const override;
 
 private:
@@ -52,4 +52,4 @@ private:
     bool _selected = false;
 };
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

@@ -5,8 +5,6 @@
 #include <utility>
 #include <vector>
 
-namespace inking {
-
 namespace {
 
 /**
@@ -19,8 +17,8 @@ namespace {
  *
  * 名字有序也顺带让 GetAllNames 的输出稳定，自检里好比对。
  */
-std::map<std::string, ButtonData>& table() {
-    static std::map<std::string, ButtonData> entries;
+std::map<std::string, InkingButtonData>& table() {
+    static std::map<std::string, InkingButtonData> entries;
     return entries;
 }
 
@@ -45,7 +43,7 @@ std::vector<std::string>& currentBatch() {
 
 }  // namespace
 
-ButtonLibrary::RegisterResult ButtonLibrary::Register(const ButtonData& data) {
+InkingButtonLibrary::RegisterResult InkingButtonLibrary::Register(const InkingButtonData& data) {
     if (data.name.empty()) {
         // 空名字登记进去也查不到，只会在表里留一个空 key。
         return RegisterResult::Invalid;
@@ -68,7 +66,7 @@ ButtonLibrary::RegisterResult ButtonLibrary::Register(const ButtonData& data) {
     return RegisterResult::Ok;
 }
 
-void ButtonLibrary::BeginRegistrationBatch() {
+void InkingButtonLibrary::BeginRegistrationBatch() {
     // 把上一批撤下：生成代码重新跑一遍时不撞 NameTaken。
     // 只删自己登记过的名字——别人（自检、业务代码）塞的条目不动。
     for (const std::string& name : previousBatch()) {
@@ -78,21 +76,21 @@ void ButtonLibrary::BeginRegistrationBatch() {
     currentBatch().clear();
 }
 
-void ButtonLibrary::EndRegistrationBatch() {
+void InkingButtonLibrary::EndRegistrationBatch() {
     previousBatch() = currentBatch();
     currentBatch().clear();
 }
 
-const ButtonData* ButtonLibrary::Find(const std::string& name) {
+const InkingButtonData* InkingButtonLibrary::Find(const std::string& name) {
     const auto it = table().find(name);
     return it == table().end() ? nullptr : &it->second;
 }
 
-bool ButtonLibrary::IsNameTaken(const std::string& name) {
+bool InkingButtonLibrary::IsNameTaken(const std::string& name) {
     return table().find(name) != table().end();
 }
 
-std::vector<std::string> ButtonLibrary::GetAllNames() {
+std::vector<std::string> InkingButtonLibrary::GetAllNames() {
     std::vector<std::string> names;
     names.reserve(table().size());
     for (const auto& entry : table()) {
@@ -101,12 +99,11 @@ std::vector<std::string> ButtonLibrary::GetAllNames() {
     return names;
 }
 
-std::size_t ButtonLibrary::Count() {
+std::size_t InkingButtonLibrary::Count() {
     return table().size();
 }
 
-void ButtonLibrary::ClearForTest() {
+void InkingButtonLibrary::ClearForTest() {
     table().clear();
 }
 
-}  // namespace inking

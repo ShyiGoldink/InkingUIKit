@@ -1,6 +1,6 @@
 #include "PanelPaint.h"
 
-// `detail::TransformBounds` 与 `detail::SubtreeHitEnvelope` 在源项目里都住在**那个
+// `inking_detail::TransformBounds` 与 `inking_detail::SubtreeHitEnvelope` 在源项目里都住在**那个
 // 单体头** `include/ink/basic/InkingAnchor.h` / 单体 `InkingAnchor.cpp` 里——本文件是
 // 经 `PanelPaint.h` -> `ink/basic/InkingAnchor.h` **传递**拿到的。拆层之后两者都落到
 // `detail/InkingGeometry.h`（都要"沿父链/子表"的视野），而 `PanelPaint.h` 现在只拖
@@ -13,7 +13,7 @@
 
 #include <cstdint>
 
-namespace inking::detail {
+namespace inking_detail {
 
 namespace {
 
@@ -24,7 +24,7 @@ float Magnify(const InkingAnchor& node) {
 }
 
 /// 两个 AABB 的并集。
-ShapeBounds UnionBounds(const ShapeBounds& a, const ShapeBounds& b) {
+InkingShapeBounds UnionBounds(const InkingShapeBounds& a, const InkingShapeBounds& b) {
     const float maxX = a.x + a.width;
     const float maxY = a.y + a.height;
     const float bMaxX = b.x + b.width;
@@ -34,35 +34,35 @@ ShapeBounds UnionBounds(const ShapeBounds& a, const ShapeBounds& b) {
     const float minY = b.y < a.y ? b.y : a.y;
     const float outMaxX = bMaxX > maxX ? bMaxX : maxX;
     const float outMaxY = bMaxY > maxY ? bMaxY : maxY;
-    return ShapeBounds{minX, minY, outMaxX - minX, outMaxY - minY};
+    return InkingShapeBounds{minX, minY, outMaxX - minX, outMaxY - minY};
 }
 
 // 这里原来有一份本地的 `TransformBounds`（"AABB 绕中心过一遍变换之后的外接
-// AABB"）。A13 把它抽成了公共件 `inking::detail::TransformBounds`
+// AABB"）。A13 把它抽成了公共件 `inking_detail::TransformBounds`
 // （`include/ink/basic/InkingAnchor.h`）——图片 / 标签算**外部显示变换**的包络
 // 要的是同一件事，抄第二遍就会分叉（注释里那句"和 ButtonHitEnvelope 里那份是
 // 同一个算法"正是它该被抽出来的证据）。
 
 }  // namespace
 
-void PaintPanelAppearance(const InkingAnchor& node, const ShapeSpec& shape,
+void PaintPanelAppearance(const InkingAnchor& node, const InkingShapeSpec& shape,
                           std::uint32_t displayColor,
-                          const TransformSpec& transform, float pixelX,
+                          const InkingTransformSpec& transform, float pixelX,
                           float pixelY) {
-    // 和按钮共用同一份填充实现（`detail::fillShape`）：轮廓三角化 + 边缘羽化
+    // 和按钮共用同一份填充实现（`inking_detail::fillShape`）：轮廓三角化 + 边缘羽化
     // + 顶点过变换。形状是唯一真相，所以"画出来的区域"与"命中判定的区域"
     // 从同一份定义派生。
     fillShape(currentRenderer(), shape, node.GetWidth(), node.GetHeight(),
               Magnify(node), pixelX, pixelY, transform, displayColor);
 }
 
-ShapeBounds PanelHitEnvelope(const InkingWidget& node, const ShapeSpec& shape,
+InkingShapeBounds PanelHitEnvelope(const InkingWidget& node, const InkingShapeSpec& shape,
                              int width, int height,
-                             const PanelAppearance& closed,
-                             const PanelAppearance& open) {
+                             const InkingPanelAppearance& closed,
+                             const InkingPanelAppearance& open) {
     // ① 布局空间里的整棵子树：自己的形状 AABB 打底。
     //    形状本身的 AABB 由形状层给（圆 / 椭圆不是整块矩形）。
-    ShapeBounds layout = GetShapeBounds(shape, width, height);
+    InkingShapeBounds layout = InkingGetShapeBounds(shape, width, height);
 
     const float baseX = node.GetAbsX();
     const float baseY = node.GetAbsY();
@@ -73,7 +73,7 @@ ShapeBounds PanelHitEnvelope(const InkingWidget& node, const ShapeSpec& shape,
         // 子节点上报的是"相对它自己左上角"的子树包络，搬到本节点的坐标系里。
         // 注意这里要的是**布局位置**（GetAbsX/Y），不带任何变换：变换在
         // 第 ② 步统一作用——容器的变换是作用在整棵子树上的。
-        ShapeBounds one = SubtreeHitEnvelope(*child);
+        InkingShapeBounds one = SubtreeHitEnvelope(*child);
         one.x += child->GetAbsX() - baseX;
         one.y += child->GetAbsY() - baseY;
         layout = UnionBounds(layout, one);
@@ -87,4 +87,4 @@ ShapeBounds PanelHitEnvelope(const InkingWidget& node, const ShapeSpec& shape,
                        TransformBounds(layout, open.transform, centerX, centerY));
 }
 
-}  // namespace inking::detail
+}  // namespace inking_detail

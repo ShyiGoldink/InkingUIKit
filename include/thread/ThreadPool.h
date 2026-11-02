@@ -10,32 +10,30 @@
 #include <thread>
 #include <vector>
 
-namespace inking {
-
 /** 默认管家线程数量。UI 侧的活主要是 IO/解码，开太多线程反而互相抢。 */
-inline constexpr std::size_t kDefaultThreadCount = 4;
+inline constexpr std::size_t InkingDefaultThreadCount = 4;
 
 /**
- * @brief 受限线程池，结构移植自 InkingBackendFramework 的 ThreadPool。
+ * @brief 受限线程池，结构移植自 InkingBackendFramework 的 InkingThreadPool。
  *
  * 与后端版本的差异：
  *   1. 不继承后端的模块自检基类（自检体系没有移植过来）；
- *   2. 线程数量从固定的编译期常量改成 init() 的参数，默认 kDefaultThreadCount。
+ *   2. 线程数量从固定的编译期常量改成 init() 的参数，默认 InkingDefaultThreadCount。
  *
  * 用法是"注入式"的：调用方通过 init() 注入三个回调——
  *   predicate 决定"现在有没有活"，execute 决定"有活时干什么"，
  *   waitHint 决定"没活时最多睡多久"（延迟任务靠它超时醒来）。
- * 线程池本身不认识任务是什么，认识任务的是 TaskQueue。
+ * 线程池本身不认识任务是什么，认识任务的是 InkingTaskQueue。
  */
-class ThreadPool {
+class InkingThreadPool {
 public:
-    ThreadPool() = default;
-    ~ThreadPool();
+    InkingThreadPool() = default;
+    ~InkingThreadPool();
 
-    ThreadPool(const ThreadPool&) = delete;
-    ThreadPool& operator=(const ThreadPool&) = delete;
-    ThreadPool(ThreadPool&&) = delete;
-    ThreadPool& operator=(ThreadPool&&) = delete;
+    InkingThreadPool(const InkingThreadPool&) = delete;
+    InkingThreadPool& operator=(const InkingThreadPool&) = delete;
+    InkingThreadPool(InkingThreadPool&&) = delete;
+    InkingThreadPool& operator=(InkingThreadPool&&) = delete;
 
     /**
      * @brief 初始化并启动管家线程。
@@ -49,7 +47,7 @@ public:
     void init(std::function<bool()> predicate,
               std::function<void()> execute,
               std::function<std::chrono::milliseconds()> waitHint = {},
-              std::size_t threadCount = kDefaultThreadCount);
+              std::size_t threadCount = InkingDefaultThreadCount);
 
     /** 请求退出并唤醒全部管家线程；真正的 join 在析构里做。 */
     void quit();
@@ -87,5 +85,4 @@ private:
     std::atomic<bool> _isRunning{false};                /** 是否已启动 */
 };
 
-}  // namespace inking
 

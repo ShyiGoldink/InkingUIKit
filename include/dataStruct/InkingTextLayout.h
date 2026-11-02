@@ -11,19 +11,19 @@
 // 两条设计决定：
 //
 //   - **不含 SDL**：真正的"文字 → 像素宽度"是文字层（`InkingText.h`，含 SDL）的事，
-//     这一层只要一个**测量回调**（`TextMeasureFn`）。于是排版逻辑可以
+//     这一层只要一个**测量回调**（`InkingTextMeasureFn`）。于是排版逻辑可以
 //     用"每个码点固定宽"的假测量做数值自检，不需要字体、不需要渲染器；
-//   - **纯函数**：`LayoutText` 不改任何状态、不缓存，同样的输入永远同样的输出
+//   - **纯函数**：`InkingLayoutText` 不改任何状态、不缓存，同样的输入永远同样的输出
 //     （A6 的 `MeasureLayout` 要求测量是纯函数，这里是它的下游）。
 //
 // 真实用法（在 .cpp 里把文字层接上）：
 //
-//     const auto measure = [](const std::string& s, const inking::TextStyle& style) {
-//         const inking::TextMetrics m = inking::MeasureText(inking::TextRequest{
+//     const auto measure = [](const std::string& s, const InkingTextStyle& style) {
+//         const InkingTextMetrics m = InkingMeasureText(InkingTextRequest{
 //             .text = s, .fontSize = style.fontSize, .fontPath = style.fontPath});
-//         return inking::TextExtent{m.width, m.height};
+//         return InkingTextExtent{m.width, m.height};
 //     };
-//     const inking::TextLayoutResult laid = inking::LayoutText(request, measure);
+//     const InkingTextLayoutResult laid = InkingLayoutText(request, measure);
 
 #include <dataStruct/InkingLayout.h>
 
@@ -33,32 +33,31 @@
 #include <string>
 #include <vector>
 
-namespace inking {
 
 /// 省略号：U+2026（UTF-8 三个字节）。别用三个点——宽度不一样，回退算法会算错。
-inline constexpr const char* kTextEllipsis = "\xE2\x80\xA6";
+inline constexpr const char* InkingTextEllipsis = "\xE2\x80\xA6";
 
 /// 换行方式。
-enum class TextWrap : std::uint8_t {
+enum class InkingTextWrap : std::uint8_t {
     NoWrap = 0,  ///< 不自动换行（只有显式 `\n` 才断）——单行标签用这个
     Word,        ///< 按"可断点"换行：英文整词不切开，CJK 字与字之间可断
     Anywhere,    ///< 逐码点硬切（长单词 / URL / 无空格语言）
 };
 
 /// 行内水平对齐。
-enum class TextAlignH : std::uint8_t { Left = 0, Center, Right };
+enum class InkingTextAlignH : std::uint8_t { Left = 0, Center, Right };
 
 /// 整块垂直对齐（在给定的高度里怎么摆；高度不限时它是 `Top`）。
-enum class TextAlignV : std::uint8_t { Top = 0, Middle, Bottom };
+enum class InkingTextAlignV : std::uint8_t { Top = 0, Middle, Bottom };
 
 /// 放不下时怎么办。
-enum class TextOverflow : std::uint8_t {
+enum class InkingTextOverflow : std::uint8_t {
     Clip = 0,  ///< 直接切掉（多余的行不画）
     Ellipsis,  ///< 最后一行用 `…` 收尾
 };
 
 /// 量出来的尺寸，设计坐标。
-struct TextExtent {
+struct InkingTextExtent {
     float width = 0.0f;
     float height = 0.0f;
 };
@@ -69,7 +68,7 @@ struct TextExtent {
  * 与 A6 的布局分工：布局管"这个组件在父容器里多大"，这里管"文字在组件里怎么摆"。
  * 内缩（`padding`）是后者——它是文本框自己与文字之间的留白，不是外边距。
  */
-struct TextStyle {
+struct InkingTextStyle {
     float fontSize = 16.0f;      ///< 字号，设计坐标
     float lineSpacing = 1.25f;   ///< 行距倍数（1.0 = 行与行紧贴）
     std::string fontPath;        ///< 字体绝对路径；空 = 默认字体（候选表）
@@ -89,22 +88,22 @@ struct TextStyle {
      *      （静默换字体等于把"设计意图没生效"藏起来，与本项目的取向相反）。
      */
     std::vector<std::string> fontPaths;
-    TextAlignH align = TextAlignH::Left;
-    TextAlignV alignV = TextAlignV::Top;
-    LayoutSpacing padding{};     ///< 文字与文本框四边之间的留白
+    InkingTextAlignH align = InkingTextAlignH::Left;
+    InkingTextAlignV alignV = InkingTextAlignV::Top;
+    InkingLayoutSpacing padding{};     ///< 文字与文本框四边之间的留白
 };
 
 /// 一次排版请求。
-struct TextLayoutRequest {
+struct InkingTextLayoutRequest {
     std::string text;
-    TextStyle style{};
+    InkingTextStyle style{};
 
     /// 可用宽度上限（设计坐标）。`0` = 不限 ⇒ 不会自动换行。
     float maxWidth = 0.0f;
 
     /// 可用高度上限（0 = 不限）。**它真的会丢行**（0.8.3 T-01）：累计行高超过
     /// `maxHeight - 上下 padding` 时，尾部那些装不下的行整行不排，并置
-    /// `truncated`。这是 `TextOverflow::Clip`（默认值）的实现——"框多高就显示
+    /// `truncated`。这是 `InkingTextOverflow::Clip`（默认值）的实现——"框多高就显示
     /// 多少"是设计者的直觉，不需要额外开关。
     ///
     /// 三条边界：
@@ -117,12 +116,12 @@ struct TextLayoutRequest {
     /// 行数上限（0 = 不限）。超出时按 `overflow` 处理。
     int maxLines = 0;
 
-    TextWrap wrap = TextWrap::Word;
-    TextOverflow overflow = TextOverflow::Clip;
+    InkingTextWrap wrap = InkingTextWrap::Word;
+    InkingTextOverflow overflow = InkingTextOverflow::Clip;
 };
 
 /// 一行落在源串里的哪一段，以及它排好之后的位置。
-struct TextLine {
+struct InkingTextLine {
     std::size_t begin = 0;   ///< 源串里的**字节**起点
     std::size_t end = 0;     ///< 字节终点（不含）
     float width = 0.0f;      ///< 这一行的宽度（含省略号，如果有）
@@ -133,8 +132,8 @@ struct TextLine {
 };
 
 /// 排版结果。`width` / `height` 就是**文本框该有多大**（含 padding）。
-struct TextLayoutResult {
-    std::vector<TextLine> lines;
+struct InkingTextLayoutResult {
+    std::vector<InkingTextLine> lines;
     float width = 0.0f;
     float height = 0.0f;
     float contentWidth = 0.0f;   ///< 不含 padding
@@ -146,11 +145,11 @@ struct TextLayoutResult {
 /**
  * @brief 测量回调：量"一段连续文字"在给定样式下占多大。
  *
- * 真实实现包一层 `inking::MeasureText`；自检里用"每个码点固定宽"的假测量。
+ * 真实实现包一层 `InkingMeasureText`；自检里用"每个码点固定宽"的假测量。
  * **按整行调用**（不是逐码点）：换行的贪心算法先切好候选行，再问它一次宽度。
  */
-using TextMeasureFn =
-    std::function<TextExtent(const std::string& text, const TextStyle& style)>;
+using InkingTextMeasureFn =
+    std::function<InkingTextExtent(const std::string& text, const InkingTextStyle& style)>;
 
 /**
  * @brief 排版：切行、算位置、算总尺寸。**纯函数**。
@@ -174,16 +173,15 @@ using TextMeasureFn =
  *
  * 空串返回 `empty = true`、尺寸只剩 padding（不崩、也不产生假行）。
  */
-TextLayoutResult LayoutText(const TextLayoutRequest& request,
-                            const TextMeasureFn& measure);
+InkingTextLayoutResult InkingLayoutText(const InkingTextLayoutRequest& request,
+                            const InkingTextMeasureFn& measure);
 
 /**
  * @brief 一行的水平起点：把**对齐**单独拿出来，供"组件宽度和排版宽度不一样"时重算。
  *
  * 什么时候会不一样：排版按 `maxWidth` 断行，而组件被 A6 的 `fillMain` 拉得更宽
- * （或者被 `max` 夹得更窄）。那时 `TextLine::x` 那份是按排版宽度算的，
+ * （或者被 `max` 夹得更窄）。那时 `InkingTextLine::x` 那份是按排版宽度算的，
  * 组件用这个函数按自己的**实际宽度**再算一次即可——规则只有一份，不会分叉。
  */
-float LineOffsetX(float lineWidth, float availableWidth, TextAlignH align);
+float InkingLineOffsetX(float lineWidth, float availableWidth, InkingTextAlignH align);
 
-}  // namespace inking

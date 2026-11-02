@@ -1,7 +1,7 @@
 #include <scene/SceneLibrary.h>
 
 #include <detail/InkLog.h>
-#include <render/InkingText.h>  // detail::BeginTextFrame（0.8.4 T-04：帧首的纹理预算淘汰）
+#include <render/InkingText.h>  // inking_detail::BeginTextFrame（0.8.4 T-04：帧首的纹理预算淘汰）
 
 #include <memory>
 #include <unordered_map>
@@ -12,12 +12,10 @@
 
 #include <scene/InkingScene.h>
 
-namespace inking {
-
 namespace {
 
 /** 日志里的模块名（`InkLog` 按模块分组，别写成各处不一样的字面量）。 */
-constexpr const char* kModuleName = "SceneLibrary";
+constexpr const char* kModuleName = "InkingSceneLibrary";
 
 /** name → 该名字占用的场景。一对一，这是"同名同期只能有一个"的落点。 */
 using SceneMap = std::unordered_map<std::string, InkingScene*>;
@@ -69,7 +67,7 @@ std::vector<std::unique_ptr<InkingScene>>& pendingDestroy() {
 // 登记 / 注销
 // ---------------------------------------------------------------------------
 
-SceneLibrary::RegisterResult SceneLibrary::RegisterScene(
+InkingSceneLibrary::RegisterResult InkingSceneLibrary::RegisterScene(
     const std::string& sceneName, InkingScene* scene) {
     if (scene == nullptr || sceneName.empty()) {
         return RegisterResult::Invalid;
@@ -86,7 +84,7 @@ SceneLibrary::RegisterResult SceneLibrary::RegisterScene(
     return RegisterResult::Ok;
 }
 
-void SceneLibrary::UnregisterScene(const std::string& sceneName,
+void InkingSceneLibrary::UnregisterScene(const std::string& sceneName,
                                    InkingScene* scene) {
     if (scene == nullptr) {
         return;
@@ -112,13 +110,13 @@ void SceneLibrary::UnregisterScene(const std::string& sceneName,
     }
 }
 
-InkingScene* SceneLibrary::FindScene(const std::string& sceneName) {
+InkingScene* InkingSceneLibrary::FindScene(const std::string& sceneName) {
     const SceneMap& table = scenes();
     const auto it = table.find(sceneName);
     return it != table.end() ? it->second : nullptr;
 }
 
-bool SceneLibrary::CloseScene(const std::string& sceneName) {
+bool InkingSceneLibrary::CloseScene(const std::string& sceneName) {
     InkingScene* scene = FindScene(sceneName);
     if (scene == nullptr) {
         return false;
@@ -155,7 +153,7 @@ bool SceneLibrary::CloseScene(const std::string& sceneName) {
 // 活跃态
 // ---------------------------------------------------------------------------
 
-void SceneLibrary::SetActiveScene(InkingScene* scene) {
+void InkingSceneLibrary::SetActiveScene(InkingScene* scene) {
     InkingScene*& current = activeScene();
     if (current == scene) {
         return;
@@ -174,11 +172,11 @@ void SceneLibrary::SetActiveScene(InkingScene* scene) {
     }
 }
 
-InkingScene* SceneLibrary::GetActiveScene() {
+InkingScene* InkingSceneLibrary::GetActiveScene() {
     return activeScene();
 }
 
-bool SceneLibrary::RenderScene(SDL_Renderer* renderer) {
+bool InkingSceneLibrary::RenderScene(SDL_Renderer* renderer) {
     InkingScene* scene = activeScene();
 
     // 只渲染活跃场景：停放态（注册被驳回）、静默态（被顶掉的）、
@@ -193,9 +191,9 @@ bool SceneLibrary::RenderScene(SDL_Renderer* renderer) {
     // 为什么放在**渲染之前**：淘汰依据是"上一帧之后还有谁没被用过"，而这个结论
     // 只有在还没开始画这一帧时才成立。放在渲染之后就会丢掉"本帧刚用过"的纹理
     // （它们的帧号正好等于本帧，会被下一帧当成老古董）。
-    // 为什么放在**这个地方**（SceneLibrary 而不是 Scene）：它是"一帧一次"的
+    // 为什么放在**这个地方**（InkingSceneLibrary 而不是 Scene）：它是"一帧一次"的
     // 天然收口——自检直接调 `RenderScene` 时也照样生效，不必让每个调用方记得调。
-    detail::BeginTextFrame(renderer);
+    inking_detail::BeginTextFrame(renderer);
 
     scene->Render(renderer);
     return true;
@@ -205,7 +203,7 @@ bool SceneLibrary::RenderScene(SDL_Renderer* renderer) {
 // 查询
 // ---------------------------------------------------------------------------
 
-std::vector<std::string> SceneLibrary::GetAllSceneNames() {
+std::vector<std::string> InkingSceneLibrary::GetAllSceneNames() {
     std::vector<std::string> names;
     names.reserve(scenes().size());
     for (const auto& pair : scenes()) {
@@ -214,11 +212,11 @@ std::vector<std::string> SceneLibrary::GetAllSceneNames() {
     return names;
 }
 
-std::size_t SceneLibrary::SceneCount() {
+std::size_t InkingSceneLibrary::SceneCount() {
     return scenes().size();
 }
 
-bool SceneLibrary::IsNameTaken(const std::string& sceneName) {
+bool InkingSceneLibrary::IsNameTaken(const std::string& sceneName) {
     return scenes().find(sceneName) != scenes().end();
 }
 
@@ -226,7 +224,7 @@ bool SceneLibrary::IsNameTaken(const std::string& sceneName) {
 // 预加载
 // ---------------------------------------------------------------------------
 
-bool SceneLibrary::PreloadScene(const std::string& sceneName) {
+bool InkingSceneLibrary::PreloadScene(const std::string& sceneName) {
     InkingScene* scene = FindScene(sceneName);
     if (scene == nullptr) {
         // 名字错 / 已关闭 / 停放态（注册被驳回的场景压根不在库里）。
@@ -238,7 +236,7 @@ bool SceneLibrary::PreloadScene(const std::string& sceneName) {
     return scene->RequestPreload();
 }
 
-void SceneLibrary::DrainPreloadCompletions() {
+void InkingSceneLibrary::DrainPreloadCompletions() {
     // 复制一份指针再遍历：收尾钩子是用户代码，里面可能构造新场景（构造即
     // 登记，会改 `scenes()`）——拿着 map 的迭代器边遍历边改就是悬垂。
     // `InkingScene::TickLogic` 那边是同一条理由。
@@ -260,7 +258,7 @@ void SceneLibrary::DrainPreloadCompletions() {
 // 所有权与销毁
 // ---------------------------------------------------------------------------
 
-bool SceneLibrary::AdoptScene(std::unique_ptr<InkingScene> scene) {
+bool InkingSceneLibrary::AdoptScene(std::unique_ptr<InkingScene> scene) {
     if (scene == nullptr) {
         return false;
     }
@@ -277,7 +275,7 @@ bool SceneLibrary::AdoptScene(std::unique_ptr<InkingScene> scene) {
     return true;
 }
 
-bool SceneLibrary::DestroyScene(const std::string& sceneName) {
+bool InkingSceneLibrary::DestroyScene(const std::string& sceneName) {
     InkingScene* scene = FindScene(sceneName);
     if (scene == nullptr) {
         return false;
@@ -324,7 +322,7 @@ bool SceneLibrary::DestroyScene(const std::string& sceneName) {
     return false;
 }
 
-std::size_t SceneLibrary::CommitPendingDestructions() {
+std::size_t InkingSceneLibrary::CommitPendingDestructions() {
     std::vector<std::unique_ptr<InkingScene>>& pending = pendingDestroy();
     const std::size_t count = pending.size();
 
@@ -334,4 +332,3 @@ std::size_t SceneLibrary::CommitPendingDestructions() {
     return count;
 }
 
-}  // namespace inking

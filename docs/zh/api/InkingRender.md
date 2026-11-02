@@ -3,7 +3,7 @@
 **回到API目录：**
 [API index](../API.md)
 
-渲染层是**框架内部**：这一层的头文件要么含 SDL，要么含 `detail::` 内部工具。
+渲染层是**框架内部**：这一层的头文件要么含 SDL，要么含 `inking_detail::` 内部工具。
 业务代码不需要 include 它们——组件实现里才会用到。放在公开 `include/` 下只是因为
 `include/` 是唯一的头文件搜索根。
 
@@ -11,7 +11,7 @@
 
 | 头文件 | 内容 | 含 SDL |
 | --- | --- | --- |
-| `dataStruct/InkingTextRequest.h` | `TextRequest` / `TextMetrics`（**纯数据，公开**） | 否 |
+| `dataStruct/InkingTextRequest.h` | `InkingTextRequest` / `InkingTextMetrics`（**纯数据，公开**） | 否 |
 | `dataStruct/InkingTextLayout.h` | 换行 / 省略 / 对齐（**纯函数，可单测**） | 否 |
 | `render/InkingMesh.h` | 形状 → 轮廓点 → 三角索引（**纯几何**） | 否 |
 | `render/InkingDraw.h` | `fillShape` / `strokeShape` / `fillShapeTextured` + 渲染器槽 | 是 |
@@ -25,15 +25,15 @@
 Scene::Render
   └─ for each DrawItem（z 升序）
        └─ InkingWidget::SubmitToRenderer(renderer, absX, absY)   // 设计坐标 → 设备像素
-            ├─ detail::SetCurrentNode(_vertexCache.get())        // 这个节点用哪个缓存槽
+            ├─ inking_detail::SetCurrentNode(_vertexCache.get())        // 这个节点用哪个缓存槽
             ├─ currentRendererSlot() = renderer                  // onRender 里从槽里取
             └─ onRender(pixelX, pixelY)
-                 ├─ detail::fillShape(...)          → AppendContour → AppendEarClipIndices
+                 ├─ inking_detail::fillShape(...)          → AppendContour → AppendEarClipIndices
                  │                                     → AppendLocalGeometry → SDL_RenderGeometry
-                 ├─ detail::fillShapeTextured(...)  → 同样网格 + UV → SDL_RenderGeometry(带纹理)
-                 ├─ detail::strokeShape(...)        → 两条轮廓之间的环带
-                 └─ detail::PaintText(...)          → 纹理表（缓存）→ SDL_RenderTextureRotated
-  └─ detail::BeginFrame / EndFrame（场景 Render 的首尾）
+                 ├─ inking_detail::fillShapeTextured(...)  → 同样网格 + UV → SDL_RenderGeometry(带纹理)
+                 ├─ inking_detail::strokeShape(...)        → 两条轮廓之间的环带
+                 └─ inking_detail::PaintText(...)          → 纹理表（缓存）→ SDL_RenderTextureRotated
+  └─ inking_detail::BeginFrame / EndFrame（场景 Render 的首尾）
 ```
 
 **为什么 `onRender` 只有坐标、没有渲染器**：不希望每个组件实现都被迫多接一个参数。
@@ -45,9 +45,9 @@ Scene::Render
 
 ## 二、形状同源：渲染 / 命中 / AABB 一份定义
 
-`InkingMesh.h` 是渲染层里**唯一不碰 SDL** 的那一半。它回答的和 `ShapeContains`
+`InkingMesh.h` 是渲染层里**唯一不碰 SDL** 的那一半。它回答的和 `InkingShapeContains`
 （[InkingShapeSpec.md](InkingShapeSpec.md)）是**同一个几何问题**：`AppendContour` 采出来的
-轮廓必须与 `ShapeContains` 判的内外同源，否则就是"画的圆角、点的是直角"那种只在角落
+轮廓必须与 `InkingShapeContains` 判的内外同源，否则就是"画的圆角、点的是直角"那种只在角落
 露头的错。
 
 ```C++
@@ -58,9 +58,9 @@ inline constexpr int kMinArcSteps = 4;
 inline constexpr int kMaxArcSteps = 64;
 
 int  StepsForLength(float pixels, int minSteps, int maxSteps);
-int  ContourSteps(const ShapeSpec& scaled, float width, float height);
-void AppendContour(std::vector<OutlinePoint>& out, const ShapeSpec& shape, ...);
-bool SameShape(const ShapeSpec& a, const ShapeSpec& b);
+int  ContourSteps(const InkingShapeSpec& scaled, float width, float height);
+void AppendContour(std::vector<OutlinePoint>& out, const InkingShapeSpec& shape, ...);
+bool SameShape(const InkingShapeSpec& a, const InkingShapeSpec& b);
 void AppendEarClipIndices(const std::vector<OutlinePoint>& ring, ...);
 ```
 
@@ -93,10 +93,10 @@ void AppendEarClipIndices(const std::vector<OutlinePoint>& ring, ...);
 struct VertexCacheSlot {
     std::vector<SDL_Vertex> vertices;
     std::vector<int> indices;
-    ShapeSpec shape{};        // ↓ 这几项构成"这批顶点是按什么算出来的"
+    InkingShapeSpec shape{};        // ↓ 这几项构成"这批顶点是按什么算出来的"
     int width = 0, height = 0;
     float magnification = 0.0f;
-    TransformSpec transform{};
+    InkingTransformSpec transform{};
     std::uint32_t color = 0u; // 颜色也算键（顶点里带逐顶点颜色）
     bool valid = false;
 };
@@ -140,7 +140,7 @@ void ApplyAncestorAffineToVertices(SDL_Vertex* v, std::size_t n,
 void NoteImmediateDraw() noexcept;
 void SetImageBatchingEnabled(bool enabled) noexcept;   // 矩形 + Fill 的图片并进批次（默认开）
 bool ImageBatchingEnabled() noexcept;
-void SetClipRect(SDL_Renderer* renderer, const ShapeBounds& deviceRect) noexcept;
+void SetClipRect(SDL_Renderer* renderer, const InkingShapeBounds& deviceRect) noexcept;
 void ClearClipRect(SDL_Renderer* renderer) noexcept;
 ```
 
@@ -165,10 +165,10 @@ void ClearClipRect(SDL_Renderer* renderer) noexcept;
 
 ## 四、文字与图片
 
->**TextRequest**（`dataStruct/InkingTextRequest.h`，纯数据）
+>**InkingTextRequest**（`dataStruct/InkingTextRequest.h`，纯数据）
 
 ```C++
-struct TextRequest {
+struct InkingTextRequest {
     std::string text;              // UTF-8
     float fontSize = 16.0f;        // 设计坐标（SDL3_ttf 的 DPI 是 72，"点"= 像素）
     std::string fontPath;          // 空 = 机器默认字体（按候选表找）
@@ -179,21 +179,21 @@ struct TextRequest {
     bool Empty() const noexcept;
 };
 
-struct TextMetrics { float width = 0.0f; float height = 0.0f; };
+struct InkingTextMetrics { float width = 0.0f; float height = 0.0f; };
 ```
 
-`MeasureText` **不看** `offsetX/Y`。拿不到字体时（没编 SDL3_ttf / 找不到字体 / 字号 ≤ 0）
+`InkingMeasureText` **不看** `offsetX/Y`。拿不到字体时（没编 SDL3_ttf / 找不到字体 / 字号 ≤ 0）
 返回**估算值**（按字号的方块：宽 = 字号 × 码点数，高 = 字号），与绘制的退化画法一致。
 不依赖渲染器，可以单独调。
 
->**MeasureText / PaintText**
+>**InkingMeasureText / PaintText**
 
 ```C++
-TextMetrics MeasureText(const TextRequest& request);
+InkingTextMetrics InkingMeasureText(const InkingTextRequest& request);
 
-void PaintText(SDL_Renderer* renderer, const TextRequest& request,
+void PaintText(SDL_Renderer* renderer, const InkingTextRequest& request,
                int width, int height, float magnification,
-               float pixelX, float pixelY, const TransformSpec& transform);
+               float pixelX, float pixelY, const InkingTransformSpec& transform);
 ```
 
 `PaintText` 是文字**唯一的绘制入口**（所有组件都走它）。三件事值得记住：
@@ -204,26 +204,26 @@ void PaintText(SDL_Renderer* renderer, const TextRequest& request,
   同一句话换颜色**不用重烘纹理**（颜色不进缓存键）；
 - **变换绕组件中心**，与形状同一套语义，所以文字跟着按钮一起转。
 
->**PaintImage / ImageBytes**
+>**PaintImage / InkingImageBytes**
 
 ```C++
-struct ImageBytes {
+struct InkingImageBytes {
     const std::uint8_t* data = nullptr;   // 借用：指向生成代码里那个静态数组
     std::size_t size = 0;
     std::string name;                     // 配置里的路径（缓存键 + 日志）
     bool Empty() const noexcept;
 };
 
-bool PaintImage(SDL_Renderer* renderer, const ImageBytes& image,
-                const ShapeSpec& shape, int width, int height,
+bool PaintImage(SDL_Renderer* renderer, const InkingImageBytes& image,
+                const InkingShapeSpec& shape, int width, int height,
                 float magnification, float pixelX, float pixelY,
-                const TransformSpec& transform, ImageFit fit,
-                std::uint32_t tintColor, const ShapeBounds& srcRect = {});
+                const InkingTransformSpec& transform, InkingImageFit fit,
+                std::uint32_t tintColor, const InkingShapeBounds& srcRect = {});
 ```
 
 四个已定的决定：**首次绘制时解码**（进程启动什么都不做）、**按组件形状裁剪**（走形状层
 同一条网格生成，所以圆角按钮配图片时四角一起被剪）、**适配模式**（`fill` / `contain` /
-`cover`，几何在 `ImageFitSpec` 的纯函数里）、**变换同源**。
+`cover`，几何在 `InkingImageFitSpec` 的纯函数里）、**变换同源**。
 `tintColor` 只取 **alpha**（过渡时淡入淡出，图片本身不换色）。解码不出来返回 false，
 调用方可以退回"按颜色填形状"。
 
@@ -256,12 +256,12 @@ ImageSampling GetImageSampling() noexcept;
 >**ProbeImageSize**
 
 ```C++
-bool ProbeImageSize(const ImageBytes& image, int* width, int* height);
+bool ProbeImageSize(const InkingImageBytes& image, int* width, int* height);
 ```
 
 量一张图片的**固有像素尺寸**：不建纹理、不需要渲染器。只有一个用途——图集构造期
 校验切格几何（`InkingSprite`，0.6.1 T-05）。数据层看不到图片多大，而"格数与图宽不符"
-能通过 `SpriteData::Validate()`，所以必须真的解一次。
+能通过 `InkingSpriteData::Validate()`，所以必须真的解一次。
 
 代价按 `(名字, 字节数)` 缓存（与纹理表同一套键口径）：同屏 N 个 sprite 共用一张图集时
 只解一次。解不出来（没接 SDL3_image / 字节坏了 / SVG）返回 false，调用方跳过校验。
@@ -300,7 +300,7 @@ float GetTextRasterCap() noexcept;
 >**WarnIfImageUndersampled**（0.7.1 T-04，**只在 `INK_ISDEBUG` 下存在**）
 
 ```C++
-void WarnIfImageUndersampled(const ImageBytes& image, int designWidth,
+void WarnIfImageUndersampled(const InkingImageBytes& image, int designWidth,
                              int designHeight, int srcWidth = 0,
                              int srcHeight = 0) noexcept;
 ```
@@ -361,7 +361,7 @@ void BeginTextFrame(SDL_Renderer* renderer) noexcept;  // 由 RenderScene 每帧
 用 2 万个不同字时 **1220 张 / 43.7 MB / 1603 ms**。淘汰之前，全库唯一的回收口是
 `ReleaseTextCache()`（全清）。
 
-做法：`SceneLibrary::RenderScene` 在 `scene->Render()` **之前**调 `BeginTextFrame`——
+做法：`InkingSceneLibrary::RenderScene` 在 `scene->Render()` **之前**调 `BeginTextFrame`——
 推进帧号；若 `textureBytes > budget`，先 `FlushGeometry()`（批里可能还引用着要丢的
 纹理），再从 `lastUsedFrame` 最小的条目丢起，直到回到预算内。
 
@@ -380,7 +380,7 @@ void BeginTextFrame(SDL_Renderer* renderer) noexcept;  // 由 RenderScene 每帧
 用法（回答"这套素材吃多少显存"）：
 
 ```C++
-const auto stats = inking::detail::TextCacheStatsSnapshot();
+const auto stats = inking_detail::TextCacheStatsSnapshot();
 std::printf("纹理 %llu 张 / 现在 %.1f MB / 峰值 %.1f MB\n",
             (unsigned long long)stats.textureCount,
             stats.textureBytes / 1048576.0,
@@ -391,16 +391,16 @@ std::printf("纹理 %llu 张 / 现在 %.1f MB / 峰值 %.1f MB\n",
 
 ## 五、字形图集
 
-`GlyphAtlas` 是**一张大纹理上的 shelf packing 分配器**：按行（shelf）往里塞字形位图，
+`InkingGlyphAtlas` 是**一张大纹理上的 shelf packing 分配器**：按行（shelf）往里塞字形位图，
 每格留 `kPadding = 1`，避免采样时互相渗色。
 
 ```C++
-class GlyphAtlas {
+class InkingGlyphAtlas {
 public:
     struct Slot { int x, y, width, height; };
     static constexpr int kPadding = 1;
 
-    explicit GlyphAtlas(int size = 1024);
+    explicit InkingGlyphAtlas(int size = 1024);
     int Size() const noexcept;
     Slot Insert(int width, int height);     // 塞不下返回空槽
     int SlotCount() const noexcept;
@@ -416,7 +416,7 @@ public:
 `OverlapsAny` 是**自检用的对账口**：把塞进去的每个槽两两比一遍，"没有重叠"这件事
 只能这么验。
 
-`detail` 侧（`AcquireGlyph` / `LayOutGlyphs` / `GlyphAtlasSnapshot` /
+`detail` 侧（`AcquireGlyph` / `InkingLayOutGlyphs` / `GlyphAtlasSnapshot` /
 `SetGlyphAtlasEnabled` / `GlyphAtlasTexture` / `ReleaseGlyphAtlas`）是内部实现：
 按需烘一个字形、返回它的 UV 与位置。**图集满了不会整张重建**（0.8.3 之前这里写错了）：
 `AcquireGlyph` 返回 `valid == false`、调用方**退回整段渲染**，同时
@@ -433,15 +433,15 @@ public:
 ## 六、文本排版（纯函数）
 
 ```C++
-TextLayoutResult LayoutText(const TextLayoutRequest& request,
-                            const TextMeasureFn& measure);
-float LineOffsetX(float lineWidth, float availableWidth, TextAlignH align);
+InkingTextLayoutResult InkingLayoutText(const InkingTextLayoutRequest& request,
+                            const InkingTextMeasureFn& measure);
+float InkingLineOffsetX(float lineWidth, float availableWidth, InkingTextAlignH align);
 ```
 
 这一层**不含 SDL**：真正的"文字 → 像素宽度"是文字层的事，这里只要一个测量回调。
 于是排版逻辑可以用"每个码点固定宽"的假测量做数值自检，不需要字体、不需要渲染器。
 
-`TextLayoutRequest`：`text` / `style`（`fontSize` / `lineSpacing` / `fontPath` /
+`InkingTextLayoutRequest`：`text` / `style`（`fontSize` / `lineSpacing` / `fontPath` /
 `fontPaths`（回退链）/ `align` / `alignV` / `padding`）/ `maxWidth` / `maxHeight` / `maxLines` /
 `wrap`（`NoWrap` / `Word` / `Anywhere`）/ `overflow`（`Clip` / `Ellipsis`）。
 
@@ -461,17 +461,17 @@ float LineOffsetX(float lineWidth, float availableWidth, TextAlignH align);
    （一行硬断成零宽的行没有意义）——有意行为，不是漏判。
 
 > **框高即上限**（0.8.3 T-01）：`maxHeight` 不只是垂直对齐的参照，它**真的会丢行**——
-> 累计行高超过 `maxHeight − 上下 padding` 时尾部那些行整行不排。这就是 `TextOverflow::Clip`
+> 累计行高超过 `maxHeight − 上下 padding` 时尾部那些行整行不排。这就是 `InkingTextOverflow::Clip`
 > （默认值）的实现。两条边界：**至少留一行**（框比一行还矮也画一行，宁可溢出几像素也不让
 > 标签静默变空白）；**不缩字号**（"自动缩小"是另一件事，不做）。
 
 空串返回 `empty = true`、尺寸只剩 padding。
 
-> `TextLayoutResult::width/height` 就是**文本框该有多大**，`TextLine::begin/end` 是
-> 源串里的**字节**区间，`hasEllipsis` 告诉绘制那一段末尾要接 `…`（`kTextEllipsis`
+> `InkingTextLayoutResult::width/height` 就是**文本框该有多大**，`InkingTextLine::begin/end` 是
+> 源串里的**字节**区间，`hasEllipsis` 告诉绘制那一段末尾要接 `…`（`InkingTextEllipsis`
 > 是 U+2026 三字节，**别用三个点**——宽度不一样，回退算法会算错）。
 
-`LineOffsetX` 单独拎出来，是为了"组件宽度和排版宽度不一样"时重算：
+`InkingLineOffsetX` 单独拎出来，是为了"组件宽度和排版宽度不一样"时重算：
 排版按 `maxWidth` 断行，而组件被布局拉得更宽时，用实际宽度再算一次即可——规则只有一份。
 
 ## 常见坑
@@ -481,7 +481,7 @@ float LineOffsetX(float lineWidth, float availableWidth, TextAlignH align);
 3. **在裁剪期间不刷缓冲就改裁剪矩形**：先前攒的顶点会在"别人的裁剪"下被刷出去。
 4. **把 `VertexCacheSlot` 当节点状态改**：它只是缓存，键不全就会"状态切了、画面没变"。
 5. **缓存字形 UV**：图集满了一次重建，旧槽全失效。
-6. **用三个点当省略号**：用 `kTextEllipsis`。
+6. **用三个点当省略号**：用 `InkingTextEllipsis`。
 
 ---
 

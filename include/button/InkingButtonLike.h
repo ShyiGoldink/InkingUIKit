@@ -15,10 +15,10 @@
 // 它在自己的头里把 `GetAppearance` / `GetDisplayColor` / `GetDisplayTransform`
 // 又抄了一遍（只是"只认 Normal 一态"）。分层归位之后是：
 //
-//     ButtonData           数据：三态外观 / 每态尺寸 / 文字 / 形状      （ButtonData.h）
-//     ButtonLook           状态机：三态 + 过渡插值（纯值类型）          （ButtonLook.h）
+//     InkingButtonData           数据：三态外观 / 每态尺寸 / 文字 / 形状      （InkingButtonData.h）
+//     InkingButtonLook           状态机：三态 + 过渡插值（纯值类型）          （InkingButtonLook.h）
 //     InkingButtonLike     契约：这个文件 —— clicked 事件 + 三态 + [√] 钩子
-//     detail::ButtonPaint  绘制：形状 / 贴图 / 描边阴影 / 文字          （ButtonPaint.h）
+//     inking_detail::ButtonPaint  绘制：形状 / 贴图 / 描边阴影 / 文字          （ButtonPaint.h）
 //            ↓
 //     InkingStaticButton   接线：把上面接起来（形状、文字、命中、登记）
 //     InkingStaticImage    接线：同上，但**不吃输入**（见下）
@@ -26,7 +26,7 @@
 // ---------------------------------------------------------------------------
 // 为什么**不**做成纯接口（`IInkingButtonLike`）
 // ---------------------------------------------------------------------------
-// 因为它**必须带状态**：`ButtonLook` 那十几个字段、过渡的计时与起点、`clicked`
+// 因为它**必须带状态**：`InkingButtonLook` 那十几个字段、过渡的计时与起点、`clicked`
 // 槽，全是实现而不是契约。抽成纯接口（只有纯虚函数、无数据、无实现体）之后，
 // 每个使用者都要把状态机与二十来行转发**再写一遍**——正是这个文件要消除的东西。
 // 你的原话是"允许一些其它组件**继承** button 的三态和点击事件"：要继承的是
@@ -79,7 +79,6 @@
 #include <functional>
 #include <utility>
 
-namespace inking {
 
 /**
  * 次键点击（右键 / 触摸长按）的回调。
@@ -87,10 +86,10 @@ namespace inking {
  * **带按下点**（设计坐标），因为右键的业务语义就是"在这一点的上下文"——
  * `MenuPopup::OpenAt(x, y)` 的入参没有第二处来源。
  *
- * 与 `ButtonClickCallback`（左键，无参）的不对称是故意的：左键的语义是"这个按钮
+ * 与 `InkingButtonClickCallback`（左键，无参）的不对称是故意的：左键的语义是"这个按钮
  * 被激活了"，位置无意义；右键的位置**就是**语义本身。
  */
-using ButtonContextClickCallback = std::function<void(float designX, float designY)>;
+using InkingButtonContextClickCallback = std::function<void(float designX, float designY)>;
 
 /**
  * @brief 按钮契约：三态外观 + 过渡 + 点击事件。
@@ -141,7 +140,7 @@ public:
 
     /**
      * **状态变化事件**（0.2.0 T-11）：`stateChanged.Subscribe(...)`，参数是
-     * `(from, to)` 两个 `ButtonState`。
+     * `(from, to)` 两个 `InkingButtonState`。
      *
      * 为什么要有它：`onButtonStateChanged` 是 protected 虚钩子——业务想监听
      * "鼠标进出了"就必须派生一个类；而**静态档与动态档共用这一个槽**，所以
@@ -160,7 +159,7 @@ public:
      *      发生在**同一帧**）。鼠标不动时两档都不更新。差异表见
      *      `CXXCSS.md` §4.3。
      */
-    InkingEvent<ButtonState, ButtonState> stateChanged;
+    InkingEvent<InkingButtonState, InkingButtonState> stateChanged;
 
     // ---------------- 观测口 ----------------
     //
@@ -172,18 +171,18 @@ public:
     // 两个同名声明"，查找歧义。
 
     /// 当前三态中的一个。初始是 Normal。
-    ButtonState GetState() const noexcept { return _look.state; }
+    InkingButtonState GetState() const noexcept { return _look.state; }
 
     /**
      * 三态外观（按当前状态）。注意它是**目标**那一份配置（json 里写的），
      * 过渡进行中它与屏幕上正在显示的颜色不是一回事——要那个用 `GetDisplayColor()`。
      */
-    const ButtonAppearance& GetAppearance() const noexcept {
+    const InkingButtonAppearance& GetAppearance() const noexcept {
         return _look.Current();
     }
 
     /// 指定某一个状态的外观。默认值来自配置里的 normal / hover / onclicked。
-    const ButtonAppearance& GetAppearance(ButtonState state) const noexcept {
+    const InkingButtonAppearance& GetAppearance(InkingButtonState state) const noexcept {
         return _look.For(state);
     }
 
@@ -191,7 +190,7 @@ public:
     std::uint32_t GetDisplayColor() const noexcept { return _look.displayColor; }
 
     /// 现在**实际生效**的变换。绘制用它过正变换、命中用它过逆变换。
-    const TransformSpec& GetDisplayTransform() const noexcept {
+    const InkingTransformSpec& GetDisplayTransform() const noexcept {
         return _look.displayTransform;
     }
 
@@ -224,7 +223,7 @@ public:
      * ——也就是以前那个 `_onClicked = callback` 的行为，别指望它和
      * `clicked.Subscribe` 叠加。要挂多个就用事件槽那条路。
      */
-    void SetOnClicked(ButtonClickCallback callback) {
+    void SetOnClicked(InkingButtonClickCallback callback) {
         clicked.Clear();
         if (callback) {
             clicked.Subscribe(std::move(callback));
@@ -237,7 +236,7 @@ public:
      * 语义与 `SetOnClicked` 一样是"替换"：先清空 `contextClicked` 上已有的
      * 订阅者，再挂这一个。要挂多个就用 `contextClicked.Subscribe`。
      */
-    void SetOnContextClicked(ButtonContextClickCallback callback) {
+    void SetOnContextClicked(InkingButtonContextClickCallback callback) {
         contextClicked.Clear();
         if (callback) {
             contextClicked.Subscribe(std::move(callback));
@@ -301,7 +300,7 @@ public:
      *         指针滑出去——也返回 false，那时连颜色都不用换）。
      */
     bool MouseHover(bool hover) noexcept {
-        const ButtonState before = _look.state;
+        const InkingButtonState before = _look.state;
         if (!_look.SetHovered(hover)) {
             return false;
         }
@@ -317,7 +316,7 @@ public:
      * "抬起时该回哪一态"——那份状态只有按钮自己知道。
      */
     bool MousePress(bool press) noexcept {
-        const ButtonState before = _look.state;
+        const InkingButtonState before = _look.state;
         if (!_look.SetPressed(press)) {
             return false;
         }
@@ -338,8 +337,8 @@ public:
      *
      * @return 这一帧变了什么（`repaint` = 画面变了，`hit` = 命中结果可能变了）。
      */
-    ButtonLook::AdvanceResult AdvanceButtonLook(float deltaSeconds) noexcept {
-        const ButtonLook::AdvanceResult advanced = _look.Advance(deltaSeconds);
+    InkingButtonLook::AdvanceResult AdvanceButtonLook(float deltaSeconds) noexcept {
+        const InkingButtonLook::AdvanceResult advanced = _look.Advance(deltaSeconds);
         if (advanced.repaint || advanced.hit) {
             onButtonDisplayAdvanced(advanced.repaint, advanced.hit);
         }
@@ -348,12 +347,12 @@ public:
 
 protected:
     /**
-     * 装配置：把 `ButtonData` 里的三态外观与基准尺寸展开进状态机（并复位）。
+     * 装配置：把 `InkingButtonData` 里的三态外观与基准尺寸展开进状态机（并复位）。
      *
-     * 组件的构造函数里调一次，并且**要在写几何之前**：`ButtonLook` 的基准尺寸
+     * 组件的构造函数里调一次，并且**要在写几何之前**：`InkingButtonLook` 的基准尺寸
      * 是"状态没写尺寸"时的兜底，构造期就有人问（锚点推导、场景登记）。
      */
-    void ResetButtonLook(const ButtonData& data) noexcept { _look.Reset(data); }
+    void ResetButtonLook(const InkingButtonData& data) noexcept { _look.Reset(data); }
 
     /**
      * 组件**自己那份尺寸被外部改了**（布局 / 自测量）时同步一次（0.4.0 A4/B1）。
@@ -381,8 +380,8 @@ protected:
      * 它与 `onButtonDisplayAdvanced` 的分工：这里是"状态**目标**变了"，
      * 那里是"**显示值**变了"。配了过渡时，目标当场就变，而显示值要几帧才走到。
      */
-    virtual void onButtonStateChanged(ButtonState /*from*/,
-                                      ButtonState /*to*/) {}
+    virtual void onButtonStateChanged(InkingButtonState /*from*/,
+                                      InkingButtonState /*to*/) {}
 
     /**
      * [√] 过渡推进了一帧，**显示值**变了。
@@ -395,18 +394,18 @@ protected:
      *
      * 两项分开是为了让调用方标对脏——只用一个 bool 的话，"颜色变了"也会去标
      * 命中脏，于是每帧白重建一次绘制列表，这是动画接上标脏之后最容易付的
-     * 冤枉代价（`ButtonLook::AdvanceResult` 的注释里有同一段话）。
+     * 冤枉代价（`InkingButtonLook::AdvanceResult` 的注释里有同一段话）。
      */
     virtual void onButtonDisplayAdvanced(bool /*repaintDirty*/,
                                          bool /*hitDirty*/) {}
 
 private:
-    /// 三态外观 + 过渡状态机（与 `ButtonData` 无关的那一半；静态 / 动态共用）。
+    /// 三态外观 + 过渡状态机（与 `InkingButtonData` 无关的那一半；静态 / 动态共用）。
     /// 私有：外面只能经上面那些观测口 / 喂入口碰它，免得"显示值"被绕过状态机改掉。
-    ButtonLook _look{};
+    InkingButtonLook _look{};
 
     /// `before` 与当前状态的比较收在一处，两个写入口共用。
-    void OnStateChanged(ButtonState before) {
+    void OnStateChanged(InkingButtonState before) {
         onButtonStateChanged(before, _look.state);
         // 公开事件在同一处 Emit（T-11）：两档自动都有，派生类与外部订阅者
         // 看到的是**同一次**状态迁移。放在钩子之后——钩子先收尾（同步基类
@@ -415,4 +414,3 @@ private:
     }
 };
 
-}  // namespace inking

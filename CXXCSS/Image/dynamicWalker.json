@@ -1,0 +1,23 @@
+{
+    "$comment": [
+        "动态图片（G-08）：\"dynamic\": true ⇒ 生成的类继承 InkingDynamicImage。",
+        "字段集与静态图片**完全相同**——档位只决定几何能不能在运行期改（Resize /",
+        "ChangeOffset / ChangeSelfAnchor / ChangeTraceAnchor）：静态档那两条写尺寸的",
+        "通道业务代码调不到，这才是要动态档的理由。",
+        "图照样可以是 runtime 那种「运行期从资源根读」；A13 外部显示变换两档都保留",
+        "（它与几何是正交的两件事：一个改显示、一个改占位）。",
+        "这份**没有** frames / sheet ⇒ 产物是图片而不是帧动画；要动态帧动画见 dynamicRunner.json。"
+    ],
+    "name": "dynamicWalker",
+    "width": 48,
+    "height": 48,
+    "runtime": true,
+    "dynamic": true,
+    "normal": { "type": "img", "source": "walk.png", "fit": "fill" },
+    "selfAnchorX": 0,
+    "selfAnchorY": 0,
+    "traceAnchorX": 0,
+    "traceAnchorY": 0,
+    "offsetX": 200,
+    "offsetY": 600
+}

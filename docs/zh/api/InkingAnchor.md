@@ -17,25 +17,25 @@ InkingAnchor完全不参与渲染，甚至不知道渲染层的存在——它�
 
 ## 用到的数据结构
 
->**AnchorPoint**
+>**InkingAnchorPoint**
 
 ``` C++
-struct AnchorPoint {
+struct InkingAnchorPoint {
     float x = 0.0f;
     float y = 0.0f;
 };
 ```
 
->**AnchorData**
+>**InkingAnchorData**
 
-AnchorData混杂了部分Widget的内容。这是因为InkingAnchor我们完全不推荐单独使用。
+InkingAnchorData混杂了部分Widget的内容。这是因为InkingAnchor我们完全不推荐单独使用。
 并且实际上也没有留任何开口。
-所以将AnchorData设计成现在这个形状，并且让InkingAnchor的构造函数依赖此数据结构来起到一定的约束效果。
+所以将InkingAnchorData设计成现在这个形状，并且让InkingAnchor的构造函数依赖此数据结构来起到一定的约束效果。
 
 ```C++
-struct AnchorData {
-    AnchorPoint selfAnchor{};  ///< 自身锚点
-    AnchorPoint traceAnchor{}; ///< 上级锚点（追踪的父级锚点）
+struct InkingAnchorData {
+    InkingAnchorPoint selfAnchor{};  ///< 自身锚点
+    InkingAnchorPoint traceAnchor{}; ///< 上级锚点（追踪的父级锚点）
     float offsetX = 0.0f;      ///< 对齐之后再挪一点，设计坐标
     float offsetY = 0.0f;
     int width = 0;   ///< 自身尺寸，设计坐标
@@ -44,8 +44,8 @@ struct AnchorData {
     int zIndex = 0;   ///< 越大越靠上，**只在兄弟之间**比较（局部层级）
     bool visible = true;  ///< 可见性；不可见连命中都不必问
     std::uint32_t color = 0xFF569CD6u;  ///< 占位填充色 0xAARRGGBB（样式层接手）
-    LayoutSpec layout{};
-    LayoutItem layoutItem{};
+    InkingLayoutSpec layout{};
+    InkingLayoutItem layoutItem{};
 };
 ```
 
@@ -53,11 +53,11 @@ struct AnchorData {
 
 ### Protected
 
->**AnchorPoint _selfAnchor**  
+>**InkingAnchorPoint _selfAnchor**  
 
  自身锚点
 
->**AnchorPoint _traceAnchor**
+>**InkingAnchorPoint _traceAnchor**
 
  上级锚点（追踪的父级锚点）
 
@@ -98,7 +98,7 @@ struct AnchorData {
 原名:
 
 ```C++
-const AnchorPoint& GetSelfAnchor() const noexcept;
+const InkingAnchorPoint& GetSelfAnchor() const noexcept;
 ```
 
 读回配置里的**自身锚点**（只读）。**位置的推导不经过它**——`GetX/Y` 直接用公式算，所以正常业务不需要读；调试或写自定义布局时才用。
@@ -107,7 +107,7 @@ const AnchorPoint& GetSelfAnchor() const noexcept;
  原名:
 
  ```C++
- const AnchorPoint& GetTraceAnchor() const noexcept;
+ const InkingAnchorPoint& GetTraceAnchor() const noexcept;
  ```
 
  读回配置里的**上级锚点**（只读）。同上：推导不经过它，正常业务不需要读。
@@ -195,12 +195,12 @@ float GetMagnification()const noexcept;
 
 ### Protected Methods
 
->**InkingAnchor(InkingAnchor* parent, const AnchorData& data) ***
+>**InkingAnchor(InkingAnchor* parent, const InkingAnchorData& data) ***
 
 原名:
 
 ```C++
-InkingAnchor(InkingAnchor* parent, const AnchorData& data) noexcept;
+InkingAnchor(InkingAnchor* parent, const InkingAnchorData& data) noexcept;
 ```
 
 构造函数。`parent` 传 `nullptr` 代表它是一个根（窗口 / 场景）。

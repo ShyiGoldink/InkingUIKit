@@ -1,7 +1,7 @@
 #pragma once
 
-// CXXCSS 的**加载 + 校验**：一个 json → 一份运行期配置（`inking::ButtonData` /
-// `inking::PanelData` / `inking::LabelData` / `inking::TextTable`）。
+// CXXCSS 的**加载 + 校验**：一个 json → 一份运行期配置（`InkingButtonData` /
+// `InkingPanelData` / `InkingLabelData` / `InkingTextTable`）。
 //
 // 这一层直接产出**运行期那些结构体**，不另立一套"生成器自己的配置类型"。
 // 理由：两套类型意味着每个字段有两份定义、两处校验、两条会分叉的演化路径
@@ -90,7 +90,7 @@ const char* ComponentKindName(ComponentKind kind);
 /// 一份加载成功的按钮配置。
 struct ButtonConfig {
     std::string filePath;          ///< 来源文件，报错和日志要用
-    std::string name;              ///< 配置里的 name（= ButtonLibrary 的查找键）
+    std::string name;              ///< 配置里的 name（= InkingButtonLibrary 的查找键）
     /**
      * 生成出来的**类名**（`normalButton` → `NormalButton`）。
      *
@@ -102,16 +102,16 @@ struct ButtonConfig {
     /**
      * 生成成**动态**按钮吗（json 里的 `"dynamic": true`）。
      *
-     * 这一点只决定"生成出来的类继承谁"：静态继承 `inking::InkingStaticButton`、
-     * 动态继承 `inking::InkingDynamicButton`（几何可以在运行期改，代价是不进命中表，
+     * 这一点只决定"生成出来的类继承谁"：静态继承 `InkingStaticButton`、
+     * 动态继承 `InkingDynamicButton`（几何可以在运行期改，代价是不进命中表，
      * 指针由它自己在 Tick 里拉——见 include/button/InkingDynamicButton.h）。
      *
-     * 它**不进运行期那份数据结构**（`inking::ButtonData` 里没有这个字段）：
+     * 它**不进运行期那份数据结构**（`InkingButtonData` 里没有这个字段）：
      * 类型本身已经说明了它属于哪一档，再存一遍就是第二份真相，
      * 而第二份真相迟早会和第一份不一致。
      */
     bool dynamic = false;
-    inking::ButtonData data{};        ///< 运行期那份配置
+    InkingButtonData data{};        ///< 运行期那份配置
 
     /// `$extends` 的来源（相对 CXXCSS 根、不带 .json；空 = 没继承）。只用于
     /// 生成物注释——合并发生在读配置那一层，运行期数据结构里没有这项。
@@ -122,7 +122,7 @@ struct ButtonConfig {
      * 烘成生成代码里的静态数组。下标 0 / 1 / 2 = normal / hover / onclicked，
      * 空表示那个状态不是 img（或者读文件时已经报错）。
      *
-     * 为什么放在 ButtonConfig 而不是 `ButtonData`：`ButtonData` 是**运行期**结构，
+     * 为什么放在 ButtonConfig 而不是 `InkingButtonData`：`InkingButtonData` 是**运行期**结构，
      * 里面只有"指向字节的视图"；字节本体属于生成物，生成器这一侧得先拿住它。
      */
     std::vector<std::uint8_t> imageBytes[3];
@@ -130,7 +130,7 @@ struct ButtonConfig {
     /**
      * `polygonPath` 形状的**顶点表**（B2）：`x0,y0,x1,y1,…`，设计坐标。
      *
-     * 和 `imageBytes` 同一个道理——`ShapeSpec` 里只有"指向点列的视图"，
+     * 和 `imageBytes` 同一个道理——`InkingShapeSpec` 里只有"指向点列的视图"，
      * 本体属于生成物，生成器这一侧得先拿住它，再由 `Emit` 烘成静态数组。
      * 解析完在 `Finish()` 里把 `data.shape.pathPoints` 指回这里（见那里的注释）。
      */
@@ -144,14 +144,25 @@ struct ButtonConfig {
  * 一份加载成功的面板配置。
  *
  * 它比 `ButtonConfig` 简单：面板没有三态、没有文字、没有 `img` / `svg` 外观，
- * 所以没有图像字节要烘、也不需要"选基类"的开关（面板只有静态档——开合只改变换，
- * 几何构造即定型）。
+ * 所以没有图像字节要烘。开合只改变换，几何构造即定型——**这是静态档的行为**；
+ * 要运行期改几何 / 占位就写 `"dynamic": true`（G-08）改用动态档。
  */
 struct PanelConfig {
     std::string filePath;
     std::string name;
     std::string identifier;   ///< 生成类名（`drawerPanel` → `DrawerPanel`）
-    inking::PanelData data{};
+
+    /**
+     * 生成成**动态**面板吗（json 里的 `"dynamic": true`）。
+     *
+     * 只决定"生成出来的类继承谁"：静态继承 `InkingStaticPanel`、
+     * 动态继承 `InkingDynamicPanel`（几何可运行期改、不进命中表、
+     * 指针由它自己在 Tick 里拉）。**不进运行期数据结构**（`InkingPanelData` 里没有
+     * 这个字段）——类型本身已经说明了档位，再存一遍就是第二份真相。
+     */
+    bool dynamic = false;
+
+    InkingPanelData data{};
 
     /// `$extends` 的来源（相对 CXXCSS 根、不带 .json；空 = 没继承）。只用于
     /// 生成物注释——合并发生在读配置那一层，运行期数据结构里没有这项。
@@ -163,14 +174,24 @@ struct PanelConfig {
  * 一份加载成功的标签配置（`CXXCSS/Label/<名字>.json`，A7 的生成器段）。
  *
  * 它比 `PanelConfig` 还简单：标签是**叶子**——没有三态、没有开合、没有形状
- * （`LabelData` 里就没有 `shape` 字段：标签只画文字），文字怎么排全在
+ * （`InkingLabelData` 里就没有 `shape` 字段：标签只画文字），文字怎么排全在
  * `text` 段里（内容 + 样式 + 换行 / 省略）。
  */
 struct LabelConfig {
     std::string filePath;
     std::string name;
     std::string identifier;   ///< 生成类名（`menuTitle` → `MenuTitle`）
-    inking::LabelData data{};
+
+    /**
+     * 生成成**动态**标签吗（json 里的 `"dynamic": true`）。
+     *
+     * 只决定"生成出来的类继承谁"：静态继承 `InkingStaticLabel`、
+     * 动态继承 `InkingDynamicLabel`（`SetText` 之外还能 `Resize` /
+     * `FitToContent`，占位由调用方控制）。**不进运行期数据结构**。
+     */
+    bool dynamic = false;
+
+    InkingLabelData data{};
 
     /// `$extends` 的来源（相对 CXXCSS 根、不带 .json；空 = 没继承）。只用于
     /// 生成物注释——合并发生在读配置那一层，运行期数据结构里没有这项。
@@ -181,7 +202,7 @@ struct LabelConfig {
 /**
  * 一份加载成功的**图片**配置（`CXXCSS/Image/<名字>.json`，A11）。
  *
- * 数据就是 `inking::ImageData`——它是 `inking::ButtonData` 的派生（多一个
+ * 数据就是 `InkingImageData`——它是 `InkingButtonData` 的派生（多一个
  * `runtimeAsset` 开关）。所以生成器这边**逐字复用**按钮那套读取与烘法：
  * 图片配置认的字段 = 按钮那套**减去三态 / 文字 / 过渡**（只有 `normal` 一态），
  * 加上 `runtime` 那个开关。
@@ -191,7 +212,7 @@ struct LabelConfig {
  *     烘成静态数组（照旧行为，exe 自带图）；读不到文件就是生成期报错；
  *   - `"runtime": true`：`normal.source` 是**相对资源根**的路径（默认 exe 旁的
  *     `assets/`），**生成期一个字都不读**、产物里只有那个路径字符串，运行期由
- *     `inking::AssetLoad` 读（可带轻量混淆）。这是"别把所有图烘进 exe"那条路。
+ *     `InkingAssetLoad` 读（可带轻量混淆）。这是"别把所有图烘进 exe"那条路。
  */
 struct ImageConfig {
     std::string filePath;
@@ -202,7 +223,7 @@ struct ImageConfig {
      * **复用按钮整份配置**（外观 / 形状 / 锚点 / 生成期烘好的字节 / 顶点表）。
      *
      * 图片就是"没有 onClicked 的 button"（A11 的原话），数据同构 ⇒ 生成器这边
-     * 逐字复用 `ButtonBody` 那套烘法（只把类型名换成 `inking::ImageData`、末尾补一行
+     * 逐字复用 `ButtonBody` 那套烘法（只把类型名换成 `InkingImageData`、末尾补一行
      * `runtimeAsset`）。另一条路是"再抄一份字段并同步维护"，那是
      * `AGENTS.md` §6 第 83 条记的那种坑。
      */
@@ -224,11 +245,23 @@ struct ImageConfig {
     /**
      * @brief 是**帧动画**吗（配了 `frames` 或 `sheet`，0.6.1 T-06）。
      *
-     * 一条配置长出两种产物：静态图片（`ImageData` + `InkingStaticImage`）与
-     * 帧动画（`SpriteData` + `InkingSprite`）。判据只有"配没配帧"，**不需要**
+     * 一条配置长出两种产物：静态图片（`InkingImageData` + 静态图片类）与
+     * 帧动画（`InkingSpriteData` + 帧动画类）。判据只有"配没配帧"，**不需要**
      * 额外的 `"sprite": true`——多一个开关就多一个"配了帧却忘了开开关"的坑。
      */
     bool isSprite = false;
+
+    /**
+     * 生成成**动态**档吗（json 里的 `"dynamic": true`，G-08）。
+     *
+     * 与 `isSprite` **正交**：四个组合是四条不同的基类——
+     *   - 静态图片 `InkingStaticImage` / 动态图片 `InkingDynamicImage`；
+     *   - 静态帧动画 `InkingSprite` / 动态帧动画 `InkingDynamicSprite`。
+     *
+     * 数据侧一个字都不变（`Data()` 仍返回 `InkingImageData` / `InkingSpriteData`）：
+     * 档位只决定"几何能不能在运行期改、进不进命中表"。
+     */
+    bool dynamic = false;
 
     /**
      * 帧动画的那部分数据（`frames` / `sheet` / 播放参数）。
@@ -236,7 +269,7 @@ struct ImageConfig {
      * **`normal` 等基础字段仍在 `button.data` 里**，`Finish()` 时一次性搬进来
      * ——解析过程只有一处写，产物只有一份读，不会出现"两份 normal 谁也不服谁"。
      */
-    inking::SpriteData sprite{};
+    InkingSpriteData sprite{};
 
     /// 序列帧每帧的图像字节（生成期烘的）；下标与 `sprite.frames` 对齐。
     std::vector<std::vector<std::uint8_t>> spriteFrameBytes;
@@ -247,19 +280,19 @@ struct ImageConfig {
 /**
  * @brief 一份加载成功的**图集描述**（`CXXCSS/Atlas/<名字>.json`，0.6.5 T-17）。
  *
- * 它不是组件：产物里没有类，只有一个 `inking::AtlasData` 访问函数。
- * 运行期用 `inking::MakeSpriteData(AtlasSlime(), AtlasSlime().FindIndex("walk"),
+ * 它不是组件：产物里没有类，只有一个 `InkingAtlasData` 访问函数。
+ * 运行期用 `InkingMakeSpriteData(AtlasSlime(), AtlasSlime().FindIndex("walk"),
  * 字节, 大小)` 转成某个 `InkingSprite` 的配置——**一个图集可以被多个 sprite 共用**
  * （字节只有一份、纹理只有一张），这正是"一页多动画"要的效果。
  *
- * 校验直接调 `inking::AtlasData::Validate()`：重名 / 帧矩形非法这些判据只该有一份
+ * 校验直接调 `InkingAtlasData::Validate()`：重名 / 帧矩形非法这些判据只该有一份
  * （0.6.1 定下的规矩），生成期不另写一套文案。
  */
 struct AtlasConfig {
     std::string filePath;
     std::string name;        ///< 配置里的 name（= 文件名）
     std::string identifier;  ///< 生成的访问函数名（`slime` → `AtlasSlime`）
-    inking::AtlasData data{};
+    InkingAtlasData data{};
     std::vector<std::string> warnings;
 };
 
@@ -267,21 +300,21 @@ struct AtlasConfig {
  * 一份加载成功的**语言表**配置（`CXXCSS/Text/<名字>.json`）。
  *
  * 它不是组件：`Text` 目录描述的是一张**全局表**（占位符 → 各语言的串），
- * 运行期由 `inking::InstallTextTable` 装进 `include/text/InkingTextTable.h` 那份
+ * 运行期由 `InkingInstallTextTable` 装进 `include/text/InkingTextTable.h` 那份
  * 状态里。所以它没有尺寸、没有锚点、也不进命中表 / 绘制列表。
  *
- * **只允许一份**：`InstallTextTable` 的语义就是"替换整张表"，装两张只有一张
+ * **只允许一份**：`InkingInstallTextTable` 的语义就是"替换整张表"，装两张只有一张
  * 生效——与其让用户猜哪张赢，不如在生成期直接报错（`LoadConfigInto` 那条路）。
  *
  * `defaultLanguage` 是 json 里可选的 `default`（必须是 `table.languages` 里的
- * 一门）；为空表示"用表里第一门"（与 `InstallTextTable` 的缺省一致）。
+ * 一门）；为空表示"用表里第一门"（与 `InkingInstallTextTable` 的缺省一致）。
  */
 struct TextConfig {
     std::string filePath;
     std::string name;              ///< 配置里的 name（= 文件名）
     std::string identifier;        ///< 生成用的名字（`uiStrings` → `UiStrings`）
     std::string defaultLanguage;   ///< 空 = 表里第一门
-    inking::TextTable table{};
+    InkingTextTable table{};
     std::vector<std::string> warnings;
 };
 
@@ -335,8 +368,8 @@ struct ThemeConfig {
  *
  * 为什么产物是"常量 + 一次调用"而不是"只生成一个头文件让库自己读"：
  * 本库以**预编译 DLL** 分发，配置改的是消费方的构建产物，碰不到 DLL 里烘死的
- * 编译期常量。所以这些设置必须有**运行期**入口（`inking::SetDesignSize` /
- * `inking::ApplyWindowConfig`），生成代码里的 `ApplyConfig()` 就是它的唯一正确用法。
+ * 编译期常量。所以这些设置必须有**运行期**入口（`InkingSetDesignSize` /
+ * `InkingApplyWindowConfig`），生成代码里的 `ApplyConfig()` 就是它的唯一正确用法。
  *
  * `window` 的每一项都是 `std::optional`：**没写 = 不动**（保持库里默认值）。
  * 不在这里抄一份"默认值"——抄了就成了第二份真相，库改默认值时它一定是错的。
@@ -346,7 +379,7 @@ struct ThemeConfig {
 struct GlobalConfig {
     std::string filePath;
 
-    /// 设计画布（`design.width/height`，必填，1..kMaxDesignSize 的整数）。
+    /// 设计画布（`design.width/height`，必填，1..InkingMaxDesignSize 的整数）。
     int width  = 0;
     int height = 0;
 

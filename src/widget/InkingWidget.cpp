@@ -12,7 +12,6 @@
 
 #include <cmath>
 
-namespace inking {
 
 namespace {
 
@@ -67,7 +66,7 @@ int ChainDepth(const InkingWidget& node) noexcept {
 
 }  // namespace
 
-// `detail::FillDefaultRect`（第 0 层渲染：一块实心矩形）的定义在
+// `inking_detail::FillDefaultRect`（第 0 层渲染：一块实心矩形）的定义在
 // `src/detail/InkingGeometry.cpp`——它要用渲染层的 `fillShape`，而几何那一份
 // 已经依赖渲染层；放在这里会让本文件（节点类）也背上那个依赖。
 
@@ -100,9 +99,9 @@ void InkingWidget::DetachFromParentChildren() noexcept {
 InkingWidget::InkingWidget(InkingWidget* parent, const std::string& name,
                            bool dynamic)
     // 基类先跑：定位字段（锚点 / 偏移 / 尺寸 / 可见性）与 `_parent` 都由它持有。
-    // 配置驱动那条路的定位数据默认全零（`AnchorData` 的默认值），由子类读好
+    // 配置驱动那条路的定位数据默认全零（`InkingAnchorData` 的默认值），由子类读好
     // CXXCSS 之后再配自己的字段。
-    : InkingAnchor(parent, AnchorData{}),
+    : InkingAnchor(parent, InkingAnchorData{}),
       _name(name),
       _registerOrder(nextRegisterOrder()),
       _dynamic(dynamic) {
@@ -112,7 +111,7 @@ InkingWidget::InkingWidget(InkingWidget* parent, const std::string& name,
     RegisterToScene(GetSceneAncestor());
 }
 
-InkingWidget::InkingWidget(InkingWidget* parent, const AnchorData& data,
+InkingWidget::InkingWidget(InkingWidget* parent, const InkingAnchorData& data,
                            bool dynamic)
     // 定位那半段交给基类（它就是为这件事存在的）；本层只接自己那半段。
     : InkingAnchor(parent, data),
@@ -184,7 +183,7 @@ const std::vector<InkingWidget*>& InkingWidget::GetChildren() const noexcept {
     return _children;
 }
 
-TransformSpec InkingWidget::GetClipTransform() const noexcept {
+InkingTransformSpec InkingWidget::GetClipTransform() const noexcept {
     // 默认：裁剪跟着和内容**同一份**变换——没有滚动这类"只动内容不动窗口"的
     // 通道时，两个语义就是同一个（滚动容器才需要把它们分开，见头文件）。
     return GetSubtreeTransform();
@@ -210,10 +209,10 @@ int InkingWidget::GetHeight() const noexcept {
     return _height;
 }
 
-ShapeBounds InkingWidget::GetSubtreeClipBounds() const noexcept {
+InkingShapeBounds InkingWidget::GetSubtreeClipBounds() const noexcept {
     // 默认就是本体整块矩形——绝大多数"剪子孙"的容器要的正是它
     // （下拉 / 滚动 / 抽屉的窗口就是自己那一块）。
-    return ShapeBounds{0.0f, 0.0f, static_cast<float>(_width),
+    return InkingShapeBounds{0.0f, 0.0f, static_cast<float>(_width),
                        static_cast<float>(_height)};
 }
 
@@ -328,7 +327,7 @@ InkingScene* InkingWidget::GetScene() const noexcept {
 
 bool InkingWidget::HitTest(float /*worldX*/, float /*worldY*/) const {
     // 基类不回答：它不可实例化，也没有形状。具体组件按自己的形状判定
-    // （按钮走 ShapeContains，和渲染共用同一份定义）。
+    // （按钮走 InkingShapeContains，和渲染共用同一份定义）。
     return false;
 }
 
@@ -349,7 +348,7 @@ InkingWidget* InkingWidget::HitTestNode(float worldX, float worldY) noexcept {
     // 所以下面"自己那一笔"不受影响——但裁剪区一定在自己本体之内，落在外面
     // 也就落在体外，直接 nullptr 与"自己那一笔也判 false"等价。
     if (HasSubtreeClip()
-        && !detail::HitTestLocalRect(*this, GetSubtreeClipBounds(),
+        && !inking_detail::HitTestLocalRect(*this, GetSubtreeClipBounds(),
                                      GetClipTransform(), worldX, worldY)) {
         return nullptr;
     }
@@ -378,10 +377,10 @@ InkingWidget* InkingWidget::HitTestNode(float worldX, float worldY) noexcept {
     return HitTest(worldX, worldY) ? this : nullptr;
 }
 
-ShapeBounds InkingWidget::GetHitEnvelope() const {
+InkingShapeBounds InkingWidget::GetHitEnvelope() const {
     // 保守默认：整块矩形。基类不认识形状（形状是组件的事），而包络给大了
     // 只是候选多几个、不会误命中，所以这里宁可保守。
-    ShapeBounds bounds;
+    InkingShapeBounds bounds;
     bounds.x = 0.0f;
     bounds.y = 0.0f;
     bounds.width = static_cast<float>(_width);
@@ -573,13 +572,13 @@ int RoundSize(float value) {
 }
 }  // namespace
 
-LayoutSize InkingWidget::MeasureLayout(const LayoutConstraints& /*constraints*/) const {
+InkingLayoutSize InkingWidget::MeasureLayout(const InkingLayoutConstraints& /*constraints*/) const {
     // 默认：我"想要"的就是我现在的大小。
     //
     // 内容驱动的组件（label 按文字撑高、img 按原始尺寸）会重写这个钩子——
     // 它们去问文字层 / 纹理层，而**不是**看自己的 `_width`（那个可能正是上一次
     // 布局给的结果，问它就成了自己证明自己）。
-    return LayoutSize{static_cast<float>(_width), static_cast<float>(_height)};
+    return InkingLayoutSize{static_cast<float>(_width), static_cast<float>(_height)};
 }
 
 bool InkingWidget::ApplySelfSize(int width, int height) noexcept {
@@ -607,7 +606,7 @@ void InkingWidget::RelayoutSelfIfContentSized() noexcept {
 
     // 约束给 {0,0} = "没人管我多宽"，于是内容驱动的组件按内容自然排（不换行）。
     _selfSizing = true;
-    const LayoutSize measured = MeasureLayout(LayoutConstraints{0.0f, 0.0f});
+    const InkingLayoutSize measured = MeasureLayout(InkingLayoutConstraints{0.0f, 0.0f});
     _selfSizing = false;
 
     int width = _width;
@@ -633,7 +632,7 @@ void InkingWidget::WarnIfZeroSize(const char* moduleName) const {
                        "声明了 layout 的容器里）");
 }
 
-bool InkingWidget::ApplyLayoutRect(const LayoutRect& rect) noexcept {
+bool InkingWidget::ApplyLayoutRect(const InkingLayoutRect& rect) noexcept {
     // 目标：让"我的矩形（相对父级左上角）"正好是 rect。
     //
     // 位置由锚点公式给出：GetX() = parentW × trace.x − w × self.x + offsetX。
@@ -653,8 +652,8 @@ bool InkingWidget::ApplyLayoutRect(const LayoutRect& rect) noexcept {
         return false;  // 一模一样：**一个脏都不标**（重复排不白干）
     }
 
-    _selfAnchor = AnchorPoint{0.0f, 0.0f};
-    _traceAnchor = AnchorPoint{0.0f, 0.0f};
+    _selfAnchor = InkingAnchorPoint{0.0f, 0.0f};
+    _traceAnchor = InkingAnchorPoint{0.0f, 0.0f};
     _offsetX = offsetX;
     _offsetY = offsetY;
     _width = width;
@@ -679,7 +678,7 @@ bool InkingWidget::ApplyLayoutRect(const LayoutRect& rect) noexcept {
 void InkingWidget::Relayout() noexcept {
     // 同步排一次：算完几何立刻生效（"改完内容马上调"就能马上看到正确的位置），
     // 脏由 `ApplyLayoutRect` 内部按"真的变了才标"处理。
-    detail::layout::ArrangeSubtree(*this);
+    inking_detail::layout::ArrangeSubtree(*this);
 }
 
 void InkingWidget::RelayoutParent() noexcept {
@@ -898,12 +897,12 @@ bool InkingWidget::AcceptsExternalTransform() const noexcept {
     return false;
 }
 
-const TransformSpec& InkingWidget::GetExternalTransform() const noexcept {
+const InkingTransformSpec& InkingWidget::GetExternalTransform() const noexcept {
     return _displayTransform;
 }
 
-TransformSpec InkingWidget::CombineWithExternal(
-    const TransformSpec& own) const noexcept {
+InkingTransformSpec InkingWidget::CombineWithExternal(
+    const InkingTransformSpec& own) const noexcept {
     if (_displayTransform.IsIdentity()) {
         return own;  // 没开这条通道：原样返回（绝大多数组件走这里，零开销）
     }
@@ -918,11 +917,11 @@ TransformSpec InkingWidget::CombineWithExternal(
     // 于是：scale = se·si、rotate = θe + θi、
     //       translate = se·R(θe)·内.translate + 外.translate。
     // 自检里用"逐点依次施加两个变换"对账这条公式，别只信这里的推导。
-    const float radians = _displayTransform.rotate * detail::kTransformDegToRad;
+    const float radians = _displayTransform.rotate * inking_detail::kTransformDegToRad;
     const float cosA = std::cos(radians);
     const float sinA = std::sin(radians);
 
-    TransformSpec out;
+    InkingTransformSpec out;
     out.scale = _displayTransform.scale * own.scale;
     out.rotate = _displayTransform.rotate + own.rotate;
     out.translateX = _displayTransform.scale
@@ -934,7 +933,7 @@ TransformSpec InkingWidget::CombineWithExternal(
     return out;
 }
 
-bool InkingWidget::SetDisplayTransform(const TransformSpec& transform) noexcept {
+bool InkingWidget::SetDisplayTransform(const InkingTransformSpec& transform) noexcept {
     if (!AcceptsExternalTransform()) {
         ++_displayTransformRejected;
         INK_LOG_ERROR(std::string("InkingWidget"),
@@ -942,7 +941,7 @@ bool InkingWidget::SetDisplayTransform(const TransformSpec& transform) noexcept 
                       "SetDisplayTransform 被拒绝（组件：" + _name + "）");
         return false;
     }
-    if (SameTransform(_displayTransform, transform)) {
+    if (InkingSameTransform(_displayTransform, transform)) {
         return false;  // 幂等：一个脏都不标
     }
 
@@ -972,7 +971,7 @@ bool InkingWidget::ClearDisplayTransform() noexcept {
     if (_displayTransform.IsIdentity()) {
         return false;  // 本来就是单位：幂等，也不必惊动"拒绝"那条路
     }
-    return SetDisplayTransform(TransformSpec{});
+    return SetDisplayTransform(InkingTransformSpec{});
 }
 
 std::uint64_t InkingWidget::GetDisplayTransformRevision() const noexcept {
@@ -1025,30 +1024,30 @@ float InkingWidget::BeginRenderSlots(SDL_Renderer* renderer) const {
     // 设计坐标 → 设备像素的倍率，由调用方拿去换算坐标。
     // 顺带把渲染器挂到"当前渲染器"上，好让 onRender 不用多接一个参数。
     const float scale = magnify(*this);
-    detail::currentRendererSlot() = renderer;
+    inking_detail::currentRendererSlot() = renderer;
 
     // 祖先子树变换（T-7）：容器的变换要作用到整棵子树。算出来挂在槽上，
     // 形状 / 文字 / 图片都用它——组件侧依旧一个字不用改。
     // 仿射是**设计坐标**的，这里把平移量乘上展示倍率，换到设备像素。
     {
-        Affine ancestor = detail::AncestorAffine(*this);
+        InkingAffine ancestor = inking_detail::AncestorAffine(*this);
         ancestor.tx *= scale;
         ancestor.ty *= scale;
-        detail::currentAncestorAffineSlot() = ancestor;
+        inking_detail::currentAncestorAffineSlot() = ancestor;
     }
-    // 顶点缓存槽：懒创建，然后挂成"当前节点"——`detail::fillShape` 靠它知道
+    // 顶点缓存槽：懒创建，然后挂成"当前节点"——`inking_detail::fillShape` 靠它知道
     // 这一批顶点是谁的、该复用的还是重算（T-6）。组件侧一个字都不用改。
     if (_vertexCache == nullptr) {
-        _vertexCache = std::make_unique<detail::VertexCacheSlot>();
+        _vertexCache = std::make_unique<inking_detail::VertexCacheSlot>();
     }
-    detail::SetCurrentNode(_vertexCache.get());
+    inking_detail::SetCurrentNode(_vertexCache.get());
     return scale;
 }
 
 void InkingWidget::EndRenderSlots() const {
-    detail::SetCurrentNode(nullptr);
-    detail::currentAncestorAffineSlot() = Affine{};
-    detail::currentRendererSlot() = nullptr;
+    inking_detail::SetCurrentNode(nullptr);
+    inking_detail::currentAncestorAffineSlot() = InkingAffine{};
+    inking_detail::currentRendererSlot() = nullptr;
 }
 
 void InkingWidget::SubmitToRenderer(SDL_Renderer* renderer, float absX,
@@ -1090,4 +1089,3 @@ InkingWidget* InkingWidget::FindSubtreeWheelOwner() noexcept {
     return nullptr;
 }
 
-}  // namespace inking

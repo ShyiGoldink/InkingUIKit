@@ -10,19 +10,18 @@
 
 #include <string>
 
-namespace inking {
 
 // ---------------------------------------------------------------------------
 // 构造
 // ---------------------------------------------------------------------------
 
-InkingStaticPanel::InkingStaticPanel(InkingWidget* parent, const PanelData& data)
+InkingStaticPanel::InkingStaticPanel(InkingWidget* parent, const InkingPanelData& data)
     : InkingStaticWidget(parent, data.name) {
     applyData(data);
 }
 
-void InkingStaticPanel::applyData(const PanelData& data) {
-    // 拷一份再收尾：调用方给的 PanelData 可能是"还没补齐 open 态"的，
+void InkingStaticPanel::applyData(const InkingPanelData& data) {
+    // 拷一份再收尾：调用方给的 InkingPanelData 可能是"还没补齐 open 态"的，
     // 而本类要求 _data 永远处于补齐状态（渲染与命中都按它来）。
     _data = data;
     _data.Normalize();
@@ -62,7 +61,7 @@ void InkingStaticPanel::applyData(const PanelData& data) {
 
     // 尺寸护栏（T-02）：判据与文案统一在 Widget 层。放在几何写完之后调用，
     // 所以报出来的是**真的写进基类的那一份**（而不是 `_data` 里的原始值）。
-    WarnIfZeroSize(kPanelModuleName);
+    WarnIfZeroSize(InkingPanelModuleName);
 
     // 几何是构造期写入的，场景绘制列表里的绝对坐标快照要重算一次。
     NotifySceneStructureChanged();
@@ -76,7 +75,7 @@ bool InkingStaticPanel::IsOpen() const noexcept {
     return _look.IsOpen();
 }
 
-PanelState InkingStaticPanel::GetState() const noexcept {
+InkingPanelState InkingStaticPanel::GetState() const noexcept {
     return _look.state;
 }
 
@@ -85,11 +84,11 @@ std::uint32_t InkingStaticPanel::GetDisplayColor() const noexcept {
     return _look.displayColor;
 }
 
-const TransformSpec& InkingStaticPanel::GetDisplayTransform() const noexcept {
+const InkingTransformSpec& InkingStaticPanel::GetDisplayTransform() const noexcept {
     return _look.displayTransform;
 }
 
-const ShapeSpec& InkingStaticPanel::GetShape() const noexcept {
+const InkingShapeSpec& InkingStaticPanel::GetShape() const noexcept {
     return _data.shape;
 }
 
@@ -101,14 +100,14 @@ float InkingStaticPanel::TransitionProgress() const noexcept {
     return _look.TransitionProgress();
 }
 
-const PanelData& InkingStaticPanel::GetData() const noexcept {
+const InkingPanelData& InkingStaticPanel::GetData() const noexcept {
     return _data;
 }
 
-TransformSpec InkingStaticPanel::GetSubtreeTransform() const noexcept {
+InkingTransformSpec InkingStaticPanel::GetSubtreeTransform() const noexcept {
     // 容器与子树的唯一连接点：返回当前显示变换，提交层会把它复合进整棵子树
     // 的每一笔绘制（形状 / 文字 / 图片都吃这一份）。子节点一个字都不用改。
-    TransformSpec transform = _look.displayTransform;
+    InkingTransformSpec transform = _look.displayTransform;
     if (_data.scroll.enabled) {
         // B12：滚动就是**在开合动画的变换上再平移一点**——两者互不干扰
         // （抽屉该拉还拉，滚动该滚还滚），也不用给子树变换加第二条通道。
@@ -129,18 +128,18 @@ bool InkingStaticPanel::HitTest(float worldX, float worldY) const {
     }
 
     // ① 自己本体：撤祖先变换 → 减自己的绝对位置 → 过自己变换的逆 → 问形状。
-    //    和绘制共用同一份定义（`detail::HitTestShape`）。
+    //    和绘制共用同一份定义（`inking_detail::HitTestShape`）。
     //    自己那一笔**不受自己的裁剪影响**（裁剪只剪子孙）——和绘制同一条规矩。
-    if (detail::HitTestShape(*this, GetShape(), _look.displayTransform, worldX,
+    if (inking_detail::HitTestShape(*this, GetShape(), _look.displayTransform, worldX,
                              worldY)) {
         return true;
     }
 
     // ①.5 裁剪（A5）：点落在裁剪区之外 → **整棵子树都不命中**。
     //      这就是"画出来被剪、点起来也被剪"里的后一半，和绘制用的是同一个矩形
-    //      （绘制侧由 `detail::AncestorClipInDevice` 算，命中侧在这里判）。
+    //      （绘制侧由 `inking_detail::AncestorClipInDevice` 算，命中侧在这里判）。
     if (HasSubtreeClip()
-        && !detail::HitTestLocalRect(*this, GetSubtreeClipBounds(),
+        && !inking_detail::HitTestLocalRect(*this, GetSubtreeClipBounds(),
                                      _look.displayTransform, worldX, worldY)) {
         return false;
     }
@@ -168,7 +167,7 @@ InkingWidget* InkingStaticPanel::HitTestNode(float worldX,
     // 所以下面自己本体那一笔不受它影响——和绘制同一条规矩。
     const bool insideClip =
         !HasSubtreeClip()
-        || detail::HitTestLocalRect(*this, GetSubtreeClipBounds(),
+        || inking_detail::HitTestLocalRect(*this, GetSubtreeClipBounds(),
                                     _look.displayTransform, worldX, worldY);
 
     // ① 子树优先：子节点画在容器之上，所以它们先答。
@@ -198,10 +197,10 @@ InkingWidget* InkingStaticPanel::HitTestNode(float worldX,
         return block;  // 子树里有 Block：它就是这次事件的目标
     }
 
-    // ② 自己本体：和绘制共用同一份形状定义（`detail::HitTestShape`）。
+    // ② 自己本体：和绘制共用同一份形状定义（`inking_detail::HitTestShape`）。
     //    自己是 PassThrough 时也返回 nullptr——那种情况交给调用方按三态处理。
     if (!IsHitPassThrough()
-        && detail::HitTestShape(*this, GetShape(), _look.displayTransform,
+        && inking_detail::HitTestShape(*this, GetShape(), _look.displayTransform,
                                 worldX, worldY)) {
         return this;
     }
@@ -211,11 +210,11 @@ InkingWidget* InkingStaticPanel::HitTestNode(float worldX,
     return nullptr;
 }
 
-ShapeBounds InkingStaticPanel::GetHitEnvelope() const {
+InkingShapeBounds InkingStaticPanel::GetHitEnvelope() const {
     // 包络 = 布局空间里整棵子树的并集 × 两个状态的变换并集。
     // 它**只在建表时算一次**：抽屉来回拉只改变换，这份包络不动，
     // 所以命中表的条目数一条都不变（`InputDesign.md` §11 的变换通道）。
-    return detail::PanelHitEnvelope(*this, GetShape(), GetWidth(), GetHeight(),
+    return inking_detail::PanelHitEnvelope(*this, GetShape(), GetWidth(), GetHeight(),
                                     _look.closed, _look.open);
 }
 
@@ -225,7 +224,7 @@ ShapeBounds InkingStaticPanel::GetHitEnvelope() const {
 
 void InkingStaticPanel::onAnimationTick(float deltaSeconds) {
     // 没有过渡在跑时 `Advance` 直接返回两个 false（稳态 = 一个分支 + 什么都不做）。
-    const PanelLook::AdvanceResult advanced = _look.Advance(deltaSeconds);
+    const InkingPanelLook::AdvanceResult advanced = _look.Advance(deltaSeconds);
     if (!advanced.repaint && !advanced.hit) {
         return;
     }
@@ -262,7 +261,7 @@ bool InkingStaticPanel::SetOpen(bool open) noexcept {
     // 命中表条目数不变"的来源。
     //
     // 顺带说明为什么这里不必等 `Advance` 的待报告账：面板的开合是**业务动作**，
-    // 主动标一次最直白；`PanelLook` 里那笔账是给"没配过渡、显示值当场被换掉"
+    // 主动标一次最直白；`InkingPanelLook` 里那笔账是给"没配过渡、显示值当场被换掉"
     // 的情况兜底的（两条都标同一个 bool，重复标脏是幂等的）。
     MarkRepaintDirty();
     MarkDirty();
@@ -290,11 +289,11 @@ void InkingStaticPanel::onRender(float pixelX, float pixelY) const {
     // T-07：有阴影先画阴影（它在填充**之下**——"形状之下的偏移副本"）。
     // 描边不在这里：它走装饰遍（`onRenderDecoration`），画在子孙之上。
     if (_look.displayShadow.Visible()) {
-        detail::PaintSurfaceShadow(detail::currentRenderer(), *this, GetShape(),
+        inking_detail::PaintSurfaceShadow(inking_detail::currentRenderer(), *this, GetShape(),
                                    _look.displayShadow, _look.displayTransform,
                                    pixelX, pixelY);
     }
-    detail::PaintPanelAppearance(*this, GetShape(), _look.displayColor,
+    inking_detail::PaintPanelAppearance(*this, GetShape(), _look.displayColor,
                                  _look.displayTransform, pixelX, pixelY);
 
     // B12：两条滚动条。画在**容器自己的坐标**里（不含滚动偏移——条不该跟着内容
@@ -302,7 +301,7 @@ void InkingStaticPanel::onRender(float pixelX, float pixelY) const {
     if (!_data.scroll.enabled) {
         return;
     }
-    SDL_Renderer* renderer = detail::currentRenderer();
+    SDL_Renderer* renderer = inking_detail::currentRenderer();
     if (renderer == nullptr) {
         return;
     }
@@ -317,7 +316,7 @@ void InkingStaticPanel::onRender(float pixelX, float pixelY) const {
         const float radius = _data.scroll.barRadius > 0.0f
                                  ? _data.scroll.barRadius
                                  : std::min(width, height) * 0.5f;
-        detail::fillShape(renderer, ShapeSpec::RoundedRect(radius),
+        inking_detail::fillShape(renderer, InkingShapeSpec::RoundedRect(radius),
                           std::max(1, static_cast<int>(width + 0.5f)),
                           std::max(1, static_cast<int>(height + 0.5f)),
                           magnitude, pixelX + x * magnitude,
@@ -325,7 +324,7 @@ void InkingStaticPanel::onRender(float pixelX, float pixelY) const {
                           color);
     };
     for (int axis = 0; axis < 2; ++axis) {
-        const ScrollBarMetrics bar = GetBarMetrics(axis == 0);
+        const InkingScrollBarMetrics bar = GetBarMetrics(axis == 0);
         if (!bar.visible) {
             continue;
         }
@@ -356,7 +355,7 @@ void InkingStaticPanel::onRenderDecoration(float pixelX, float pixelY) const {
     // 只有描边（T-07）：阴影在填充那一趟（它在形状**之下**，挪到这里反而
     // 盖住自己的内容）。场景在"子树画完、上层兄弟未画"时调这里，所以这一笔
     // 压得住子孙、又不越界。
-    detail::PaintSurfaceStroke(detail::currentRenderer(), *this, GetShape(),
+    inking_detail::PaintSurfaceStroke(inking_detail::currentRenderer(), *this, GetShape(),
                                _look.displayStroke, _look.displayTransform,
                                pixelX, pixelY);
 }
@@ -422,19 +421,19 @@ float InkingStaticPanel::ContentViewportHeight() const noexcept {
 }
 
 float InkingStaticPanel::GetScrollRangeX() const noexcept {
-    return ScrollRange(_contentWidth, ContentViewportWidth());
+    return InkingScrollRange(_contentWidth, ContentViewportWidth());
 }
 
 float InkingStaticPanel::GetScrollRangeY() const noexcept {
-    return ScrollRange(_contentHeight, ContentViewportHeight());
+    return InkingScrollRange(_contentHeight, ContentViewportHeight());
 }
 
 void InkingStaticPanel::SetScroll(float x, float y) {
     if (!_data.scroll.enabled) {
         return;
     }
-    const float nextX = ClampScroll(x, GetScrollRangeX());
-    const float nextY = ClampScroll(y, GetScrollRangeY());
+    const float nextX = InkingClampScroll(x, GetScrollRangeX());
+    const float nextY = InkingClampScroll(y, GetScrollRangeY());
     if (nextX == _scrollX && nextY == _scrollY) {
         return;  // 没变就不标脏（幂等：多喊几次无害）
     }
@@ -467,19 +466,19 @@ void InkingStaticPanel::WheelScroll(float deltaX, float deltaY) {
     onPointerWheel(deltaX, deltaY);
 }
 
-ScrollBarMetrics InkingStaticPanel::GetBarMetrics(bool vertical) const noexcept {
+InkingScrollBarMetrics InkingStaticPanel::GetBarMetrics(bool vertical) const noexcept {
     if (!_data.scroll.enabled) {
-        return ScrollBarMetrics{};
+        return InkingScrollBarMetrics{};
     }
     const float content = vertical ? _contentHeight : _contentWidth;
     const float offset = vertical ? _scrollY : _scrollX;
     // 条自己用**原始视口**算"有没有得滚 / 滑块多长"——不调 `GetScrollRange*`：
     // 那个已经按"扣掉条带的内容视口"算，而条带宽度又取决于条是否可见 ⇒ 会绕成环。
     // 两者差一个条带宽度（十几像素），对"滑块多长"没有可见影响。
-    const float rawRange = ScrollRange(
+    const float rawRange = InkingScrollRange(
         content, vertical ? static_cast<float>(GetHeight())
                           : static_cast<float>(GetWidth()));
-    return ComputeScrollBar(vertical, static_cast<float>(GetWidth()),
+    return InkingComputeScrollBar(vertical, static_cast<float>(GetWidth()),
                             static_cast<float>(GetHeight()), content, offset,
                             rawRange, _data.scroll);
 }
@@ -493,14 +492,14 @@ void InkingStaticPanel::PressScrollAt(float designX, float designY) {
     const float localY = designY - GetY();
 
     // 竖直优先：两条都可见时它们在右下角重叠，竖直条画在外面（更常用）。
-    const ScrollBarMetrics bars[2] = {GetBarMetrics(true), GetBarMetrics(false)};
+    const InkingScrollBarMetrics bars[2] = {GetBarMetrics(true), GetBarMetrics(false)};
     for (int axis = 0; axis < 2; ++axis) {
         const bool vertical = axis == 0;
-        const ScrollBarMetrics& bar = bars[axis];
+        const InkingScrollBarMetrics& bar = bars[axis];
         if (!bar.visible) {
             continue;
         }
-        if (HitsThumb(localX, localY, bar)) {
+        if (InkingHitsThumb(localX, localY, bar)) {
             _dragAxis = vertical ? 1 : 2;  // 拖：跟着指针走
             return;
         }
@@ -512,7 +511,7 @@ void InkingStaticPanel::PressScrollAt(float designX, float designY) {
             const float range =
                 vertical ? GetScrollRangeY() : GetScrollRangeX();
             const float jumped =
-                ScrollFromTrackClick(vertical, localX, localY, bar, range);
+                InkingScrollFromTrackClick(vertical, localX, localY, bar, range);
             if (vertical) {
                 SetScroll(_scrollX, jumped);
             } else {
@@ -528,7 +527,7 @@ void InkingStaticPanel::DragScrollTo(float designX, float designY) {
         return;
     }
     const bool vertical = _dragAxis == 1;
-    const ScrollBarMetrics bar = GetBarMetrics(vertical);
+    const InkingScrollBarMetrics bar = GetBarMetrics(vertical);
     if (!bar.visible) {
         return;
     }
@@ -538,7 +537,7 @@ void InkingStaticPanel::DragScrollTo(float designX, float designY) {
     // 拖动与"点轨道跳过去"是**同一套算术**（滑块中心对到指针上）——所以拖动
     // 天然跟手、也和点击一致，不会出现"点一下跳到的位置"和"拖到那儿"不一样。
     const float next =
-        ScrollFromTrackClick(vertical, localX, localY, bar, range);
+        InkingScrollFromTrackClick(vertical, localX, localY, bar, range);
     if (vertical) {
         SetScroll(_scrollX, next);
     } else {
@@ -546,10 +545,10 @@ void InkingStaticPanel::DragScrollTo(float designX, float designY) {
     }
 }
 
-void InkingStaticPanel::onPointerPress(PointerButton button, bool press) {
+void InkingStaticPanel::onPointerPress(InkingPointerButton button, bool press) {
     // 容器吃的是**主键**的滚动拖动（0.5.0）。不判的话，右键抬起会把左键正在
     // 进行的拖动结束掉——`_dragAxis = 0` 那一行就是它。
-    if (button != PointerButton::Primary) {
+    if (button != InkingPointerButton::Primary) {
         return;
     }
     if (!press) {
@@ -569,4 +568,3 @@ void InkingStaticPanel::onPointerDrag(float designX, float designY, float,
     DragScrollTo(designX, designY);
 }
 
-}  // namespace inking

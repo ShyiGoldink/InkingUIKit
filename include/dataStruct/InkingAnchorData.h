@@ -17,29 +17,27 @@
 
 #include <cstdint>
 
-namespace inking {
-
 /// 锚点：百分比，(0,0) 是左上角，(1,1) 是右下角。组件使用锚点时都被视作矩形。
 ///
-/// 名字从 `Anchor` 改成 `AnchorPoint`：它表达的是「矩形上的一个百分比点」，
+/// 名字从 `Anchor` 改成 `InkingAnchorPoint`：它表达的是「矩形上的一个百分比点」，
 /// 不是「锚点机制」本身——后者是 `InkingAnchor` 这个类的职责，两个名字
 /// 并列时容易互相误解。
-struct AnchorPoint {
+struct InkingAnchorPoint {
     float x = 0.0f;
     float y = 0.0f;
 };
 
-/// 预置锚点，拿来即用；要自定义直接填 `AnchorPoint`。
+/// 预置锚点，拿来即用；要自定义直接填 `InkingAnchorPoint`。
 struct InkingChangeAnchor {
-    static constexpr AnchorPoint LeftTop{0.0f, 0.0f};
-    static constexpr AnchorPoint CenterTop{0.5f, 0.0f};
-    static constexpr AnchorPoint RightTop{1.0f, 0.0f};
-    static constexpr AnchorPoint LeftCenter{0.0f, 0.5f};
-    static constexpr AnchorPoint Center{0.5f, 0.5f};
-    static constexpr AnchorPoint RightCenter{1.0f, 0.5f};
-    static constexpr AnchorPoint LeftBottom{0.0f, 1.0f};
-    static constexpr AnchorPoint CenterBottom{0.5f, 1.0f};
-    static constexpr AnchorPoint RightBottom{1.0f, 1.0f};
+    static constexpr InkingAnchorPoint LeftTop{0.0f, 0.0f};
+    static constexpr InkingAnchorPoint CenterTop{0.5f, 0.0f};
+    static constexpr InkingAnchorPoint RightTop{1.0f, 0.0f};
+    static constexpr InkingAnchorPoint LeftCenter{0.0f, 0.5f};
+    static constexpr InkingAnchorPoint Center{0.5f, 0.5f};
+    static constexpr InkingAnchorPoint RightCenter{1.0f, 0.5f};
+    static constexpr InkingAnchorPoint LeftBottom{0.0f, 1.0f};
+    static constexpr InkingAnchorPoint CenterBottom{0.5f, 1.0f};
+    static constexpr InkingAnchorPoint RightBottom{1.0f, 1.0f};
 };
 
 /// Resize 的哨兵值：某个方向传 `none`，表示这个方向不动。
@@ -67,12 +65,12 @@ struct InkingZIndex {
  *
  * 上半段是**定位层**要读的（锚点 / 偏移 / 尺寸），下半段是 **Widget 层**要读的
  * （层级 / 可见性 / 颜色 / 布局）。类构造时逐字段拆存进基类——**基类不存整份
- * `AnchorData`**，所以要加字段时有几处要同步（见 `AGENTS.md` §6 第 83 条）。
+ * `InkingAnchorData`**，所以要加字段时有几处要同步（见 `AGENTS.md` §6 第 83 条）。
  */
-struct AnchorData {
+struct InkingAnchorData {
     // ---------------- 定位层（InkingAnchor 读） ----------------
-    AnchorPoint selfAnchor{};  ///< 自身锚点
-    AnchorPoint traceAnchor{}; ///< 上级锚点（追踪的父级锚点）
+    InkingAnchorPoint selfAnchor{};  ///< 自身锚点
+    InkingAnchorPoint traceAnchor{}; ///< 上级锚点（追踪的父级锚点）
     float offsetX = 0.0f;      ///< 对齐之后再挪一点，设计坐标
     float offsetY = 0.0f;
     int width = 0;   ///< 自身尺寸，设计坐标
@@ -96,9 +94,8 @@ struct AnchorData {
      * **不会**回写这里（否则重排就丢了输入）。见 `InkingLayout.h` 头顶那三句话。
      */
     ///@{
-    LayoutSpec layout{};
-    LayoutItem layoutItem{};
+    InkingLayoutSpec layout{};
+    InkingLayoutItem layoutItem{};
     ///@}
 };
 
-}  // namespace inking

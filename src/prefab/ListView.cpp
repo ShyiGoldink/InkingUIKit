@@ -10,22 +10,22 @@
 #include <memory>
 #include <utility>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 namespace {
 
 /// 占位块（撑位置用）的颜色：alpha = 2/255。
 ///
-/// **不能写全透明**：`PanelData::Normalize()` 会把"三态 alpha 全 0"兜底成不透明黑
-/// （和 `ButtonData` 同一条规矩，`AGENTS.md` §6 第 52 条），那样占位块会变成一块
+/// **不能写全透明**：`InkingPanelData::Normalize()` 会把"三态 alpha 全 0"兜底成不透明黑
+/// （和 `InkingButtonData` 同一条规矩，`AGENTS.md` §6 第 52 条），那样占位块会变成一块
 /// 黑条压在列表上。给一个极小但非 0 的 alpha：看不见，但仍然参与合成。
 constexpr std::uint32_t kInvisibleColor = 0x02000000u;
 
 /// 禁用行的文字色（和 C1 同一个做法：静态按钮没有禁用态，只能"不发事件 + 文字变灰"）。
 constexpr std::uint32_t kDisabledTextColor = theme::kTextDisabled;
 
-PanelData MakePanelData(const ListViewStyle& style) {
-    PanelData panel = style.panel;
+InkingPanelData MakePanelData(const ListViewStyle& style) {
+    InkingPanelData panel = style.panel;
     if (panel.name.empty()) {
         panel.name = "listView";
     }
@@ -34,22 +34,22 @@ PanelData MakePanelData(const ListViewStyle& style) {
                      "列表的 panel.layout 没声明（kind = None）：行会叠在左上角。"
                      "这里兜底成竖向 Stack + gap 0 + 交叉轴拉伸。名字："
                          + panel.name);
-        panel.layout.kind = LayoutKind::Stack;
-        panel.layout.axis = LayoutAxis::Vertical;
+        panel.layout.kind = InkingLayoutKind::Stack;
+        panel.layout.axis = InkingLayoutAxis::Vertical;
         panel.layout.gap = 0.0f;
-        panel.layout.align = LayoutAlign::Stretch;
+        panel.layout.align = InkingLayoutAlign::Stretch;
     }
-    if (panel.layout.axis != LayoutAxis::Vertical) {
+    if (panel.layout.axis != InkingLayoutAxis::Vertical) {
         // 列表这一版只做竖排：窗口化靠"行高 × 索引"直接算位置，横排没有对应的
         // 语义（也没有那种需求）。不静默——记一条 WARN 再按竖排走。
         INK_LOG_WARN(std::string(kListModuleName),
                      "列表这一版只支持竖向排列（axis = Vertical）；配置里写的是"
                      "横排，这里按竖排处理。名字：" + panel.name);
-        panel.layout.axis = LayoutAxis::Vertical;
+        panel.layout.axis = InkingLayoutAxis::Vertical;
     }
     if (!panel.scroll.enabled) {
         // 列表不能滚就不是列表：滚动是它的**能力**而不是可选项（CXXCSS 那边
-        // 也是这个口径：`PanelData::scroll` 是容器的一种能力）。
+        // 也是这个口径：`InkingPanelData::scroll` 是容器的一种能力）。
         panel.scroll.enabled = true;
     }
     if (!panel.clipChildren) {
@@ -62,27 +62,27 @@ PanelData MakePanelData(const ListViewStyle& style) {
 
 }  // namespace
 
-ButtonData MakeDefaultRowLook() {
-    ButtonData look;
+InkingButtonData MakeDefaultRowLook() {
+    InkingButtonData look;
     look.name = "listRowDefault";
     look.width = 0;  // 0 = 用视口宽度（建行时会补上）
     look.height = 32;
     // **行用直角**（`Rect`，不是 `RoundedRect`）：行是**表格单元**——一行挨一行时
     // 圆角会让每一行看起来像一块独立的小卡片，排起来"很奇怪"（用户看过第一版后
     // 的反馈）。要圆角的是**按钮**（选项 / 菜单项 / 底部按钮），不是列表行。
-    look.shape = ShapeSpec::Rect();
+    look.shape = InkingShapeSpec::Rect();
     // **常态是不透明白**（用户点名要的）：行是一块"白卡片"，悬停 / 按下 / 选中
     // 才铺浅紫底。视口因此要比它沉一档（`kSurfaceSunken`），白行才浮得起来。
-    look.normal = ButtonAppearance(AppearanceType::Color, theme::kSurface);
-    look.hover = ButtonAppearance(AppearanceType::Color, theme::kAccentSoft);
-    look.onclicked = ButtonAppearance(AppearanceType::Color,
+    look.normal = InkingButtonAppearance(InkingAppearanceType::Color, theme::kSurface);
+    look.hover = InkingButtonAppearance(InkingAppearanceType::Color, theme::kAccentSoft);
+    look.onclicked = InkingButtonAppearance(InkingAppearanceType::Color,
                                       theme::kAccentSoftPressed);
     // 显式关掉"省略即继承"（`AGENTS.md` §6 第 43 条）。
     look.hoverInheritsNormal = false;
     look.onclickedInheritsNormal = false;
     look.text.fontSize = 15.0f;
     look.text.leftSpace = 14.0f;
-    look.text.alignV = TextAlignV::Middle;  // 行内文字垂直居中
+    look.text.alignV = InkingTextAlignV::Middle;  // 行内文字垂直居中
     look.text.topSpace = 0.0f;
     look.text.path = theme::DefaultFontPath();
     look.textColor = theme::kAccentStrong;  // 深紫的字（用户点名要的）
@@ -94,7 +94,7 @@ ListViewStyle ListViewStyle::MakeDefault() {
     style.panel.name = "listView";
     style.panel.width = 320;
     style.panel.height = 400;
-    style.panel.shape = ShapeSpec::RoundedRect(theme::kRadiusPanel);
+    style.panel.shape = InkingShapeSpec::RoundedRect(theme::kRadiusPanel);
     // 视口用**承载面**（浅紫灰）：行是白卡片，白行浮在比它沉一档的底上才看得清
     // （用户点名要"行常态是白的"——那就得让视口不是白的）。
     style.panel.closed.color = theme::kSurfaceSunken;
@@ -106,11 +106,11 @@ ListViewStyle ListViewStyle::MakeDefault() {
     style.panel.scroll.barColor = theme::kScrollTrack;
     style.panel.scroll.thumbColor = theme::kScrollThumb;
     style.panel.scroll.thumbHoverColor = theme::kScrollThumbHover;
-    style.panel.layout.kind = LayoutKind::Stack;
-    style.panel.layout.axis = LayoutAxis::Vertical;
+    style.panel.layout.kind = InkingLayoutKind::Stack;
+    style.panel.layout.axis = InkingLayoutAxis::Vertical;
     style.panel.layout.gap = 0.0f;
-    style.panel.layout.align = LayoutAlign::Stretch;
-    style.panel.layout.padding = LayoutSpacing{};
+    style.panel.layout.align = InkingLayoutAlign::Stretch;
+    style.panel.layout.padding = InkingLayoutSpacing{};
     style.rowLook = MakeDefaultRowLook();
     style.rowHeight = 32.0f;
     style.selectedColor = theme::kAccentSoftPressed;  // 选中行：实一点的浅紫
@@ -172,7 +172,7 @@ std::string ListView::ItemId(int index) const {
 void ListView::addRowNode(int index) {
     const ListItem& item = _items[static_cast<std::size_t>(index)];
 
-    ButtonData look = _style.rowLook;
+    InkingButtonData look = _style.rowLook;
     look.name = "listRow" + std::to_string(index);
     look.height = static_cast<int>(_style.rowHeight + 0.5f);
     if (look.width <= 0) {
@@ -201,7 +201,7 @@ void ListView::addSpacer(float height) {
     if (height <= 0.0f) {
         return;
     }
-    AnchorData data;
+    InkingAnchorData data;
     data.width = 1;
     data.height = static_cast<int>(height + 0.5f);
     data.color = kInvisibleColor;
@@ -406,12 +406,12 @@ ListRow* ListView::GetRowNode(int index) const {
     return _rowNodes[slot];
 }
 
-ShapeBounds ListView::GetRowRect(int index) const {
+InkingShapeBounds ListView::GetRowRect(int index) const {
     const ListRow* row = GetRowNode(index);
     if (row == nullptr) {
-        return ShapeBounds{};
+        return InkingShapeBounds{};
     }
-    return ShapeBounds{row->GetX(), row->GetY(),
+    return InkingShapeBounds{row->GetX(), row->GetY(),
                        static_cast<float>(row->GetWidth()),
                        static_cast<float>(row->GetHeight())};
 }
@@ -441,7 +441,7 @@ void ListView::onPointerWheel(float deltaX, float deltaY) {
     SyncVisibleWindow();
 }
 
-void ListView::onPointerPress(PointerButton button, bool press) {
+void ListView::onPointerPress(InkingPointerButton button, bool press) {
     // 守卫在基类（`InkingStaticPanel` 只认主键），这里照常转发——
     // 签名必须一致，否则右键连"什么都不做"都传不到基类那层。
     InkingStaticPanel::onPointerPress(button, press);
@@ -454,4 +454,4 @@ void ListView::onPointerDrag(float designX, float designY, float deltaX,
     SyncVisibleWindow();
 }
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

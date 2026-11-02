@@ -2,57 +2,56 @@
 
 #include <SDL3/SDL.h>
 
-namespace inking {
 
-const MouseState& MouseInput::GetState() const noexcept {
+const InkingMouseState& InkingMouseInput::GetState() const noexcept {
     return state_;
 }
 
-void MouseInput::SetDesignPosition(float x, float y) noexcept {
+void InkingMouseInput::SetDesignPosition(float x, float y) noexcept {
     state_.design.x = x;
     state_.design.y = y;
 }
 
-void MouseInput::SetWindowSize(float width, float height) noexcept {
+void InkingMouseInput::SetWindowSize(float width, float height) noexcept {
     // 触摸的归一化坐标要乘它。宽高为 0（窗口还没建好）时触摸会被算到 (0,0)
     // ——那种情况下本来也没有触摸事件。
     windowWidth_ = width > 0.0f ? width : 0.0f;
     windowHeight_ = height > 0.0f ? height : 0.0f;
 }
 
-bool MouseInput::IsTouchActive() const noexcept { return touchActive_; }
+bool InkingMouseInput::IsTouchActive() const noexcept { return touchActive_; }
 
-std::int64_t MouseInput::GetTouchFinger() const noexcept { return touchFinger_; }
+std::int64_t InkingMouseInput::GetTouchFinger() const noexcept { return touchFinger_; }
 
-bool MouseInput::IsLeftDown() const noexcept {
+bool InkingMouseInput::IsLeftDown() const noexcept {
     return state_.leftButtonDown;
 }
 
-bool MouseInput::IsRightDown() const noexcept {
+bool InkingMouseInput::IsRightDown() const noexcept {
     return state_.rightButtonDown;
 }
 
-bool MouseInput::IsMiddleDown() const noexcept {
+bool InkingMouseInput::IsMiddleDown() const noexcept {
     return state_.middleButtonDown;
 }
 
-bool MouseInput::IsMoved() const noexcept {
+bool InkingMouseInput::IsMoved() const noexcept {
     return state_.moved;
 }
 
-float MouseInput::GetWheelX() const noexcept {
+float InkingMouseInput::GetWheelX() const noexcept {
     return state_.wheelX;
 }
 
-float MouseInput::GetWheelY() const noexcept {
+float InkingMouseInput::GetWheelY() const noexcept {
     return state_.wheelY;
 }
 
-bool MouseInput::IsWheelScrolled() const noexcept {
+bool InkingMouseInput::IsWheelScrolled() const noexcept {
     return state_.wheelX != 0.0f || state_.wheelY != 0.0f;
 }
 
-void MouseInput::ResetFrameFlags() noexcept {
+void InkingMouseInput::ResetFrameFlags() noexcept {
     state_.moved = false;
     // 滚轮和 moved 同一档：都是"这一帧发生过的事"。累积值交给场景派发过了，
     // 不清掉的话下一帧会被重复派发一次（帧率越高滚得越多）。
@@ -60,7 +59,7 @@ void MouseInput::ResetFrameFlags() noexcept {
     state_.wheelY = 0.0f;
 }
 
-void MouseInput::UpdateFromSDL(const union SDL_Event& event) {
+void InkingMouseInput::UpdateFromSDL(const union SDL_Event& event) {
     switch (event.type) {
     case SDL_EVENT_MOUSE_MOTION: {
         // 运动事件中，坐标直接更新为最新位置。
@@ -76,7 +75,7 @@ void MouseInput::UpdateFromSDL(const union SDL_Event& event) {
         // 而移动事件不写它——否则触摸屏上"边按边动鼠标"会把来源刷成 Mouse，
         // 长按计时被反复复位。
         if (event.button.button == SDL_BUTTON_LEFT) {
-            state_.source = PointerSource::Mouse;
+            state_.source = InkingPointerSource::Mouse;
         }
         switch (event.button.button) {
         case SDL_BUTTON_LEFT:
@@ -140,7 +139,7 @@ void MouseInput::UpdateFromSDL(const union SDL_Event& event) {
         state_.moved = true;
         // 来源：手指按下（0.5.0）。场景用它决定"要不要走长按 → 次键"，
         // 组件层看不到这个值——设备差异到此为止。
-        state_.source = PointerSource::Touch;
+        state_.source = InkingPointerSource::Touch;
         break;
     }
 
@@ -201,4 +200,3 @@ void MouseInput::UpdateFromSDL(const union SDL_Event& event) {
     }
 }
 
-}  // namespace inking

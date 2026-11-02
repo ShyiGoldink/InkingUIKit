@@ -1,14 +1,12 @@
 #pragma once
 
-#include <image/ImageData.h>
+#include <image/ImageLike.h>
 #include <widget/InkingStaticWidget.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <vector>
 
-namespace inking {
 
 /**
  * @brief 一张**静态图片**（A11）：不带点击回调的按钮。
@@ -17,7 +15,7 @@ namespace inking {
  * onClicked 事件的 button"——形状、外观（颜色 / 纹理）、描边阴影、锚点、命中
  * 全都要，只有三态与回调不要。所以它：
  *
- *   - **复用按钮那条绘制**（`detail::PaintButtonAppearance`，见
+ *   - **复用按钮那条绘制**（`inking_detail::PaintButtonAppearance`，见
  *     `include/button/ButtonPaint.h`）：形状填充 / 图片贴图 / 描边阴影三笔的
  *     顺序与实现一个字都不重写——两份实现各自演化就会出现"按钮和图片画得不一样"；
  *   - **只认 `normal` 一态**：没有状态机、没有过渡，`GetDisplayColor()` /
@@ -26,7 +24,7 @@ namespace inking {
  *     所以它不会被按下、不会悬停变样、也拿不到键盘焦点；
  *   - **参与命中**：指针落在它这一格就命中它（和标签的"默认穿透"是两回事——
  *     图片是画面上的实体，不该把点击漏给底下）。整张设计稿当背景时用
- *     `ImageData::hitPassThrough` 关掉：那时空白处判成 `PassThrough`、继续往下找
+ *     `InkingImageData::hitPassThrough` 关掉：那时空白处判成 `PassThrough`、继续往下找
  *     （0.5.1，见 `CXXCSS.md` §3.10）。
  *
  * ---------------------------------------------------------------------------
@@ -37,32 +35,33 @@ namespace inking {
  *      好处是"exe 自带图、不会缺文件"；坏处是图一多 exe 就肥、编译也慢。
  *   2. **运行期读**（`runtimeAsset == true`）：`normal.source` 是**相对资源根**的
  *      路径（默认 exe 旁的 `assets/`），构造时（或 `LoadAsset` 时）由
- *      `inking::AssetLoad` 读进来，本类**自己持有**那份字节（`std::vector`），
+ *      `InkingAssetLoad` 读进来，本类**自己持有**那份字节（`std::vector`），
  *      并把视图指给绘制层。资源模块还认一种轻量混淆头（`INKA` + 异或流），
  *      所以"资源包里直接拖出来就能用"这件事被挡住了（见 `asset/InkingAsset.h`）。
  *
  * 读不到图时**保留上一次的图**（首次则退回按颜色填）：把画面变成一个洞比
  * "缺图"更糟，而且那种失败会一路传到用户面前却说不清是哪一步。
  */
-class InkingStaticImage : public InkingStaticWidget {
+// G-02：数据与观测由 InkingImageLike 共用；本类仍保留全部旧声明作 ABI 薄转发。
+class InkingStaticImage : public InkingStaticWidget, public InkingImageLike {
 public:
     /**
-     * 手写数据构造：不走配置，直接把一份 `ImageData` 交给它。
+     * 手写数据构造：不走配置，直接把一份 `InkingImageData` 交给它。
      *
      * @param parent 上级锚点；非拥有。图片必须在某个场景的子树下才能被渲染。
      * @param data   配置数据（构造时会 `Normalize` 一次；`runtimeAsset` 为真时
      *               会**立刻**从资源根读一次图）。
      */
-    InkingStaticImage(InkingWidget* parent, const ImageData& data);
+    InkingStaticImage(InkingWidget* parent, const InkingImageData& data);
 
     /// 指针在这个位置上吗（世界坐标）。**照常参与命中**：它不是标签。
     bool HitTest(float worldX, float worldY) const override;
 
     /// 形状定义：渲染 / 命中 / 包围盒三者都从它派生（见 InkingShapeSpec.h）。
-    const ShapeSpec& GetShape() const noexcept;
+    const InkingShapeSpec& GetShape() const noexcept;
 
     /// 当前外观（图片只有一态，所以恒等于配置里的 `normal`）。
-    const ButtonAppearance& GetAppearance() const noexcept;
+    const InkingButtonAppearance& GetAppearance() const noexcept;
 
     /// 画出来的颜色（0xAARRGGBB）：就是 `normal` 那份。
     std::uint32_t GetDisplayColor() const noexcept;
@@ -72,19 +71,19 @@ public:
     /// 返回值而不是引用：A13 之后它可能是个**合成结果**（外部拖动叠在配置那份
     /// 之上），不再指向 `_data` 里的字段。绘制与命中**都必须读它**——两处各读
     /// 各的数据就是"画的是一个、点的是另一个"（`AGENTS.md` §6 第 38 条）。
-    TransformSpec GetDisplayTransform() const noexcept;
+    InkingTransformSpec GetDisplayTransform() const noexcept;
 
     /// 变换**同时作用于子节点**（和按钮 / 面板同一条约定）。
-    TransformSpec GetSubtreeTransform() const noexcept override;
+    InkingTransformSpec GetSubtreeTransform() const noexcept override;
 
     /// 图片认**外部显示变换**（A13）：拖动 / 缩放图片要靠它（框架默认不认）。
     bool AcceptsExternalTransform() const noexcept override { return true; }
 
     /// 命中索引用的保守包络：一态包络 **× 外部变换**（拖走了也要点得到）。
-    ShapeBounds GetHitEnvelope() const override;
+    InkingShapeBounds GetHitEnvelope() const override;
 
     /// 构造时用的那份配置（已经 Normalize 过）。
-    const ImageData& GetData() const noexcept;
+    const InkingImageData& GetData() const noexcept;
 
     /// 现在这张图的名字（**纹理缓存键** / 日志用）。没有图时是空串。
     const std::string& ImageName() const noexcept;
@@ -95,7 +94,7 @@ public:
     /// 现在用的是不是运行期读进来的字节（而不是生成期烘的那份）。
     bool UsingAssetBytes() const noexcept;
 
-    /// 这个组件**自己**加载过几次（全局计数在 `AssetStatsSnapshot()`）。
+    /// 这个组件**自己**加载过几次（全局计数在 `InkingAssetStatsSnapshot()`）。
     int AssetLoadCount() const noexcept;
 
     // ---------------- 拖拽 / 缩放（A13） ----------------
@@ -141,7 +140,7 @@ public:
      * 运行期换图：直接给字节。本类**拷贝一份**自己拥有（`data` 可以为临时缓冲）。
      *
      * `name` 是纹理缓存键：同一张图给同一个名字才会复用纹理（见
-     * `ImageBytes::name`）。传空指针 / 0 字节 = 把图清掉，退回按颜色填。
+     * `InkingImageBytes::name`）。传空指针 / 0 字节 = 把图清掉，退回按颜色填。
      */
     void SetImageBytes(const std::uint8_t* data, std::size_t size,
                        const std::string& name);
@@ -161,14 +160,14 @@ protected:
      * 它会标**重绘脏**、**不**标命中脏：切格只换取哪块，几何一个字节都不动。
      * 这条性质是图集换帧能待在静态档的前提。
      */
-    void SetRenderSourceRect(const ShapeBounds& srcRect);
+    void SetRenderSourceRect(const InkingShapeBounds& srcRect);
 
     /// 当前生效的源矩形（全零 = 整张图）。
-    const ShapeBounds& GetRenderSourceRect() const noexcept;
+    const InkingShapeBounds& GetRenderSourceRect() const noexcept;
 
     /// 按下 / 抬起。**只认主键**：图片的拖动 / 缩放是主键手势，
     /// 右键不该把正在进行的拖动收尾（0.5.0）。
-    void onPointerPress(PointerButton button, bool press) override;
+    void onPointerPress(InkingPointerButton button, bool press) override;
 
     /**
      * 拖着走：移动或缩放，两者都落成一次 `SetDisplayTransform`。
@@ -181,44 +180,27 @@ protected:
 
 private:
     /// 把 data 搬进自己 + 基类；构造函数用。
-    void applyData(const ImageData& data);
+    void applyData(const InkingImageData& data);
 
-    /// 把"要画的那份外观"重算一遍（`normal` + 可能的运行期字节视图）。
+    /// G-02：保留既有私有符号；唯一实现已移到 InkingImageLike。
     void refreshRenderAppearance();
 
     /**
      * 用**世界坐标**里的一个按下点决定这次交互是"移动"还是"抓右下角缩放"。
      *
-     * 判定必须与**命中**同源（`detail::HitTestLocalRect`：撤祖先变换 → 减绝对位置 →
+     * 判定必须与**命中**同源（`inking_detail::HitTestLocalRect`：撤祖先变换 → 减绝对位置 →
      * 过自己变换的**逆**）。只减绝对位置（不过逆变换）的话，图片一旦被缩放，
      * "哪一块算把手"就和"看到的把手"错位——**缩小时抓把手会被判成移动**
      * （表现就是"右下角缩放好像有延迟 / 抓不住"），放大时图片中部又会被误判成缩放。
      */
     void resolveDragMode(float worldX, float worldY) noexcept;
 
-    ImageData _data{};
-
-    /// 运行期读进来的字节（本类拥有）；空 = 用生成期那份。
-    std::vector<std::uint8_t> _assetBytes;
-
-    /// 绘制用外观：`normal` 的副本，必要时把 `imageBytes/imageSize` 指到
-    /// `_assetBytes` 上（**不能**指向 `_data.normal`，那是另一份存储）。
-    ButtonAppearance _renderAppearance{};
-
-    /// 生效的源矩形（0.6.1 T-04）。**单独存一份**而不是只写进 `_renderAppearance`：
-    /// `refreshRenderAppearance()` 每次都会整份重拷 `normal`，只写在副本上的话，
-    /// 换一次图（`SetImageBytes`）就会把切格信息静默冲掉。
-    ShapeBounds _renderSourceRect{};
-
-    std::string _imageName;
-    int _assetLoadCount = 0;
-
     // ---- 拖拽 / 缩放（A13）：一次交互的状态 ----
     bool _draggable = false;  ///< 允许整块拖动
     bool _resizable = false;  ///< 允许抓右下角缩放
     bool _dragActive = false;  ///< 这次按下有没有开始拖动（抬起时清）
     bool _dragScaling = false;  ///< 这次交互是缩放（否则是移动）
-    TransformSpec _dragStartTransform{};  ///< 按下那一刻的外部变换（缩放的基准）
+    InkingTransformSpec _dragStartTransform{};  ///< 按下那一刻的外部变换（缩放的基准）
     /// 按下点的**世界坐标**（首次拖动事件反推：`designX - deltaX`）。
     /// 缩放必须用"相对按下点的**累计**位移"，不能用本次事件的增量——
     /// 增量每次都从 `_dragStartTransform` 重算，除了第一帧以外全被算回原位
@@ -227,4 +209,3 @@ private:
     float _dragPressY = 0.0f;
 };
 
-}  // namespace inking

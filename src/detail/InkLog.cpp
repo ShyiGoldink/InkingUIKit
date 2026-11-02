@@ -27,7 +27,6 @@
 // （没有 `Impl`、没有缓冲），这个文件必须整体消失——否则 `INK_ISLOG` 关掉
 // 的结果是"编译不过"，而不是"日志从二进制里彻底消失"，那个开关也就没意义了。
 
-namespace inking {
 namespace {
 
 /** 内存环形缓冲容量：tail/grep 直接读这里，不碰磁盘。 */
@@ -150,13 +149,13 @@ int shortThreadId() {
     return assigned;
 }
 
-const char* levelTag(LogLevel level) {
+const char* levelTag(InkingLogLevel level) {
     switch (level) {
-        case LogLevel::Debug: return "DEBUG";
-        case LogLevel::Info:  return "INFO ";
-        case LogLevel::Pass:  return "PASS ";
-        case LogLevel::Warn:  return "WARN ";
-        case LogLevel::Error: return "ERROR";
+        case InkingLogLevel::Debug: return "DEBUG";
+        case InkingLogLevel::Info:  return "INFO ";
+        case InkingLogLevel::Pass:  return "PASS ";
+        case InkingLogLevel::Warn:  return "WARN ";
+        case InkingLogLevel::Error: return "ERROR";
     }
     return "INFO ";
 }
@@ -227,7 +226,7 @@ struct Impl {
     std::filesystem::path path;
     std::string runId;
     std::string currentDay;
-    LogLevel threshold = kDefaultLogLevel;
+    InkingLogLevel threshold = InkingDefaultLogLevel;
     bool initialized = false;
     std::uint64_t sequence = 0;
     std::uint64_t records = 0;
@@ -408,7 +407,7 @@ bool openFileLocked(Impl& st, const std::chrono::system_clock::time_point& now) 
 
 }  // namespace
 
-void InkLog::write(LogLevel level, const std::string& moduleName, const std::string& message,
+void InkLog::write(InkingLogLevel level, const std::string& moduleName, const std::string& message,
                    Kind kind, const std::source_location& site) {
     if (message.empty()) {
         return;
@@ -420,7 +419,7 @@ void InkLog::write(LogLevel level, const std::string& moduleName, const std::str
     const auto now = std::chrono::system_clock::now();
     if (!st.initialized) {
         if (const char* levelText = std::getenv("INK_LOG_LEVEL")) {
-            LogLevel parsed = st.threshold;
+            InkingLogLevel parsed = st.threshold;
             if (parseLevel(levelText, parsed)) {
                 st.threshold = parsed;
             }
@@ -446,9 +445,9 @@ void InkLog::write(LogLevel level, const std::string& moduleName, const std::str
     //   dedupable   哪些级别**允许**合并（DEBUG / INFO / PASS；WARN 以上是
     //               诊断凭据，合并会丢掉"发生了几次"这条最要紧的信息）
     //   rateLimited 哪些级别受"每秒 5 条"限制（ERROR 不限——它本来就该吵）
-    const bool dedicated = !forced && level == LogLevel::Debug;
-    const bool dedupable = !forced && level < LogLevel::Warn;
-    const bool rateLimited = !forced && level < LogLevel::Error;
+    const bool dedicated = !forced && level == InkingLogLevel::Debug;
+    const bool dedupable = !forced && level < InkingLogLevel::Warn;
+    const bool rateLimited = !forced && level < InkingLogLevel::Error;
     const std::string flat = flatten(message);
     const char* tag = forced ? kTagMark : levelTag(level);
 
@@ -547,31 +546,31 @@ void InkLog::write(LogLevel level, const std::string& moduleName, const std::str
 
 void InkLog::info(const std::string& moduleName, const std::string& message,
                   const std::source_location& site) {
-    write(LogLevel::Info, moduleName, message, Kind::Record, site);
+    write(InkingLogLevel::Info, moduleName, message, Kind::Record, site);
 }
 
 void InkLog::pass(const std::string& moduleName, const std::string& message,
                   const std::source_location& site) {
-    write(LogLevel::Pass, moduleName, message, Kind::Record, site);
+    write(InkingLogLevel::Pass, moduleName, message, Kind::Record, site);
 }
 
 void InkLog::warn(const std::string& moduleName, const std::string& message,
                   const std::source_location& site) {
-    write(LogLevel::Warn, moduleName, message, Kind::Record, site);
+    write(InkingLogLevel::Warn, moduleName, message, Kind::Record, site);
 }
 
 void InkLog::error(const std::string& moduleName, const std::string& message,
                    const std::source_location& site) {
-    write(LogLevel::Error, moduleName, message, Kind::Record, site);
+    write(InkingLogLevel::Error, moduleName, message, Kind::Record, site);
 }
 
 void InkLog::debug(const std::string& moduleName, const std::string& message,
                    const std::source_location& site) {
-    write(LogLevel::Debug, moduleName, message, Kind::Record, site);
+    write(InkingLogLevel::Debug, moduleName, message, Kind::Record, site);
 }
 
 void InkLog::mark(std::string_view text, const std::source_location& site) {
-    write(LogLevel::Info, "InkLog", std::string(text), Kind::Mark, site);
+    write(InkingLogLevel::Info, "InkLog", std::string(text), Kind::Mark, site);
 }
 
 std::filesystem::path InkLog::logFilePath() {
@@ -590,19 +589,19 @@ std::filesystem::path InkLog::logDirectory() {
     return logRootPath();
 }
 
-void InkLog::setLevel(LogLevel newLevel) {
+void InkLog::setLevel(InkingLogLevel newLevel) {
     Impl& st = state();
     std::lock_guard<std::mutex> lock(st.mutex);
     st.threshold = newLevel;
 }
 
-LogLevel InkLog::level() {
+InkingLogLevel InkLog::level() {
     Impl& st = state();
     std::lock_guard<std::mutex> lock(st.mutex);
     return st.threshold;
 }
 
-std::uint64_t InkLog::CountOf(LogLevel level) {
+std::uint64_t InkLog::CountOf(InkingLogLevel level) {
     Impl& st = state();
     std::lock_guard<std::mutex> lock(st.mutex);
     const auto index = static_cast<std::size_t>(level);
@@ -627,7 +626,7 @@ void InkLog::ResetStats() {
     st.debugSuppressed = 0;
 }
 
-bool InkLog::parseLevel(std::string_view text, LogLevel& result) {
+bool InkLog::parseLevel(std::string_view text, InkingLogLevel& result) {
     std::string lower;
     lower.reserve(text.size());
     for (const char item : text) {
@@ -635,15 +634,15 @@ bool InkLog::parseLevel(std::string_view text, LogLevel& result) {
     }
 
     if (lower == "debug") {
-        result = LogLevel::Debug;
+        result = InkingLogLevel::Debug;
     } else if (lower == "info") {
-        result = LogLevel::Info;
+        result = InkingLogLevel::Info;
     } else if (lower == "pass") {
-        result = LogLevel::Pass;
+        result = InkingLogLevel::Pass;
     } else if (lower == "warn" || lower == "warning") {
-        result = LogLevel::Warn;
+        result = InkingLogLevel::Warn;
     } else if (lower == "error") {
-        result = LogLevel::Error;
+        result = InkingLogLevel::Error;
     } else {
         return false;
     }
@@ -733,6 +732,5 @@ std::string InkLog::statistics() {
     return output.str();
 }
 
-}  // namespace inking
 
 #endif  // INK_ISLOG

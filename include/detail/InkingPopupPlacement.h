@@ -29,9 +29,7 @@
 
 #include <dataStruct/InkingAnchorData.h>
 #include <dataStruct/InkingShapeSpec.h>
-
-namespace inking {
-namespace detail {
+namespace inking_detail {
 
 /**
  * @brief 一次落位的结果。
@@ -40,7 +38,7 @@ namespace detail {
  * `traceAnchor` 与父级尺寸换算成 offset（见 `InkingFixedPopup::OpenAt`）。
  */
 struct PopupPlacement {
-    AnchorPoint selfAnchor{0.0f, 0.0f};  ///< 最终自锚点（通常是 0 或 1）
+    InkingAnchorPoint selfAnchor{0.0f, 0.0f};  ///< 最终自锚点（通常是 0 或 1）
     float x = 0.0f;                      ///< 相对父级左上角
     float y = 0.0f;
     int sideX = 1;  ///< +1 正向 / −1 翻转 / 0 夹紧
@@ -61,8 +59,7 @@ struct PopupPlacement {
  * 是最合理的答案，等尺寸定下来再 `SetTarget` 一次即可。
  */
 PopupPlacement SolvePopupPlacement(float targetX, float targetY, int width,
-                                   int height, const ShapeBounds& bounds,
-                                   const AnchorPoint& preferred);
+                                   int height, const InkingShapeBounds& bounds,
+                                   const InkingAnchorPoint& preferred);
 
-}  // namespace detail
-}  // namespace inking
+}  // namespace inking_detail

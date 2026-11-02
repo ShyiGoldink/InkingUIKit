@@ -1,53 +1,32 @@
 #include <text/InkingStaticLabel.h>
 
-// `detail::TransformBounds` 在源项目里住在**那个单体头** `include/ink/basic/InkingAnchor.h`
+// `inking_detail::TransformBounds` 在源项目里住在**那个单体头** `include/ink/basic/InkingAnchor.h`
 // 里，本文件是经 `text/InkingStaticLabel.h` -> `ink/basic/InkingAnchor.h` **传递**
 // 拿到的。搬过来之后单体头被拆开（`TransformBounds` 落到了 `detail/InkingGeometry.h`），
 // 而 `widget/InkingStaticWidget.h` 不再传递它——所以这里必须显式包含。
 // **拆单体头时现形的就是这一类依赖；凡是调 `TransformBounds` 的 .cpp 都要自己带。**
 #include <detail/InkingGeometry.h>
-#include <render/InkingDraw.h>
-#include <render/InkingText.h>
-#include <text/InkingTextTable.h>
-#include <theme/InkingTheme.h>
-
-#include <SDL3/SDL.h>
 
 #include <string>
 #include <utility>
 
-// 标签（A7）的实现。三处说明：
+// 标签（A7）的实现。G-06 起**排版、取色、测量、画字**都只有一份，在
+// `src/text/InkingLabelLike.cpp`；本文件只剩静态档自己的三件事：
 //
 //   1. **数据驱动的构造**和面板 / 按钮走同一条路：基类只拿到名字，
 //      尺寸与锚点是这之后从 data 取到的（不给它写进去，标签就是 0×0——
 //      画不出来也点不到）。新增字段要记得在这儿搬一次（AGENTS §6 第 83 条）；
-//   2. **排版缓存按"所有影响排版的字段"比**：文本、字号、行距、字体、对齐、
-//      内缩、可用宽度、行数上限、换行与省略开关。少比一个，就会出现
-//      "改了配置、画面没变"（§6 第 72 条那条教训）；
-//   3. **测量与绘制共用同一份排版结果**：`MeasureLayout` 报的尺寸和
-//      `onRender` 画出来的行必须来自同一次排版，否则"框多大"与"字排多少"
-//      会在窄宽度上分叉。
+//   2. **`SetText` 之后重排**：文字变长 ⇒ 自己变高 ⇒ 兄弟要让位，那是父容器的
+//      活儿（`RelayoutParent`）。动态档故意不做这一件（G-05 的关键决定一）；
+//   3. 三行转发：`MeasureLayout` / `onRender` / 两个观测量。
+//
+// 文件末尾那三个私有转发是 ABI 用的——G-06 之前它们是本类的私有成员，
+// `nm -g` 能看到符号，挪走之后也不能少（与 G-02 / G-04 同一条纪律）。
 
-namespace inking {
 
-namespace {
-
-/// 真测量：把文字层包成排版层要的回调（文字层含 SDL，所以只在 .cpp 里出现）。
-TextExtent MeasureWithTextLayer(const std::string& text,
-                                const TextStyle& style) {
-    TextRequest request;
-    request.text = text;
-    request.fontSize = style.fontSize > 0.0f ? style.fontSize : 16.0f;
-    request.fontPath = style.fontPath;
-    request.fontPaths = style.fontPaths;
-    const TextMetrics metrics = MeasureText(request);
-    return TextExtent{metrics.width, metrics.height};
-}
-
-}  // namespace
-
-InkingStaticLabel::InkingStaticLabel(InkingWidget* parent, const LabelData& data)
-    : InkingStaticWidget(parent, data.name), _data(data) {
+InkingStaticLabel::InkingStaticLabel(InkingWidget* parent, const InkingLabelData& data)
+    : InkingStaticWidget(parent, data.name),
+      InkingLabelLike(static_cast<InkingWidget&>(*this), data) {
     _width = data.width > 0 ? data.width : 0;
     _height = data.height > 0 ? data.height : 0;
     _selfAnchor = data.selfAnchor;
@@ -75,7 +54,7 @@ InkingStaticLabel::InkingStaticLabel(InkingWidget* parent, const LabelData& data
     // 尺寸护栏（T-02）放在自测量**之后**：正常标签此时已经有尺寸，不该再报。
     // **空文本不报**：空标签本来就不占地方（不画东西），0 尺寸是预期结果。
     if (!_data.text.empty()) {
-        WarnIfZeroSize(kLabelModuleName);
+        WarnIfZeroSize(InkingLabelModuleName);
     }
 
     NotifySceneStructureChanged();
@@ -83,7 +62,8 @@ InkingStaticLabel::InkingStaticLabel(InkingWidget* parent, const LabelData& data
 
 InkingStaticLabel::InkingStaticLabel(InkingWidget* parent,
                                      const std::string& name)
-    : InkingStaticWidget(parent, name) {
+    : InkingStaticWidget(parent, name),
+      InkingLabelLike(static_cast<InkingWidget&>(*this)) {
     _data.name = name;
     SetHitPassThrough(true);
     ClearDirty();
@@ -91,11 +71,10 @@ InkingStaticLabel::InkingStaticLabel(InkingWidget* parent,
 }
 
 bool InkingStaticLabel::SetText(std::string text) noexcept {
-    if (_data.text == text) {
+    // 数据手术在 `InkingLabelLike`（改字段 + 让排好的行作废）；"之后做什么"是两档的差别。
+    if (!assignText(std::move(text))) {
         return false;
     }
-    _data.text = std::move(text);
-    _cache.valid = false;
 
     // 尺寸可能变了 ⇒ 让**所在容器**重排（兄弟要让位）。
     // 不标命中脏：文字不参与命中（AGENTS §6 第 47 条）。
@@ -105,175 +84,56 @@ bool InkingStaticLabel::SetText(std::string text) noexcept {
 }
 
 bool InkingStaticLabel::SetTextColor(std::uint32_t color) noexcept {
-    if (_data.color == color) {
+    if (!assignTextColor(color)) {
         return false;
     }
-    _data.color = color;
-    // 手动设色 = 这个颜色**不再是语义色**：不清掉 token 的话，下一帧主题
-    // 版本的比较会把用户刚设的颜色盖回去（界面表现为"设了没用"）。
-    _data.colorToken = nullptr;
-    _themeColor = color;
-    _themeVersion = ThemeVersion();
-    _themeColorValid = true;
-    // 颜色走纹理调制（纹理烘成白字），所以**不用**让排版缓存失效。
     MarkRepaintDirty();
     return true;
 }
 
-std::uint32_t InkingStaticLabel::EffectiveTextColor() const noexcept {
-    const std::uint64_t version = ThemeVersion();
-    if (!_themeColorValid || _themeVersion != version) {
-        _themeVersion = version;
-        _themeColor = ResolveThemeColor(_data.colorToken, _data.color);
-        _themeColorValid = true;
-    }
-    return _themeColor;
+const InkingTextLayoutResult& InkingStaticLabel::GetTextLayout() const {
+    return InkingLabelLike::GetTextLayout();
 }
 
-bool InkingStaticLabel::CacheMatches(float available,
-                                     float availableHeight) const noexcept {
-    const LayoutCache& cache = _cache;
-    return cache.valid && cache.text == _data.text
-        && cache.fontPath == _data.style.fontPath
-        && cache.fontPaths == _data.style.fontPaths
-        && cache.fontSize == _data.style.fontSize
-        && cache.lineSpacing == _data.style.lineSpacing
-        && cache.align == _data.style.align
-        && cache.alignV == _data.style.alignV
-        && cache.padding.left == _data.style.padding.left
-        && cache.padding.top == _data.style.padding.top
-        && cache.padding.right == _data.style.padding.right
-        && cache.padding.bottom == _data.style.padding.bottom
-        && cache.availableWidth == available
-        // 高度进缓存键（T-01）：它现在能改变"排几行"，不进键就是 §6 第 72 条
-        // 那类"改了框高、画面没变"的静默失效。
-        && cache.availableHeight == availableHeight
-        && cache.maxLines == _data.maxLines && cache.wrap == _data.wrap
-        && cache.overflow == _data.overflow
-        // 语言版本（A7）：切语言 ⇒ 这里不匹配 ⇒ 重查串 + 重排。
-        && cache.languageVersion == TextLanguageVersion();
-}
-
-const TextLayoutResult& InkingStaticLabel::LayoutForWidth(float available,
-                                                         float availableHeight) const {
-    if (CacheMatches(available, availableHeight)) {
-        return _cache.result;
-    }
-
-    // 查表放在排版之前：`_data.text` 是**占位符或字面量**，排的是查出来的串。
-    std::string resolved = ResolveText(_data.text);
-
-    TextLayoutRequest request;
-    request.text = resolved;
-    request.style = _data.style;
-    request.maxWidth = available > 0.0f ? available : 0.0f;
-    // 框高就是上限（T-01，0.8.3）：`Clip` 是默认值却一直没人实现，于是 300×40
-    // 的标签会把 7 行全画到框外。传 0 = 不限高（`MeasureLayout` 那条撑高的路
-    // 必须传 0，否则"框多大"永远等于"一行高"）。
-    request.maxHeight = availableHeight > 0.0f ? availableHeight : 0.0f;
-    request.maxLines = _data.maxLines;
-    request.wrap = _data.wrap;
-    request.overflow = _data.overflow;
-    _cache.result = LayoutText(request, MeasureWithTextLayer);
-    _cache.resolvedText = std::move(resolved);
-
-    _cache.valid = true;
-    _cache.text = _data.text;
-    _cache.fontPath = _data.style.fontPath;
-    _cache.fontPaths = _data.style.fontPaths;
-    _cache.fontSize = _data.style.fontSize;
-    _cache.lineSpacing = _data.style.lineSpacing;
-    _cache.align = _data.style.align;
-    _cache.alignV = _data.style.alignV;
-    _cache.padding = _data.style.padding;
-    _cache.availableWidth = available;
-    _cache.availableHeight = availableHeight;
-    _cache.maxLines = _data.maxLines;
-    _cache.wrap = _data.wrap;
-    _cache.overflow = _data.overflow;
-    _cache.languageVersion = TextLanguageVersion();
-    return _cache.result;
-}
-
-const TextLayoutResult& InkingStaticLabel::GetTextLayout() const {
-    return LayoutForWidth(static_cast<float>(_width), static_cast<float>(_height));
-}
-
-LayoutSize InkingStaticLabel::MeasureLayout(
-    const LayoutConstraints& constraints) const {
-    // 有约束就按约束换行（父容器给了我多宽，我就按多宽排）；
-    // 没约束就用配置宽度。两者都没有 → 不换行（宽度不限）。
-    float available = constraints.maxWidth;
-    if (available <= 0.0f) {
-        available = static_cast<float>(_width);
-    }
-    // **高度传 0**（T-01）：测量这条路不能自截，否则"框多高"永远等于"一行高"，
-    // 内容驱动的高度就再也撑不开了。框高只约束**绘制**那一次排版。
-    const TextLayoutResult& laid = LayoutForWidth(available, 0.0f);
-
-    LayoutSize size;
-    size.width = laid.width;
-    // 空文本时不把自己撑成 0 高：保持配置的高度（不然一个空标签会消失）。
-    size.height = laid.height > 0.0f ? laid.height
-                                     : static_cast<float>(_height);
-    return size;
+InkingLayoutSize InkingStaticLabel::MeasureLayout(
+    const InkingLayoutConstraints& constraints) const {
+    // 测量本体在 `InkingLabelLike`：宽度有约束就按约束换行，高度是排版结果
+    // （**高度传 0**，否则"框多高"永远等于"一行高"，内容驱动的高度撑不开）。
+    return MeasureLabel(constraints);
 }
 
 void InkingStaticLabel::onRender(float pixelX, float pixelY) const {
-    SDL_Renderer* renderer = detail::currentRenderer();
-    if (renderer == nullptr || _data.text.empty()) {
-        return;
-    }
-
-    // 用**当前实际宽度**排版（A6 可能给了我一个与配置不同的宽度）；高度也一起
-    // 传：装不下的行不画（T-01）——这是 `TextOverflow::Clip` 的默认语义。
-    const TextLayoutResult& laid =
-        LayoutForWidth(static_cast<float>(_width), static_cast<float>(_height));
-    // 画的是**查表之后**的串：行里的字节区间指向它，不是 `_data.text` 那个占位符。
-    const std::string& resolved = _cache.resolvedText;
-    if (resolved.empty()) {
-        return;
-    }
-    const float magnification = GetMagnification();
-    // 文字色：配了 `$token` 就按当前主题重查（运行期换肤），否则就是烘好的字面量。
-    // 一次解析、整段复用——逐行解析只会让主题版本的比较白做几十遍。
-    const std::uint32_t textColor = EffectiveTextColor();
-
-    for (const TextLine& line : laid.lines) {
-        if (line.begin >= line.end || line.end > resolved.size()) {
-            continue;  // 空行（显式换行留下的）不画
-        }
-        TextRequest request;
-        request.text = resolved.substr(line.begin, line.end - line.begin);
-        if (line.hasEllipsis) {
-            request.text += kTextEllipsis;
-        }
-        request.fontSize = _data.style.fontSize > 0.0f ? _data.style.fontSize
-                                                      : 16.0f;
-        request.fontPath = _data.style.fontPath;
-        request.fontPaths = _data.style.fontPaths;
-        request.color = textColor;
-        // 水平滚动（T-12）：默认 0；输入框在文本超宽时给一个正值，把文字左移，
-        // 好让光标停在本体里。排版与命中不受影响（那是未滚动的坐标）。
-        request.offsetX = line.x - TextScrollX();
-        request.offsetY = line.y;
-        // A13：外部显示变换（如果有人设过）叠在文字这一笔上。文字这一侧只有
-        // 绘制——标签默认命中穿透（`SetHitPassThrough(true)`），所以"跟手"这件事
-        // 在这里只体现为画面。
-        detail::PaintText(renderer, request, _width, _height, magnification,
-                          pixelX, pixelY, GetExternalTransform());
-    }
+    // 文字那一笔在 `InkingLabelLike`（与动态档同一份）。水平滚动量由本类提供：
+    // 标签恒 0，输入框（`InkingTextInput`）覆盖 `TextScrollX()`。
+    paintLabelText(pixelX, pixelY, TextScrollX());
 }
 
-ShapeBounds InkingStaticLabel::GetHitEnvelope() const {
+InkingShapeBounds InkingStaticLabel::GetHitEnvelope() const {
     // 整块矩形（基类默认那一份）+ 外部显示变换：被挪走 / 放大之后，表里登记的
     // 包络必须跟着走，否则哪天标签改成吃点击时会"看着在这儿、点不到"
     // （`AGENTS.md` §6 第 42 条那条"保守包络"的纪律）。
-    const ShapeBounds base{0.0f, 0.0f, static_cast<float>(_width),
+    const InkingShapeBounds base{0.0f, 0.0f, static_cast<float>(_width),
                            static_cast<float>(_height)};
-    return detail::TransformBounds(base, GetExternalTransform(),
+    return inking_detail::TransformBounds(base, GetExternalTransform(),
                                    static_cast<float>(_width) * 0.5f,
                                    static_cast<float>(_height) * 0.5f);
 }
 
-}  // namespace inking
+// ---------------------------------------------------------------------------
+// G-06：保留既有私有符号（唯一实现在 `InkingLabelLike`）
+// ---------------------------------------------------------------------------
+
+const InkingTextLayoutResult& InkingStaticLabel::LayoutForWidth(
+    float available, float availableHeight) const {
+    return InkingLabelLike::LayoutForWidth(available, availableHeight);
+}
+
+bool InkingStaticLabel::CacheMatches(float available,
+                                     float availableHeight) const noexcept {
+    return InkingLabelLike::CacheMatches(available, availableHeight);
+}
+
+std::uint32_t InkingStaticLabel::EffectiveTextColor() const noexcept {
+    return InkingLabelLike::EffectiveTextColor();
+}
+

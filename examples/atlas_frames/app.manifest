@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  高 DPI 声明（per-monitor v2）。
+
+  为什么需要它：没有 manifest 时 Windows 按"DPI 不感知"对待进程，在 125% /
+  150% 缩放的屏幕上把整窗**位图拉伸**——512 的设计尺寸变成 410 个物理像素，
+  图被缩一遍再显示（看起来偏小、偏糊）。图集测试要看的正是像素，所以这里
+  声明成 per-monitor v2：SDL 拿到的是真实像素尺寸，1:1 出图。
+
+  两条都要写：`dpiAware` 是 Win7 时代的老键（给老系统兜底），`dpiAwareness`
+  是 1607 之后的新键（PerMonitorV2 生效的那条）。
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="inking.atlas_frames" version="1.0.0.0"/>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>

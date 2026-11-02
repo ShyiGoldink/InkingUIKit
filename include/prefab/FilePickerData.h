@@ -12,7 +12,7 @@
 // 对话框的一行按钮只是"横向排两个按钮"，这些策略一条都不该继承——早先为了
 // "不新增底层词汇"复用它，结果是全屏下整行消失（`hideInFullscreen`）、滚轮落在
 // 按钮上变成窗口缩放（`zoomWheel`）。布局该复用，策略不该复用：现在只用
-// `PanelData`（Stack / Horizontal / End）排，窗口语义按构造不存在。
+// `InkingPanelData`（Stack / Horizontal / End）排，窗口语义按构造不存在。
 //
 // 为什么不走 `IFileOpenDialog`（写在注释里，免得下次有人重开这个决定）：
 // 它要 COM 初始化 + **全程宽字符**（`AGENTS.md` §6 第 53 条），而且
@@ -30,7 +30,7 @@
 #include <string>
 #include <vector>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 /// 模块名常量：日志与自检要用。
 inline constexpr const char* kFilePickerModuleName = "FilePicker";
@@ -50,10 +50,10 @@ enum class FilePickMode : std::uint8_t {
  */
 struct FilePickerStyle {
     /// 选择器自己那一层：尺寸 / 背景 / 形状。
-    PanelData panel{};
+    InkingPanelData panel{};
 
     /// 路径文本框（显示当前目录；回车进入那个目录）。
-    TextInputData pathInput{};
+    InkingTextInputData pathInput{};
 
     /// 快捷位置那一栏（上级目录 / 根目录 / 主目录）。
     OptionBarStyle shortcuts{};
@@ -73,15 +73,15 @@ struct FilePickerStyle {
     /**
      * 底部按钮那一栏（确定 / 取消）：**一条普通横排容器**，不是 `MenuBar`。
      *
-     * 只用 `PanelData` 的 `layout`（`Stack / Horizontal / justify=End / align=Center`）
+     * 只用 `InkingPanelData` 的 `layout`（`Stack / Horizontal / justify=End / align=Center`）
      * 排两个按钮。为什么不用 `MenuBar`（0.5.3 的改动，理由也在文件抬头）：
      * 它自带窗口语义——`hideInFullscreen` / `zoomWheel` 默认都是 true，还会订阅
      * 窗口的全屏事件、绑快捷键表。对话框的按钮行只要"横向排好"，不要那些。
      */
-    PanelData buttonBar{};
+    InkingPanelData buttonBar{};
 
     /// 底部那两个按钮的外观模板（"确定" / "取消"）。宽度就是按钮宽度（Stack 不拉伸主轴）。
-    ButtonData buttonLook{};
+    InkingButtonData buttonLook{};
 
     /**
      * 扩展名过滤（小写比较）：`{".png", ".jpg"}`。**空 = 全要**。
@@ -128,6 +128,6 @@ struct FilePickerStyle {
 };
 
 /// 一份底部按钮的默认外观（深色圆角 + 浅色字，够看清）。
-ButtonData MakeDefaultPickerButtonLook();
+InkingButtonData MakeDefaultPickerButtonLook();
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

@@ -1,4 +1,4 @@
-# `inking::json`：库内的 JSON 小工具（0.6.5）
+# `json`：库内的 JSON 小工具（0.6.5）
 
 > 头文件 `<util/InkingJson.h>` ｜ 实现 `src/util/InkingJson.cpp`（+ `ParseAsset` 在
 > `src/asset/InkingAsset.cpp`）｜ 只依赖标准库
@@ -44,7 +44,7 @@ struct Result { bool ok = false; Value value; std::string error; };
 
 ```C++
 Result Parse(const std::string& text);              // 纯字符串，不碰文件系统
-Result ParseAsset(const std::string& relative);     // AssetLoadText + Parse（相对资源根）
+Result ParseAsset(const std::string& relative);     // InkingAssetLoadText + Parse（相对资源根）
 
 std::string ReadString(const Value& object, const std::string& key,
                        const std::string& fallback);

@@ -8,11 +8,9 @@
 
 #include <detail/InkingGeometry.h>
 
-namespace inking {
-
 // 静态档：几何构造即定型，所以 dynamic 传 false。
 InkingStaticWidget::InkingStaticWidget(InkingWidget* parent,
-                                       const AnchorData& data)
+                                       const InkingAnchorData& data)
     : InkingWidget(parent, data, false) {}
 
 InkingStaticWidget::InkingStaticWidget(InkingWidget* parent,
@@ -20,8 +18,7 @@ InkingStaticWidget::InkingStaticWidget(InkingWidget* parent,
     : InkingWidget(parent, name, false) {}
 
 void InkingStaticWidget::onRender(float pixelX, float pixelY) const {
-    // 第 0 层渲染：一块实心矩形（SDF 形状层接手后换掉 detail::FillDefaultRect）。
-    detail::FillDefaultRect(*this, pixelX, pixelY);
+    // 第 0 层渲染：一块实心矩形（SDF 形状层接手后换掉 inking_detail::FillDefaultRect）。
+    inking_detail::FillDefaultRect(*this, pixelX, pixelY);
 }
 
-}  // namespace inking

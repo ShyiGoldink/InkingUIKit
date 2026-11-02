@@ -11,15 +11,27 @@
 //   3. **文字层**（`InkingText.h`，在 .cpp 里接）：把排好的每一行画出来。
 //
 // 可编辑的输入框（光标 / 选区 / IME）是另一件事，见 `TaskGuide.md` B7。
+//
+// ---------------------------------------------------------------------------
+// G-06：排版与取色的**唯一实现**在 `InkingLabelLike`（纯重构，行为零变化）
+// ---------------------------------------------------------------------------
+//
+//   本类与 `InkingDynamicLabel` 共用 `text/InkingLabelLike.h`：数据面、排版缓存、
+//   `LayoutForWidth` / `CacheMatches` / `EffectiveTextColor` / 测量 / 画文字那一笔
+//   都只有那一份。本类只留**静态档自己的**三件事：
+//   - `SetText` 之后 `RelayoutParent()`（兄弟让位 / 无布局容器时自测量）；
+//   - 构造函数把 `InkingLabelData` 搬进几何与 `InkingLabelLike`；
+//   - `onRender` 一行转发（并把自己那份 `TextScrollX()` 传进去）。
+//
+//   改名两处是机械的：`MeasureLayout`（虚函数，覆盖必须留在组件里）转发到
+//   `InkingLabelLike::MeasureLabel`，`onRender` 转发到 `InkingLabelLike::paintLabelText`。
 
+#include <text/LabelLike.h>
 #include <widget/InkingStaticWidget.h>
-#include <text/LabelData.h>
 
 #include <cstdint>
 #include <string>
-#include <vector>
 
-namespace inking {
 
 /**
  * @brief 静态标签：只读、按内容撑高、默认不吃点击。
@@ -27,13 +39,13 @@ namespace inking {
  * **不吃点击**是有意的（`SetHitPassThrough(true)`）：标签经常压在按钮或图片上，
  * 吃掉点击会让"看得见的按钮点不动"——那种 bug 很难从画面看出来。
  */
-class InkingStaticLabel : public InkingStaticWidget {
+class InkingStaticLabel : public InkingStaticWidget, public InkingLabelLike {
 public:
-    InkingStaticLabel(InkingWidget* parent, const LabelData& data);
+    InkingStaticLabel(InkingWidget* parent, const InkingLabelData& data);
     /// 配置驱动那条路的入口：数据由派生类（生成的类）从库里取。
     InkingStaticLabel(InkingWidget* parent, const std::string& name);
 
-    const LabelData& GetData() const noexcept { return _data; }
+    const InkingLabelData& GetData() const noexcept { return _data; }
 
     /**
      * @brief 换文字（`[final]` 写入口）。
@@ -41,6 +53,9 @@ public:
      * 三件事一次做完：排好的行作废、**让所在容器重排**（尺寸可能变了，
      * 兄弟要让位）、标重绘脏。**不标命中脏**——文字不参与命中
      * （`AGENTS.md` §6 第 47 条：这条"半对"的规矩就在这里）。
+     *
+     * 动态档（`InkingDynamicLabel`）**故意不做第 2 件**：改几何要显式喊
+     * `FitToContent()`（G-05 的关键决定一）。
      */
     bool SetText(std::string text) noexcept;
 
@@ -53,7 +68,7 @@ public:
      * **不推脏**：它按当前宽度排一次并缓存，宽度没变就直接给上一次的结果
      * （`AGENTS.md` §6 第 41 条那条"观测口要不要推脏"必须写死一条）。
      */
-    const TextLayoutResult& GetTextLayout() const;
+    const InkingTextLayoutResult& GetTextLayout() const;
 
     /**
      * @brief A6 的测量钩子：我这段文字要多大。
@@ -61,16 +76,17 @@ public:
      * 宽度：有约束就用约束（于是按它换行），没有就用配置宽度。
      * 高度：**排版结果的高度**——撑高就发生在这里。
      */
-    LayoutSize MeasureLayout(const LayoutConstraints& constraints) const override;
+    InkingLayoutSize MeasureLayout(const InkingLayoutConstraints& constraints) const override;
 
     /// 标签认**外部显示变换**（A13）：文字可以整体被挪走 / 缩放（绘制跟着走）。
     bool AcceptsExternalTransform() const noexcept override { return true; }
 
     /// 命中包络：整块矩形 **× 外部变换**（标签默认不参与命中，但包络要跟着动，
     /// 免得哪天它改成吃点击时表里登记的仍是老位置——`AGENTS.md` §6 第 42 条）。
-    ShapeBounds GetHitEnvelope() const override;
+    InkingShapeBounds GetHitEnvelope() const override;
 
 protected:
+    /// 画排好的每一行（实现在 `InkingLabelLike::paintLabelText`）。
     void onRender(float pixelX, float pixelY) const override;
 
     /**
@@ -87,64 +103,15 @@ protected:
     virtual float TextScrollX() const noexcept { return 0.0f; }
 
 private:
-    /// 排版的缓存键：**所有影响排版的字段**都要进来（`AGENTS.md` §6 第 72 条
-    /// 那条教训——漏一个就是"改了配置、画面没变"）。
-    ///
-    /// `languageVersion` 是 A7 的"切换时机"：它一变，缓存自然未命中 ⇒ 重查串、
-    /// 重排、重烘纹理。**不需要**谁来遍历所有标签通知一遍。
-    /// `resolvedText` 存的是**查表之后**的串：行区间（`TextLine::begin/end`）
-    /// 指向的是它，而不是 `LabelData::text` 里的那个占位符。
-    struct LayoutCache {
-        bool valid = false;
-        std::string text;
-        std::string fontPath;
-        /// 字体回退链（T-13）：**必须一起比**。链变了而这里不比，排出来的
-        /// 宽高会停在旧字体上——"改了配置、框还是旧尺寸"，就是 §6 第 72 条
-        /// 那类静默失效。
-        std::vector<std::string> fontPaths;
-        float fontSize = 0.0f;
-        float lineSpacing = 0.0f;
-        TextAlignH align = TextAlignH::Left;
-        TextAlignV alignV = TextAlignV::Top;
-        LayoutSpacing padding{};
-        float availableWidth = 0.0f;
-        /// 排这一次时用的**高度上限**（0 = 不限）。它 0.8.3 起真的影响"排几行"
-        /// （T-01），所以必须进键——漏了就是"改了框高、行数没变"。
-        float availableHeight = 0.0f;
-        int maxLines = 0;
-        TextWrap wrap = TextWrap::Word;
-        TextOverflow overflow = TextOverflow::Clip;
-        std::uint64_t languageVersion = 0;
-        std::string resolvedText;
-        TextLayoutResult result{};
-    };
+    // ---------------- G-06：保留既有私有符号（唯一实现在 `InkingLabelLike`） ----------------
+    //
+    // 这三个在 G-06 之前是本类的私有成员，`nm -g` 能看到它们的符号。挪进
+    // `InkingLabelLike` 之后各留一行转发，符号一个不少（与 G-02 / G-04 同一条纪律）。
+    // 缓存键的完整说明在 `InkingLabelLike.h` 的 `LayoutCache` 上，别在这里再抄一份。
 
-    /// 按给定可用宽度 / 高度排版（带缓存）。
-    /// `available <= 0` 表示"宽度不限"；`availableHeight <= 0` 表示"高度不限"
-    /// （装不下的行**不排**，见 `TextLayoutRequest::maxHeight`）。
-    const TextLayoutResult& LayoutForWidth(float available,
-                                          float availableHeight) const;
-
-    /// 缓存键是否还匹配（逐字段比，见 `LayoutCache` 的注释）。
+    const InkingTextLayoutResult& LayoutForWidth(float available,
+                                           float availableHeight) const;
     bool CacheMatches(float available, float availableHeight) const noexcept;
-
-    /**
-     * 文字色**真正要画**的值。
-     *
-     * `_data.color` 是生成期按默认主题烘好的字面量；`_data.colorToken` 非空时
-     * 说明它是语义色，要在运行期按当前主题重查（`theme/InkingTheme.h`）。
-     * 结果按 `ThemeVersion()` 缓存——稳态只比一次版本号，不查表、不分配。
-     */
     std::uint32_t EffectiveTextColor() const noexcept;
-
-    LabelData _data;
-    mutable LayoutCache _cache;
-
-    /// 上一次解析文字色时的主题版本与结果（和 `LayoutCache` 分开：颜色变不改排版）。
-    /// `_themeColorValid` 区分"还没算过"与"算出来正好是版本 0"。
-    mutable bool _themeColorValid = false;
-    mutable std::uint64_t _themeVersion = 0;
-    mutable std::uint32_t _themeColor = 0xFFFFFFFFu;
 };
 
-}  // namespace inking

@@ -36,9 +36,7 @@
 #include <functional>
 #include <vector>
 
-namespace inking {
-
-class Timeline {
+class InkingTimeline {
 public:
     /** 订阅句柄。0 表示无效（或已经被移除了）。 */
     using Handle = std::uint64_t;
@@ -56,7 +54,7 @@ public:
      * @param logicIntervalSeconds 逻辑步长，默认 1/50s（50Hz）。
      * @param maxCatchUpSeconds    单帧最多补多少时间，默认 0.25s。
      */
-    explicit Timeline(double logicIntervalSeconds = 1.0 / 50.0,
+    explicit InkingTimeline(double logicIntervalSeconds = 1.0 / 50.0,
                       double maxCatchUpSeconds = 0.25);
 
     // ---------------- 驱动 ----------------
@@ -135,4 +133,3 @@ private:
     std::uint64_t _catchUpDrops = 0;
 };
 
-}  // namespace inking

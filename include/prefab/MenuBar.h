@@ -46,23 +46,22 @@
 #include <string>
 #include <vector>
 
-namespace inking {
 
 class InkingStaticButton;
 
-namespace prefab {
+namespace inking_prefab {
 
 /**
  * @brief C2：预制菜单栏（也是无边框窗口的自绘标题栏）。
  *
  * ```cpp
- * inking::prefab::MenuBarStyle style = inking::prefab::MenuBarStyle::MakeDefault();
+ * inking_prefab::MenuBarStyle style = inking_prefab::MenuBarStyle::MakeDefault();
  * style.draggable = true;        // 无边框：按住空白处拖窗口
  * style.captionButtons = true;   // 无边框：右上角自绘最小化 / 关闭
- * inking::prefab::MenuBar bar(&scene, style);
- * bar.AddButton(inking::cxxcss::MenuFile::Data(), "文件", [&] { ... });
- * bar.AddItem(std::make_unique<inking::cxxcss::TitleLogo>(nullptr));  // 任意锚点
- * bar.SetJustify(inking::LayoutJustify::Start);                       // 偏左
+ * inking_prefab::MenuBar bar(&scene, style);
+ * bar.AddButton(cxxcss::MenuFile::Data(), "文件", [&] { ... });
+ * bar.AddItem(std::make_unique<cxxcss::TitleLogo>(nullptr));  // 任意锚点
+ * bar.SetJustify(InkingLayoutJustify::Start);                       // 偏左
  * ```
  */
 class MenuBar : public InkingStaticPanel {
@@ -129,12 +128,12 @@ public:
      * 便利：加一个按钮（用给定的外观 + 文字 + 回调）。
      *
      * @param shortcut 顺手绑一个**全局快捷键**（空 = 不绑）。绑定落在窗口的
-     *                 `ShortcutRegistry` 上，所以它**不依赖焦点**、也不依赖
+     *                 `InkingShortcutRegistry` 上，所以它**不依赖焦点**、也不依赖
      *                 菜单栏是否可见（全屏隐藏后照样能用，这正是"全局"的意思）。
      */
-    InkingStaticButton* AddButton(const ButtonData& look, const std::string& text,
+    InkingStaticButton* AddButton(const InkingButtonData& look, const std::string& text,
                                   ButtonCallback onActivate = {},
-                                  const Shortcut& shortcut = {});
+                                  const InkingShortcut& shortcut = {});
 
     // ---------------- 全局快捷键 ----------------
 
@@ -144,7 +143,7 @@ public:
      * @return 绑定 id；冲突（组合已被占）或参数为空时返回 0。
      *         本类的析构会把自己的全部绑定注销掉，调用方不用管。
      */
-    std::uint64_t BindShortcut(const Shortcut& shortcut,
+    std::uint64_t BindShortcut(const InkingShortcut& shortcut,
                                ButtonCallback onActivate,
                                std::string label = {});
 
@@ -157,7 +156,7 @@ public:
     std::size_t GetItemCount() const noexcept;
 
     /// 第 `index` 项的矩形，**相对菜单栏左上角**（设计坐标）。越界 = 零矩形。
-    ShapeBounds GetItemRect(std::size_t index) const;
+    InkingShapeBounds GetItemRect(std::size_t index) const;
 
     /// 第 `index` 项那个锚点（越界 = nullptr）。
     InkingWidget* GetItemNode(std::size_t index) const;
@@ -169,9 +168,9 @@ public:
      * `Start` = 偏左、`End` = 偏右、`SpaceBetween` = 两端顶住。
      * 改完重排一次（幂等）。
      */
-    void SetJustify(LayoutJustify justify);
+    void SetJustify(InkingLayoutJustify justify);
 
-    LayoutJustify GetJustify() const noexcept;
+    InkingLayoutJustify GetJustify() const noexcept;
 
     // ---------------- 无边框标题栏 ----------------
 
@@ -212,7 +211,7 @@ public:
 
 protected:
     /// 按下 / 抬起。**只认主键**：无边框拖动是主键手势（0.5.0）。
-    void onPointerPress(PointerButton button, bool press) override;
+    void onPointerPress(InkingPointerButton button, bool press) override;
     void onPointerDrag(float designX, float designY, float deltaX,
                        float deltaY) override;
 
@@ -245,5 +244,4 @@ private:
     void RebuildCaptions();
 };
 
-}  // namespace prefab
-}  // namespace inking
+}  // namespace inking_prefab

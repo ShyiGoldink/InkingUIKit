@@ -37,35 +37,45 @@ inline constexpr const char* const kKnownRootFields[] = {
 };
 
 /// Panel 顶层字段（`CXXCSS.md` §4.4）。
+///
+/// `dynamic`（G-08）与 Button 的同名同义：只决定**生成的类继承谁**
+/// （`InkingStaticPanel` / `InkingDynamicPanel`），不进运行期数据结构。
 inline constexpr const char* const kKnownPanelFields[] = {
     "$comment",    "name",         "width",        "height",
     "closed",      "open",         "startOpen",    "clipChildren", "scroll",
     "selfAnchorX", "selfAnchorY",  "traceAnchorX", "traceAnchorY",
     "offsetX",     "offsetY",      "zIndex",       "visible",
-    "shape",       "layout",       "layoutItem",
+    "shape",       "layout",       "layoutItem",   "dynamic",
 };
 
 /// Label 顶层字段（`CXXCSS.md` §3.8）。
+///
+/// `dynamic`（G-08）同上：换的是档位（能不能在运行期改几何 / 占位），
+/// 字段集一个字都没变。
 inline constexpr const char* const kKnownLabelFields[] = {
     "$comment",     "name",        "width",        "height",
     "text",         "selfAnchorX", "selfAnchorY",  "traceAnchorX",
     "traceAnchorY", "offsetX",     "offsetY",      "zIndex",
-    "visible",      "layout",      "layoutItem",
+    "visible",      "layout",      "layoutItem",   "dynamic",
 };
 
 /// Image 顶层字段（`CXXCSS.md` §3.10）。
 ///
 /// 末尾七个是**帧动画**（sprite，0.6.1 T-06）：配了 `frames` 或 `sheet` 就是帧动画，
-/// 生成出来的是 `inking::SpriteData` + `InkingSprite` 类；否则仍是静态图片。
+/// 生成出来的是 `InkingSpriteData` + 一个帧动画类；否则仍是静态图片。
 /// 它们与其他字段**同在一个白名单**里，是因为 sprite 就是"会换帧的图片"——
 /// 形状 / 锚点 / 命中 / `runtime` / `hitPassThrough` 全部照旧，另开一套只会分裂。
+///
+/// `dynamic`（G-08）与 Button 的同名同义，且**与帧动画正交**：四个组合都成立
+/// （静态图片 / 动态图片 / 静态帧动画 / 动态帧动画），它只有一条语义——
+/// 生成的类继承哪一档。
 inline constexpr const char* const kKnownImageFields[] = {
     "$comment",   "name",         "width",        "height",  "normal",
     "runtime",    "shape",        "stroke",       "shadow",  "selfAnchorX",
     "selfAnchorY", "traceAnchorX", "traceAnchorY", "offsetX", "offsetY",
     "layoutItem", "zIndex",       "visible",      "hitPassThrough",
     "frames",     "sheet",        "fps",          "loop",    "autoplay",
-    "startFrame", "startOffset",  "events",
+    "startFrame", "startOffset",  "events",       "dynamic",
 };
 
 /// 帧动画的 `sheet` 段：一张大图怎么切成 N 格（0.6.1 T-06）。
@@ -94,7 +104,7 @@ inline constexpr const char* const kKnownSpriteEventFields[] = {
 /// 图集描述（`CXXCSS/Atlas/*.json`，0.6.5 T-17）：一张图里有哪些动画。
 ///
 /// 与 `Image/*.json` 的 `sheet` 段分工：那边是"一张图一个动画、等宽等高"，
-/// 这里是"一张图多个动画、帧宽高可以不等"。两者产出同一种 `SpriteData`。
+/// 这里是"一张图多个动画、帧宽高可以不等"。两者产出同一种 `InkingSpriteData`。
 inline constexpr const char* const kKnownAtlasFields[] = {
     "$comment", "name", "animations",
 };
@@ -102,7 +112,7 @@ inline constexpr const char* const kKnownAtlasFields[] = {
 /// 图集里的**一个动画**（`animations[]` 的元素）。
 ///
 /// `frames`（逐帧矩形）与 `columns / rows / frameWidth / frameHeight / count /
-/// firstFrame`（网格）**二选一**：判据在 `SpriteData::Validate()` 里只有一份，
+/// firstFrame`（网格）**二选一**：判据在 `InkingSpriteData::Validate()` 里只有一份，
 /// 生成期只是把它转成运行期结构。
 inline constexpr const char* const kKnownAtlasAnimationFields[] = {
     "$comment", "name",   "source",     "fps",       "loop",
@@ -230,7 +240,7 @@ inline constexpr FieldGroup kFieldGroups[] = {
     {"Label", "text", kKnownLabelTextFields, std::size(kKnownLabelTextFields),
      "标签的文字段：整块排版（换行 / 省略 / 行距），与 Button 的 text 同名不同义"},
     {"Image", "（顶层）", kKnownImageFields, std::size(kKnownImageFields),
-     "静态图片 = 没有 onClicked 的 button：没有三态、没有 dynamic；hitPassThrough = 背景不吃点击"},
+     "静态图片 = 没有 onClicked 的 button：没有三态；hitPassThrough = 背景不吃点击；dynamic 只换档位、不改字段集"},
     {"Image", "normal", kKnownImageAppearanceFields,
      std::size(kKnownImageAppearanceFields),
      "图片外观认 color / img / svg；svg 是纹理路（整份稿光栅化），与按钮的 svg 不同"},
@@ -241,7 +251,7 @@ inline constexpr FieldGroup kFieldGroups[] = {
      std::size(kKnownSpriteEventFields),
      "帧事件：播到第 frame 帧时发一个名字（慢帧跨帧也不漏）"},
     {"Atlas", "（顶层）", kKnownAtlasFields, std::size(kKnownAtlasFields),
-     "图集描述（不是组件）：一张图里的多个具名动画；生成期转成 AtlasData 常量"},
+     "图集描述（不是组件）：一张图里的多个具名动画；生成期转成 InkingAtlasData 常量"},
     {"Atlas", "animations[]", kKnownAtlasAnimationFields,
      std::size(kKnownAtlasAnimationFields),
      "一个动画：名字 + 图集路径 + 帧矩形或网格切法 + 播放参数"},

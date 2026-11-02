@@ -8,11 +8,11 @@
 // 自身锚点与上级锚点、三态外观、文字。
 // 代码生成器会把**每个独立名字**的 Button 展开成一个独立的新类并替换掉泛型
 // 实现，所以名字必须与配置文件、代码里的用法三处一致。生成器落地之前，
-// 手写这条路走 `ButtonData`（见下"两种构造"）。
+// 手写这条路走 `InkingButtonData`（见下"两种构造"）。
 //
 // 用法：
-//     inking::InkingStaticButton button(parent, data);      // 手写数据
-//     inking::InkingStaticButton button(parent, "name");    // 按名字从 ButtonLibrary 取
+//     InkingStaticButton button(parent, data);      // 手写数据
+//     InkingStaticButton button(parent, "name");    // 按名字从 InkingButtonLibrary 取
 //     button.SetOnClicked([] { ... });
 //
 // ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@
 // `TriggerClick` / `SetOnClicked` 全部**继承得来**，本类一个都不用转发。
 //
 // 两条路的输入方式不同（静态是场景派发喂、动态是自己拉），但"哪个状态配哪份
-// 外观""按下 > 悬停 > 通常"只允许有一份定义，所以规则本体在 `ButtonLook`
+// 外观""按下 > 悬停 > 通常"只允许有一份定义，所以规则本体在 `InkingButtonLook`
 // ——它跟契约一起被 `InkingButtonLike` 持有，静态 / 动态共用同一份。
 // 本类只负责"什么时候把两个标志填进去"——那是场景派发的事。
 //
@@ -54,13 +54,13 @@
 // 状态机是**契约**的事，命中与渲染才是本类的事
 //
 // 三态是**渲染状态**（只换颜色，不碰几何）；命中判定走形状层同一份定义
-// （`ShapeContains`，见 GetShape），所以"画的是圆角、点到的是直角"不会发生。
+// （`InkingShapeContains`，见 GetShape），所以"画的是圆角、点到的是直角"不会发生。
 // 本类在 `onPointer*` 三个钩子里把场景推过来的判定结果**转发一行**给
 // `MouseHover` / `MousePress` / `TriggerClick`——仅此而已，三态怎么变、过渡
 // 怎么跑、点击怎么派发全在基类。
 //
-// 转发**不标脏是有意的**：三态切换的画面变化由 `ButtonLook` 记一笔待报告，
-// 下一帧 `onAnimationTick` 里报出来（见 `ButtonLook::BeginTransition`）。
+// 转发**不标脏是有意的**：三态切换的画面变化由 `InkingButtonLook` 记一笔待报告，
+// 下一帧 `onAnimationTick` 里报出来（见 `InkingButtonLook::BeginTransition`）。
 //
 // 动态按钮（`InkingDynamicButton`）**没有**这三个推的入口：它的输入是自己从场景
 // 拉的（`JudgePointer`）。所以"输入与静态版不同"那句话，落到接口上就是
@@ -73,9 +73,8 @@
 #include <functional>
 #include <string>
 
-namespace inking {
 
-/// 点击回调（`ButtonClickCallback`）与三态（`ButtonState`）都在 ButtonLook.h 里：
+/// 点击回调（`InkingButtonClickCallback`）与三态（`InkingButtonState`）都在 InkingButtonLook.h 里：
 /// 静态 / 动态两块按钮共用同一份定义，不能各写一套。本类经 `InkingButtonLike`
 /// 拿到它们，不再直接包含。
 
@@ -83,12 +82,12 @@ class InkingStaticButton : public InkingStaticWidget,
                            public InkingButtonLike {
 public:
     /**
-     * 手写数据构造：不走配置，直接把一份 ButtonData 交给它。
+     * 手写数据构造：不走配置，直接把一份 InkingButtonData 交给它。
      *
      * @param parent 上级节点；非拥有。按钮必须在某个场景的子树下才能被渲染。
      * @param data   配置数据（构造时会 Normalize 一次，补齐省略的三态）。
      */
-    InkingStaticButton(InkingWidget* parent, const ButtonData& data);
+    InkingStaticButton(InkingWidget* parent, const InkingButtonData& data);
 
     /**
      * 语义激活（D7）：等价于"用户点了一下"，不经过指针，也不改三态。
@@ -100,10 +99,10 @@ public:
     bool Activate() override { return TriggerClick(); }
 
     /**
-     * 配置驱动构造：只给 parent + 名字，配置从 `ButtonLibrary` 里按名字取。
+     * 配置驱动构造：只给 parent + 名字，配置从 `InkingButtonLibrary` 里按名字取。
      *
      * **它不是生成的按钮类走的路**：生成器为每个名字生成一个独立的类，
-     * 数据直接烘在类里（`inking::cxxcss::NormalButton` 之类），构造时不查任何表。
+     * 数据直接烘在类里（`cxxcss::NormalButton` 之类），构造时不查任何表。
      * 这条构造留着给"名字要到运行期才知道"的少数场景用。
      *
      * 名字没登记时：写一条**错误**日志，给一个空按钮（不画东西、不响应点击），
@@ -121,7 +120,7 @@ public:
      * 给"我想先看看配置里写了什么"或者"我要自己判断该不该建"这类场景用；
      * 按名字构造内部也走它，所以两者看到的永远是同一份数据。
      */
-    static const ButtonData* FindData(const std::string& name);
+    static const InkingButtonData* FindData(const std::string& name);
 
     /**
      * 发生过多少次"按名字构造却查不到配置"。
@@ -135,7 +134,7 @@ public:
      * 指针在这个位置上吗。坐标是**世界坐标（设计空间）**。
      *
      * 重写的是基类的 `[√]` 钩子：世界坐标 → 本地坐标，再问形状层
-     * （`ShapeContains`）——**和渲染用的是同一份形状定义**，所以不会出现
+     * （`InkingShapeContains`）——**和渲染用的是同一份形状定义**，所以不会出现
      * "画的是圆角、点到的是直角"。隐藏的按钮不参与命中（父链上任何一层
      * 不可见都算隐藏）。
      *
@@ -147,7 +146,7 @@ public:
     // ---------------- 属性（运行期可改） ----------------
 
     /// 形状定义：渲染 / 命中 / 包围盒三者都从它派生（见 InkingShapeSpec.h）。
-    const ShapeSpec& GetShape() const noexcept;
+    const InkingShapeSpec& GetShape() const noexcept;
 
     /**
      * 命中索引用的**保守包络**：三态变换的并集（`docs/InputDesign.md` §11）。
@@ -156,7 +155,7 @@ public:
      * 按下下沉）——所以登记时必须盖住"所有可能的样子"，精判才用当前变换。
      * 只按当前变换登记会漏命中：悬停那一帧按钮挪出去一点，边缘的点就落在表外了。
      */
-    ShapeBounds GetHitEnvelope() const override;
+    InkingShapeBounds GetHitEnvelope() const override;
 
     /**
      * 当前**画出来 / 判命中**的尺寸（T-5 布局通道）。
@@ -171,14 +170,14 @@ public:
     int GetWidth() const noexcept override;
     int GetHeight() const noexcept override;
 
-    /// 三个状态里有尺寸差异吗（静态档也能有"布局通道"，见 `ButtonData.h`）。
+    /// 三个状态里有尺寸差异吗（静态档也能有"布局通道"，见 `InkingButtonData.h`）。
     bool HasLayoutAnimation() const noexcept override;
 
     /// T-7：静止 / 动态按钮的变换**同时作用于子节点**（抽屉 / Toast 那一档）。
-    TransformSpec GetSubtreeTransform() const noexcept override;
+    InkingTransformSpec GetSubtreeTransform() const noexcept override;
 
     /// 构造时用的那份配置（已经 Normalize 过）。
-    const ButtonData& GetData() const noexcept;
+    const InkingButtonData& GetData() const noexcept;
 
     /// 按钮上的文字。当前只认 `text.content.normal`（生成器会把它填进 label）。
     const std::string& GetText() const noexcept;
@@ -216,7 +215,7 @@ public:
 
 protected:
     /**
-     * 尺寸被外部改了（布局 / 自测量）⇒ 让 `ButtonLook` 跟上（0.4.0 A4/B1）。
+     * 尺寸被外部改了（布局 / 自测量）⇒ 让 `InkingButtonLook` 跟上（0.4.0 A4/B1）。
      *
      * 少了这一步，"布局把宽度写成 300、`GetWidth()` 还是 100"——`fillMain` /
      * `Stretch` 因此全都不收敛，而且**不报错**。
@@ -249,8 +248,8 @@ protected:
     // `PushPointerHover/Press/Click` → 这里三个钩子。按钮要做的只是把它们转发
     // 给自己那三个幂等写入口——三态、过渡、点击回调全都在原来的地方，一个字没变。
     //
-    // 转发**不标脏**是有意的：三态切换的画面变化由 `ButtonLook` 记一笔待报告，
-    // 下一帧 `onAnimationTick` 里报出去（见 `ButtonLook::BeginTransition`）。
+    // 转发**不标脏**是有意的：三态切换的画面变化由 `InkingButtonLook` 记一笔待报告，
+    // 下一帧 `onAnimationTick` 里报出去（见 `InkingButtonLook::BeginTransition`）。
     // 在这里额外标一次会把它标重，而且"没配过渡"那条路依旧只走一个出口。
 
     /// 指针进出（由基类的 `PushPointerHover` 转来）。**只有主键**——右键不改变
@@ -261,28 +260,28 @@ protected:
     ///
     /// **右键不进三态**（0.5.0）：三态是"主键手势"的可视化，右键按下把按钮点亮
     /// 会让用户以为左键生效了。所以 Secondary 直接返回，什么都不做。
-    void onPointerPress(PointerButton button, bool press) override;
+    void onPointerPress(InkingPointerButton button, bool press) override;
 
     /// 一次完整点击（由基类的 `PushPointerClick` 转来）。
     ///
     /// 两个键走两个事件槽：Primary → `TriggerClick()`（`clicked`，无参，语义是
     /// "这个按钮被激活了"）；Secondary → `TriggerContextClick(x, y)`
     /// （`contextClicked`，带按下点，语义是"在这一点的上下文"）。
-    void onPointerClick(PointerButton button, float designX,
+    void onPointerClick(InkingPointerButton button, float designX,
                         float designY) override;
 
     /// 三态真的变了（由 `InkingButtonLike::MouseHover` / `MousePress` 同步调来）。
     /// 本类挂的副作用只有一个：把**当前显示**的颜色同步到基类那份 color。
-    void onButtonStateChanged(ButtonState from, ButtonState to) override;
+    void onButtonStateChanged(InkingButtonState from, InkingButtonState to) override;
 
     /// 过渡推进了一帧、**显示值**变了。标脏在这里发生（基类自己不标脏）。
     void onButtonDisplayAdvanced(bool repaintDirty, bool hitDirty) override;
 
 private:
     /// 把 data 里的字段搬到基类与自己的成员上；两个构造函数共用。
-    void applyData(const ButtonData& data);
+    void applyData(const InkingButtonData& data);
 
-    /// 把 ButtonLook 里**当前显示**的颜色同步到基类那份 color：
+    /// 把 InkingButtonLook 里**当前显示**的颜色同步到基类那份 color：
     /// 从基类窗口看颜色时读到的得是同一件事（本类重写了 onRender，用不到它，
     /// 但一致性不能破）。过渡进行中同步的是插值出来的中间色。
     void syncBaseColor() noexcept;
@@ -303,7 +302,6 @@ private:
     /// 构造时用的那份配置（已经 Normalize 过）。三态与基准尺寸都展开了
     /// 一份进 `InkingButtonLike` 的状态机，但它仍然要留着：形状、描边阴影、
     /// 文字、布局字段都从它取。
-    ButtonData _data{};
+    InkingButtonData _data{};
 };
 
-}  // namespace inking

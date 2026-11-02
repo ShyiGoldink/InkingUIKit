@@ -2,7 +2,7 @@
 
 > ## 当前为 **0.x 发布版**（Release Build）
 >
-> 版本号 `0.5.3`（`inking::kVersion` / `inking::kVersionStage`）。
+> 版本号 `0.5.3`（`InkingVersion` / `InkingVersionStage`）。
 >
 > - **接口仍在变动**：本文档描述的类、函数、字段在 `1.0.0` 之前不承诺 ABI / API 稳定，
 >   升级请按 `docs/zh/CHANGELOG.md` 逐条对照。
@@ -25,26 +25,26 @@
 #include <button/InkingStaticButton.h>
 
 // 1) 场景：必须派生（InkingScene 是基类，构造即登记进场景库）
-class DemoScene : public inking::InkingScene {
+class DemoScene : public InkingScene {
 public:
-    explicit DemoScene(const std::string& name) : inking::InkingScene(name) {
-        // 手写数据这条路由 ButtonData 直接给（配置驱动那条路是传名字）
-        inking::ButtonData data;
+    explicit DemoScene(const std::string& name) : InkingScene(name) {
+        // 手写数据这条路由 InkingButtonData 直接给（配置驱动那条路是传名字）
+        InkingButtonData data;
         data.name   = "demo_button";
         data.width  = 160;
         data.height = 48;
         data.normal.color = 0xFF569CD6u;
         data.Normalize();                       // 补齐"省略即继承"
-        _button = std::make_unique<inking::InkingStaticButton>(this, data);
+        _button = std::make_unique<InkingStaticButton>(this, data);
         _button->SetOnClicked([] { /* ... */ });
     }
 private:
-    std::unique_ptr<inking::InkingStaticButton> _button;
+    std::unique_ptr<InkingStaticButton> _button;
 };
 
 int main() {
     DemoScene scene{"demo"};                       // 名字同期唯一
-    inking::InkingWindow::Instance().Show("demo"); // 进主循环，退出后返回
+    InkingWindow::Instance().Show("demo"); // 进主循环，退出后返回
     return 0;
 }
 ```
@@ -111,7 +111,7 @@ int main() {
 任何组件在使用锚点时都会被视作"矩形"。上级锚点决定了自身的锚点与上级的哪里作为对应。
 
 **| 设计坐标 / 设备像素**
-本文档里凡是写"设计坐标"的，都是 `kDesignWidth × kDesignHeight`（默认 1280×720）这套
+本文档里凡是写"设计坐标"的，都是 `InkingLegacyDesignWidth × InkingLegacyDesignHeight`（默认 1280×720）这套
 与分辨率无关的坐标；凡是写"设备像素"的，都是真实窗口像素。换算只有一个系数：
 `GetMagnification()`（letterbox 下 XY 同倍率）。**公开 API 的入参一律设计坐标**，
 只有 `onRender(pixelX, pixelY)` 那一层收设备像素。
@@ -129,8 +129,8 @@ int main() {
 | ABI 稳定性 | **不承诺** | 0.x 发布版，见顶部横幅 |
 
 > **文字与框高**（0.8.3 起）：标签的 `height` 就是文字的上限——累计行高超过
-> `height − 上下 padding` 时，装不下的行整行不画（`TextOverflow::Clip` 的默认语义
-> 之前一直没实现，文字会画到框外），并置 `TextLayoutResult::truncated`。**至少留
+> `height − 上下 padding` 时，装不下的行整行不画（`InkingTextOverflow::Clip` 的默认语义
+> 之前一直没实现，文字会画到框外），并置 `InkingTextLayoutResult::truncated`。**至少留
 > 一行**、**不缩字号**。想让长文案溢出的，把 `height` 设 0 即恢复旧行为。
 > 细节见 [api/InkingRender.md](api/InkingRender.md#六文本排版纯函数)。
 
@@ -161,13 +161,13 @@ int main() {
 | --- | --- |
 | [api/InkingPointerHandler.md](api/InkingPointerHandler.md#指针输入契约) | `input/InkingPointerHandler.h` |
 | [api/InkingKeyboardTarget.md](api/InkingKeyboardTarget.md#键盘输入契约) | `input/InkingKeyboardTarget.h` |
-| [api/InkingInput.md](api/InkingInput.md) | `input/KeyboardInput.h`、`input/MouseInput.h`、`input/Shortcut.h`、`input/ShortcutRegistry.h`、`input/TextEditState.h` |
+| [api/InkingInput.md](api/InkingInput.md) | `input/InkingKeyboardInput.h`、`input/InkingMouseInput.h`、`input/InkingShortcut.h`、`input/InkingShortcutRegistry.h`、`input/InkingTextEditState.h` |
 
 ### 3.4 场景 / 窗口 / 渲染
 
 | 页面 | 覆盖的头文件 |
 | --- | --- |
-| [api/InkingScene.md](api/InkingScene.md) | `scene/InkingScene.h`、`scene/SceneLibrary.h`、`scene/SceneRegisterToken.h`、`scene/HitTable.h` |
+| [api/InkingScene.md](api/InkingScene.md) | `scene/InkingScene.h`、`scene/InkingSceneLibrary.h`、`scene/SceneRegisterToken.h`、`scene/InkingHitTable.h` |
 | [api/InkingWindow.md](api/InkingWindow.md) | `window/InkingWindow.h`、`config/window_config.h` |
 | [api/InkingRender.md](api/InkingRender.md) | `render/*.h`、`dataStruct/InkingTextRequest.h`、`dataStruct/InkingTextLayout.h` |
 
@@ -178,7 +178,7 @@ int main() {
 | [api/InkingComponents.md](api/InkingComponents.md) | `button/*`、`panel/*`、`image/*`、`text/*`、`canvas/*`、`video/*`、`audio/*` |
 | [api/InkingFixedPopup.md](api/InkingFixedPopup.md) | `panel/InkingFixedPopup.h`（定点浮窗，0.4.1） |
 | [api/InkingPrefab.md](api/InkingPrefab.md) | `prefab/*` |
-| [api/InkingCxxcss.md](api/InkingCxxcss.md) | **没有头文件**：`CXXCSS/*.json` 编译期生成的那些组件类（`inking::cxxcss::OptionItem` 之类）、`RegisterAllButtons()`、语言表安装、`inkgen` 命令行 |
+| [api/InkingCxxcss.md](api/InkingCxxcss.md) | **没有头文件**：`CXXCSS/*.json` 编译期生成的那些组件类（`cxxcss::OptionItem` 之类）、`RegisterAllButtons()`、语言表安装、`inkgen` 命令行 |
 
 ### 3.6 工具件（`util/`）
 
@@ -201,7 +201,7 @@ int main() {
 
 | 页面 | 覆盖的头文件 |
 | --- | --- |
-| [api/InkingRuntime.md](api/InkingRuntime.md) | `inking.h`、`thread/*`、`timeline/Timeline.h`、`event/InkingEvent.h`、`asset/InkingAsset.h`、`detail/InkLog.h`、`detail/MessageQueue.h`、`detail/InkingHit.h`、`dataStruct/TaskStruct.h`、`dataStruct/MessageStruct.h` |
+| [api/InkingRuntime.md](api/InkingRuntime.md) | `inking.h`、`thread/*`、`timeline/InkingTimeline.h`、`event/InkingEvent.h`、`asset/InkingAsset.h`、`detail/InkLog.h`、`detail/InkingMessageQueue.h`、`detail/InkingHit.h`、`dataStruct/TaskStruct.h`、`dataStruct/MessageStruct.h` |
 
 ### 3.7 工程规范与设计文档
 
@@ -278,7 +278,7 @@ cd build && PATH=.:$PATH ./bin/inking_demo_selftest.exe   # 单跑行为自检
 所以 `exit=0` ⇔ 全绿，可以直接当判据，不需要解析 stdout。
 
 > 上一版这里写的是"不要看退出码"。那句话已经过期：它源自 `0.1.0-test`
-> 时代"打印完失败项就不返回"的死锁（`TaskQueue` 的函数内静态量在 DLL 卸载时
+> 时代"打印完失败项就不返回"的死锁（`InkingTaskQueue` 的函数内静态量在 DLL 卸载时
 > join 管家线程），那条在 `0.1.1` 就修掉了（见 `README.md` §已知限制 那条
 > "已修掉的历史限制"）。实测连跑多次都是 1 秒内 `exit=0`。
 
@@ -321,7 +321,7 @@ INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 本机走 dire
 ## 8. 头文件 → 专页 全量索引
 
 97 个公开头，全部落在上表的某一页里。
-**生成物不在 `include/` 里**（`CXXCSS/*.json` 烘出来的 `inking::cxxcss::*` 类落在
+**生成物不在 `include/` 里**（`CXXCSS/*.json` 烘出来的 `cxxcss::*` 类落在
 `build/inkgen/` 下），见 [api/InkingCxxcss.md](api/InkingCxxcss.md)。
 
 | 目录 | 头文件 | 专页 |
@@ -330,23 +330,23 @@ INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 本机走 dire
 | anchor | `InkingAnchor.h` | Anchor |
 | asset | `InkingAsset.h` | Runtime |
 | audio | `InkingAudio.h` | Components |
-| button | `ButtonData.h` `ButtonLibrary.h` `ButtonLook.h` `ButtonPaint.h` `InkingButtonLike.h` `InkingStaticButton.h` `InkingDynamicButton.h` | Components |
-| canvas | `CanvasContext.h` `CanvasData.h` `InkingCanvasPainter.h` `InkingStaticCanvas.h` | Components |
+| button | `InkingButtonData.h` `InkingButtonLibrary.h` `InkingButtonLook.h` `ButtonPaint.h` `InkingButtonLike.h` `InkingStaticButton.h` `InkingDynamicButton.h` | Components |
+| canvas | `InkingCanvasContext.h` `InkingCanvasData.h` `InkingCanvasPainter.h` `InkingStaticCanvas.h` | Components |
 | config | `window_config.h` | Window |
-| dataStruct | `InkingAffine.h` `InkingTransform.h` `InkingAnchorData.h` `InkingColor.h` `InkingDecoration.h` `InkingEasing.h` `InkingImageFit.h` `InkingImageScale.h` `InkingLayout.h` `InkingScroll.h` `InkingShapeSpec.h` `InkingTextLayout.h` `InkingTextRequest.h` `MessageStruct.h` `TaskStruct.h` | Anchor / ShapeSpec / Transform / Layout / Render / Runtime / [§9](#9-素材该多大缩放规则) |
-| detail | `InkLog.h` `InkingGeometry.h` `InkingHit.h` `MessageQueue.h` | Runtime / Widget |
+| dataStruct | `InkingAffine.h` `InkingTransform.h` `InkingAnchorData.h` `InkingColor.h` `InkingDecoration.h` `InkingEasing.h` `InkingImageFit.h` `InkingImageScale.h` `InkingLayout.h` `InkingScroll.h` `InkingShapeSpec.h` `InkingTextLayout.h` `InkingTextRequest.h` `MessageStruct.h` `TaskStruct.h` | Anchor / InkingShapeSpec / Transform / Layout / Render / Runtime / [§9](#9-素材该多大缩放规则) |
+| detail | `InkLog.h` `InkingGeometry.h` `InkingHit.h` `InkingMessageQueue.h` | Runtime / Widget |
 | event | `InkingEvent.h` | Runtime |
-| image | `ImageData.h` `SpriteData.h` `InkingStaticImage.h` `InkingSprite.h` | Components |
-| input | `InkingKeyboardTarget.h` `InkingPointerHandler.h` `PointerButton.h` `KeyboardInput.h` `MouseInput.h` `Shortcut.h` `ShortcutRegistry.h` `TextEditState.h` | KeyboardTarget / PointerHandler / Input |
+| image | `InkingImageData.h` `InkingSpriteData.h` `InkingStaticImage.h` `InkingSprite.h` | Components |
+| input | `InkingKeyboardTarget.h` `InkingPointerHandler.h` `InkingPointerButton.h` `InkingKeyboardInput.h` `InkingMouseInput.h` `InkingShortcut.h` `InkingShortcutRegistry.h` `InkingTextEditState.h` | KeyboardTarget / PointerHandler / Input |
 | layout | `InkingLayoutSolver.h` | LayoutSolver |
-| panel | `InkingStaticPanel.h` `PanelData.h` `PanelLook.h` | Components |
+| panel | `InkingStaticPanel.h` `InkingPanelData.h` `InkingPanelLook.h` | Components |
 | prefab | `FilePicker.h` `FilePickerData.h` `ListRow.h` `ListView.h` `ListViewData.h` `MenuBar.h` `MenuBarData.h` `OptionBar.h` `OptionBarData.h` `PrefabTheme.h` `Select.h` `SelectData.h` | Prefab |
 | render | `InkingBatch.h` `InkingDraw.h` `InkingGlyphAtlas.h` `InkingMesh.h` `InkingText.h` | Render |
-| scene | `HitTable.h` `InkingScene.h` `SceneLibrary.h` `SceneRegisterToken.h` | Scene |
-| text | `InkingStaticLabel.h` `InkingTextInput.h` `InkingTextTable.h` `LabelData.h` | Components |
-| thread | `TaskQueue.h` `ThreadPool.h` | Runtime |
-| timeline | `Timeline.h` | Runtime |
-| video | `InkingVideo.h` `VideoData.h` | Components |
+| scene | `InkingHitTable.h` `InkingScene.h` `InkingSceneLibrary.h` `SceneRegisterToken.h` | Scene |
+| text | `InkingStaticLabel.h` `InkingTextInput.h` `InkingTextTable.h` `InkingLabelData.h` | Components |
+| thread | `InkingTaskQueue.h` `InkingThreadPool.h` | Runtime |
+| timeline | `InkingTimeline.h` | Runtime |
+| video | `InkingVideo.h` `InkingVideoData.h` | Components |
 | widget | `InkingWidget.h` `InkingStaticWidget.h` `InkingDynamicWidget.h` | Widget |
 | window | `InkingWindow.h` | Window |
 
@@ -355,7 +355,7 @@ INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 本机走 dire
 ## 9. 素材该多大（缩放规则）
 
 > 规则本身写在代码里：`dataStruct/InkingImageScale.h`（纯头、无 SDL，与
-> `ImageFitSpec` 同一形态）。这一节是**给使用者与美术读的**版本，公式一字不改，
+> `InkingImageFitSpec` 同一形态）。这一节是**给使用者与美术读的**版本，公式一字不改，
 > 但以头文件为准。设计取舍的完整推演在
 > [`plans/2026-10-29-scaling-and-device-pixels.md`](plans/2026-10-29-scaling-and-device-pixels.md)。
 
@@ -371,7 +371,7 @@ R_max = min(最大目标屏宽 ÷ 设计宽, 最大目标屏高 ÷ 设计高)
 ### 9.2 规则一：素材按"屏幕像素"出，不按"设计像素的倍数"出
 
 ```
-素材像素 = 组件设计尺寸 × 纵深 × R_max      // ImageScaleSpec::RequiredTextureWidth()
+素材像素 = 组件设计尺寸 × 纵深 × R_max      // InkingImageScaleSpec::RequiredTextureWidth()
 ```
 
 关键推论：**素材的绝对像素只取决于"这个组件最大占多少屏幕"，与设计尺寸无关。**
@@ -388,7 +388,7 @@ R_max = min(最大目标屏宽 ÷ 设计宽, 最大目标屏高 ÷ 设计高)
 
 不做 mip、不做运行期重采样，就意味着**每个显示尺寸都要靠"素材正好那么大"来保证
 σ 为整数**。非整数 σ 会有整列纹素被跳过（表现是细节在运动时游走 / 闪烁），比
-"缩得多"更难看。干净档位 = `ImageScaleSpec::CleanDepth(素材倍率 m, k) = m / k`：
+"缩得多"更难看。干净档位 = `InkingImageScaleSpec::CleanDepth(素材倍率 m, k) = m / k`：
 
 | 素材倍率 m | 干净纵深档位（k = 1,2,3,4,5） |
 | --- | --- |
@@ -396,7 +396,7 @@ R_max = min(最大目标屏宽 ÷ 设计宽, 最大目标屏高 ÷ 设计高)
 | 2× | 1.0 / 0.667 / 0.5 / 0.4 / 0.333 |
 | 0.5× | 0.5 / 0.25 / 0.167 / — / — |
 
-σ 判定（`ImageScaleSpec::IsCleanRatio(sigma)`）：
+σ 判定（`InkingImageScaleSpec::IsCleanRatio(sigma)`）：
 
 | σ | 含义 | 观感 |
 | --- | --- | --- |
@@ -419,14 +419,14 @@ R_max = min(最大目标屏宽 ÷ 设计宽, 最大目标屏高 ÷ 设计高)
 ```cpp
 #include <dataStruct/InkingImageScale.h>
 
-inking::ImageScaleSpec spec;
+InkingImageScaleSpec spec;
 spec.designWidth = 320;   // 组件在设计坐标里的宽度
 spec.depth       = 1.0f;  // 没有纵深系统就填 1
 spec.ratioMax    = 2.0f;  // 最大目标屏 ÷ 设计尺寸；不知道就填 2
 const int need   = spec.RequiredTextureWidth();          // 交给美术："出这么宽"
 
 const float sigma = spec.SamplingRatio(纹理宽, 当前 R);   // 装载期自检 / 打日志
-const bool clean  = inking::ImageScaleSpec::IsCleanRatio(sigma);
+const bool clean  = InkingImageScaleSpec::IsCleanRatio(sigma);
 ```
 
 验收示例：`examples/sharp`（720p 设计尺寸 + 一张 1536×2752 的真实素材，全屏逐档

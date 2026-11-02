@@ -8,7 +8,7 @@
 #include <memory>
 #include <utility>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 namespace {
 
@@ -23,25 +23,25 @@ std::string ItemNodeName(std::size_t index) {
 }
 
 /// 把布局规则里那份 padding 加起来（主轴 / 交叉轴各一份）。
-float PaddingMain(const LayoutSpacing& padding, bool horizontal) noexcept {
+float PaddingMain(const InkingLayoutSpacing& padding, bool horizontal) noexcept {
     return horizontal ? padding.left + padding.right
                       : padding.top + padding.bottom;
 }
 
-float PaddingCross(const LayoutSpacing& padding, bool horizontal) noexcept {
+float PaddingCross(const InkingLayoutSpacing& padding, bool horizontal) noexcept {
     return horizontal ? padding.top + padding.bottom
                       : padding.left + padding.right;
 }
 
 /**
- * 把样式里的面板数据补成一份**能给基类用**的 `PanelData`：名字兜底 +
+ * 把样式里的面板数据补成一份**能给基类用**的 `InkingPanelData`：名字兜底 +
  * 布局兜底（竖向 Stack）。
  *
  * 放在匿名命名空间而不是私有成员函数里，是因为它要在**基类构造之前**用掉
  * （成员初始化列表里）——那时 `this` 还不能碰。
  */
-PanelData MakePanelData(const OptionBarStyle& style) {
-    PanelData panel = style.panel;
+InkingPanelData MakePanelData(const OptionBarStyle& style) {
+    InkingPanelData panel = style.panel;
     if (panel.name.empty()) {
         panel.name = "optionBar";
     }
@@ -53,27 +53,27 @@ PanelData MakePanelData(const OptionBarStyle& style) {
                      "选项栏的 panel.layout 没声明（kind = None）：项会全堆在 "
                      "左上角。这里兜底成竖向 Stack + 间距 6；想横排请显式配 "
                      "axis = Horizontal。名字：" + panel.name);
-        panel.layout.kind = LayoutKind::Stack;
-        panel.layout.axis = LayoutAxis::Vertical;
+        panel.layout.kind = InkingLayoutKind::Stack;
+        panel.layout.axis = InkingLayoutAxis::Vertical;
         panel.layout.gap = 6.0f;
-        panel.layout.align = LayoutAlign::Stretch;
-        panel.layout.padding = LayoutSpacing{6.0f, 6.0f, 6.0f, 6.0f};
+        panel.layout.align = InkingLayoutAlign::Stretch;
+        panel.layout.padding = InkingLayoutSpacing{6.0f, 6.0f, 6.0f, 6.0f};
     }
     return panel;
 }
 
 }  // namespace
 
-ButtonData MakeDefaultItemLook() {
-    ButtonData look;
+InkingButtonData MakeDefaultItemLook() {
+    InkingButtonData look;
     look.name = "optionItemDefault";
     look.width = 0;  // 0 = 用容器宽度（建项时会补上）
     look.height = 40;
-    look.shape = ShapeSpec::RoundedRect(theme::kRadiusItem);
+    look.shape = InkingShapeSpec::RoundedRect(theme::kRadiusItem);
     // 亮色场景：白底 + 1px 浅描边；悬停 / 按下用主色的浅紫底（见 PrefabTheme.h）。
-    look.normal = ButtonAppearance(AppearanceType::Color, theme::kSurface);
-    look.hover = ButtonAppearance(AppearanceType::Color, theme::kAccentSoft);
-    look.onclicked = ButtonAppearance(AppearanceType::Color,
+    look.normal = InkingButtonAppearance(InkingAppearanceType::Color, theme::kSurface);
+    look.hover = InkingButtonAppearance(InkingAppearanceType::Color, theme::kAccentSoft);
+    look.onclicked = InkingButtonAppearance(InkingAppearanceType::Color,
                                       theme::kAccentSoftPressed);
     // ⚠️ 必须显式关掉：Normalize() 的规矩是"继承为真就拿 normal 覆盖"
     // （`AGENTS.md` §6 第 43 条），不关的话上面两份 hover / onclicked 白写。
@@ -84,7 +84,7 @@ ButtonData MakeDefaultItemLook() {
     look.stroke.color = theme::kOutline;
     look.text.fontSize = 16.0f;
     look.text.leftSpace = 14.0f;  // 文字靠左，垂直居中
-    look.text.alignV = TextAlignV::Middle;
+    look.text.alignV = InkingTextAlignV::Middle;
     look.text.topSpace = 0.0f;
     look.text.path = theme::DefaultFontPath();  // 开源圆体（拿不到就机器默认）
     look.textColor = theme::kTextPrimary;
@@ -96,19 +96,19 @@ OptionBarStyle OptionBarStyle::MakeDefault() {
     style.panel.name = "optionBar";
     style.panel.width = 220;
     style.panel.height = 200;
-    style.panel.shape = ShapeSpec::RoundedRect(theme::kRadiusPanel);
+    style.panel.shape = InkingShapeSpec::RoundedRect(theme::kRadiusPanel);
     // 面板只有"关 / 开"两态，选项栏不用开合动画 ⇒ 两态同一个颜色。
-    // 直接写字段而不是走 `PanelAppearance` 的构造：那个构造是
+    // 直接写字段而不是走 `InkingPanelAppearance` 的构造：那个构造是
     // `(颜色, 时长, 缓动, 变换)`，四个参数凑一个颜色读起来反而费劲。
     style.panel.closed.color = theme::kSurface;
     style.panel.open.color = theme::kSurface;
     style.panel.openInheritsClosed = false;
     // 排列：竖向 Stack + 间距 6 + 内缩 6 + 交叉轴拉伸（一列按钮撑满宽度是常态）。
-    style.panel.layout.kind = LayoutKind::Stack;
-    style.panel.layout.axis = LayoutAxis::Vertical;
+    style.panel.layout.kind = InkingLayoutKind::Stack;
+    style.panel.layout.axis = InkingLayoutAxis::Vertical;
     style.panel.layout.gap = 6.0f;
-    style.panel.layout.align = LayoutAlign::Stretch;
-    style.panel.layout.padding = LayoutSpacing{6.0f, 6.0f, 6.0f, 6.0f};
+    style.panel.layout.align = InkingLayoutAlign::Stretch;
+    style.panel.layout.padding = InkingLayoutSpacing{6.0f, 6.0f, 6.0f, 6.0f};
     style.itemLook = MakeDefaultItemLook();
     style.itemHeight = 40.0f;
     return style;
@@ -161,7 +161,7 @@ void OptionBar::rebuildItems() {
     for (std::size_t i = 0; i < _items.size(); ++i) {
         const OptionItem& item = _items[i];
 
-        ButtonData look = _style.itemLook;
+        InkingButtonData look = _style.itemLook;
         look.name = ItemNodeName(i);
         // 宽度：模板没给就用容器宽度——不然"交叉轴不拉伸"的那些配置会画出一个
         // 零宽的项（看着像没建出来）。
@@ -218,13 +218,13 @@ bool OptionBar::Activate(std::size_t index) {
     return true;
 }
 
-ShapeBounds OptionBar::GetItemRect(std::size_t index) const {
+InkingShapeBounds OptionBar::GetItemRect(std::size_t index) const {
     const std::vector<InkingWidget*>& children = GetChildren();
     if (index >= children.size() || children[index] == nullptr) {
-        return ShapeBounds{};
+        return InkingShapeBounds{};
     }
     const InkingWidget* node = children[index];
-    return ShapeBounds{node->GetX(), node->GetY(),
+    return InkingShapeBounds{node->GetX(), node->GetY(),
                        static_cast<float>(node->GetWidth()),
                        static_cast<float>(node->GetHeight())};
 }
@@ -251,14 +251,14 @@ std::size_t OptionBar::GetBuiltItemCount() const noexcept {
     return GetOwnedChildCount();
 }
 
-LayoutSize OptionBar::MeasureLayout(const LayoutConstraints& constraints) const {
+InkingLayoutSize OptionBar::MeasureLayout(const InkingLayoutConstraints& constraints) const {
     // ⚠️ 一条**既有的边界**（写在这里免得下一个人找半天）：静态按钮重写了
     // `GetWidth()` / `GetHeight()`（T-5 的逐态尺寸），于是布局通道写进 `_width`
     // 的那份**对按钮不生效**——按钮的尺寸永远取配置里那两份。
     // 所以这里算的是"我这个容器需要多大"，而不是"布局能把项拉多大"；
     // 建项时也已经按容器宽兜底了（见 `rebuildItems`）。
-    const LayoutSpec& spec = GetLayoutSpec();
-    const bool horizontal = spec.axis == LayoutAxis::Horizontal;
+    const InkingLayoutSpec& spec = GetLayoutSpec();
+    const bool horizontal = spec.axis == InkingLayoutAxis::Horizontal;
     const float gap = spec.Valid() ? spec.gap : 0.0f;
 
     const bool explicitWidth = _style.itemLook.width > 0;
@@ -287,14 +287,14 @@ LayoutSize OptionBar::MeasureLayout(const LayoutConstraints& constraints) const 
                                  ? constraints.maxHeight
                                  : (explicitHeight ? crossContent
                                                    : static_cast<float>(GetHeight()));
-        return LayoutSize{main, height};
+        return InkingLayoutSize{main, height};
     }
     // 竖排：高度是内容说了算；宽度听父级的（同上）。
     const float width = constraints.maxWidth > 0.0f
                             ? constraints.maxWidth
                             : (explicitWidth ? crossContent
                                              : static_cast<float>(GetWidth()));
-    return LayoutSize{width, main};
+    return InkingLayoutSize{width, main};
 }
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

@@ -3,7 +3,7 @@
 // 它单独一个文件，是为了让 `InkingLayoutSolver.cpp` 保持**纯算术**：
 // `Solve` / `SolveStack` / `SolveGrid` 只依赖 `dataStruct/InkingLayout.h`，
 // 可以不起任何 Widget 就单测；而 `ArrangeSubtree` 必须知道组件树——
-// 要读容器的 `LayoutSpec`、问每个孩子的 `MeasureLayout`、再把解出来的矩形
+// 要读容器的 `InkingLayoutSpec`、问每个孩子的 `MeasureLayout`、再把解出来的矩形
 // 经 `ApplyLayoutRect` 写回去。
 //
 // 那条写入口是 Widget 层的 private + `friend`：**只有本文件的这个函数调得到**
@@ -15,21 +15,19 @@
 #include <widget/InkingWidget.h>
 
 #include <vector>
-
-namespace inking {
-namespace detail {
+namespace inking_detail {
 namespace layout {
 
 void ArrangeSubtree(InkingWidget& container) {
     // 先把**这一层**排好（孩子的尺寸由此确定），再递归进"本身也是容器"的孩子——
     // 顺序反过来的话，子容器会用它**旧的**尺寸去排自己的内容，位置差一截。
-    const LayoutSpec& spec = container.GetLayoutSpec();
+    const InkingLayoutSpec& spec = container.GetLayoutSpec();
     const std::vector<InkingWidget*>& children = container.GetChildren();
 
     if (spec.Valid() && !children.empty()) {
-        const LayoutSize containerSize{static_cast<float>(container.GetWidth()),
+        const InkingLayoutSize containerSize{static_cast<float>(container.GetWidth()),
                                        static_cast<float>(container.GetHeight())};
-        const LayoutConstraints constraints{containerSize.width,
+        const InkingLayoutConstraints constraints{containerSize.width,
                                            containerSize.height};
 
         std::vector<LayoutInput> inputs;
@@ -57,5 +55,4 @@ void ArrangeSubtree(InkingWidget& container) {
     }
 }
 }  // namespace layout
-}  // namespace detail
-}  // namespace inking
+}  // namespace inking_detail

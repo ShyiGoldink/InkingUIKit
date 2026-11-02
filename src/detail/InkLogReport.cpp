@@ -12,8 +12,6 @@
 // 报告是**派生产物**：运行期只写纯文本 .log，需要浏览器视图时调用一次
 // InkLog::report()，由这里把 .log 渲染成一份自包含的 HTML。
 // 这样日志热路径上不再有 CSS/JS 模板，报告随时可以从事实源重新生成。
-
-namespace inking {
 namespace {
 
 /** 取第 n 个 " | " 分隔字段（0 基），越界返回空串。 */
@@ -331,6 +329,5 @@ main{display:flex; flex-direction:column; gap:1px}
     return outputPath;
 }
 
-}  // namespace inking
 
 #endif  // INK_ISLOG

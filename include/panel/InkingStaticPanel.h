@@ -28,12 +28,11 @@
 #include <panel/PanelData.h>
 #include <panel/PanelLook.h>
 
-namespace inking {
 
 class InkingStaticPanel : public InkingStaticWidget {
 public:
     /**
-     * 手写数据构造：不走配置，直接把一份 `PanelData` 交给它。
+     * 手写数据构造：不走配置，直接把一份 `InkingPanelData` 交给它。
      *
      * 配置驱动那条路（`CXXCSS/Panel/<名字>.json` → 生成类）是任务 A2：
      * 生成器目前硬绑 Button，所以这一轮面板的配置在代码里手写。
@@ -41,7 +40,7 @@ public:
      * @param parent 上级锚点；非拥有。面板必须在某个场景的子树下才能被渲染。
      * @param data   配置数据（构造时会 `Normalize` 一次，补齐省略的 open 态）。
      */
-    InkingStaticPanel(InkingWidget* parent, const PanelData& data);
+    InkingStaticPanel(InkingWidget* parent, const InkingPanelData& data);
 
     // ---------------- [final] 开合写入口（幂等，只改颜色 / 变换） ----------------
     //
@@ -65,7 +64,7 @@ public:
     bool IsOpen() const noexcept;
 
     /** 当前两态中的一个。 */
-    PanelState GetState() const noexcept;
+    InkingPanelState GetState() const noexcept;
 
     // ---------------- 读 ----------------
 
@@ -73,14 +72,14 @@ public:
     std::uint32_t GetDisplayColor() const noexcept;
 
     /// 现在**实际生效**的变换（过渡中是插值出来的中间值）——它同时作用于子树。
-    const TransformSpec& GetDisplayTransform() const noexcept;
+    const InkingTransformSpec& GetDisplayTransform() const noexcept;
 
     /// 现在**实际画出来**的描边 / 阴影（T-07，过渡中是插值出来的中间值）。
     /// 观测口：自检靠它断言"描边跟着开合过渡一起插值"，不用去猜像素。
-    const StrokeSpec& GetDisplayStroke() const noexcept {
+    const InkingStrokeSpec& GetDisplayStroke() const noexcept {
         return _look.displayStroke;
     }
-    const ShadowSpec& GetDisplayShadow() const noexcept {
+    const InkingShadowSpec& GetDisplayShadow() const noexcept {
         return _look.displayShadow;
     }
 
@@ -102,7 +101,7 @@ public:
     void WheelScroll(float deltaX, float deltaY);
 
     /// 一条滚动条算出来的几何（绘制与自检共用同一份：没有第二个真相）。
-    ScrollBarMetrics GetBarMetrics(bool vertical) const noexcept;
+    InkingScrollBarMetrics GetBarMetrics(bool vertical) const noexcept;
 
     /// 按下（设计坐标）：点在**滑块**上就进入拖动，点在轨道上就跳过去。
     void PressScrollAt(float designX, float designY);
@@ -125,7 +124,7 @@ public:
     float GetContentHeight() const noexcept { return _contentHeight; }
 
     /// 形状定义：渲染 / 命中 / 包围盒三者都从它派生。
-    const ShapeSpec& GetShape() const noexcept;
+    const InkingShapeSpec& GetShape() const noexcept;
 
     /// 现在有一段开合过渡在跑吗。自检与"画面稳了没有"用得上。
     bool IsTransitioning() const noexcept;
@@ -134,7 +133,7 @@ public:
     float TransitionProgress() const noexcept;
 
     /// 构造时用的那份配置（已经 `Normalize` 过）。
-    const PanelData& GetData() const noexcept;
+    const InkingPanelData& GetData() const noexcept;
 
     // ---------------- [√] 命中与子树（容器的三个关键重写） ----------------
 
@@ -143,7 +142,7 @@ public:
      *
      * 两步，顺序不能换：
      *   1. **自己本体**：撤祖先变换 + 减自己的绝对位置 + 过一次自己变换的逆，
-     *      再问形状（`detail::HitTestShape`，和绘制同一份定义）；
+     *      再问形状（`inking_detail::HitTestShape`，和绘制同一份定义）；
      *   2. **子树**：把**世界坐标原样**交给每个子节点问一遍。这样做是对的，
      *      因为子节点的 `AncestorAffine` 里已经含了**我这一层变换**——它自己
      *      会撤干净。反过来说，如果我先把点换算到自己的本地空间再递归，
@@ -170,20 +169,20 @@ public:
 
     /**
      * 命中索引用的保守包络：**布局空间里整棵子树的并集**，再按两个状态的变换
-     * 各转一次取并集（`detail::PanelHitEnvelope`）。
+     * 各转一次取并集（`inking_detail::PanelHitEnvelope`）。
      *
      * 两件事都必须在：包络要盖住子树（否则表里登记的框比实际小，边缘漏命中），
      * 也要盖住**所有可能的状态**（抽屉开着和关着差一个身位，只按当前状态登记，
      * 拉出来之后表里就找不到它了）。
      */
-    ShapeBounds GetHitEnvelope() const override;
+    InkingShapeBounds GetHitEnvelope() const override;
 
     /// 当前变换**同时作用于子节点**（`InkingWidget::GetSubtreeTransform`）。
-    TransformSpec GetSubtreeTransform() const noexcept override;
+    InkingTransformSpec GetSubtreeTransform() const noexcept override;
 
     /// B12：裁剪窗口是**容器本体**，不含滚动位移——不然内容滑出去还看得见
     /// （`_look.displayTransform` 只有开合动画那一份）。
-    TransformSpec GetClipTransform() const noexcept override {
+    InkingTransformSpec GetClipTransform() const noexcept override {
         return _look.displayTransform;
     }
 
@@ -197,7 +196,7 @@ public:
     }
 
     /**
-     * 裁剪子孙吗（A5）？由 `PanelData::clipChildren` 决定，默认不剪。
+     * 裁剪子孙吗（A5）？由 `InkingPanelData::clipChildren` 决定，默认不剪。
      *
      * 这一条就是"下拉 / 滚动 / 抽屉"的窗口：声明之后，超出本体的子节点
      * **画出来被剪、点起来也被剪**（两边同源），而子节点自己一个字都不用改。
@@ -210,8 +209,8 @@ public:
     /// 容器底色上），所以画在 `onRender` 里的滚动条会被文字盖住。与其再加一条
     /// "画在子孙之后"的覆盖通道，不如让**内容根本画不到条带上**：条带区域就只剩
     /// 背景 + 轨道 + 滑块。绘制与命中的裁剪用的是同一份，两边自动一致。
-    ShapeBounds GetSubtreeClipBounds() const noexcept override {
-        return ShapeBounds{0.0f, 0.0f, ContentViewportWidth(),
+    InkingShapeBounds GetSubtreeClipBounds() const noexcept override {
+        return InkingShapeBounds{0.0f, 0.0f, ContentViewportWidth(),
                            ContentViewportHeight()};
     }
 
@@ -245,13 +244,13 @@ protected:
     }
 
     /// 滚轮（B12）：`deltaX/deltaY` 是**一次性的滚动增量**（A4 那套），
-    /// 一格滚 `ScrollSpec::wheelStep` 设计像素。
+    /// 一格滚 `InkingScrollSpec::wheelStep` 设计像素。
     void onPointerWheel(float deltaX, float deltaY) override;
 
     /// 按下 / 抬起（B12）：按下时决定"拖滑块还是点轨道跳过去"。
     /// 按下 / 抬起。**只认主键**：容器吃的是滚动拖动，右键不参与（0.5.0）。
     /// 重写时必须把 `button` 判掉，否则右键抬起会结束正在进行的左键滚动拖动。
-    void onPointerPress(PointerButton button, bool press) override;
+    void onPointerPress(InkingPointerButton button, bool press) override;
 
     /// 拖动（B12）：把滑块中心拖到指针处。
     void onPointerDrag(float designX, float designY, float deltaX,
@@ -268,15 +267,15 @@ protected:
 
 private:
     /// 把 data 里的字段搬到基类与自己的成员上。
-    void applyData(const PanelData& data);
+    void applyData(const InkingPanelData& data);
 
     /// 把当前显示色同步到基类那份 color：从基类窗口看过去得是同一件事。
     void syncBaseColor() noexcept;
 
-    PanelData _data{};
+    InkingPanelData _data{};
 
     // B12：滚动量（设计像素）与量出来的内容尺寸。
-    // 刻意**不写进** `PanelData` 之外的地方：`GetSubtreeTransform()` 直接读它们，
+    // 刻意**不写进** `InkingPanelData` 之外的地方：`GetSubtreeTransform()` 直接读它们，
     // 所以绘制 / 命中 / 子交互都是"当前值"，没有第二份快照要对账。
     float _scrollX = 0.0f;
     float _scrollY = 0.0f;
@@ -286,8 +285,7 @@ private:
     /// 正在拖的轴（0 = 没拖，1 = 竖直，2 = 水平）。
     int _dragAxis = 0;
 
-    /// 两态外观 + 状态机 + 过渡（静态 / 动态 Panel 共用的那一份，见 PanelLook.h）。
-    PanelLook _look{};
+    /// 两态外观 + 状态机 + 过渡（静态 / 动态 Panel 共用的那一份，见 InkingPanelLook.h）。
+    InkingPanelLook _look{};
 };
 
-}  // namespace inking

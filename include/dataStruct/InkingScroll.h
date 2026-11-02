@@ -2,7 +2,6 @@
 
 #include <cstdint>
 
-namespace inking {
 
 /**
  * @brief 滚动容器（TaskGuide B12）的配置与**纯几何**。
@@ -26,14 +25,14 @@ namespace inking {
  */
 
 /// 一条轴上的滚动条什么时候显示。
-enum class ScrollAxisMode {
+enum class InkingScrollAxisMode {
     Never,   ///< 不画（但那条轴照样能滚，比如只靠滚轮 / 触摸）
     Auto,    ///< 内容超出可视区才显示（默认）
     Always,  ///< 一直显示
 };
 
 /// 容器的滚动配置（没配 `"scroll"` 段就是普通容器）。
-struct ScrollSpec {
+struct InkingScrollSpec {
     bool enabled = false;
 
     bool vertical = true;    ///< 能不能上下滚
@@ -43,8 +42,8 @@ struct ScrollSpec {
     /// 由实现层按"这一帧的滚轮增量"算，这里只给基准。
     float wheelStep = 48.0f;
 
-    ScrollAxisMode verticalBar = ScrollAxisMode::Auto;
-    ScrollAxisMode horizontalBar = ScrollAxisMode::Auto;
+    InkingScrollAxisMode verticalBar = InkingScrollAxisMode::Auto;
+    InkingScrollAxisMode horizontalBar = InkingScrollAxisMode::Auto;
 
     float barWidth = 8.0f;        ///< 条的粗细
     float barInset = 4.0f;        ///< 离容器边缘多远
@@ -67,7 +66,7 @@ struct ScrollSpec {
 };
 
 /// 一条滚动条算出来的几何（都在**容器本地坐标**里，设计像素）。
-struct ScrollBarMetrics {
+struct InkingScrollBarMetrics {
     bool visible = false;
 
     float trackX = 0.0f;
@@ -82,10 +81,10 @@ struct ScrollBarMetrics {
 };
 
 /// 可滚范围：内容比视口大多少（内容没超出就是 0）。**纯函数**。
-float ScrollRange(float contentSize, float viewportSize) noexcept;
+float InkingScrollRange(float contentSize, float viewportSize) noexcept;
 
 /// 把滚动量夹进 `[0, range]`（`range <= 0` 一律归 0）。**纯函数**。
-float ClampScroll(float offset, float range) noexcept;
+float InkingClampScroll(float offset, float range) noexcept;
 
 /**
  * 算一条滚动条的轨道与滑块。**纯函数**（不碰渲染器、不碰组件）。
@@ -95,29 +94,28 @@ float ClampScroll(float offset, float range) noexcept;
  * @param viewportHeight 容器高
  * @param contentSize    这个方向上的**内容尺寸**（量出来的）
  * @param offset         当前滚动量（会被夹）
- * @param range          可滚范围（`ScrollRange` 的结果）
+ * @param range          可滚范围（`InkingScrollRange` 的结果）
  * @param spec           配置
  */
-ScrollBarMetrics ComputeScrollBar(bool vertical, float viewportWidth,
+InkingScrollBarMetrics InkingComputeScrollBar(bool vertical, float viewportWidth,
                                   float viewportHeight, float contentSize,
                                   float offset, float range,
-                                  const ScrollSpec& spec) noexcept;
+                                  const InkingScrollSpec& spec) noexcept;
 
 /**
  * 点轨道（滑块以外的地方）**跳过去**：滑块中心落到点击处。**纯函数**。
  *
  * @return 新的滚动量（已夹进 `[0, range]`）
  */
-float ScrollFromTrackClick(bool vertical, float clickX, float clickY,
-                           const ScrollBarMetrics& bar, float range) noexcept;
+float InkingScrollFromTrackClick(bool vertical, float clickX, float clickY,
+                           const InkingScrollBarMetrics& bar, float range) noexcept;
 
 /**
  * 这一点落在滑块上吗（按下时用它决定"是拖滑块还是跳过去"）。
  *
- * **0.8.5 删掉了 `bool vertical`**：`ScrollBarMetrics` 里的 `thumbX/thumbY/
+ * **0.8.5 删掉了 `bool vertical`**：`InkingScrollBarMetrics` 里的 `thumbX/thumbY/
  * thumbWidth/thumbHeight` 已经按各自的轴算好了，再传一个"是竖的还是横的"
  * 根本没人读——一个没人读的参数比没有更容易骗人。
  */
-bool HitsThumb(float x, float y, const ScrollBarMetrics& bar) noexcept;
+bool InkingHitsThumb(float x, float y, const InkingScrollBarMetrics& bar) noexcept;
 
-}  // namespace inking

@@ -12,7 +12,7 @@
 
 #include "PathUtf8.h"
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 std::string PathToUtf8(const std::filesystem::path& path) {
 #if defined(_WIN32)
@@ -57,4 +57,4 @@ std::filesystem::path Utf8ToPath(const std::string& text) {
 #endif
 }
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

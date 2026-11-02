@@ -9,7 +9,6 @@
 
 #include <string>
 
-namespace inking {
 
 namespace {
 
@@ -32,7 +31,7 @@ int& unknownNameCount() {
 // ---------------------------------------------------------------------------
 
 InkingDynamicButton::InkingDynamicButton(InkingWidget* parent,
-                                         const ButtonData& data)
+                                         const InkingButtonData& data)
     : InkingDynamicWidget(parent, data.name) {
     applyData(data);
     finishConstruction();
@@ -41,7 +40,7 @@ InkingDynamicButton::InkingDynamicButton(InkingWidget* parent,
 InkingDynamicButton::InkingDynamicButton(InkingWidget* parent,
                                          const std::string& name)
     : InkingDynamicWidget(parent, name) {
-    const ButtonData* registered = FindData(name);
+    const InkingButtonData* registered = FindData(name);
     if (registered != nullptr) {
         applyData(*registered);
     } else {
@@ -49,12 +48,12 @@ InkingDynamicButton::InkingDynamicButton(InkingWidget* parent,
         // 那样按钮长得不对却没有任何报错，只能靠肉眼发现。
         ++unknownNameCount();
         INK_LOG_ERROR(
-            std::string(kButtonModuleName),
+            std::string(InkingButtonModuleName),
             "按名字构造动态按钮却查不到配置，给了一个空按钮：" + name
                 + "（名字拼错了？或者这里该用生成出来的按钮类——"
                   "生成的类是数据烘在类里，不查表）");
 
-        ButtonData empty;
+        InkingButtonData empty;
         empty.name = name;
         applyData(empty);
     }
@@ -67,11 +66,11 @@ int InkingDynamicButton::UnknownNameCount() noexcept {
 
 void InkingDynamicButton::finishConstruction() {
     // 与静态按钮同一条护栏（`0.1.1` T-02：判据与文案统一在 Widget 层）。
-    WarnIfZeroSize(kButtonModuleName);
+    WarnIfZeroSize(InkingButtonModuleName);
 }
 
-void InkingDynamicButton::applyData(const ButtonData& data) {
-    // 拷一份再收尾：调用方给的 ButtonData 可能是"还没补齐三态"的。
+void InkingDynamicButton::applyData(const InkingButtonData& data) {
+    // 拷一份再收尾：调用方给的 InkingButtonData 可能是"还没补齐三态"的。
     _data = data;
     _data.Normalize();
 
@@ -118,23 +117,23 @@ void InkingDynamicButton::applyData(const ButtonData& data) {
 // 查询
 // ---------------------------------------------------------------------------
 
-const ButtonData* InkingDynamicButton::FindData(const std::string& name) {
-    return ButtonLibrary::Find(name);
+const InkingButtonData* InkingDynamicButton::FindData(const std::string& name) {
+    return InkingButtonLibrary::Find(name);
 }
 
 bool InkingDynamicButton::HitTest(float worldX, float worldY) const {
     // 世界坐标 → 本地 → 形状判定，和静态版共用同一份实现
     // （含"撤祖先变换 + 用当前变换取逆"那两步）。动态按钮的几何每帧可能变，
     // 所以 `GetAbsX/Y` 与 `GetDisplayTransform` 都是**现算**的，正好对。
-    return detail::HitTestShape(*this, GetShape(), GetDisplayTransform(),
+    return inking_detail::HitTestShape(*this, GetShape(), GetDisplayTransform(),
                                 worldX, worldY);
 }
 
-const ShapeSpec& InkingDynamicButton::GetShape() const noexcept {
+const InkingShapeSpec& InkingDynamicButton::GetShape() const noexcept {
     return _data.shape;
 }
 
-const ButtonData& InkingDynamicButton::GetData() const noexcept {
+const InkingButtonData& InkingDynamicButton::GetData() const noexcept {
     return _data;
 }
 
@@ -172,13 +171,13 @@ bool InkingDynamicButton::HasLayoutAnimation() const noexcept {
     return HasButtonLayoutAnimation();
 }
 
-TransformSpec InkingDynamicButton::GetSubtreeTransform() const noexcept {
+InkingTransformSpec InkingDynamicButton::GetSubtreeTransform() const noexcept {
     return GetDisplayTransform();
 }
 
-ShapeBounds InkingDynamicButton::GetHitEnvelope() const {
+InkingShapeBounds InkingDynamicButton::GetHitEnvelope() const {
     // 只用于登记动态洞（动态组件不进表）。和静态版共用同一份算法。
-    return detail::ButtonHitEnvelope(_data, GetShape(), GetWidth(), GetHeight());
+    return inking_detail::ButtonHitEnvelope(_data, GetShape(), GetWidth(), GetHeight());
 }
 
 void InkingDynamicButton::syncBaseColor() noexcept {
@@ -194,7 +193,7 @@ bool InkingDynamicButton::IsPointerOver() const noexcept {
 
 bool InkingDynamicButton::IsPressCaptured() const noexcept {
     // 三态只跟主键（右键不进 Pressed）：问"按住没"就是问主键捕获。
-    return _probe.IsCaptured(PointerButton::Primary);
+    return _probe.IsCaptured(InkingPointerButton::Primary);
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +217,7 @@ bool InkingDynamicButton::JudgePointer() noexcept {
     // 按下用的是**原始按键状态**，不折进 inside：和静态版一致——按着不放把指针
     // 拖出窗口，仍然是"按着"（`DispatchPointer` 那边也是这么用 `_pointerDown` 的）。
     // 0.5.0 起是**整包**两个键，`PointerProbe` 按槽各判各的。
-    const PointerDownState down = scene->GetPointerDown();
+    const InkingPointerDownState down = scene->GetPointerDown();
 
     // 命中自判：世界坐标 → 本地坐标，问自己的形状。
     // 指针不在窗口里时一律算"不在按钮上"（窗口外不该继续悬停）。
@@ -227,7 +226,7 @@ bool InkingDynamicButton::JudgePointer() noexcept {
 
     // 边沿、捕获、点击判定都在 `PointerProbe` 里（0.4.1 T-03）：
     // 那三条语义与静态档是同一套，抄在组件里就会走形。
-    const detail::PointerProbeResult r = _probe.Update(hit, down);
+    const inking_detail::PointerProbeResult r = _probe.Update(hit, down);
 
     // 三态：按下 > 悬停 > 通常。按下用的是"这次按下算在按钮上"而不是"指针
     // 此刻在按钮上"——所以按着滑出去仍然是按下，和静态版的手感一致。
@@ -238,15 +237,15 @@ bool InkingDynamicButton::JudgePointer() noexcept {
     // 看起来像"左键点了一下"。
     const bool hoverChanged = MouseHover(r.hovered);
     const bool pressChanged =
-        MousePress(_probe.IsCaptured(PointerButton::Primary));
+        MousePress(_probe.IsCaptured(InkingPointerButton::Primary));
 
     if (r.primary.clicked) {
         TriggerClick();
     }
     if (r.secondary.clicked) {
         // 次键：带**按下点**（不是此刻的指针）。长按后手指微动时，菜单不该跟着挪。
-        const MousePoint origin =
-            scene->GetPressOrigin(PointerButton::Secondary);
+        const InkingMousePoint origin =
+            scene->GetPressOrigin(InkingPointerButton::Secondary);
         TriggerContextClick(origin.x, origin.y);
     }
     return hoverChanged || pressChanged;
@@ -267,7 +266,7 @@ void InkingDynamicButton::onTick(float /*deltaSeconds*/) {
 }
 
 void InkingDynamicButton::onAnimationTick(float deltaSeconds) {
-    // 三态之间的颜色过渡与变换走**渲染帧**这条通道（和静态版共用 ButtonLook）。
+    // 三态之间的颜色过渡与变换走**渲染帧**这条通道（和静态版共用 InkingButtonLook）。
     // 它和上面的 onTick 各管各的：输入 / 几何在逻辑步，颜色/变换过渡在渲染帧。
     // 推进与"这一帧变了什么"都在契约基类里，本类只在它报出来后标脏
     // （见下面 `onButtonDisplayAdvanced`）。
@@ -278,8 +277,8 @@ void InkingDynamicButton::onAnimationTick(float deltaSeconds) {
 // 三态契约的两个 [√] 钩子：本类在"状态变了"和"显示值变了"两处挂副作用
 // ---------------------------------------------------------------------------
 
-void InkingDynamicButton::onButtonStateChanged(ButtonState /*from*/,
-                                               ButtonState /*to*/) {
+void InkingDynamicButton::onButtonStateChanged(InkingButtonState /*from*/,
+                                               InkingButtonState /*to*/) {
     // 只同步基类颜色（和静态版同一条），**不标脏**：三态切换的画面变化由
     // 状态机自己记成"待报告"，下一帧 `onButtonDisplayAdvanced` 会把它报出来。
     syncBaseColor();
@@ -306,14 +305,13 @@ void InkingDynamicButton::onRender(float pixelX, float pixelY) const {
     // 和静态版同一份实现（src/button/ButtonPaint.cpp）：动态按钮差的是
     // 几何与输入，不是"画出来长什么样"。
     // 颜色与变换都取**当前显示**那一份（命中那边对同一个变换取逆）。
-    detail::PaintButtonAppearance(*this, GetShape(), GetAppearance(),
+    inking_detail::PaintButtonAppearance(*this, GetShape(), GetAppearance(),
                                   _data.stroke, _data.shadow,
                                   GetDisplayColor(), GetDisplayTransform(),
                                   pixelX, pixelY);
     if (_data.HasLabel()) {
-        detail::PaintButtonText(*this, _data, GetDisplayTransform(), pixelX,
+        inking_detail::PaintButtonText(*this, _data, GetDisplayTransform(), pixelX,
                                 pixelY);
     }
 }
 
-}  // namespace inking

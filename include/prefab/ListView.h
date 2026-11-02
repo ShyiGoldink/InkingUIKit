@@ -19,15 +19,15 @@
 // 十几二十个，`GetItemCount()` 才是 1000。
 //
 // 占位块承担两个"框架没给写入口"的地方：静态档改不了自己的几何，而布局规则
-// （`LayoutItem` / `LayoutSpec`）也是构造期定死的——所以"把第一行顶下去"只能靠
+// （`InkingLayoutItem` / `InkingLayoutSpec`）也是构造期定死的——所以"把第一行顶下去"只能靠
 // **在它前面放一个已知高度的兄弟**。这是"用现有配件组装"那条路的解法，不是绕过。
 //
 // ---------------------------------------------------------------------------
 // 另外两条现成的机制直接用，不重写
 //
-//   - **滚动**：`PanelData::scroll`（B12）——滚轮 / 拖滑块 / 点轨道全在基类里；
+//   - **滚动**：`InkingPanelData::scroll`（B12）——滚轮 / 拖滑块 / 点轨道全在基类里；
 //     本类只重写那几个指针钩子，在**基类处理完之后**同步一次可见窗口。
-//   - **裁剪**：`PanelData::clipChildren`——绘制与命中同源（A5），所以"滚出去的
+//   - **裁剪**：`InkingPanelData::clipChildren`——绘制与命中同源（A5），所以"滚出去的
 //     行点不到"是白拿的。本类构造时强制打开它（列表不能滚出框外还看得见）。
 //
 // 第一版**不做**：拖拽重排、行内编辑、多列 / 排序、树形缩进（要树再单开一条）。
@@ -41,8 +41,7 @@
 #include <string>
 #include <vector>
 
-namespace inking {
-namespace prefab {
+namespace inking_prefab {
 
 class ListRow;
 
@@ -50,11 +49,11 @@ class ListRow;
  * @brief C3：预制列表（可滚、可选、可只建可见项）。
  *
  * ```cpp
- * inking::prefab::ListViewStyle style = inking::prefab::ListViewStyle::MakeDefault();
+ * inking_prefab::ListViewStyle style = inking_prefab::ListViewStyle::MakeDefault();
  * style.panel.width = 360;
  * style.panel.height = 480;
  * style.windowed = true;          // 只建可见项（1000 项也只有十几个节点）
- * inking::prefab::ListView list(&scene, style);
+ * inking_prefab::ListView list(&scene, style);
  * list.SetItems(rows);
  * list.selectionChanged.Subscribe([](const std::string& id, int index) { ... });
  * ```
@@ -132,7 +131,7 @@ public:
 
     /// 第 `index` 行的矩形（**相对视口左上角**，设计坐标）。
     /// 没建出来的行（窗口化时在可见区之外）返回零矩形。
-    ShapeBounds GetRowRect(int index) const;
+    InkingShapeBounds GetRowRect(int index) const;
 
     /// 第 `index` 行的节点；没建出来时 nullptr。
     ListRow* GetRowNode(int index) const;
@@ -160,7 +159,7 @@ protected:
     void onAnimationTick(float deltaSeconds) override;
     void onPointerWheel(float deltaX, float deltaY) override;
     /// 按下 / 抬起。**只认主键**（行选中 / 拖动滚动）；右键菜单留给下一版（0.5.0）。
-    void onPointerPress(PointerButton button, bool press) override;
+    void onPointerPress(InkingPointerButton button, bool press) override;
     void onPointerDrag(float designX, float designY, float deltaX,
                        float deltaY) override;
 
@@ -197,5 +196,4 @@ private:
     int _builtLast = -1;
 };
 
-}  // namespace prefab
-}  // namespace inking
+}  // namespace inking_prefab

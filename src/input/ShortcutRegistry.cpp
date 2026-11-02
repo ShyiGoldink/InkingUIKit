@@ -5,13 +5,11 @@
 
 #include <utility>
 
-namespace inking {
-
 namespace {
-constexpr const char* kModuleName = "Shortcut";
+constexpr const char* kModuleName = "InkingShortcut";
 }  // namespace
 
-ShortcutRegistry::Id ShortcutRegistry::Bind(const Shortcut& shortcut,
+InkingShortcutRegistry::Id InkingShortcutRegistry::Bind(const InkingShortcut& shortcut,
                                             Action action, std::string label) {
     if (shortcut.Empty() || !action) {
         return 0;
@@ -36,7 +34,7 @@ ShortcutRegistry::Id ShortcutRegistry::Bind(const Shortcut& shortcut,
     return _entries.back().id;
 }
 
-bool ShortcutRegistry::Unbind(Id id) {
+bool InkingShortcutRegistry::Unbind(Id id) {
     if (id == 0) {
         return false;
     }
@@ -49,11 +47,11 @@ bool ShortcutRegistry::Unbind(Id id) {
     return false;
 }
 
-bool ShortcutRegistry::IsTaken(const Shortcut& shortcut) const noexcept {
+bool InkingShortcutRegistry::IsTaken(const InkingShortcut& shortcut) const noexcept {
     return Find(shortcut) != 0;
 }
 
-ShortcutRegistry::Id ShortcutRegistry::Find(const Shortcut& shortcut)
+InkingShortcutRegistry::Id InkingShortcutRegistry::Find(const InkingShortcut& shortcut)
     const noexcept {
     if (shortcut.Empty()) {
         return 0;
@@ -66,7 +64,7 @@ ShortcutRegistry::Id ShortcutRegistry::Find(const Shortcut& shortcut)
     return 0;
 }
 
-std::string ShortcutRegistry::GetLabel(Id id) const {
+std::string InkingShortcutRegistry::GetLabel(Id id) const {
     for (const Entry& entry : _entries) {
         if (entry.id == id) {
             return entry.label;
@@ -75,18 +73,18 @@ std::string ShortcutRegistry::GetLabel(Id id) const {
     return {};
 }
 
-std::size_t ShortcutRegistry::Dispatch(KeyboardInput& input) {
+std::size_t InkingShortcutRegistry::Dispatch(InkingKeyboardInput& input) {
     if (_entries.empty()) {
         return 0;
     }
 
-    const std::vector<KeyInputEvent>& events = input.GetFrameEvents();
+    const std::vector<InkingKeyInputEvent>& events = input.GetFrameEvents();
     std::vector<std::size_t> consumed;
     std::vector<Action> fired;
 
     for (std::size_t index = 0; index < events.size(); ++index) {
-        const KeyInputEvent& event = events[index];
-        if (event.kind != KeyInputEvent::Kind::Down) {
+        const InkingKeyInputEvent& event = events[index];
+        if (event.kind != InkingKeyInputEvent::Kind::Down) {
             continue;  // 抬起与文本输入不参与快捷键
         }
         for (const Entry& entry : _entries) {
@@ -115,4 +113,3 @@ std::size_t ShortcutRegistry::Dispatch(KeyboardInput& input) {
     return fired.size();
 }
 
-}  // namespace inking

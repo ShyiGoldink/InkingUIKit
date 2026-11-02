@@ -4,9 +4,7 @@
 #include <string>
 #include <string_view>
 
-namespace inking {
-
-inline constexpr const char* kTextEditModuleName = "TextEditState";
+inline constexpr const char* InkingTextEditModuleName = "InkingTextEditState";
 
 /**
  * @brief 可编辑文本的**状态机**（B7）：光标、选区、插入 / 删除、剪贴板。
@@ -33,9 +31,9 @@ inline constexpr const char* kTextEditModuleName = "TextEditState";
  *
  * **没做**的（写在文档里，不含糊）：撤销 / 重做、双向文本、字素簇
  * （emoji 组合、国旗是多个码点，这里按码点删）、点击的"字内精确定位"
- * （要排版层的测量，组件那一层用 `TextLine` 做）。
+ * （要排版层的测量，组件那一层用 `InkingTextLine` 做）。
  */
-class TextEditState {
+class InkingTextEditState {
 public:
     /// 一次操作**改动了什么**——组件靠它决定"要不要重排 / 重画"。
     ///
@@ -47,9 +45,9 @@ public:
         bool selection = false;  ///< 选区变了 ⇒ 至少重绘
     };
 
-    TextEditState() = default;
+    InkingTextEditState() = default;
 
-    explicit TextEditState(std::string text) { SetText(std::move(text)); }
+    explicit InkingTextEditState(std::string text) { SetText(std::move(text)); }
 
     // ---------------- 文本 ----------------
 
@@ -165,4 +163,3 @@ private:
     Change lastChange_{};
 };
 
-}  // namespace inking

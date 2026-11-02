@@ -1,6 +1,6 @@
 // 菜单浮窗的实现（`include/prefab/MenuPopup.h`）。
 //
-// 三件事：竖排布局（构造时把 `LayoutSpec` 交给基类、项数变了重算高度）、
+// 三件事：竖排布局（构造时把 `InkingLayoutSpec` 交给基类、项数变了重算高度）、
 // 项注册（点击与局部快捷键走同一条激活路径）、局部快捷键（自己的表，不碰全局）。
 
 #include <prefab/MenuPopup.h>
@@ -11,19 +11,17 @@
 #include <detail/InkLog.h>
 #include <prefab/PrefabTheme.h>
 #include <window/InkingWindow.h>
-
-namespace inking {
-namespace prefab {
+namespace inking_prefab {
 namespace {
 
 constexpr const char* kMenuPopupModuleName = "MenuPopup";
 
-/// `MenuPopupStyle` → `PanelData`：只补"调用方没显式指定"的那几项。
+/// `MenuPopupStyle` → `InkingPanelData`：只补"调用方没显式指定"的那几项。
 ///
 /// 布局规则在这里落地（`InkingWidget` 没有运行期 `SetLayoutSpec`，只能构造时给）：
 /// 竖排 + 固定间距 + 四边等距内边距 + 交叉轴拉满（项宽度跟着菜单走）。
-PanelData MakePanelData(const MenuPopupStyle& style) {
-    PanelData panel = style.panel;
+InkingPanelData MakePanelData(const MenuPopupStyle& style) {
+    InkingPanelData panel = style.panel;
 
     if (panel.width <= 0) {
         panel.width = style.itemWidth + style.padding * 2;
@@ -36,13 +34,13 @@ PanelData MakePanelData(const MenuPopupStyle& style) {
     }
 
     if (!panel.layout.Valid()) {
-        LayoutSpec spec;
-        spec.kind = LayoutKind::Stack;
-        spec.axis = LayoutAxis::Vertical;
+        InkingLayoutSpec spec;
+        spec.kind = InkingLayoutKind::Stack;
+        spec.axis = InkingLayoutAxis::Vertical;
         spec.gap = static_cast<float>(style.gap);
-        spec.align = LayoutAlign::Stretch;
+        spec.align = InkingLayoutAlign::Stretch;
         const float pad = static_cast<float>(style.padding);
-        spec.padding = LayoutSpacing{pad, pad, pad, pad};
+        spec.padding = InkingLayoutSpacing{pad, pad, pad, pad};
         panel.layout = spec;
     }
     return panel;
@@ -61,24 +59,24 @@ MenuPopupStyle MenuPopupStyle::MakeDefault() {
     style.panel.width = style.itemWidth + style.padding * 2;
     style.panel.height = style.padding * 2;
     style.panel.zIndex = style.zIndex;
-    style.panel.shape = ShapeSpec::RoundedRect(theme::kRadiusPanel);
+    style.panel.shape = InkingShapeSpec::RoundedRect(theme::kRadiusPanel);
     style.panel.closed.color = theme::kSurface;
-    style.panel.closed.stroke = StrokeSpec{1.0f, theme::kOutline};
-    style.panel.closed.shadow = ShadowSpec{0.0f, 6.0f, 0x33000000u};
+    style.panel.closed.stroke = InkingStrokeSpec{1.0f, theme::kOutline};
+    style.panel.closed.shadow = InkingShadowSpec{0.0f, 6.0f, 0x33000000u};
 
     // 项：白底、悬停浅紫、圆角（行是表格单元才用直角，菜单项不是）。
     style.itemLook.width = style.itemWidth;
     style.itemLook.height = style.itemHeight;
-    style.itemLook.shape = ShapeSpec::RoundedRect(theme::kRadiusItem);
+    style.itemLook.shape = InkingShapeSpec::RoundedRect(theme::kRadiusItem);
     style.itemLook.normal =
-        ButtonAppearance(AppearanceType::Color, theme::kSurface);
+        InkingButtonAppearance(InkingAppearanceType::Color, theme::kSurface);
     style.itemLook.hover =
-        ButtonAppearance(AppearanceType::Color, theme::kAccentSoft);
+        InkingButtonAppearance(InkingAppearanceType::Color, theme::kAccentSoft);
     style.itemLook.onclicked =
-        ButtonAppearance(AppearanceType::Color, theme::kAccentSoftPressed);
+        InkingButtonAppearance(InkingAppearanceType::Color, theme::kAccentSoftPressed);
     style.itemLook.text.fontSize = 20.0f;
-    style.itemLook.text.align = TextAlignH::Left;
-    style.itemLook.text.alignV = TextAlignV::Middle;
+    style.itemLook.text.align = InkingTextAlignH::Left;
+    style.itemLook.text.alignV = InkingTextAlignV::Middle;
     style.itemLook.textColor = theme::kTextPrimary;
     return style;
 }
@@ -111,11 +109,11 @@ InkingWidget* MenuPopup::AddItem(const ItemFactory& factory) {
     return AddItem(factory());
 }
 
-InkingStaticButton* MenuPopup::AddButton(const ButtonData& look,
+InkingStaticButton* MenuPopup::AddButton(const InkingButtonData& look,
                                         const std::string& text,
                                         Action onActivate,
-                                        const Shortcut& shortcut) {
-    ButtonData use = look;
+                                        const InkingShortcut& shortcut) {
+    InkingButtonData use = look;
     // 尺寸留 0 = "跟随菜单"：不加这一段，`AddButton(look, text)` 传一份只写了
     // 颜色的 look，项就是 0×0——布局里看得见一个 0 高的洞，不报错。
     if (use.width <= 0) {
@@ -188,7 +186,7 @@ void MenuPopup::onMenuActivated(std::size_t /*index*/, InkingWidget* /*item*/) {
 // 局部快捷键
 // ---------------------------------------------------------------------------
 
-bool MenuPopup::BindLocalShortcut(const Shortcut& shortcut, Action action,
+bool MenuPopup::BindLocalShortcut(const InkingShortcut& shortcut, Action action,
                                   std::string label) {
     if (shortcut.Empty() || !action) {
         return false;
@@ -197,7 +195,7 @@ bool MenuPopup::BindLocalShortcut(const Shortcut& shortcut, Action action,
         label = shortcut.ToString();
     }
 
-    // 全局表优先：窗口层**先**跑 `ShortcutRegistry` 并消费掉按键，所以这里
+    // 全局表优先：窗口层**先**跑 `InkingShortcutRegistry` 并消费掉按键，所以这里
     // 被占用的组合永远收不到。绑之前就报出来，别让它变成"按了没反应"。
     if (InkingWindow::Instance().GetShortcuts().IsTaken(shortcut)) {
         INK_LOG_WARN(kMenuPopupModuleName,
@@ -205,7 +203,7 @@ bool MenuPopup::BindLocalShortcut(const Shortcut& shortcut, Action action,
         return false;
     }
 
-    // 局部表内部先到先得（与 `ShortcutRegistry` 同一条：不静默覆盖）。
+    // 局部表内部先到先得（与 `InkingShortcutRegistry` 同一条：不静默覆盖）。
     for (const LocalShortcut& entry : _localShortcuts) {
         if (entry.shortcut == shortcut) {
             INK_LOG_WARN(kMenuPopupModuleName,
@@ -219,7 +217,7 @@ bool MenuPopup::BindLocalShortcut(const Shortcut& shortcut, Action action,
     return true;
 }
 
-void MenuPopup::onKeyDown(const KeyEvent& key) {
+void MenuPopup::onKeyDown(const InkingKeyEvent& key) {
     if (!IsOpen()) {
         return;
     }
@@ -243,12 +241,12 @@ void MenuPopup::onKeyDown(const KeyEvent& key) {
 // 查询
 // ---------------------------------------------------------------------------
 
-ShapeBounds MenuPopup::GetItemRect(std::size_t index) const {
+InkingShapeBounds MenuPopup::GetItemRect(std::size_t index) const {
     if (index >= _items.size() || _items[index] == nullptr) {
-        return ShapeBounds{};
+        return InkingShapeBounds{};
     }
     const InkingWidget* node = _items[index];
-    return ShapeBounds{node->GetX(), node->GetY(),
+    return InkingShapeBounds{node->GetX(), node->GetY(),
                        static_cast<float>(node->GetWidth()),
                        static_cast<float>(node->GetHeight())};
 }
@@ -257,5 +255,4 @@ InkingWidget* MenuPopup::GetItemNode(std::size_t index) const {
     return index < _items.size() ? _items[index] : nullptr;
 }
 
-}  // namespace prefab
-}  // namespace inking
+}  // namespace inking_prefab

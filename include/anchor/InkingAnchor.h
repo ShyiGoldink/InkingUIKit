@@ -22,8 +22,6 @@
 
 #include <cstdint>
 
-namespace inking {
-
 /**
  * @brief 定位基类。
  *
@@ -47,10 +45,10 @@ public:
     // ---------------- 只读查询：锚点与位置 ----------------
 
     /// 自身锚点：自身矩形上的哪个百分比点，去对上级锚点。默认左上角。
-    const AnchorPoint& GetSelfAnchor() const noexcept { return _selfAnchor; }
+    const InkingAnchorPoint& GetSelfAnchor() const noexcept { return _selfAnchor; }
 
     /// 上级锚点：父级矩形上的哪个百分比点。默认左上角。
-    const AnchorPoint& GetTraceAnchor() const noexcept { return _traceAnchor; }
+    const InkingAnchorPoint& GetTraceAnchor() const noexcept { return _traceAnchor; }
 
     /// 对齐之后再挪一点（设计坐标）。
     float GetOffsetX() const noexcept { return _offsetX; }
@@ -128,7 +126,7 @@ protected:
     //
     // 定位层只需要这一条父链；子表与场景登记由 Widget 层的构造体接手
     // （它在本构造体之后跑，所以 `_parent` 已经就位）。
-    InkingAnchor(InkingAnchor* parent, const AnchorData& data) noexcept
+    InkingAnchor(InkingAnchor* parent, const InkingAnchorData& data) noexcept
         : _selfAnchor(data.selfAnchor),
           _traceAnchor(data.traceAnchor),
           _offsetX(data.offsetX),
@@ -149,8 +147,8 @@ protected:
     // 几何写入口在动态档上（`InkingDynamicWidget`），所以这里的字段由那一档 或布局通道写。
     // 本类只读。
 
-    AnchorPoint _selfAnchor{};   //< 自身锚点
-    AnchorPoint _traceAnchor{};  //< 上级锚点（追踪的父级锚点）
+    InkingAnchorPoint _selfAnchor{};   //< 自身锚点
+    InkingAnchorPoint _traceAnchor{};  //< 上级锚点（追踪的父级锚点）
 
     float _offsetX = 0.0f;  ///< 对齐之后的微调，设计坐标
     float _offsetY = 0.0f;
@@ -187,4 +185,3 @@ protected:
     InkingAnchor* _parent = nullptr;
 };
 
-}  // namespace inking

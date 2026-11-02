@@ -26,19 +26,17 @@
 #include <string>
 #include <vector>
 
-namespace inking {
-
-class KeyboardInput;
+class InkingKeyboardInput;
 
 /**
  * @brief 快捷键 → 回调的绑定表。
  *
  * ```cpp
- * auto id = registry.Bind(inking::Shortcut::Parse("Ctrl+S"), Save, "保存");
+ * auto id = registry.Bind(InkingShortcut::Parse("Ctrl+S"), Save, "保存");
  * registry.Unbind(id);
  * ```
  */
-class ShortcutRegistry {
+class InkingShortcutRegistry {
 public:
     using Action = std::function<void()>;
 
@@ -56,16 +54,16 @@ public:
      * @param action   回调；空的也返回 0。
      * @param label    人读的名字（冲突日志与自检提示用）。
      */
-    Id Bind(const Shortcut& shortcut, Action action, std::string label = {});
+    Id Bind(const InkingShortcut& shortcut, Action action, std::string label = {});
 
     /// 按 id 退订。@return 真的退掉了才返回 true。
     bool Unbind(Id id);
 
     /// 这个组合被占了吗（注册前的预检 / 冲突提示）。
-    bool IsTaken(const Shortcut& shortcut) const noexcept;
+    bool IsTaken(const InkingShortcut& shortcut) const noexcept;
 
     /// 占着这个组合的 id（没人占返回 0）。
-    Id Find(const Shortcut& shortcut) const noexcept;
+    Id Find(const InkingShortcut& shortcut) const noexcept;
 
     /// 现在绑了几条。
     std::size_t Count() const noexcept { return _entries.size(); }
@@ -85,7 +83,7 @@ public:
      *
      * @return 这一帧真的触发了几个快捷键。
      */
-    std::size_t Dispatch(KeyboardInput& input);
+    std::size_t Dispatch(InkingKeyboardInput& input);
 
     /// 全部退订（窗口重建 / 自检复位用）。
     void Clear() noexcept { _entries.clear(); }
@@ -93,7 +91,7 @@ public:
 private:
     struct Entry {
         Id id = 0;
-        Shortcut shortcut{};
+        InkingShortcut shortcut{};
         Action action{};
         std::string label{};
     };
@@ -104,4 +102,3 @@ private:
     Id _nextId = 1;
 };
 
-}  // namespace inking

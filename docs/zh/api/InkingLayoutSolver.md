@@ -8,13 +8,13 @@
 
 为什么单拎出来：布局的坑几乎全在**算术**上（间距、剩余空间怎么分、min/max 什么时候夹、
 溢出怎么办），而那些都能用数字钉死。真正的组件接线（把结果写回去 + 重烘命中表）
-只是薄薄一层——那一层在 `detail::layout::ArrangeSubtree`
+只是薄薄一层——那一层在 `inking_detail::layout::ArrangeSubtree`
 （声明在 `include/widget/InkingWidget.h`、实现在 `src/widget/InkingWidget.cpp`）。
 
-**规则的数据面在 [InkingLayout.md](InkingLayout.md)**：`LayoutSpec` / `LayoutItem` /
-`LayoutRect` / `LayoutSize` / `LayoutConstraints`。本页只讲怎么解。
+**规则的数据面在 [InkingLayout.md](InkingLayout.md)**：`InkingLayoutSpec` / `InkingLayoutItem` /
+`InkingLayoutRect` / `InkingLayoutSize` / `InkingLayoutConstraints`。本页只讲怎么解。
 
-`#include <layout/InkingLayoutSolver.h>`（`namespace inking::detail::layout`）。
+`#include <layout/InkingLayoutSolver.h>`（`namespace inking_detail::layout`）。
 
 ## 用到的数据结构
 
@@ -22,8 +22,8 @@
 
 ```C++
 struct LayoutInput {
-    LayoutSize desired{};   // Measure 出来的期望尺寸（内容驱动：文字多高、图片多大）
-    LayoutItem item{};      // 这个孩子的意愿：margin / fillMain / min-max / selfAlign
+    InkingLayoutSize desired{};   // Measure 出来的期望尺寸（内容驱动：文字多高、图片多大）
+    InkingLayoutItem item{};      // 这个孩子的意愿：margin / fillMain / min-max / selfAlign
 };
 ```
 
@@ -31,8 +31,8 @@ struct LayoutInput {
 
 ```C++
 struct LayoutOutput {
-    LayoutRect rect{};      // 最终位置与尺寸，相对**父级左上角**
-    LayoutSize size{};      // 最终尺寸（与 rect 的 width/height 一致，方便取用）
+    InkingLayoutRect rect{};      // 最终位置与尺寸，相对**父级左上角**
+    InkingLayoutSize size{};      // 最终尺寸（与 rect 的 width/height 一致，方便取用）
 };
 ```
 
@@ -41,8 +41,8 @@ struct LayoutOutput {
 >**Solve(spec, containerSize, items)**
 
 ```C++
-std::vector<LayoutOutput> Solve(const LayoutSpec& spec,
-                                const LayoutSize& containerSize,
+std::vector<LayoutOutput> Solve(const InkingLayoutSpec& spec,
+                                const InkingLayoutSize& containerSize,
                                 const std::vector<LayoutInput>& items);
 ```
 
@@ -73,13 +73,13 @@ std::vector<LayoutOutput> Solve(const LayoutSpec& spec,
 | --- | --- | --- |
 | 内容超出（剩余 < 0） | 按 Start 排，溢出不管 | 挤 / 缩会把"内容放不下"这个事实藏起来；裁剪 / 滚动是容器的职责 |
 | 多个 `fillMain` | 均分，再各自夹 max | 剩余空间是"大家一起吃"；夹完还有剩就留在那里（不再二次分配，避免迭代） |
-| `maxWidth/maxHeight` 为 0 | 视为**不限** | "0 = 不限"与 `LayoutConstraints` / `maxWidth` 的约定统一 |
+| `maxWidth/maxHeight` 为 0 | 视为**不限** | "0 = 不限"与 `InkingLayoutConstraints` / `maxWidth` 的约定统一 |
 
 ## 与上层的接线（数据流）
 
 ```
-容器 LayoutSpec ──┐
-                  ├─► detail::layout::ArrangeSubtree(InkingWidget& container)
+容器 InkingLayoutSpec ──┐
+                  ├─► inking_detail::layout::ArrangeSubtree(InkingWidget& container)
 孩子 MeasureLayout ┘            │  读 spec + 每个孩子的 desired
                                 ▼
                         layout::Solve(...)  →  LayoutOutput[]
@@ -107,7 +107,7 @@ std::vector<LayoutOutput> Solve(const LayoutSpec& spec,
 1. **指望求解器帮忙处理溢出**：它不挤不缩。要么裁剪（`clipChildren`），要么滚动（`scroll`）。
 2. **在 `MeasureLayout` 里改自己的尺寸**：那会让"问一遍"变成"改一遍"，
    嵌套重排时结果不可预测。
-3. **`columns <= 0`**：`LayoutSpec::columns` 至少 1（`Valid()` 只看 `kind`，
+3. **`columns <= 0`**：`InkingLayoutSpec::columns` 至少 1（`Valid()` 只看 `kind`，
    这个值靠生成期 / 调用方把关）。
 4. **用 `Solve` 的结果直接当绝对坐标**：它相对**父级左上角**，不是屏幕。
 

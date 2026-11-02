@@ -34,22 +34,20 @@
 #include <utility>
 #include <vector>
 
-namespace inking {
-
 /// 模块名常量（日志用；约定：每个模块都暴露一个）。
-inline constexpr const char* kSpriteGroupModuleName = "InkingSpriteGroup";
+inline constexpr const char* InkingSpriteGroupModuleName = "InkingSpriteGroup";
 
 /**
- * @brief 一个角色的全部动作：**名字 → 一份 `SpriteData`**（顺序 = 声明顺序）。
+ * @brief 一个角色的全部动作：**名字 → 一份 `InkingSpriteData`**（顺序 = 声明顺序）。
  *
  * 用 `vector<pair>` 而不是 `map`：顺序有意义（第 0 个是默认动作），而且动作数
  * 只有几个，线性查比哈希更省也更可读。
  *
- * 每条 `SpriteData` 都是**完整配置**（素材、fps、loop、事件、宽高），组不替它们
+ * 每条 `InkingSpriteData` 都是**完整配置**（素材、fps、loop、事件、宽高），组不替它们
  * 补默认值——"待机 12fps 循环、攻击 8fps 不循环"本来就是两条独立的配置。
  */
-struct SpriteGroupData {
-    std::vector<std::pair<std::string, SpriteData>> animations;
+struct InkingSpriteGroupData {
+    std::vector<std::pair<std::string, InkingSpriteData>> animations;
 
     /// 找不到时的返回值（**不是** 0：0 是第一个动作）。
     static constexpr std::size_t kNotFound = static_cast<std::size_t>(-1);
@@ -60,8 +58,8 @@ struct SpriteGroupData {
     /**
      * @brief 组自身的数据校验：返回**错误说明**，空串 = 通过。
      *
-     * 只管"组"这一层（空表 / 动作名为空 / 重名）。每条 `SpriteData` 自己的合法性
-     * 由 `SpriteData::Validate()` 判——换到那条动作时组件会照常报错并 `IsValid()`
+     * 只管"组"这一层（空表 / 动作名为空 / 重名）。每条 `InkingSpriteData` 自己的合法性
+     * 由 `InkingSpriteData::Validate()` 判——换到那条动作时组件会照常报错并 `IsValid()`
      * 为假（判据不在这里复制一份）。
      */
     std::string Validate() const;
@@ -75,7 +73,7 @@ struct SpriteGroupData {
  */
 class InkingSpriteGroup : public InkingSprite {
 public:
-    InkingSpriteGroup(InkingWidget* parent, const SpriteGroupData& data,
+    InkingSpriteGroup(InkingWidget* parent, const InkingSpriteGroupData& data,
                       const std::string& initialAnimation = std::string());
 
     /**
@@ -110,15 +108,14 @@ public:
     std::vector<std::string> GetAnimationNames() const;
 
     /// 构造时那份组数据。
-    const SpriteGroupData& GetGroupData() const noexcept;
+    const InkingSpriteGroupData& GetGroupData() const noexcept;
 
     /// 组这一层的错误说明（空表 / 重名 / 动作名为空）；空串 = 合法。
     const std::string& GetGroupError() const noexcept;
 
 private:
-    SpriteGroupData _group{};
+    InkingSpriteGroupData _group{};
     std::string _currentAnimation;
     std::string _groupError;
 };
 
-}  // namespace inking

@@ -15,7 +15,7 @@
 
 | | 谁 | 什么时候变 |
 | --- | --- | --- |
-| `GetWidth()` / `GetHeight()`（继承自基类） | **设计画布**大小（`kDesignWidth × kDesignHeight`） | 编译期定型，构造后不动 |
+| `GetWidth()` / `GetHeight()`（继承自基类） | **设计画布**大小（`InkingLegacyDesignWidth × InkingLegacyDesignHeight`） | 编译期定型，构造后不动 |
 | `GetWindowWidth()` / `GetWindowHeight()` | **窗口像素**尺寸 | 运行期可调（`setWindowWidth` / 缩放 / 全屏） |
 
 窗口怎么拉都不改设计坐标里的几何：设计空间固定，靠 letterbox 做整幅等比换算，
@@ -36,8 +36,8 @@
   2.   刷展示倍率 syncMagnification
   2b.  Scene::DispatchPointer     ← 先按位置算焦点
   2c.  Scene::DispatchKeyboard    ← 再把按键推给"新的"焦点
-  3.   Timeline::Advance(delta)   ← 逻辑步 0..N 次 + 每帧回调 1 次
-  3b.  AudioTick(delta)           ← 音频与场景无关，不能挂在场景通道上
+  3.   InkingTimeline::Advance(delta)   ← 逻辑步 0..N 次 + 每帧回调 1 次
+  3b.  InkingAudioTick(delta)           ← 音频与场景无关，不能挂在场景通道上
   4.   drawFrame（清屏色 + 场景 + 指针标记 + Present）
   5.   Scene::ConsumeFrameDirty   ← 脏的统一消费（只对活跃场景）
   5b.  mouse/keyboard ResetFrameFlags（瞬时状态一帧清一次）
@@ -58,7 +58,7 @@
 ## 非阻塞跑帧（0.5.0 D 组）
 
 ```C++
-inking::InkingWindow& window = inking::InkingWindow::Instance();
+InkingWindow& window = InkingWindow::Instance();
 window.SetFixedDelta(1.0f / 60.0f);      // D4：确定性时间步（0 = 用墙上时钟）
 window.Open("main");                     // D1：建窗口 + 预加载，**不进循环**
 window.RunFrames(2);                     // 跑两帧：事件泵 / 派发 / 渲染全走一遍
@@ -78,7 +78,7 @@ window.RequestClose(failures);           // D5：退出码 = 失败项数，给 
 | `SetFixedDelta(s)` | 固定每帧 delta，**且关掉节流**（跑 100 帧不用等 1.6 秒） |
 | `RenderToTexture(path,w,h,scene)` | 离屏出图：**不建窗口**、不需要 dummy 驱动 |
 
-`RenderToTexture` 走的是**同一条** `SceneLibrary::RenderScene`（形状 / 文字 / 裁剪 /
+`RenderToTexture` 走的是**同一条** `InkingSceneLibrary::RenderScene`（形状 / 文字 / 裁剪 /
 装饰笔全在内），不是"另画一份"。落盘是"先编码到内存，再 `fopen`（失败才退回 SDL 文件层）"
 ——实测受限环境里 `SDL_SavePNG(surface, path)` 会把文件名截断却返回 true。
 
@@ -163,39 +163,39 @@ using ExitConfirmHandler = std::function<bool()>;
 >**config/window_config.h**
 
 ```C++
-inline constexpr int kDefaultDesignWidth  = 1280;   // 默认值，不随 SetDesignSize 变
-inline constexpr int kDefaultDesignHeight = 720;
-int  DesignWidth() noexcept;                        // 运行期**实际值**
-int  DesignHeight() noexcept;
-void GetDesignSize(int& width, int& height) noexcept;
-bool SetDesignSize(int width, int height);          // 必须在构造场景 / 窗口之前
+inline constexpr int InkingDefaultDesignWidth  = 1280;   // 默认值，不随 InkingSetDesignSize 变
+inline constexpr int InkingDefaultDesignHeight = 720;
+int  InkingDesignWidth() noexcept;                        // 运行期**实际值**
+int  InkingDesignHeight() noexcept;
+void InkingGetDesignSize(int& width, int& height) noexcept;
+bool InkingSetDesignSize(int width, int height);          // 必须在构造场景 / 窗口之前
 ```
 
 设计尺寸是**运行期**的（`CXXCSS/config.json` 的 `design` 段决定的），库内一律读访问器。
-`kDesignWidth` / `kDesignHeight` 仍保留为**默认值别名**，只为源码兼容——它们永远不随
-`SetDesignSize` 变化，别拿它当"当前设计尺寸"用。
+`InkingLegacyDesignWidth` / `InkingLegacyDesignHeight` 仍保留为**默认值别名**，只为源码兼容——它们永远不随
+`InkingSetDesignSize` 变化，别拿它当"当前设计尺寸"用。
 
-`SetDesignSize` 在窗口或场景**已经按旧尺寸定型**之后会拒绝改动（返回 false + ERROR），
+`InkingSetDesignSize` 在窗口或场景**已经按旧尺寸定型**之后会拒绝改动（返回 false + ERROR），
 不做"一半新一半旧"的半生效。详细理由见 `CXXCSS.md` §3.11。
 
->**window/WindowConfig.h**
+>**window/InkingWindowConfig.h**
 
 ```C++
-struct WindowConfig {                 // 每一项都是 std::optional：空 = 不动
+struct InkingWindowConfig {                 // 每一项都是 std::optional：空 = 不动
     std::optional<bool>          borderless;
     std::optional<bool>          roundedCorners;
     std::optional<bool>          transparent;    // 透明窗口（只能 Show() 之前）
     std::optional<std::uint32_t> background;     // 0xAARRGGBB
     std::optional<bool>          fullscreen;
 };
-int ApplyWindowConfig(const WindowConfig& config);   // 返回没生效的字段数
+int InkingApplyWindowConfig(const InkingWindowConfig& config);   // 返回没生效的字段数
 ```
 
 **启动配置 + 回读校验**。为什么不自己连调 `SetBorderless` 那四个：它们的返回值是"真的变了
 没有"，幂等调用返回 false，和失败长得一样；`SetBackgroundColor` 干脆是 void。所以判据只能
 是"读完再比"——这件事收在这一个函数里，失败逐条打 ERROR。
 
-它**会构造窗口单例**，所以要排在 `SetDesignSize()` 之后（窗口根锚点按设计尺寸定型）。
+它**会构造窗口单例**，所以要排在 `InkingSetDesignSize()` 之后（窗口根锚点按设计尺寸定型）。
 `CXXCSS/config.json` 的 `window` 段就是它；生成的 `ApplyConfig()` 已经把顺序写死了。
 
 ## APIS
@@ -352,7 +352,7 @@ bool IsTransparentApplied() const noexcept;
 - **只能建窗前设**（`Show()` / `Open()` 之前）。SDL3 的透明是建窗标志
   `SDL_WINDOW_TRANSPARENT`，没有事后切换的 API；窗口已打开时调用返回 false + 一条 WARN。
 - `IsTransparentRequested()` 是**请求值**，`SetTransparent` 的返回值分不清"幂等"和
-  "窗口已开"，所以 `WindowConfig` 的回读比的是它。
+  "窗口已开"，所以 `InkingWindowConfig` 的回读比的是它。
 - `IsTransparentApplied()` 是"标志**进了窗口**"（建窗后读 `SDL_GetWindowFlags`），
   **不是"桌面真的透了"**——合成结果读不回来，只能真机目视 / 截图读 alpha。
 
@@ -415,8 +415,8 @@ bool HasPendingCapture() const noexcept;
 >**GetShortcuts()**
 
 ```C++
-ShortcutRegistry& GetShortcuts() noexcept;
-const ShortcutRegistry& GetShortcuts() const noexcept;
+InkingShortcutRegistry& GetShortcuts() noexcept;
+const InkingShortcutRegistry& GetShortcuts() const noexcept;
 ```
 
 进程级快捷键表（唯一持有者）。**注册者必须在析构时 `Unbind`**——这张表比它们活得久，
@@ -424,18 +424,18 @@ const ShortcutRegistry& GetShortcuts() const noexcept;
 
 ### 自由函数
 
->**ApplyWindowConfig(const WindowConfig&)**
+>**InkingApplyWindowConfig(const InkingWindowConfig&)**
 
 ```C++
-int ApplyWindowConfig(const WindowConfig& config);   // namespace inking
+int InkingApplyWindowConfig(const InkingWindowConfig& config);   // namespace inking
 ```
 
-见上面「用到的数据结构 → window/WindowConfig.h」。返回**没生效的字段数**（0 = 全部生效）。
+见上面「用到的数据结构 → window/InkingWindowConfig.h」。返回**没生效的字段数**（0 = 全部生效）。
 
->**GetLastRenderedScene()**
+>**InkingGetLastRenderedScene()**
 
 ```C++
-InkingScene* GetLastRenderedScene() noexcept;   // namespace inking
+InkingScene* InkingGetLastRenderedScene() noexcept;   // namespace inking
 ```
 
 上一帧真的渲染了哪个场景；没有场景时为 `nullptr`。纯自检观察点：`Show()` 返回时窗口已经
@@ -458,7 +458,7 @@ SDL_VIDEO_DRIVER=dummy INK_CAPTURE=/tmp/shot.png INK_AUTOQUIT=1 ./inking_demo.ex
 ## 常见坑
 
 1. **拿 `GetWidth()` 当窗口宽度**：那是设计画布，不是窗口像素。
-2. **改设计尺寸只改 `kDesignWidth`**：场景根锚点、CXXCSS 里的尺寸、缩放档位都会跟着偏，
+2. **改设计尺寸只改 `InkingLegacyDesignWidth`**：场景根锚点、CXXCSS 里的尺寸、缩放档位都会跟着偏，
    改之前先看清谁在读它。
 3. **自己 `exit()` 而不走 `RequestExit()`**：跳过帧末析构与纹理释放。
 4. **在 `Show()` 之前依赖 `HasWindow()`**：还没建窗口时它一直是 false。

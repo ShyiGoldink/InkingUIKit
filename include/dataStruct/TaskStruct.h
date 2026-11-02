@@ -5,8 +5,6 @@
 #include <utility>
 #include <vector>
 
-namespace inking {
-
 /**
  * @brief 本项目的任务模式。
  *
@@ -20,23 +18,23 @@ namespace inking {
  *   execute(input)       按"左（依赖）→ 中（action）→ 右（后继）"执行
  */
 template <typename T>
-struct Task {
+struct InkingTask {
     /** 执行动作：入参是上游传来的值序列，返回本节点的结果。 */
     using Action = std::function<T(const std::vector<T>&)>;
 
     Action action;                            /** 动作（中） */
-    std::vector<std::unique_ptr<Task>> deps;  /** 依赖（左，可有多个） */
-    std::unique_ptr<Task> next;               /** 后继（右，最多一个） */
+    std::vector<std::unique_ptr<InkingTask>> deps;  /** 依赖（左，可有多个） */
+    std::unique_ptr<InkingTask> next;               /** 后继（右，最多一个） */
 
     /** 添加一个依赖：该依赖的返回值会成为本节点 action 的入参之一。 */
-    Task& dependOn(Action fn) {
+    InkingTask& dependOn(Action fn) {
         return dependOn(std::vector<Action>{std::move(fn)});
     }
 
     /** 添加多个依赖：按传入顺序，各自的返回值依次进入本节点 action 的参数。 */
-    Task& dependOn(std::vector<Action> fns) {
+    InkingTask& dependOn(std::vector<Action> fns) {
         for (auto& fn : fns) {
-            auto dep = std::make_unique<Task>();
+            auto dep = std::make_unique<InkingTask>();
             dep->action = std::move(fn);
             deps.push_back(std::move(dep));
         }
@@ -44,19 +42,19 @@ struct Task {
     }
 
     /** 追加一个后继：本节点执行完后，把结果作为后继 action 的唯一入参。 */
-    Task& then(Action fn) {
+    InkingTask& then(Action fn) {
         return then(std::vector<Action>{std::move(fn)});
     }
 
     /** 追加多个后继：按传入顺序串成一条链，前一个的输出进入后一个的入参。 */
-    Task& then(std::vector<Action> fns) {
-        Task* tail = this;
+    InkingTask& then(std::vector<Action> fns) {
+        InkingTask* tail = this;
         while (tail->next) {
             tail = tail->next.get();
         }
 
         for (auto& fn : fns) {
-            auto step = std::make_unique<Task>();
+            auto step = std::make_unique<InkingTask>();
             step->action = std::move(fn);
             tail->next = std::move(step);
             tail = tail->next.get();
@@ -91,5 +89,4 @@ struct Task {
     }
 };
 
-}  // namespace inking
 

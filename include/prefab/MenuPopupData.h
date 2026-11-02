@@ -9,9 +9,7 @@
 #include <panel/PanelData.h>
 
 #include <cstdint>
-
-namespace inking {
-namespace prefab {
+namespace inking_prefab {
 
 /**
  * @brief 一个菜单浮窗的外观与行为。
@@ -20,7 +18,7 @@ namespace prefab {
  * 每一项的高度固定为 `itemHeight`，项间距 `gap`。
  *
  * `itemLook` 是**每一项的默认外观**（形状 / 三态色 / 字号）；`AddButton` 传了
- * 自己的 `ButtonData` 就按那份走（宽高仍可省略：<= 0 时用上面的默认）。
+ * 自己的 `InkingButtonData` 就按那份走（宽高仍可省略：<= 0 时用上面的默认）。
  */
 struct MenuPopupStyle {
     int itemWidth = 200;    ///< 菜单内容区宽度
@@ -29,21 +27,20 @@ struct MenuPopupStyle {
     int gap = 2;            ///< 项间距
     int zIndex = 400;       ///< 高于 `Select` 的 200：浮层要压住普通内容
 
-    /// 统一文字色（0 = 不动每一项自己的）。用自己那份 `ButtonData` 时特别有用。
+    /// 统一文字色（0 = 不动每一项自己的）。用自己那份 `InkingButtonData` 时特别有用。
     std::uint32_t textColor = 0;
 
     /// 点了一项 / 按了该项的快捷键之后自动关闭（菜单语义）。
     bool closeOnActivate = true;
 
     /// 每一项的默认外观。宽高可以留 0（`AddButton` 会补成 `itemWidth` / `itemHeight`）。
-    ButtonData itemLook{};
+    InkingButtonData itemLook{};
 
     /// 容器外观（只用 `closed` 那一份；`open` / `startOpen` / `scroll` 被忽略）。
-    PanelData panel{};
+    InkingPanelData panel{};
 
     /// 预制件统一调色板的那一份默认值。
     static MenuPopupStyle MakeDefault();
 };
 
-}  // namespace prefab
-}  // namespace inking
+}  // namespace inking_prefab

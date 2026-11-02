@@ -24,7 +24,7 @@
 
 #include <cstdint>
 
-namespace inking::detail {
+namespace inking_detail {
 
 /**
  * 当前渲染器槽位：提交前设置、提交后清成 nullptr。
@@ -48,7 +48,7 @@ inline SDL_Renderer* currentRenderer() {
 /**
  * 当前节点的"**祖先子树变换**"槽位（T-7）。
  *
- * `SubmitToRenderer` 在 `onRender` 之前算好（`detail::AncestorAffine(*this)`，
+ * `SubmitToRenderer` 在 `onRender` 之前算好（`inking_detail::AncestorAffine(*this)`，
  * 设备像素），绘制完成后清掉。形状填充 / 文字 / 图片都读它——这样"容器动了、
  * 子树跟着动"不需要每个组件各写一遍，也不用改任何组件的签名。
  *
@@ -59,23 +59,23 @@ inline SDL_Renderer* currentRenderer() {
  * ——动态库下 exe / DLL 必须共用同一份，否则"组件在 DLL 里读的变换"会和
  * "提交层在别处写的"不是同一个变量。
  */
-Affine& currentAncestorAffineSlot();
+InkingAffine& currentAncestorAffineSlot();
 
-inline Affine currentAncestorAffine() {
+inline InkingAffine currentAncestorAffine() {
     return currentAncestorAffineSlot();
 }
 
 /** 0xAARRGGBB → SDL 的绘制颜色。 */
 inline void setDrawColor(SDL_Renderer* renderer, std::uint32_t color) {
-    SDL_SetRenderDrawColor(renderer, ColorRed(color), ColorGreen(color),
-                           ColorBlue(color), ColorAlpha(color));
+    SDL_SetRenderDrawColor(renderer, InkingColorRed(color), InkingColorGreen(color),
+                           InkingColorBlue(color), InkingColorAlpha(color));
 }
 
 /**
  * @brief 按形状填一块，边缘**抗锯齿**——这是唯一的填充入口。
  *
  * 形状是唯一真相：几何取的是 `InkingShapeSpec.h` 那一份定义，
- * 和命中用的 `ShapeContains` 同源，所以"画的是圆角、点到的是直角"
+ * 和命中用的 `InkingShapeContains` 同源，所以"画的是圆角、点到的是直角"
  * 这条已知不一致在这里被消掉（早先那个只填包围盒的 `fillShapeBounds`
  * 已经删掉，调用方一处都没改：两条调用都换成了本函数）。
  *
@@ -102,13 +102,13 @@ inline void setDrawColor(SDL_Renderer* renderer, std::uint32_t color) {
  * @param magnification 展示倍率（设计单位 → 设备像素）；几何与羽化带都乘它。
  * @param pixelX,pixelY 左上角，**设备像素**（调用方已经换算过）。
  * @param transform     变换通道（平移 / 旋转 / 缩放），绕组件中心应用；
- *                      传 `TransformSpec{}` 就是不动。它**只动这一笔的位置与朝向**，
+ *                      传 `InkingTransformSpec{}` 就是不动。它**只动这一笔的位置与朝向**，
  *                      不改形状、尺寸，也不改命中表（docs/InputDesign.md §11）。
  * @param color         填充色 0xAARRGGBB；alpha 会参与合成。
  */
-void fillShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
+void fillShape(SDL_Renderer* renderer, const InkingShapeSpec& shape, int width,
                int height, float magnification, float pixelX, float pixelY,
-               const TransformSpec& transform, std::uint32_t color);
+               const InkingTransformSpec& transform, std::uint32_t color);
 
 /**
  * @brief 沿形状**边界**画一圈描边（B3）：宽度一半在形状外、一半在形状内。
@@ -117,7 +117,7 @@ void fillShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
  * "形状外扩 w/2"与"形状内缩 w/2"两条轮廓之间的**环带**——没有中心扇形，
  * 也不加中心点。于是：
  *   - 描边跟着形状走（圆角矩形的描边也圆角、跟着变换转）；
- *   - 描边**不参与命中**（命中判的是形状本体，`ShapeContains`）。
+ *   - 描边**不参与命中**（命中判的是形状本体，`InkingShapeContains`）。
  *
  * 两条实现上的取舍：
  *   - **`ring` / `arc` 不描边**：它们本身就是一条细带（两条边界），"沿边界描边"
@@ -126,9 +126,9 @@ void fillShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
  *
  * @param strokeWidth 描边宽度，**设计坐标**（内部乘展示倍率）；<= 0 是空操作。
  */
-void strokeShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
+void strokeShape(SDL_Renderer* renderer, const InkingShapeSpec& shape, int width,
                  int height, float magnification, float pixelX, float pixelY,
-                 const TransformSpec& transform, float strokeWidth,
+                 const InkingTransformSpec& transform, float strokeWidth,
                  std::uint32_t color);
 
 /**
@@ -151,7 +151,7 @@ void strokeShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
  *     纹理这一笔也跟着走——两份各写一遍就会出现"颜色跟着动、图片留在原地"。
  *
  * @param texture   已经建好的纹理（调用方负责解码与缓存，见 `PaintImage`）。
- * @param fit       适配模式 + 框尺寸 + 图尺寸（`ImageFitSpec`）。它决定 UV 与
+ * @param fit       适配模式 + 框尺寸 + 图尺寸（`InkingImageFitSpec`）。它决定 UV 与
  *                  `contain` 的留白。
  * @param tintColor 只取 alpha：过渡时做淡入淡出（图片本身不换色）。
  *
@@ -160,10 +160,10 @@ void strokeShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
  * 再也没人读——一个没人读的参数比没有更容易骗人。历史上那个坑（透明区发黑）
  * 记在 `fillShapeTextured` 的"矩形 + Fill"注释里。
  */
-void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
+void fillShapeTextured(SDL_Renderer* renderer, const InkingShapeSpec& shape, int width,
                        int height, float magnification, float pixelX,
-                       float pixelY, const TransformSpec& transform,
-                       SDL_Texture* texture, const ImageFitSpec& fit,
+                       float pixelY, const InkingTransformSpec& transform,
+                       SDL_Texture* texture, const InkingImageFitSpec& fit,
                        std::uint32_t tintColor);
 
-}  // namespace inking::detail
+}  // namespace inking_detail

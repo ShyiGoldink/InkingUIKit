@@ -33,19 +33,17 @@
 #include <string>
 #include <vector>
 
-namespace inking {
-
 // 只前向声明：公开头不拖别的组件的实现进来（`AGENTS.md` §6 第 8 条那条纪律的
 // 同族——能不全量包含就不全量包含）。
 class InkingStaticButton;
 
-namespace prefab {
+namespace inking_prefab {
 
 /**
  * @brief C1：预制选项栏。
  *
  * ```cpp
- * inking::prefab::OptionBar bar(&scene);
+ * inking_prefab::OptionBar bar(&scene);
  * bar.SetItems({{"save", "存档"}, {"load", "读档"}, {"quit", "退出"}});
  * bar.optionClicked.Subscribe([](const std::string& id, std::size_t index) {
  *     if (id == "quit") { ... }   // 想嵌套就在这里再建一个 OptionBar
@@ -100,7 +98,7 @@ public:
      * 所以"项数 / 顺序 / 每项矩形"这三条验收判据能直接用数字钉住。
      * 越界返回零矩形。
      */
-    ShapeBounds GetItemRect(std::size_t index) const;
+    InkingShapeBounds GetItemRect(std::size_t index) const;
 
     /// 第 `index` 项的按钮节点（要自己挂事件 / 改文字时用）。越界 = nullptr。
     InkingStaticButton* GetItemNode(std::size_t index) const;
@@ -118,7 +116,7 @@ public:
      * 就把它挂在声明了布局的父容器下，让父级把这份尺寸写下来——静态档自己
      * 没有几何写入口，这是有意保留的那条铁律。
      */
-    LayoutSize MeasureLayout(const LayoutConstraints& constraints) const override;
+    InkingLayoutSize MeasureLayout(const InkingLayoutConstraints& constraints) const override;
 
     /**
      * 直接触发第 `index` 项（跳过指针链路，模拟一次点击）。
@@ -163,5 +161,4 @@ private:
     int _layerZ = 0;
 };
 
-}  // namespace prefab
-}  // namespace inking
+}  // namespace inking_prefab

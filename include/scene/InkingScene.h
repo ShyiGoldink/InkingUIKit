@@ -19,13 +19,12 @@
 #include <widget/InkingStaticWidget.h>
 
 #include <input/KeyboardInput.h>
-#include <input/MouseInput.h>   // MousePoint（设计坐标点）：按下点用这个既有词汇
+#include <input/MouseInput.h>   // InkingMousePoint（设计坐标点）：按下点用这个既有词汇
 #include <input/PointerButton.h>
 
 // 只做前向声明：公开头里不拖 SDL 进来（见 docs/AGENTS.md §6 第 8 条）。
 struct SDL_Renderer;
 
-namespace inking {
 
 /**
  * @brief 场景：window 之下最高的结点，继承**静态锚点**。
@@ -36,9 +35,9 @@ namespace inking {
  * ---------------------------------------------------------------------------
  * 登记：同名同期只能有一个
  *
- * 构造时把自己登记进 SceneLibrary。**名字被占了就当场驳回**——对象照样构造
+ * 构造时把自己登记进 InkingSceneLibrary。**名字被占了就当场驳回**——对象照样构造
  * 出来了，但它没进库，所以既不会渲染也不会被 tick，是一块"停放"的荒地；
- * 想用这个名字，得先把占用者 `SceneLibrary::CloseScene(名字)` 关掉。
+ * 想用这个名字，得先把占用者 `InkingSceneLibrary::CloseScene(名字)` 关掉。
  *
  * 被驳回的场景 `IsRegistered()` 为 false。库不拥有场景对象，关掉也不析构它，
  * 生命周期始终归调用方——这样"从库里拿指针 → 关掉 → 再自己决定何时析构"
@@ -66,7 +65,7 @@ namespace inking {
  * "需要不渲染但逻辑动"的场景，用 onTick 就行——它不依赖活跃态；
  * 反过来"不渲染就彻底别动"，把逻辑放 onRenderBoundTick。
  * 更细的频率（例如 24fps 的动画）不走这两个钩子，去订阅**场景自己的动画时钟**
- * （`SubscribeAnimation`，见本类"动画时钟与频率订阅"一节）——`Timeline` 实例
+ * （`SubscribeAnimation`，见本类"动画时钟与频率订阅"一节）——`InkingTimeline` 实例
  * 在窗口里、随重建失效，组件拿不到。
  *
  * ---------------------------------------------------------------------------
@@ -79,7 +78,7 @@ namespace inking {
  * 为什么扁平而不是递归遍历：
  *   - 绝对坐标必须走父链，而 `GetAbsX()` 是 O(深度)。扁平列表里父指针是
  *     现成的，取绝对坐标不用额外结构；
- *   - 命中侧（docs/InputDesign.md §10.2）已经定了"压平成 HitTable + 平铺
+ *   - 命中侧（docs/InputDesign.md §10.2）已经定了"压平成 InkingHitTable + 平铺
  *     _drawList"，渲染跟着扁平，两边遍历才不会越走越远；
  *   - 线性遍历对缓存友好，也没有深递归的栈风险。
  * 「整块在动」那档（抽屉 / Toast）将来要的是"子树自带子表 + 变换通道"，
@@ -97,10 +96,10 @@ namespace inking {
 class InkingScene : public InkingStaticWidget {
 public:
     /**
-     * 场景的 RAII 登记令牌：绑定"场景类 → SceneLibrary"。
+     * 场景的 RAII 登记令牌：绑定"场景类 → InkingSceneLibrary"。
      * 类型别名让派生类不用关心模板参数。
      */
-    using SceneToken = inking::RegisterToken<InkingScene, SceneLibrary>;
+    using SceneToken = InkingRegisterToken<InkingScene, InkingSceneLibrary>;
 
     /**
      * 绘制列表里的一项：节点本身 + 提交时算绝对坐标用的父指针。
@@ -139,7 +138,7 @@ public:
      * 但是考虑到一般使用场景，Scene一般都需要和window的大小对齐，否则可能会有奇怪的黑边
      * 但是依然要提供这样的一个方法
      */
-    explicit InkingScene(const std::string& sceneName, const AnchorData& anchorData);
+    explicit InkingScene(const std::string& sceneName, const InkingAnchorData& anchorData);
 
     virtual ~InkingScene();
 
@@ -159,13 +158,13 @@ public:
     /** 注册被驳回了吗（后来者、名字被占）。停放态就是它。 */
     bool IsRejected() const noexcept;
 
-    /** 被库关掉过吗（SceneLibrary::CloseScene）。关掉之后不能再注册。 */
+    /** 被库关掉过吗（InkingSceneLibrary::CloseScene）。关掉之后不能再注册。 */
     bool IsClosed() const noexcept;
 
     /**
      * 这个场景是不是"正在渲染"的那个。
      *
-     * 由 SceneLibrary::SetActiveScene 维护：同一时刻最多一个为 true。
+     * 由 InkingSceneLibrary::SetActiveScene 维护：同一时刻最多一个为 true。
      * 切场景时旧的自动变 false（静默）。
      */
     bool IsActive() const noexcept;
@@ -197,12 +196,12 @@ public:
     // ---------------- 动画时钟与频率订阅（0.6.0 T-01） ----------------
     //
     // 为什么要有这一层：组件需要"按我自己的频率推进"（12fps 的帧动画、24fps 的
-    // 采样），而 `inking::Timeline` 虽然有自定义频率订阅，但**实例在窗口里**
+    // 采样），而 `InkingTimeline` 虽然有自定义频率订阅，但**实例在窗口里**
     // （`WindowState` 成员），重开窗口就重建——把句柄发给组件，等于把生命周期
     // 事故发给组件。所以时钟挪到场景这一级：场景活着，订阅就活着；场景析构，
     // 回调跟着一起没，不会留下指向已析构对象的订阅。
     //
-    // 语义与 `Timeline::Subscribe` **同构**（照抄语义、不照抄代码）：
+    // 语义与 `InkingTimeline::Subscribe` **同构**（照抄语义、不照抄代码）：
     // 累加器追赶，回调收到的是**声明的时间隔**而不是墙上 delta，于是慢帧只会
     // 让这一帧多派发几次，不会让动画相对墙上时间走偏。
     //
@@ -221,7 +220,7 @@ public:
     /**
      * 动画订阅回调：入参是**声明的间隔**（秒），不是墙上 delta。
      *
-     * 与 `Timeline::SampleCallback` 同一个约定：拿到 1/12 就代表"又过了 1/12 秒"，
+     * 与 `InkingTimeline::SampleCallback` 同一个约定：拿到 1/12 就代表"又过了 1/12 秒"，
      * 不保证这一帧真的画了那么多时间。
      */
     using AnimationCallback = std::function<void(double stepSeconds)>;
@@ -232,7 +231,7 @@ public:
      * 静默 / 停放 / 关闭的场景不走 `TickFrame` ⇒ 时钟冻结。所以它可以当
      * "这个场景的本地时间"用，跨场景共享的绝对时间请自己存。
      *
-     * 名字不带 `Get`：与 `Timeline::SubscriberCount()` 同一档——它读的是一个
+     * 名字不带 `Get`：与 `InkingTimeline::SubscriberCount()` 同一档——它读的是一个
      * **量**（时间），不是"取某个对象的状态"。
      */
     double AnimationSeconds() const noexcept;
@@ -243,7 +242,7 @@ public:
      * @param intervalSeconds 派发间隔，必须 > 0；否则返回 0（无效句柄）。
      * @param callback        到期回调；为空返回 0。
      * @return 句柄。**句柄只增不复用**，所以"退订后又被复用的句柄"这种事故
-     *         不可能发生（与 `Timeline::Handle` 同一条规矩）。
+     *         不可能发生（与 `InkingTimeline::Handle` 同一条规矩）。
      *
      * **回调里不许增删节点**（`AddChild` / `RemoveChild` / 构造 / 析构 /
      * `SetParent` 都算）：派发期间遍历的是订阅表本身，树一变，同帧后续的处理
@@ -265,7 +264,7 @@ public:
      *
      * 计数发生在两处：单帧补发超过上限（`kMaxAnimationCatchUpPerFrame`），
      * 以及一个订阅在两次派发之间攒下的步数超过上限。丢掉的是**欠的步**，
-     * 不是时间基准——同 `Timeline::GetCatchUpDropCount()`。
+     * 不是时间基准——同 `InkingTimeline::GetCatchUpDropCount()`。
      */
     std::uint64_t GetAnimationCatchUpDropCount() const noexcept;
 
@@ -398,7 +397,7 @@ public:
      * 返回的是**静态层与动态层合并之后**的答案：点在动态组件的洞里时，
      * 会拿动态层最上面那个和静态结果比 z 序。
      */
-    HitResult QueryHit(float designX, float designY) noexcept;
+    InkingHitResult QueryHit(float designX, float designY) noexcept;
 
     /** 命中表里有多少条静态条目 / 多少个簇 / 多少个格子（自检与预算估算用）。 */
     std::size_t GetHitTableEntryCount() noexcept;
@@ -492,8 +491,8 @@ public:
      *               移动鼠标就会把长按计时打断，而那种"偶尔失效"最难查。
      */
     void SetPointerState(float designX, float designY,
-                         const PointerDownState& down, bool inside,
-                         PointerSource source) noexcept;
+                         const InkingPointerDownState& down, bool inside,
+                         InkingPointerSource source) noexcept;
 
     /**
      * 便捷写法：只喂**主键**（次键当作没按，来源当作鼠标）。
@@ -504,15 +503,15 @@ public:
     void SetPointerState(float designX, float designY, bool primaryDown,
                          bool inside) noexcept {
         SetPointerState(designX, designY,
-                        PointerDownState{primaryDown, false}, inside,
-                        PointerSource::Mouse);
+                        InkingPointerDownState{primaryDown, false}, inside,
+                        InkingPointerSource::Mouse);
     }
 
     /**
      * 把这一帧的**滚轮增量**喂进来（A4）。由窗口层在主循环里调。
      *
      * 与 `SetPointerState` 一样"只存不判"：真正的派发在 `DispatchPointer()`。
-     * 一帧里调多次会**累加**（窗口层每帧调一次，值是 `MouseInput` 本帧的累积量）。
+     * 一帧里调多次会**累加**（窗口层每帧调一次，值是 `InkingMouseInput` 本帧的累积量）。
      *
      * 滚轮是**一次性量**而不是跨帧状态：本帧没派发出去（没人收）也照样在
      * 帧末被 `ConsumeFrameDirty()` 清掉——"滚了但没人要"就是丢掉，
@@ -549,7 +548,7 @@ public:
     bool IsSecondaryPointerDown() const noexcept;
 
     /// 两个键的按下状态整包（动态档的 `PointerProbe::Update` 吃它）。
-    const PointerDownState& GetPointerDown() const noexcept;
+    const InkingPointerDownState& GetPointerDown() const noexcept;
 
     /**
      * 某个键的**按下点**（设计坐标）。click 的坐标、long press 的 slop 基准、
@@ -558,7 +557,7 @@ public:
      * 没按过的时候是上一次按下的残留值——只在"正在按着 / 刚抬起"这两段时间里
      * 有意义，业务不要拿它当"指针位置"用（那是 `GetPointerX/Y`）。
      */
-    MousePoint GetPressOrigin(PointerButton button) const noexcept;
+    InkingMousePoint GetPressOrigin(InkingPointerButton button) const noexcept;
 
     /// 指针在不在窗口里。窗口外不该继续悬停。
     bool IsPointerInside() const noexcept;
@@ -618,7 +617,7 @@ public:
     //   2. **事件派发**：把本帧的按键 / 文本推给那个节点（`DispatchKeyboard`）。
     //
     // 状态（现在按着哪些键 / 在不在打字）由场景转存一份供组件查询——
-    // 组件不必自己认识 `KeyboardInput`（那是窗口层的东西），
+    // 组件不必自己认识 `InkingKeyboardInput`（那是窗口层的东西），
     // 与"指针状态由 `SetPointerState` 喂进来"同一条思路。
 
     /**
@@ -627,10 +626,10 @@ public:
      * 与 `SetPointerState` 一样"只存不判"：真正的派发在 `DispatchKeyboard()`，
      * 那是"每帧只判断一次"那条设计的落点。
      */
-    void SetKeyboardInput(const KeyboardInput& input) noexcept;
+    void SetKeyboardInput(const InkingKeyboardInput& input) noexcept;
 
     /** 当前键盘状态（组件轮询用：`IsKeyDown` / `IsTyping` / 修饰键）。 */
-    const KeyboardState& GetKeyboardState() const noexcept;
+    const InkingKeyboardState& GetKeyboardState() const noexcept;
 
     /**
      * 把键盘焦点交给某个节点（传 nullptr = 清空）。
@@ -665,17 +664,17 @@ public:
      */
     void DispatchKeyboard();
 
-    // ---------------- 只给 SceneLibrary 调 ----------------
+    // ---------------- 只给 InkingSceneLibrary 调 ----------------
 
     /**
-     * 被库关掉时的通知（`SceneLibrary::CloseScene`）。
+     * 被库关掉时的通知（`InkingSceneLibrary::CloseScene`）。
      *
      * 摘掉活跃态与登记：关掉之后它不渲染、不再活跃，也不能再注册。
      * 数据全部保留，仍然可读——"先把重要数据 move 出来再关"就是这么用的。
      */
     void MarkClosed() noexcept;
 
-    /** 被库切换活跃态时的通知（`SceneLibrary::SetActiveScene`）。 */
+    /** 被库切换活跃态时的通知（`InkingSceneLibrary::SetActiveScene`）。 */
     void SetActiveFromLibrary(bool active) noexcept;
 
     // ---------------- 预加载：把"构造"与"init"分开 ----------------
@@ -685,7 +684,7 @@ public:
     //
     //   | 走哪条路                          | `onPreload` 跑在   | 收尾在哪 |
     //   | --------------------------------- | ------------------ | -------- |
-    //   | `SceneLibrary::PreloadScene(名)`  | **管家线程**       | UI 线程帧首 |
+    //   | `InkingSceneLibrary::PreloadScene(名)`  | **管家线程**       | UI 线程帧首 |
     //   | `InkingWindow::Show(名)`          | UI 线程（同步）    | 紧随其后 |
     //
     // 两条路**共用同一套状态机**，所以"先手动调过、再 Show"只跑一次，反过来
@@ -711,15 +710,15 @@ public:
     /** 预加载有结果了吗（成不成功都算）。 */
     bool IsPreloadFinished() const noexcept;
 
-    // ---------------- 只给 SceneLibrary / 窗口层调 ----------------
+    // ---------------- 只给 InkingSceneLibrary / 窗口层调 ----------------
 
     /**
-     * 要求一次**异步**预加载：任务丢进 `TaskQueue`，`onPreload()` 在管家线程跑。
+     * 要求一次**异步**预加载：任务丢进 `InkingTaskQueue`，`onPreload()` 在管家线程跑。
      *
      * @return 受理了才返回 true；已经受理过 / 已跑过 / 场景已关闭 → false。
      *         所以重复调用天然无害，调用方不用自己判重。
      *
-     * **只从 UI 线程调**（`SceneLibrary::PreloadScene` 就是那么调的）：里面读的
+     * **只从 UI 线程调**（`InkingSceneLibrary::PreloadScene` 就是那么调的）：里面读的
      * `_closed` 是 UI 线程私有的非原子量。
      */
     bool RequestPreload();
@@ -737,7 +736,7 @@ public:
      * 预加载有结果了、而且**还没通知过**的话，就在**调用它的线程**上调一次
      * `onPreloadFinished(ok)`。
      *
-     * 只有 `SceneLibrary::DrainPreloadCompletions()` 在 UI 线程的帧首调它——
+     * 只有 `InkingSceneLibrary::DrainPreloadCompletions()` 在 UI 线程的帧首调它——
      * **这就是"管家线程干完活之后回 UI 线程"的那条路**。
      * @return 这次真的调了才返回 true。
      */
@@ -745,7 +744,7 @@ public:
 
 protected:
     /**
-     * 把 this 登记进 SceneLibrary。
+     * 把 this 登记进 InkingSceneLibrary。
      *
      * 与后端 ShineBasicModule::registerToStatusChecker() 同一套写法：
      * 在**构造函数末尾**调用，表示自身已经构造完成、可以登记了。
@@ -794,7 +793,7 @@ protected:
      *
      * 默认什么都不做、直接返回 true——不重写就是"我没什么要预加载的"。
      *
-     * 它跑在**管家线程**（`SceneLibrary::PreloadScene` 那条路）或 UI 线程
+     * 它跑在**管家线程**（`InkingSceneLibrary::PreloadScene` 那条路）或 UI 线程
      * （`InkingWindow::Show` 那条路）。所以里面**只能做与 UI 无关的准备**：
      * 读文件、解析配置、解码成 `SDL_Surface*` 这类。
      *
@@ -832,7 +831,7 @@ protected:
     /**
      * 渲染入口：按 z 序把绘制列表里的节点提交给渲染器。
      *
-     * **protected**：只有框架该调它（窗口层经 `SceneLibrary::RenderScene`
+     * **protected**：只有框架该调它（窗口层经 `InkingSceneLibrary::RenderScene`
      * 走一道，保证"只有活跃场景会被渲染"这条规矩有唯一落点）。
      */
     void Render(SDL_Renderer* renderer);
@@ -841,7 +840,7 @@ protected:
     std::string _sceneName;
 
 private:
-    friend class SceneLibrary;
+    friend class InkingSceneLibrary;
 
     /** 重建绘制列表：**按树重建**（树是唯一真相源），再按 z 升序排好。 */
     void sortDrawList();
@@ -858,7 +857,7 @@ private:
     void collectDrawList(InkingWidget* node);
 
     /** 场景根矩形的初始数据；三个构造函数共用。 */
-    static AnchorData sceneRootAnchorData();
+    static InkingAnchorData sceneRootAnchorData();
 
     /** 三个构造函数的公共收尾：盖章成根 + 登记进库。 */
     void finishConstruction();
@@ -901,7 +900,7 @@ private:
      * 一处改了另一处自动跟上。抄第二份就会出现"重建时留了洞、刷洞时没留"
      * ——症状是那个动态组件在两种路径下点得到 / 点不到随机切换。
      */
-    bool ResolveDynamicHole(InkingWidget* node, ShapeBounds& out) const noexcept;
+    bool ResolveDynamicHole(InkingWidget* node, InkingShapeBounds& out) const noexcept;
 
     /**
      * 动态层最上面那个命中者（动态组件不进表，只能现问）。
@@ -909,7 +908,7 @@ private:
      * 只在"点落在某个动态洞里"时才会被调用——洞就是为省这一趟而存在的。
      */
     InkingWidget* topmostDynamicHit(float designX, float designY,
-                                    HitKind& kind) noexcept;
+                                    InkingHitKind& kind) noexcept;
 
     /**
      * 绘制列表，按 z 升序（先画的在底下）。
@@ -938,7 +937,7 @@ private:
      * （`rebuildHitTable()`）。没脏的时候一次都不碰——这正是"每帧 0 次重烘"
      * 的来源（`InputDesign.md` §13）。
      */
-    HitTable _hitTable;
+    InkingHitTable _hitTable;
 
     /**
      * 只有洞脏（T-19）：列表内容 / 排序 / 静态条目都是对的，只是某个动态节点的
@@ -950,7 +949,7 @@ private:
     /// `RefreshHoles()` 真的刷了几次（T-19 的观测口，见头文件）。
     std::uint64_t _holeRefreshCount = 0;
 
-    /** 正在渲染（由 SceneLibrary 维护，同期最多一个）。 */
+    /** 正在渲染（由 InkingSceneLibrary 维护，同期最多一个）。 */
     bool _active = false;
     /** 被库关掉过：不能再注册，也不再活跃。 */
     bool _closed = false;
@@ -987,7 +986,7 @@ private:
      * 为什么是"语义键"而不是"左 / 右键"：触摸长按会映射成 Secondary，场景层
      * 因此完全不认识设备——设备差异在窗口层就被吸收干净了。
      */
-    PointerDownState _pointerDown{};
+    InkingPointerDownState _pointerDown{};
 
     bool _pointerInside = false;///< 指针在不在窗口里
 
@@ -997,7 +996,7 @@ private:
      * 放成员不放函数内静态量：静态量会让"两个场景的按下历史"串在一起，
      * 自检里建了又拆的场景会把上一帧的状态留给下一个（实测这种串味最难查）。
      */
-    PointerDownState _pointerWasDown{};
+    InkingPointerDownState _pointerWasDown{};
 
     /**
      * 本帧的**有效**按下状态 = 物理状态 + 长按合成（0.5.0）。
@@ -1007,17 +1006,17 @@ private:
      * 所以要存成成员而不是 `DispatchPointer` 的局部量——否则定点浮窗永远看不到
      * "长按"这一路输入，"长按点外部关闭"就会静默失灵。
      */
-    PointerDownState _effectiveDown{};
+    InkingPointerDownState _effectiveDown{};
 
     /**
      * 这次按下来自鼠标还是触摸。**只在按下那一刻写一次**
      * （`SetPointerState` 里判 `down.primary && !_pointerDown.primary`）。
      *
-     * 不能每帧照抄：触摸屏上用户一边按着手指一边动鼠标，`MouseInput` 的
+     * 不能每帧照抄：触摸屏上用户一边按着手指一边动鼠标，`InkingMouseInput` 的
      * 来源会被鼠标移动事件刷成 Mouse，长按计时就被打断——现象是"长按偶尔不
      * 成立"，而且完全看用户另一只手在干什么。
      */
-    PointerSource _pointerSource = PointerSource::Mouse;
+    InkingPointerSource _pointerSource = InkingPointerSource::Mouse;
 
     /**
      * 指针脏：指针状态变过，这一帧的悬停判断还没做。
@@ -1061,7 +1060,7 @@ private:
      * 于是抬起时左键的 `press(false)` 永远不来——按钮永久停在 Pressed 色。
      * 这是静默的视觉错误，比崩溃难查得多。
      */
-    InkingWidget* _pressedNode[kPointerButtonCount] = {nullptr, nullptr};
+    InkingWidget* _pressedNode[InkingPointerButtonCount] = {nullptr, nullptr};
 
     /**
      * 每个键的**按下点**（设计坐标）。
@@ -1073,12 +1072,12 @@ private:
      * 自检 / 手动跑帧可以只调 `SetPointerState` + `TickLogic`（不派发），写在
      * 后者里就会读到上一次交互的残留坐标，slop 越判越大、长按永不成立且不报错。
      */
-    MousePoint _pressOrigin[kPointerButtonCount]{};
+    InkingMousePoint _pressOrigin[InkingPointerButtonCount]{};
 
     // ---------------- 触摸长按 → 次键（0.5.0） ----------------
     //
     // 触摸屏上没有右键，长按是它唯一的表达方式。**这不是补偿，是映射**：
-    // 本库的跨平台立场是"组件只见 Primary / Secondary"（见 PointerButton.h），
+    // 本库的跨平台立场是"组件只见 Primary / Secondary"（见 InkingPointerButton.h），
     // 所以长按必须产出一次**完整的次键交互**（press → release → click），
     // 而不是一条"长按事件"让业务自己再解释一遍。
     //
@@ -1146,10 +1145,10 @@ private:
     // `DetachSceneFromNodes` 会把 `_keyboardFocus` 清成 nullptr，不留悬垂。
 
     /// 这一帧的键盘状态（窗口层喂进来的拷贝，供组件查询）。
-    KeyboardState _keyboardState{};
+    InkingKeyboardState _keyboardState{};
 
-    /// 这一帧的键盘事件（同上）。派发完由窗口层在帧末清掉 `KeyboardInput` 自己那份。
-    std::vector<KeyInputEvent> _keyboardEvents{};
+    /// 这一帧的键盘事件（同上）。派发完由窗口层在帧末清掉 `InkingKeyboardInput` 自己那份。
+    std::vector<InkingKeyInputEvent> _keyboardEvents{};
 
     /// 键盘焦点归谁；nullptr = 没有人拿键盘。
     InkingWidget* _keyboardFocus = nullptr;
@@ -1164,7 +1163,7 @@ private:
 
     // ---------------- 动画时钟与订阅（0.6.0 T-01） ----------------
 
-    /** 一个动画订阅。形态照 `Timeline::Subscriber`，少一个"墓碑标记"字段——
+    /** 一个动画订阅。形态照 `InkingTimeline::Subscriber`，少一个"墓碑标记"字段——
      *  这里的 tombstone 就是 `handle == 0` 本身（0 永远不是合法句柄）。 */
     struct AnimationSubscriber {
         AnimationHandle handle = 0;
@@ -1198,4 +1197,3 @@ private:
     std::uint64_t _animationCatchUpDrops = 0;
 };
 
-}  // namespace inking

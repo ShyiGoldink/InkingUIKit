@@ -25,21 +25,19 @@
 #include <string>
 #include <string_view>
 
-namespace inking {
-
-// 只做前向声明：`Matches` 的本体在 .cpp 里（它要读 KeyEvent 的字段，
-// 而那件事不值得把 `KeyboardInput.h` 拖进每一个包含 Shortcut 的文件）。
-struct KeyEvent;
+// 只做前向声明：`Matches` 的本体在 .cpp 里（它要读 InkingKeyEvent 的字段，
+// 而那件事不值得把 `InkingKeyboardInput.h` 拖进每一个包含 InkingShortcut 的文件）。
+struct InkingKeyEvent;
 
 /**
  * @brief 一个快捷键组合：修饰键位掩码 + 主键（SDL_Keycode 数值）。
  *
  * ```cpp
- * auto save = inking::Shortcut::Parse("Ctrl+S");   // {"S", Ctrl}
+ * auto save = InkingShortcut::Parse("Ctrl+S");   // {"S", Ctrl}
  * bar.AddButton(look, "保存", Save, save);         // 菜单项顺手绑定
  * ```
  */
-class Shortcut {
+class InkingShortcut {
 public:
     // 修饰键位（可以按位或）。名字对齐 SDL 的 KMOD，但这里只是普通常量，
     // 所以公开头不依赖 SDL。
@@ -57,8 +55,8 @@ public:
     /// 长按是否重复触发（默认否，见文件顶上第 ② 条）。
     bool allowRepeat = false;
 
-    Shortcut() = default;
-    Shortcut(std::int32_t keyCode, std::uint8_t modifierMask,
+    InkingShortcut() = default;
+    InkingShortcut(std::int32_t keyCode, std::uint8_t modifierMask,
              bool repeats = false) noexcept
         : key(keyCode), modifiers(modifierMask), allowRepeat(repeats) {}
 
@@ -72,7 +70,7 @@ public:
      * - 修饰键必须**完全相等**（见文件顶上第 ① 条）；
      * - `repeat = true` 的事件在 `allowRepeat == false` 时不算命中。
      */
-    bool Matches(const KeyEvent& event) const noexcept;
+    bool Matches(const InkingKeyEvent& event) const noexcept;
 
     /**
      * 解析 `"Ctrl+Shift+S"` 这类写法。
@@ -89,18 +87,17 @@ public:
      *
      * @param ok 可为空；解析失败时写入 false（返回的快捷键为空）。
      */
-    static Shortcut Parse(std::string_view text, bool* ok = nullptr);
+    static InkingShortcut Parse(std::string_view text, bool* ok = nullptr);
 
     /// 回写成人读的串（`"Ctrl+Shift+S"`）。空快捷键返回空串。
     std::string ToString() const;
 
-    bool operator==(const Shortcut& other) const noexcept {
+    bool operator==(const InkingShortcut& other) const noexcept {
         return key == other.key && modifiers == other.modifiers
             && allowRepeat == other.allowRepeat;
     }
-    bool operator!=(const Shortcut& other) const noexcept {
+    bool operator!=(const InkingShortcut& other) const noexcept {
         return !(*this == other);
     }
 };
 
-}  // namespace inking

@@ -23,7 +23,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace inking::detail {
+namespace inking_detail {
 
 // ---------------------------------------------------------------------------
 // 两个"整个进程只有一份"的槽位（槽本体搬出头的理由见 InkingDraw.h）
@@ -40,8 +40,8 @@ SDL_Renderer*& currentRendererSlot() {
     return renderer;
 }
 
-Affine& currentAncestorAffineSlot() {
-    static Affine affine;
+InkingAffine& currentAncestorAffineSlot() {
+    static InkingAffine affine;
     return affine;
 }
 
@@ -59,8 +59,8 @@ constexpr float kFeatherPixels = 1.0f;
  * 把刚算好的**本地**顶点交给提交层（T-6）。有缓存槽就顺手存一份：
  * 下一帧形状/尺寸/倍率/变换没变，就直接复用，不必再采样一遍轮廓。
  */
-void StoreAndAppend(VertexCacheSlot* slot, const ShapeSpec& scaled, int width,
-                    int height, float mag, const TransformSpec& transform,
+void StoreAndAppend(VertexCacheSlot* slot, const InkingShapeSpec& scaled, int width,
+                    int height, float mag, const InkingTransformSpec& transform,
                     const std::vector<SDL_Vertex>& vertices,
                     const std::vector<int>& indices, float pixelX,
                     float pixelY, std::uint32_t color) {
@@ -115,9 +115,9 @@ std::vector<int>& indexScratch() {
 
 /// 顶点色：rgb 取源色，alpha 单独给（羽化带的两圈就是靠它区分的）。
 SDL_FColor VertexColor(std::uint32_t color, float alpha) {
-    return SDL_FColor{static_cast<float>(ColorRed(color)) / 255.0f,
-                      static_cast<float>(ColorGreen(color)) / 255.0f,
-                      static_cast<float>(ColorBlue(color)) / 255.0f, alpha};
+    return SDL_FColor{static_cast<float>(InkingColorRed(color)) / 255.0f,
+                      static_cast<float>(InkingColorGreen(color)) / 255.0f,
+                      static_cast<float>(InkingColorBlue(color)) / 255.0f, alpha};
 }
 
 SDL_Vertex MakeVertex(float x, float y, const SDL_FColor& color) {
@@ -141,9 +141,9 @@ SDL_Vertex MakeVertex(float x, float y, const SDL_FColor& color) {
  *               这样纹理跟着形状一起转，而不是被转两次。
  * @return false = 这个形状没有面积 / 轮廓生成出了岔子（**宁可不画也别画错**）。
  */
-bool BuildShapeMesh(const ShapeSpec& scaled, float w, float h, float mag,
-                    std::uint32_t color, const TransformSpec& transform,
-                    const ImageFitSpec* uv, std::vector<SDL_Vertex>& vertices,
+bool BuildShapeMesh(const InkingShapeSpec& scaled, float w, float h, float mag,
+                    std::uint32_t color, const InkingTransformSpec& transform,
+                    const InkingImageFitSpec* uv, std::vector<SDL_Vertex>& vertices,
                     std::vector<int>& indices) {
     const float shorter = w < h ? w : h;
     // 羽化带不许宽到把形状吃光：至少留一半实心区。
@@ -161,13 +161,13 @@ bool BuildShapeMesh(const ShapeSpec& scaled, float w, float h, float mag,
     // ---- 顶点变换：在**设备像素**空间里过一次仿射，绕的是组件中心 ----
     // 平移量按设计坐标写，所以先乘展示倍率；旋转与缩放跟单位无关。
     // 中心点（扇形三角化的那个点）也要过变换，否则形状会被拧歪。
-    TransformSpec deviceTransform = transform;
+    InkingTransformSpec deviceTransform = transform;
     deviceTransform.translateX *= mag;
     deviceTransform.translateY *= mag;
     const float centerX = w * 0.5f;
     const float centerY = h * 0.5f;
     const auto transformPoint = [&](float x, float y) {
-        return ApplyTransform(deviceTransform, x, y, centerX, centerY);
+        return InkingApplyTransform(deviceTransform, x, y, centerX, centerY);
     };
 
     // 一个顶点 = 位置（过变换）+ 颜色（羽化 alpha）+ 可选的纹理坐标。
@@ -177,7 +177,7 @@ bool BuildShapeMesh(const ShapeSpec& scaled, float w, float h, float mag,
     // 在形状内部，靠逐顶点 alpha 表达不出来（那会变成"整块半透明"）。留白由
     // `fillShapeTextured` 里的**裁剪矩形**负责（形状 ∩ 图区域）。
     const auto makeVertex = [&](float rawX, float rawY, const SDL_FColor& c) {
-        const Point2 point = transformPoint(rawX, rawY);
+        const InkingPoint2 point = transformPoint(rawX, rawY);
         SDL_Vertex vertex = MakeVertex(point.x, point.y, c);
         if (uv != nullptr) {
             uv->UvAt(rawX, rawY, vertex.tex_coord.x, vertex.tex_coord.y);
@@ -194,7 +194,7 @@ bool BuildShapeMesh(const ShapeSpec& scaled, float w, float h, float mag,
     // 方向上是一条分段线性函数：外侧羽化 0→1、实心 1、内侧羽化 1→0。把它按
     // 折点采样成 3~4 圈顶点，圈与圈之间线性插值出来的就是那条精确的曲线。
     // 环宽不到 1 像素时实心段消失，合成一条"到中径取峰值"的折线。
-    if (scaled.kind == ShapeKind::Ring) {
+    if (scaled.kind == InkingShapeKind::Ring) {
         const float outerRadius = shorter * 0.5f;
         // 环宽顶到外半径就停（再厚就没有孔了，退化成实心圆）。
         const float thickness = std::min(scaled.thickness, outerRadius);
@@ -204,7 +204,7 @@ bool BuildShapeMesh(const ShapeSpec& scaled, float w, float h, float mag,
         const float innerRadius = outerRadius - thickness;
         const float midRadius = outerRadius - thickness * 0.5f;
         const float solidAlpha =
-            static_cast<float>(ColorAlpha(color)) / 255.0f;
+            static_cast<float>(InkingColorAlpha(color)) / 255.0f;
 
         struct RingSample {
             float radius = 0.0f;
@@ -266,19 +266,19 @@ bool BuildShapeMesh(const ShapeSpec& scaled, float w, float h, float mag,
     //      列间距是"半像素"换算出来的角度（`half / midRadius`）。
     // 圆心落在孔里，所以"中心扇形三角化"那套在这里根本不成立——这也是圆弧
     // 必须单独建网格、不能只加一个 SDF 分支的原因。
-    if (scaled.kind == ShapeKind::Arc) {
+    if (scaled.kind == InkingShapeKind::Arc) {
         const float outerRadius = shorter * 0.5f;
         const float thickness = std::min(
             scaled.thickness > 0.0f ? scaled.thickness : 0.0f, outerRadius);
-        const float sweep = inking::detail::ShapeArcSweepRadians(scaled);
+        const float sweep = inking_detail::ShapeArcSweepRadians(scaled);
         if (thickness <= 0.0f || outerRadius <= 0.0f || sweep <= 0.0f) {
             return false;  // 零扫角没有面积
         }
         const float innerRadius = outerRadius - thickness;
         const float midRadius = outerRadius - thickness * 0.5f;
-        const float direction = inking::detail::ShapeArcDirection(scaled);
-        const float start = scaled.startAngle * inking::detail::shapeDegToRad;
-        const float solidAlpha = static_cast<float>(ColorAlpha(color)) / 255.0f;
+        const float direction = inking_detail::ShapeArcDirection(scaled);
+        const float start = scaled.startAngle * inking_detail::shapeDegToRad;
+        const float solidAlpha = static_cast<float>(InkingColorAlpha(color)) / 255.0f;
 
         // 径向圈：与整环那套折点完全一致（外羽化 / 实心外 / 实心内 / 内羽化）。
         struct ArcRing {
@@ -377,10 +377,10 @@ bool BuildShapeMesh(const ShapeSpec& scaled, float w, float h, float mag,
     //
     // 任意多边形**不需要中心点**：它的内部走 ear clipping（见下面那段），
     // 而"中心"在凹多边形里甚至可能落在形状外（U 形的中心就在凹口里）。
-    const bool earClipInside = (scaled.kind == ShapeKind::PolygonPath);
+    const bool earClipInside = (scaled.kind == InkingShapeKind::PolygonPath);
     const SDL_FColor edgeColor = VertexColor(color, 0.0f);
     const SDL_FColor solidColor = VertexColor(
-        color, static_cast<float>(ColorAlpha(color)) / 255.0f);
+        color, static_cast<float>(InkingColorAlpha(color)) / 255.0f);
 
     vertices.reserve(2 * count + 1);
     indices.reserve(9 * count);
@@ -432,9 +432,9 @@ bool BuildShapeMesh(const ShapeSpec& scaled, float w, float h, float mag,
 
 }  // namespace
 
-void fillShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
+void fillShape(SDL_Renderer* renderer, const InkingShapeSpec& shape, int width,
                int height, float magnification, float pixelX, float pixelY,
-               const TransformSpec& transform, std::uint32_t color) {
+               const InkingTransformSpec& transform, std::uint32_t color) {
     if (renderer == nullptr || width <= 0 || height <= 0) {
         return;
     }
@@ -447,13 +447,13 @@ void fillShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
     }
 
     // 半径与线宽还得跟着展示倍率缩放：尺寸已经在 w/h 里了。
-    ShapeSpec scaled = shape;
+    InkingShapeSpec scaled = shape;
     scaled.radius = shape.radius * mag;
     scaled.thickness = shape.thickness * mag;
 
     // 线宽为 0 的 ring / line 没有面积可言（SDF 里只剩一圈测度为零的边界），
     // 直接不画——省得画出一条 1 像素的线，鼠标却点不中（画与点不同源）。
-    if ((scaled.kind == ShapeKind::Ring || scaled.kind == ShapeKind::Line)
+    if ((scaled.kind == InkingShapeKind::Ring || scaled.kind == InkingShapeKind::Line)
         && scaled.thickness <= 0.0f) {
         return;
     }
@@ -466,7 +466,7 @@ void fillShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
     auto matches = [&](const VertexCacheSlot& slot) {
         return slot.valid && slot.width == width && slot.height == height
             && slot.magnification == mag && SameShape(slot.shape, scaled)
-            && SameTransform(slot.transform, transform)
+            && InkingSameTransform(slot.transform, transform)
             && slot.color == color;
     };
     VertexCacheSlot* slot = CurrentNode();
@@ -489,9 +489,9 @@ void fillShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
                    indices, pixelX, pixelY, color);
 }
 
-void strokeShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
+void strokeShape(SDL_Renderer* renderer, const InkingShapeSpec& shape, int width,
                  int height, float magnification, float pixelX, float pixelY,
-                 const TransformSpec& transform, float strokeWidth,
+                 const InkingTransformSpec& transform, float strokeWidth,
                  std::uint32_t color) {
     if (renderer == nullptr || width <= 0 || height <= 0 || strokeWidth <= 0.0f) {
         return;
@@ -506,21 +506,21 @@ void strokeShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
 
     // `ring` / `arc` 本身就是一条细带（两条边界）："沿边界描边"会变成四条线，
     // 现在直接不画（配置里写了也不报错，见 InkingDraw.h 那条取舍）。
-    if (shape.kind == ShapeKind::Ring || shape.kind == ShapeKind::Arc) {
+    if (shape.kind == InkingShapeKind::Ring || shape.kind == InkingShapeKind::Arc) {
         return;
     }
 
-    ShapeSpec scaled = shape;
+    InkingShapeSpec scaled = shape;
     scaled.radius = shape.radius * mag;
     scaled.thickness = shape.thickness * mag;
-    if (scaled.kind == ShapeKind::Line && scaled.thickness <= 0.0f) {
+    if (scaled.kind == InkingShapeKind::Line && scaled.thickness <= 0.0f) {
         return;
     }
 
     const float stroke = strokeWidth * mag;
     const float shorter = w < h ? w : h;
     const float half = std::min(kFeatherPixels, shorter * 0.25f) * 0.5f;
-    const float solidAlpha = static_cast<float>(ColorAlpha(color)) / 255.0f;
+    const float solidAlpha = static_cast<float>(InkingColorAlpha(color)) / 255.0f;
     const float outerOffset = stroke * 0.5f;
 
     // 四条轮廓（外羽化 / 实心外 / 实心内 / 内羽化）。描边比羽化带还窄
@@ -542,13 +542,13 @@ void strokeShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
     rings[ringCount++] = StrokeRing{-outerOffset - half, 0.0f};
 
     // 变换与填充那条路同一套：绕组件中心、平移量先乘展示倍率。
-    TransformSpec deviceTransform = transform;
+    InkingTransformSpec deviceTransform = transform;
     deviceTransform.translateX *= mag;
     deviceTransform.translateY *= mag;
     const float centerX = w * 0.5f;
     const float centerY = h * 0.5f;
     const auto transformPoint = [&](float x, float y) {
-        return ApplyTransform(deviceTransform, x, y, centerX, centerY);
+        return InkingApplyTransform(deviceTransform, x, y, centerX, centerY);
     };
 
     const int steps = ContourSteps(scaled, w, h);
@@ -575,7 +575,7 @@ void strokeShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
         }
         const SDL_FColor ringColor = VertexColor(color, rings[ring].alpha);
         for (const OutlinePoint& point : contour) {
-            const Point2 placed = transformPoint(point.x, point.y);
+            const InkingPoint2 placed = transformPoint(point.x, point.y);
             // **本地**坐标：平移交给提交层（与填充同一条约定）。
             vertices.push_back(MakeVertex(placed.x, placed.y, ringColor));
         }
@@ -602,10 +602,10 @@ void strokeShape(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
                         indices.size(), pixelX, pixelY, /*reused=*/false);
 }
 
-void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width,
+void fillShapeTextured(SDL_Renderer* renderer, const InkingShapeSpec& shape, int width,
                        int height, float magnification, float pixelX,
-                       float pixelY, const TransformSpec& transform,
-                       SDL_Texture* texture, const ImageFitSpec& fit,
+                       float pixelY, const InkingTransformSpec& transform,
+                       SDL_Texture* texture, const InkingImageFitSpec& fit,
                        std::uint32_t tintColor) {
     // 0.8.5 删掉了 `bool hasAlpha` 这个参数：它原来只决定"要不要绕开几何批"
     // （带 alpha 的图必须直接贴，否则透明区发黑），而 0.6.2 T-08 把矩形图片
@@ -624,10 +624,10 @@ void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width
         return;
     }
 
-    ShapeSpec scaled = shape;
+    InkingShapeSpec scaled = shape;
     scaled.radius = shape.radius * mag;
     scaled.thickness = shape.thickness * mag;
-    if ((scaled.kind == ShapeKind::Ring || scaled.kind == ShapeKind::Line)
+    if ((scaled.kind == InkingShapeKind::Ring || scaled.kind == InkingShapeKind::Line)
         && scaled.thickness <= 0.0f) {
         return;
     }
@@ -643,11 +643,11 @@ void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width
     // **逐位相同**。那条老结论在现在的 SDL 上不复现（旧记录保留在任务书 §2.3 里）。
     // 所以默认合并：同纹理连续 N 笔 = **一次** `SDL_RenderGeometry`。
     //
-    // 开关关掉时仍走快路（`detail::SetImageBatchingEnabled(false)`）：它是回退预案，
+    // 开关关掉时仍走快路（`inking_detail::SetImageBatchingEnabled(false)`）：它是回退预案，
     // 也是"快路那份像素"的基准。**注意快路不看 `transform`**（也不看祖先仿射），
     // 所以关掉时旋转 / 缩放的矩形图片会画成没变换——这是既有缺陷，不是开关引入的。
-    const bool rectFastPath = scaled.kind == ShapeKind::Rect
-        && fit.fit == ImageFit::Fill && !ImageBatchingEnabled();
+    const bool rectFastPath = scaled.kind == InkingShapeKind::Rect
+        && fit.fit == InkingImageFit::Fill && !ImageBatchingEnabled();
     if (rectFastPath) {
         SDL_FRect destination{pixelX, pixelY, w, h};
         // 源矩形（图集切格）：全零 = 整张纹理，`srcRect` 传 nullptr——**与 0.6.1
@@ -655,7 +655,7 @@ void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width
         SDL_FRect source{};
         const SDL_FRect* sourceRect = nullptr;
         if (fit.HasSourceRect()) {
-            const ShapeBounds& raw = fit.srcRect;
+            const InkingShapeBounds& raw = fit.srcRect;
             source = SDL_FRect{raw.x, raw.y, raw.width, raw.height};
             sourceRect = &source;
         }
@@ -678,7 +678,7 @@ void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width
     // 这条**不走几何批时**的写法（下面 contain 那条）要自己刷一次批：
     // 纹理绘制本来就能与纯色几何同批（B4 起批按纹理分），但裁剪矩形是
     // "绘制那一刻"生效的，所以 contain 那一笔必须是直接提交。
-    const bool clipToImageArea = (fit.fit == ImageFit::Contain);
+    const bool clipToImageArea = (fit.fit == InkingImageFit::Contain);
     if (!clipToImageArea) {
         // 正常路径：交给提交层。同一张纹理连续画 N 笔会合并成**一次**
         // `SDL_RenderGeometry`（`BatchStats::textureDraws` 可断言）。
@@ -692,7 +692,7 @@ void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width
     NoteImmediateDraw();
     ApplyAncestorAffineToVertices(vertices.data(), vertices.size(), pixelX,
                                   pixelY);
-    const ShapeBounds area = fit.ImageArea();
+    const InkingShapeBounds area = fit.ImageArea();
     SDL_Vertex corners[4];
     const float xs[4] = {area.x, area.x + area.width, area.x, area.x + area.width};
     const float ys[4] = {area.y, area.y, area.y + area.height, area.y + area.height};
@@ -710,7 +710,7 @@ void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width
         maxX = std::max(maxX, corners[i].position.x);
         maxY = std::max(maxY, corners[i].position.y);
     }
-    SetClipRect(renderer, ShapeBounds{minX, minY, maxX - minX, maxY - minY});
+    SetClipRect(renderer, InkingShapeBounds{minX, minY, maxX - minX, maxY - minY});
 
     // 颜色只用来调制（图片本身不换色，只借 tint 的 alpha 做淡入淡出）；
     // 顶点色里的 alpha 是形状羽化，所以这里不动 alpha mod。
@@ -723,4 +723,4 @@ void fillShapeTextured(SDL_Renderer* renderer, const ShapeSpec& shape, int width
     ClearClipRect(renderer);
 }
 
-}  // namespace inking::detail
+}  // namespace inking_detail

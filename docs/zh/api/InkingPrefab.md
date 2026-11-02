@@ -20,7 +20,7 @@
 | `ListRow` | 带选中色的列表行（`InkingStaticButton`） | `prefab/ListRow.h` |
 | `PrefabTheme` | 一套配色 / 圆角 / 字体路径常量 | `prefab/PrefabTheme.h` |
 
-所有预制件都在 `inking::prefab` 命名空间下（`ListRow` 也是）。
+所有预制件都在 `prefab` 命名空间下（`ListRow` 也是）。
 
 ## 一、MenuBar
 
@@ -39,17 +39,17 @@ public:
     // 内容项
     InkingWidget* AddItem(std::unique_ptr<InkingWidget> item);
     InkingWidget* AddItem(const ItemFactory& factory);
-    InkingStaticButton* AddButton(const ButtonData& look, const std::string& text,
+    InkingStaticButton* AddButton(const InkingButtonData& look, const std::string& text,
                                   ButtonCallback onActivate = {},
-                                  const Shortcut& shortcut = {});   // ← 第 4 参绑全局快捷键
+                                  const InkingShortcut& shortcut = {});   // ← 第 4 参绑全局快捷键
 
     std::size_t GetBoundShortcutCount() const noexcept;
     std::size_t GetItemCount() const noexcept;
-    ShapeBounds GetItemRect(std::size_t index) const;
+    InkingShapeBounds GetItemRect(std::size_t index) const;
     InkingWidget* GetItemNode(std::size_t index) const;
 
-    void SetJustify(LayoutJustify justify);
-    LayoutJustify GetJustify() const noexcept;
+    void SetJustify(InkingLayoutJustify justify);
+    InkingLayoutJustify GetJustify() const noexcept;
 
     // 自绘标题栏
     void SetDraggable(bool draggable) noexcept;
@@ -79,8 +79,8 @@ public:
 
 ```C++
 struct MenuBarStyle {
-    PanelData panel{};            // 高度 / 背景 / 形状 + 排列规则（layout）
-    ButtonData captionLook{};     // 最小化 / 关闭 的外观模板
+    InkingPanelData panel{};            // 高度 / 背景 / 形状 + 排列规则（layout）
+    InkingButtonData captionLook{};     // 最小化 / 关闭 的外观模板
     bool draggable = false;       // 按住空白处拖窗口（无边框标题栏行为）
     bool captionButtons = false;  // 右上角加两个按钮
     float captionWidth = 40.0f;
@@ -121,12 +121,12 @@ public:
     void SetItems(std::vector<OptionItem> items);        // 幂等：内容没变不重建
     const std::vector<OptionItem>& GetItems() const noexcept;
     std::size_t GetItemCount() const noexcept;
-    ShapeBounds GetItemRect(std::size_t index) const;
+    InkingShapeBounds GetItemRect(std::size_t index) const;
     InkingStaticButton* GetItemNode(std::size_t index) const;
     std::string ItemId(std::size_t index) const;
     std::size_t GetBuiltItemCount() const noexcept;
 
-    LayoutSize MeasureLayout(const LayoutConstraints&) const override;
+    InkingLayoutSize MeasureLayout(const InkingLayoutConstraints&) const override;
     bool Activate(std::size_t index);        // 程序化"点"某一项
     const OptionBarStyle& GetStyle() const noexcept;
 
@@ -139,8 +139,8 @@ public:
 
 ```C++
 struct OptionBarStyle {
-    PanelData panel{};           // 尺寸 / 背景 / 裁剪 / 滚动 / 排列规则（layout）
-    ButtonData itemLook{};       // 每项外观模板
+    InkingPanelData panel{};           // 尺寸 / 背景 / 裁剪 / 滚动 / 排列规则（layout）
+    InkingButtonData itemLook{};       // 每项外观模板
     float itemHeight = 40.0f;
     std::uint32_t textColor = 0; // 0 = 用 itemLook 自带的那份
     static OptionBarStyle MakeDefault();
@@ -185,7 +185,7 @@ public:
     std::size_t GetBuiltRowCount() const noexcept;
     int GetBuiltFirstIndex() / GetBuiltLastIndex() const noexcept;
 
-    ShapeBounds GetRowRect(int index) const;
+    InkingShapeBounds GetRowRect(int index) const;
     ListRow* GetRowNode(int index) const;
 
     void ScrollTo(float x, float y);
@@ -204,8 +204,8 @@ public:
 
 ```C++
 struct ListViewStyle {
-    PanelData panel{};
-    ButtonData rowLook{};
+    InkingPanelData panel{};
+    InkingButtonData rowLook{};
     float rowHeight = 32.0f;               // 必须 > 0（窗口化靠它算位置）
     std::uint32_t selectedColor = 0xFF3E6E9Eu;
     ListSelectionMode selection = ListSelectionMode::Single;
@@ -282,14 +282,14 @@ public:
 
 ```C++
 struct SelectStyle {
-    ButtonData closedLook{};
+    InkingButtonData closedLook{};
     OptionBarStyle options{};
     SelectExpandDirection direction = SelectExpandDirection::Down;
     float expandWidth = 0.0f;          // 0 = 跟收起按钮一样宽
     float expandHeight = 0.0f;         // 0 = 用 options.panel.height
     float expandGap = 2.0f;
     bool filterable = false;
-    TextInputData filterLook{};
+    InkingTextInputData filterLook{};
     float filterHeight = 30.0f;
     std::string placeholder = "请选择";
     int zIndex = 0;
@@ -316,11 +316,11 @@ struct SelectStyle {
 ## 五、FilePicker
 
 **它就是**五块拼起来：路径框（`InkingTextInput`）→ 快捷位置（`OptionBar`）→
-盘符栏（`OptionBar`）→ 目录内容（`ListView`）→ 按钮栏（**普通横排容器**，`PanelData`）。
+盘符栏（`OptionBar`）→ 目录内容（`ListView`）→ 按钮栏（**普通横排容器**，`InkingPanelData`）。
 
 > **按钮栏不是 `MenuBar`**（0.5.3 起）：`MenuBar` 是"贴着窗口的横条"，数据面捆着
 > `hideInFullscreen` / `zoomWheel`（默认都 true）等窗口语义，实现里还订阅窗口的
-> `fullscreenChanged`。对话框的一行按钮只要"横向排好"，所以只用 `PanelData` 的
+> `fullscreenChanged`。对话框的一行按钮只要"横向排好"，所以只用 `InkingPanelData` 的
 > `layout`，不参与全屏隐藏 / 滚轮缩放。**布局复用、策略不复用。**
 
 ```C++
@@ -380,13 +380,13 @@ public:
 
 ```C++
 struct FilePickerStyle {
-    PanelData panel{};
-    TextInputData pathInput{};
+    InkingPanelData panel{};
+    InkingTextInputData pathInput{};
     OptionBarStyle shortcuts{};
     OptionBarStyle drives{};                 // 盘符栏（每项 52 宽："C:"）
     ListViewStyle list{};
-    PanelData buttonBar{};                   // 底部按钮栏（普通横排容器，不是 MenuBar）
-    ButtonData buttonLook{};                 // 宽度就是按钮宽度（Stack 不拉伸主轴）
+    InkingPanelData buttonBar{};                   // 底部按钮栏（普通横排容器，不是 MenuBar）
+    InkingButtonData buttonLook{};                 // 宽度就是按钮宽度（Stack 不拉伸主轴）
 
     std::vector<std::string> extensions;     // 小写比较；空 = 全要（目录永远显示）
     FilePickMode mode = FilePickMode::OpenFile;
@@ -450,7 +450,7 @@ public:
 
 ## 七、PrefabTheme
 
-命名空间 `inking::prefab::theme`，一组 `inline constexpr` 常量 + 一个函数：
+命名空间 `inking_prefab::theme`，一组 `inline constexpr` 常量 + 一个函数：
 
 ```C++
 kSceneBackground / kSurface / kSurfaceAlt / kSurfaceSunken / kOutline
@@ -469,7 +469,7 @@ std::string DefaultFontPath();
 
 ## 常见坑
 
-1. **给菜单栏 / 列表的 `rowLook` 三态继承没关**：`ButtonData::Normalize()` 会拿
+1. **给菜单栏 / 列表的 `rowLook` 三态继承没关**：`InkingButtonData::Normalize()` 会拿
    `normal` 覆盖 `hover` / `onclicked`，你给的那两份被悄悄盖掉。想不同就必须显式把
    `hoverInheritsNormal` / `onclickedInheritsNormal` 置 false。
 2. **`rowHeight <= 0`**：窗口化靠它算位置，直接坏掉。

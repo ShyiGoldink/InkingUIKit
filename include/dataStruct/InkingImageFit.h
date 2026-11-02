@@ -21,10 +21,8 @@
 #include <cmath>
 #include <cstdint>
 
-namespace inking {
-
 /// 图片适配模式（配置里写 `"fit": "fill" | "contain" | "cover"`）。
-enum class ImageFit : std::uint8_t {
+enum class InkingImageFit : std::uint8_t {
     Fill = 0,  ///< 拉伸铺满（默认）
     Contain,   ///< 完整放进框、居中
     Cover,     ///< 铺满框、居中、裁掉超出
@@ -33,11 +31,11 @@ enum class ImageFit : std::uint8_t {
 /**
  * @brief 一次"把图放进框"的完整计算（纯数据 + 纯函数，不碰渲染器）。
  *
- * 用法（纹理层）：`ImageFitSpec{fit, 框宽, 框高, 图宽, 图高}` → `DrawnRect()` 知道
+ * 用法（纹理层）：`InkingImageFitSpec{fit, 框宽, 框高, 图宽, 图高}` → `DrawnRect()` 知道
  * 图占哪块；生成顶点时每个点问 `UvAt()` 与 `CoverageAt()`。
  */
-struct ImageFitSpec {
-    ImageFit fit = ImageFit::Fill;
+struct InkingImageFitSpec {
+    InkingImageFit fit = InkingImageFit::Fill;
     float frameWidth = 0.0f;   ///< 组件框宽（设备像素）
     float frameHeight = 0.0f;  ///< 组件框高
     float imageWidth = 0.0f;   ///< 纹理像素宽（**整张**纹理，UV 的分母）
@@ -52,7 +50,7 @@ struct ImageFitSpec {
      *
      * **全零 = 整张纹理**。这是既有图片（非图集）的路径，一个字节的行为都不变。
      */
-    ShapeBounds srcRect{};
+    InkingShapeBounds srcRect{};
 
     /// 给过源矩形吗（`srcRect` 宽高都 > 0）。
     bool HasSourceRect() const noexcept {
@@ -60,9 +58,9 @@ struct ImageFitSpec {
     }
 
     /// 归一化后的源矩形（像素）：没给就是整张纹理。
-    ShapeBounds SourceRect() const noexcept {
+    InkingShapeBounds SourceRect() const noexcept {
         if (!HasSourceRect()) {
-            return ShapeBounds{0.0f, 0.0f, imageWidth, imageHeight};
+            return InkingShapeBounds{0.0f, 0.0f, imageWidth, imageHeight};
         }
         return srcRect;
     }
@@ -85,23 +83,23 @@ struct ImageFitSpec {
      * 一格是 40×40、整张是 160×40，拿整张去算比例会让 `Contain` / `Cover`
      * 的留白和裁边全错（帧被当成宽高比 4:1 的超宽图）。
      */
-    ShapeBounds DrawnRect() const noexcept {
+    InkingShapeBounds DrawnRect() const noexcept {
         if (!Valid()) {
-            return ShapeBounds{0.0f, 0.0f, 0.0f, 0.0f};
+            return InkingShapeBounds{0.0f, 0.0f, 0.0f, 0.0f};
         }
-        const ShapeBounds source = SourceRect();
+        const InkingShapeBounds source = SourceRect();
         float drawnWidth = frameWidth;
         float drawnHeight = frameHeight;
-        if (fit != ImageFit::Fill) {
+        if (fit != InkingImageFit::Fill) {
             const float byWidth = frameWidth / source.width;
             const float byHeight = frameHeight / source.height;
-            const float scale = (fit == ImageFit::Contain)
+            const float scale = (fit == InkingImageFit::Contain)
                                     ? std::min(byWidth, byHeight)
                                     : std::max(byWidth, byHeight);
             drawnWidth = source.width * scale;
             drawnHeight = source.height * scale;
         }
-        return ShapeBounds{(frameWidth - drawnWidth) * 0.5f,
+        return InkingShapeBounds{(frameWidth - drawnWidth) * 0.5f,
                            (frameHeight - drawnHeight) * 0.5f, drawnWidth,
                            drawnHeight};
     }
@@ -118,7 +116,7 @@ struct ImageFitSpec {
      * `u = (src.x + u01 × src.width) / imageWidth`。
      */
     void UvAt(float x, float y, float& u, float& v) const noexcept {
-        const ShapeBounds rect = DrawnRect();
+        const InkingShapeBounds rect = DrawnRect();
         if (rect.width <= 0.0f || rect.height <= 0.0f) {
             u = 0.0f;
             v = 0.0f;
@@ -134,7 +132,7 @@ struct ImageFitSpec {
             v = v01;
             return;
         }
-        const ShapeBounds source = srcRect;
+        const InkingShapeBounds source = srcRect;
         u = (source.x + u01 * source.width) / imageWidth;
         v = (source.y + v01 * source.height) / imageHeight;
     }
@@ -142,13 +140,12 @@ struct ImageFitSpec {
     /**
      * `Contain` 才有意义：**图区域**（相对框左上角）。图区域外那圈留白不画纹理
      * ——实现是"形状 ∩ 图区域"（绘制时按它设一次裁剪矩形，见
-     * `detail::fillShapeTextured`），而不是逐顶点透明度。
+     * `inking_detail::fillShapeTextured`），而不是逐顶点透明度。
      *
      * 为什么不做成逐顶点 alpha：形状网格的顶点只落在**轮廓**上（矩形就四个角 +
      * 一个中心），而图区域的边界在形状内部——用顶点插值表达不出来（实测：
      * contain 的留白会变成整块半透明，而不是干净的边界）。
      */
-    ShapeBounds ImageArea() const noexcept { return DrawnRect(); }
+    InkingShapeBounds ImageArea() const noexcept { return DrawnRect(); }
 };
 
-}  // namespace inking

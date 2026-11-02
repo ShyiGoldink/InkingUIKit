@@ -21,21 +21,20 @@
 #include <cstdint>
 #include <functional>
 
-namespace inking {
 
 /// 点击回调：不带参数、不返回值。
 ///
 /// 原来写的是 `std::function<std::any()>`（任意返回值），这里收窄成 `void`：
 /// "按下之后要算出一个值" 不是按钮的职责——需要返回值就直接在 lambda 里捕获
-/// 外部状态，或者把它包成一个 Task 交给 TaskQueue。`std::any` 还会逼每个
+/// 外部状态，或者把它包成一个 InkingTask 交给 InkingTaskQueue。`std::any` 还会逼每个
 /// 调用点都去 `std::any_cast` 一个它根本不关心的东西。
 ///
 /// 放在这里而不是某一个按钮头里：静态 / 动态两块按钮**共用同一个回调类型**，
 /// 谁换一套都会让"同一个点击回调挂不上另一块按钮"。
-using ButtonClickCallback = std::function<void()>;
+using InkingButtonClickCallback = std::function<void()>;
 
 /// 按钮的三态。顺序即优先级：按下 > 悬停 > 通常。
-enum class ButtonState : std::uint8_t {
+enum class InkingButtonState : std::uint8_t {
     Normal = 0,  ///< 通常
     Hover,       ///< 悬停
     Pressed,     ///< 按下（配置里叫 onclicked）
@@ -58,7 +57,7 @@ enum class ButtonState : std::uint8_t {
  * 形状与尺寸一个字节都不动。变换属于"变换通道"：它不改命中表，查询时把点反
  * 变换回本地空间（docs/InputDesign.md §11），所以静态档照样成立。
  *
- * 进度可以过一条**缓动曲线**（`ButtonAppearance::easing`）：曲线只改变"画到
+ * 进度可以过一条**缓动曲线**（`InkingButtonAppearance::easing`）：曲线只改变"画到
  * 哪儿了"，不改时长、起点、终点——见 `include/dataStruct/InkingEasing.h`。
  *
  * 触发是**自动**的：`SetHovered` / `SetPressed` 让三态变了，就顺手用**目标状态
@@ -71,15 +70,15 @@ enum class ButtonState : std::uint8_t {
  * 静态组件收不到 `InkingDynamicWidget::Tick`（那是动态档的逻辑步），
  * 所以每帧通道单独有一条：见 `InkingWidget::TickAnimation`。
  */
-struct ButtonLook {
+struct InkingButtonLook {
     /// 三态外观按状态展开存放，渲染时按当前状态直接取，
     /// 不在每帧去 if-else 拼一遍。
-    ButtonAppearance normal{};
-    ButtonAppearance hover{};
-    ButtonAppearance onclicked{};
+    InkingButtonAppearance normal{};
+    InkingButtonAppearance hover{};
+    InkingButtonAppearance onclicked{};
 
     /// 当前三态中的一个。初始是 Normal。
-    ButtonState state = ButtonState::Normal;
+    InkingButtonState state = InkingButtonState::Normal;
 
     /// 指针现在在不在按钮里。它一直更新（即使正在按下）：
     /// 抬起时"该回 Hover 还是 Normal"问的就是它。
@@ -103,7 +102,7 @@ struct ButtonLook {
      * 本地几何（形状 / 尺寸）完全不动，所以命中表不用重烘——这是静态组件也能
      * 有"移动 / 旋转"动画的前提（docs/InputDesign.md §11）。
      */
-    TransformSpec displayTransform{};
+    InkingTransformSpec displayTransform{};
 
     /**
      * 现在**实际生效**的尺寸（T-5 的布局通道），与颜色 / 变换同步推进。
@@ -116,7 +115,7 @@ struct ButtonLook {
     float displayHeight = 0.0f;
 
     /// 从配置展开三态，并把状态机与过渡都复位。构造时调一次。
-    void Reset(const ButtonData& data) noexcept {
+    void Reset(const InkingButtonData& data) noexcept {
         normal = data.normal;
         hover = data.hover;
         onclicked = data.onclicked;
@@ -124,12 +123,12 @@ struct ButtonLook {
         _baseHeight = data.height;
         hovered = false;
         pressed = false;
-        state = ButtonState::Normal;
+        state = InkingButtonState::Normal;
         // 颜色统一走 `TargetColor`：配了 token 就查运行期主题，没配就是烘好的字面量。
-        displayColor = TargetColor(ButtonState::Normal);
+        displayColor = TargetColor(InkingButtonState::Normal);
         displayTransform = normal.transform;
-        displayWidth = EffectiveWidth(ButtonState::Normal);
-        displayHeight = EffectiveHeight(ButtonState::Normal);
+        displayWidth = EffectiveWidth(InkingButtonState::Normal);
+        displayHeight = EffectiveHeight(InkingButtonState::Normal);
         fromColor = displayColor;
         fromTransform = displayTransform;
         fromWidth = displayWidth;
@@ -138,7 +137,7 @@ struct ButtonLook {
         duration = 0.0f;
         _pendingRepaint = false;
         _pendingHit = false;
-        _themeVersion = ThemeVersion();
+        _themeVersion = InkingThemeVersion();
     }
 
     /**
@@ -149,19 +148,19 @@ struct ButtonLook {
      * 没写 token 就是那个字面量本身。**颜色只在这里取**——三态、过渡、收尾
      * 全走这一个入口，否则"换肤后一部分对、一部分还是旧色"。
      */
-    std::uint32_t TargetColor(ButtonState which) const noexcept {
-        const ButtonAppearance& appearance = For(which);
-        return ResolveThemeColor(appearance.themeColor, appearance.color);
+    std::uint32_t TargetColor(InkingButtonState which) const noexcept {
+        const InkingButtonAppearance& appearance = For(which);
+        return InkingResolveThemeColor(appearance.themeColor, appearance.color);
     }
 
 
     /// 某个状态下的生效尺寸：状态里写了就用它，没写就用组件自己的。
-    int EffectiveWidth(ButtonState which) const noexcept {
+    int EffectiveWidth(InkingButtonState which) const noexcept {
         const float value = For(which).width;
         return value > 0.0f ? static_cast<int>(value + 0.5f) : _baseWidth;
     }
 
-    int EffectiveHeight(ButtonState which) const noexcept {
+    int EffectiveHeight(InkingButtonState which) const noexcept {
         const float value = For(which).height;
         return value > 0.0f ? static_cast<int>(value + 0.5f) : _baseHeight;
     }
@@ -211,22 +210,22 @@ struct ButtonLook {
 
     /// 三个状态里有没有哪个改了尺寸（改了才需要"每帧现算位置"与命中脏）。
     bool HasSizeAnimation() const noexcept {
-        const int baseWidth = EffectiveWidth(ButtonState::Normal);
-        const int baseHeight = EffectiveHeight(ButtonState::Normal);
-        return EffectiveWidth(ButtonState::Hover) != baseWidth
-            || EffectiveHeight(ButtonState::Hover) != baseHeight
-            || EffectiveWidth(ButtonState::Pressed) != baseWidth
-            || EffectiveHeight(ButtonState::Pressed) != baseHeight;
+        const int baseWidth = EffectiveWidth(InkingButtonState::Normal);
+        const int baseHeight = EffectiveHeight(InkingButtonState::Normal);
+        return EffectiveWidth(InkingButtonState::Hover) != baseWidth
+            || EffectiveHeight(InkingButtonState::Hover) != baseHeight
+            || EffectiveWidth(InkingButtonState::Pressed) != baseWidth
+            || EffectiveHeight(InkingButtonState::Pressed) != baseHeight;
     }
 
     /// 某一个状态对应的外观。
-    const ButtonAppearance& For(ButtonState which) const noexcept {
+    const InkingButtonAppearance& For(InkingButtonState which) const noexcept {
         switch (which) {
-            case ButtonState::Hover:
+            case InkingButtonState::Hover:
                 return hover;
-            case ButtonState::Pressed:
+            case InkingButtonState::Pressed:
                 return onclicked;
-            case ButtonState::Normal:
+            case InkingButtonState::Normal:
             default:
                 return normal;
         }
@@ -236,7 +235,7 @@ struct ButtonLook {
      * 当前状态那一份外观——注意它是**目标**那一份（配置里写的）。
      * 过渡进行中它和屏幕上正在显示的颜色不是一回事：要那个看 `displayColor`。
      */
-    const ButtonAppearance& Current() const noexcept { return For(state); }
+    const InkingButtonAppearance& Current() const noexcept { return For(state); }
 
     /**
      * 按下 > 悬停 > 通常。
@@ -244,16 +243,16 @@ struct ButtonLook {
      * 按下期间指针滑出去了也还是"按下"：用户按着不放往外拖，
      * 按钮不该看起来已经松开了。
      */
-    static ButtonState Resolve(bool isHovered, bool isPressed) noexcept {
+    static InkingButtonState Resolve(bool isHovered, bool isPressed) noexcept {
         if (isPressed) {
-            return ButtonState::Pressed;
+            return InkingButtonState::Pressed;
         }
-        return isHovered ? ButtonState::Hover : ButtonState::Normal;
+        return isHovered ? InkingButtonState::Hover : InkingButtonState::Normal;
     }
 
     /// 按当前两个标志重算三态；返回**三态真的变了**没有。
     bool ResolveFromFlags() noexcept {
-        const ButtonState next = Resolve(hovered, pressed);
+        const InkingButtonState next = Resolve(hovered, pressed);
         if (next == state) {
             return false;
         }
@@ -351,7 +350,7 @@ struct ButtonLook {
         //
         // 不做"跨主题的颜色过渡"：那会让人看见深色→浅色的中间灰，而主题切换
         // 在用户眼里是瞬时的。所以这里直接把 duration 清零。
-        const std::uint64_t themeVersion = ThemeVersion();
+        const std::uint64_t themeVersion = InkingThemeVersion();
         if (_themeVersion != themeVersion) {
             _themeVersion = themeVersion;
             const std::uint32_t before = displayColor;
@@ -368,7 +367,7 @@ struct ButtonLook {
 
         // 先留一份"上一帧的显示值"，最后拿它比对出这一帧到底变没变。
         const std::uint32_t previousColor = displayColor;
-        const TransformSpec previousTransform = displayTransform;
+        const InkingTransformSpec previousTransform = displayTransform;
         const float previousWidth = displayWidth;
         const float previousHeight = displayHeight;
 
@@ -378,7 +377,7 @@ struct ButtonLook {
         // 所以这里只是把线性的 k 过一遍曲线，插值本身一个字没改。
         // 曲线取**目标状态**那份（和时长同一个来源：过场段各自带一份）。
         const float linear = finished ? 1.0f : (elapsed / duration);
-        const float k = ApplyEasing(For(state).easing, linear);
+        const float k = InkingApplyEasing(For(state).easing, linear);
 
         // 变换与颜色**同一段时长、同一个进度**：它们是"这个状态的样子"的两个侧面，
         // 分成两段动画只会让人配两次时长、还可能对不齐。
@@ -391,8 +390,8 @@ struct ButtonLook {
             duration = 0.0f;
             elapsed = 0.0f;
         } else {
-            displayColor = MixColor(fromColor, TargetColor(state), k);
-            displayTransform = LerpTransform(fromTransform, For(state).transform, k);
+            displayColor = InkingMixColor(fromColor, TargetColor(state), k);
+            displayTransform = InkingLerpTransform(fromTransform, For(state).transform, k);
             // 尺寸与颜色/变换**同一个进度**：T-5 之后它也是"这个状态的样子"的一部分。
             displayWidth = fromWidth
                 + (static_cast<float>(EffectiveWidth(state)) - fromWidth) * k;
@@ -401,11 +400,11 @@ struct ButtonLook {
         }
 
         result.repaint = result.repaint || (displayColor != previousColor)
-            || !SameTransform(displayTransform, previousTransform)
+            || !InkingSameTransform(displayTransform, previousTransform)
             || displayWidth != previousWidth || displayHeight != previousHeight;
         // 尺寸变了，命中区域就变了：同一个点可能落到别的组件上（和变换同一条理由）。
         result.hit = result.hit
-            || !SameTransform(displayTransform, previousTransform)
+            || !InkingSameTransform(displayTransform, previousTransform)
             || displayWidth != previousWidth || displayHeight != previousHeight;
         return result;
     }
@@ -414,7 +413,7 @@ private:
     /// 过渡的起点色 / 起点变换 / 已用时长 / 总时长。
     /// `duration == 0` 表示没有过渡在跑。
     std::uint32_t fromColor = 0xFF000000u;
-    TransformSpec fromTransform{};
+    InkingTransformSpec fromTransform{};
     float fromWidth = 0.0f;
     float fromHeight = 0.0f;
     int _baseWidth = 0;   ///< 组件自己的尺寸（状态没写尺寸时用它）
@@ -435,12 +434,12 @@ private:
         fromHeight = displayHeight;
 
         const std::uint32_t targetColor = TargetColor(state);
-        const TransformSpec targetTransform = For(state).transform;
+        const InkingTransformSpec targetTransform = For(state).transform;
         const float targetWidth = static_cast<float>(EffectiveWidth(state));
         const float targetHeight = static_cast<float>(EffectiveHeight(state));
         if (seconds <= 0.0f
             || (fromColor == targetColor
-                && SameTransform(fromTransform, targetTransform)
+                && InkingSameTransform(fromTransform, targetTransform)
                 && fromWidth == targetWidth && fromHeight == targetHeight)) {
             // 没配过渡、或者颜色与变换本来就一样：直接到位，连计时都不用起。
             //
@@ -448,10 +447,10 @@ private:
             // 所以先记一笔待报告（Advance 下一次调用时会把它报出去）。
             // 漏了这一笔，"没配过渡的三态切换"就永远标不上重绘脏。
             _pendingRepaint = _pendingRepaint || (displayColor != targetColor)
-                || !SameTransform(displayTransform, targetTransform)
+                || !InkingSameTransform(displayTransform, targetTransform)
                 || displayWidth != targetWidth || displayHeight != targetHeight;
             _pendingHit = _pendingHit
-                || !SameTransform(displayTransform, targetTransform)
+                || !InkingSameTransform(displayTransform, targetTransform)
                 || displayWidth != targetWidth || displayHeight != targetHeight;
 
             duration = 0.0f;
@@ -473,10 +472,9 @@ private:
     /**
      * 颜色是按哪个主题版本算出来的。
      *
-     * `Advance` 拿它和 `ThemeVersion()` 比：不一样就说明装了表 / 切了主题 /
+     * `Advance` 拿它和 `InkingThemeVersion()` 比：不一样就说明装了表 / 切了主题 /
      * 清了表，三态颜色要重算。**稳态成本 = 一次 uint64 比较**，不查表。
      */
     std::uint64_t _themeVersion = 0;
 };
 
-}  // namespace inking

@@ -173,22 +173,21 @@ bool RequestNoDwmFrame(SDL_Window*) { return false; }
 // 音频（B10）与文本（SDL3_ttf / SDL3_image）：**直接接真实实现**
 //
 // 这里曾经是一段"未接入的可选子系统"占位——三个放在匿名 namespace 里的空桩
-// （`AudioShutdown` / `AudioTick` / `detail::ReleaseTextCache`），让窗口层在
+// （`InkingAudioShutdown` / `InkingAudioTick` / `inking_detail::ReleaseTextCache`），让窗口层在
 // 两个子系统还没搬进来时先编过。
 //
 // 两层搬完之后它们就不再是占位，而是**遮蔽**：匿名 namespace 里的同名函数在
 // 名字查找里更近，于是 `InkingWindow` 调的一直是空函数，而真实实现
-// （`inking::AudioTick` 的淡入淡出推进、`inking::AudioShutdown` 的关设备、
-// `inking::detail::ReleaseTextCache` 的 TTF_Quit）**一个调用者都没有**，
+// （`InkingAudioTick` 的淡入淡出推进、`InkingAudioShutdown` 的关设备、
+// `inking_detail::ReleaseTextCache` 的 TTF_Quit）**一个调用者都没有**，
 // 并且不报错、不警告。最刺眼的表现：即使音频宏打开了，
-// `AudioPlayBgm(sound, 0.5f)` 也会永远停在增益 0——淡入曲线只在那段没人调的
-// `AudioTick` 里推进。
+// `InkingAudioPlayBgm(sound, 0.5f)` 也会永远停在增益 0——淡入曲线只在那段没人调的
+// `InkingAudioTick` 里推进。
 //
 // 删掉空桩 + include 真头（见文件顶部的两个 include）之后，三个调用点
 // ——关窗、每帧、销毁渲染器前——一个字都没改。
 // ---------------------------------------------------------------------------
 
-namespace inking {
 
 namespace {
 
@@ -229,15 +228,15 @@ std::chrono::milliseconds AutoQuitDuration() {
 /**
  * 根锚点的尺寸 = 设计画布，不是窗口像素：子组件的锚点是相对设计空间算的。
  *
- * 这里读的是**运行期实际值**（`DesignWidth()`，由 `CXXCSS/config.json` 决定），
+ * 这里读的是**运行期实际值**（`InkingDesignWidth()`，由 `CXXCSS/config.json` 决定），
  * 并且顺手把"设计尺寸已被定型"记一笔——窗口是第一批按它对几何的地方之一，
- * 从这一刻起 `SetDesignSize` 就该拒绝改动了（`config/window_config.h`）。
+ * 从这一刻起 `InkingSetDesignSize` 就该拒绝改动了（`config/window_config.h`）。
  */
-AnchorData rootAnchorData() {
-    AnchorData data;
-    data.width  = inking::DesignWidth();
-    data.height = inking::DesignHeight();
-    inking::detail::NoteDesignSizeTaken();
+InkingAnchorData rootAnchorData() {
+    InkingAnchorData data;
+    data.width  = InkingDesignWidth();
+    data.height = InkingDesignHeight();
+    inking_detail::NoteDesignSizeTaken();
     return data;
 }
 
@@ -258,9 +257,9 @@ float letterboxMagnification(SDL_Window* window) {
     }
 
     const float scaleX = static_cast<float>(pixelWidth)
-                       / static_cast<float>(inking::DesignWidth());
+                       / static_cast<float>(InkingDesignWidth());
     const float scaleY = static_cast<float>(pixelHeight)
-                       / static_cast<float>(inking::DesignHeight());
+                       / static_cast<float>(InkingDesignHeight());
     return scaleX < scaleY ? scaleX : scaleY;
 }
 
@@ -287,7 +286,7 @@ struct WindowState {
      * 重新计时、动画会跳一下）。搬到状态里之后，`Show()` 与 `PumpOnce()`
      * 共用**同一个**节拍器。
      */
-    Timeline timeline;
+    InkingTimeline timeline;
     std::chrono::steady_clock::time_point previousFrame{};
     std::chrono::steady_clock::time_point start{};
     bool pumpReady = false;  ///< 上面三个量初始化过了没有
@@ -315,13 +314,13 @@ WindowState& state() {
 void releaseWindow(WindowState& s) {
     // 音频：设备与已加载的声音都属于"这一层自己"，窗口关掉就一起收掉
     // （B10）。放在 SDL_Quit 之前——SDL 的音频子系统得活着才能销毁流。
-    AudioShutdown();
+    InkingAudioShutdown();
 
     if (s.renderer) {
         // 纹理属于渲染器：**先**把文字纹理层持有的纹理放掉，再销毁渲染器。
         // 反过来的话，那一层会拿着已经随渲染器死掉的句柄，下次再用就是野指针。
         // 下面这个是本文件里的**空实现占位**（文本层未接入，见文件顶上那段）。
-        detail::ReleaseTextCache();
+        inking_detail::ReleaseTextCache();
         SDL_DestroyRenderer(s.renderer);
         s.renderer = nullptr;
     }
@@ -344,7 +343,7 @@ void releaseWindow(WindowState& s) {
  * 窗口坐标 → 设计坐标。
  *
  * letterbox 之下这是两套坐标：SDL 给的是窗口像素，场景认的是设计空间
- * （DesignWidth() × DesignHeight()）。换算是渲染器的职责，所以只在这里做一次，
+ * （InkingDesignWidth() × InkingDesignHeight()）。换算是渲染器的职责，所以只在这里做一次，
  * 交给场景层的永远是设计坐标。
  *
  * 必须走渲染器换算，不能拿展示倍率乘除：letterbox 下设计画面只占窗口中间一块，
@@ -367,13 +366,13 @@ void toDesign(SDL_Renderer* renderer, float windowX, float windowY,
 }
 
 /**
- * 事件泵：把这一帧攒下的 SDL 事件吃干净，变成 MouseInput 里的状态。
+ * 事件泵：把这一帧攒下的 SDL 事件吃干净，变成 InkingMouseInput 里的状态。
  * 返回 false 表示该退出主循环了。
  *
  * 这里只“更新状态”，不派发事件：命中与投递留给下一帧的 Scene 层，
  * 这样才和设计稿里的 isDirty + query 流程对得上。
  */
-bool pumpEvents(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
+bool pumpEvents(WindowState& s, InkingMouseInput& mouse, InkingKeyboardInput& keyboard,
                 InkingWindow& window) {
     bool running = true;
     SDL_Event event{};
@@ -454,7 +453,7 @@ bool pumpEvents(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
                 break;
 
             // 触摸（B6）：最简映射——第一根手指当成鼠标（只认第一根，见
-            // `MouseInput::UpdateFromSDL` 里那段）。归到和鼠标同一格里，
+            // `InkingMouseInput::UpdateFromSDL` 里那段）。归到和鼠标同一格里，
             // 是因为它产出的就是同一个指针状态。
             case SDL_EVENT_FINGER_DOWN:
             case SDL_EVENT_FINGER_MOTION:
@@ -482,7 +481,7 @@ bool pumpEvents(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
 
     // 设计坐标一帧只换算一次：一帧里收到多少个移动事件都只算一次，
     // 和“每帧只判断一次”同拍。
-    const MousePosition& windowPoint = mouse.GetState().position;
+    const InkingMousePosition& windowPoint = mouse.GetState().position;
     float designX = 0.0f;
     float designY = 0.0f;
     toDesign(s.renderer, static_cast<float>(windowPoint.x),
@@ -496,7 +495,7 @@ bool pumpEvents(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
  * 每帧把指针状态喂给活跃场景，并派发一次。
  *
  * 位置：事件泵之后（设计坐标刚算完）、时间线推进之前——和
- * `SceneLibrary::RenderScene` 同一个落点（"只有活跃场景"这条规矩的唯一出口）。
+ * `InkingSceneLibrary::RenderScene` 同一个落点（"只有活跃场景"这条规矩的唯一出口）。
  *
  * 为什么由窗口层喂：设计坐标的换算要走渲染器（letterbox 有黑边偏移），
  * 那是渲染器的职责，场景层不该认识渲染器（docs/AGENTS.md §6 第 8 条）。
@@ -505,13 +504,13 @@ bool pumpEvents(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
  * 为什么不在事件循环里直接派发：一帧里可能有多个移动事件，逐个派发等于
  * 同一帧判断多次；docs/InputDesign.md §1 定的是"每帧只判断一次"。
  */
-void dispatchPointer(WindowState& s, const MouseInput& mouse) {
-    InkingScene* scene = SceneLibrary::GetActiveScene();
+void dispatchPointer(WindowState& s, const InkingMouseInput& mouse) {
+    InkingScene* scene = InkingSceneLibrary::GetActiveScene();
     if (scene == nullptr) {
         return;
     }
 
-    const MouseState& state = mouse.GetState();
+    const InkingMouseState& state = mouse.GetState();
 
     // 指针在不在窗口里：移出去时不该继续悬停，也不该在窗口外"按下"。
     //
@@ -535,7 +534,7 @@ void dispatchPointer(WindowState& s, const MouseInput& mouse) {
     // 两个**语义键**（0.5.0）：场景层不认识设备，只认 Primary / Secondary。
     // 触摸的长按转义发生在场景里（`TickLogic`），不在这里——窗口层只负责
     // "事实"（哪个键按着、来自鼠标还是手指），策略在场景。
-    PointerDownState down;
+    InkingPointerDownState down;
     down.primary = state.leftButtonDown;
     down.secondary = state.rightButtonDown;
     scene->SetPointerState(state.design.x, state.design.y, down, inside,
@@ -553,8 +552,8 @@ void dispatchPointer(WindowState& s, const MouseInput& mouse) {
  * 与指针那边不同，这里不需要问"窗口在不在焦点"：窗口失焦时 SDL 根本不会把
  * 按键事件送过来，而"按着键切走"那种半途状态由 `ClearHeldKeys` 收掉。
  */
-void dispatchKeyboard(const KeyboardInput& keyboard) {
-    InkingScene* scene = SceneLibrary::GetActiveScene();
+void dispatchKeyboard(const InkingKeyboardInput& keyboard) {
+    InkingScene* scene = InkingSceneLibrary::GetActiveScene();
     if (scene == nullptr) {
         return;
     }
@@ -813,14 +812,14 @@ bool writeRendererImage(SDL_Renderer* renderer, const std::string& path) {
  * 换算对不对：拉成别的窗口比例，方块也应该准确贴在指针上。
  * SDF 形状层 / 样式层接手后，这一段连同 SDL_RenderFillRect 一起删掉。
  */
-void drawFrame(WindowState& s, const MouseInput& mouse,
+void drawFrame(WindowState& s, const InkingMouseInput& mouse,
                std::uint32_t background) {
     SDL_Renderer* renderer = s.renderer;
 
     // 自检钩子：记录这一帧真的渲染了哪个场景。
     // 窗口释放时会清掉场景名，所以"窗口确实解析到场景并渲染了"这件事
     // 只能靠这里的记录来验。
-    lastRenderedScene() = SceneLibrary::GetActiveScene();
+    lastRenderedScene() = InkingSceneLibrary::GetActiveScene();
 
     if (renderer == nullptr) {
         return;
@@ -835,10 +834,10 @@ void drawFrame(WindowState& s, const MouseInput& mouse,
                            static_cast<Uint8>((background >> 24) & 0xFFu));
     SDL_RenderClear(renderer);
 
-    // 当前场景的整棵渲染树。经 SceneLibrary 走一道，而不是直接调场景的
+    // 当前场景的整棵渲染树。经 InkingSceneLibrary 走一道，而不是直接调场景的
     // Render（那是 protected）：这样"只有活跃场景会被渲染"这条规矩只有
     // 一个落点，将来上合批时提交层也落在这里。没有活跃场景时返回 false。
-    SceneLibrary::RenderScene(renderer);
+    InkingSceneLibrary::RenderScene(renderer);
 
     // 截图（P2-6）：就落在这里——场景画完、`Present` 还没发生，后缓冲里
     // 正好是这一帧。**必须在指针小方块之前**，否则截图会带上那个调试方块。
@@ -851,7 +850,7 @@ void drawFrame(WindowState& s, const MouseInput& mouse,
     }
 
     if (s.rendererReady) {
-        const MousePoint& point = mouse.GetState().design;
+        const InkingMousePoint& point = mouse.GetState().design;
         constexpr float kCursorSize = 16.0f;
         const SDL_FRect cursor{point.x - kCursorSize * 0.5f,
                                point.y - kCursorSize * 0.5f,
@@ -938,7 +937,7 @@ void warnIfBackgroundAlphaIgnored(std::uint32_t background, bool transparent) {
  *
  * @return 还要不要继续跑（false = 收到关窗请求 / 冒烟时间到）。
  */
-bool stepFrame(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
+bool stepFrame(WindowState& s, InkingMouseInput& mouse, InkingKeyboardInput& keyboard,
                InkingWindow& window) {
     // 0. 时钟初始化：第一次进来（或重新 Open 之后）才做。
     if (!s.pumpReady) {
@@ -951,13 +950,13 @@ bool stepFrame(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
         // ——自检里表现为 `onRenderBoundTick` 计数为 0，非常像"能力没实现"。
         s.timeline.SetLogicCallback([](double fixedStep) {
             // 固定逻辑步：每次派发都喂同一个步长，状态机要的就是确定的步。
-            if (InkingScene* scene = SceneLibrary::GetActiveScene()) {
+            if (InkingScene* scene = InkingSceneLibrary::GetActiveScene()) {
                 scene->TickLogic(fixedStep);
             }
         });
         // 每帧通道跟着渲染走：真实 delta，和这一帧画出来的东西对齐。
         s.timeline.SetFrameCallback([](double delta) {
-            if (InkingScene* scene = SceneLibrary::GetActiveScene()) {
+            if (InkingScene* scene = InkingSceneLibrary::GetActiveScene()) {
                 scene->TickFrame(delta);
             }
         });
@@ -983,7 +982,7 @@ bool stepFrame(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
     // 1c. 预加载收尾（帧首）：管家线程跑完 `onPreload` 的场景，在这一步
     //     回到 UI 线程做它的 `onPreloadFinished`——建组件 / 建纹理都只在
     //     UI 线程做得了。放在帧首而不是帧末：本帧的绘制就能用上刚装好的东西。
-    SceneLibrary::DrainPreloadCompletions();
+    InkingSceneLibrary::DrainPreloadCompletions();
 
     // 2. 展示倍率跟着窗口 / DPI 走。
     syncMagnification(s, window);
@@ -1018,7 +1017,7 @@ bool stepFrame(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
     // 3b. 音频（B10）：**每帧都要推进**——它和场景无关（标题画面没场景也要
     //     有 BGM），所以不能挂在 timeline 那条"给活跃场景"的通道上。
     //     用同一个真实 delta：声音不该跟着帧率走。
-    AudioTick(static_cast<float>(deltaSeconds));
+    InkingAudioTick(static_cast<float>(deltaSeconds));
 
     // 4. 绘制：底色 + 当前场景的整棵渲染树 + 指针标记。
     //
@@ -1034,7 +1033,7 @@ bool stepFrame(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
     //    场景的脏标记也在这里**统一消费**（T-3）：一帧里可能连着标了很多次，
     //    攒到最后只处理这一回。只消费**活跃**场景——静默 / 停放 / 已关闭的
     //    场景脏要留着，切回来时才有意义。
-    if (InkingScene* scene = SceneLibrary::GetActiveScene()) {
+    if (InkingScene* scene = InkingSceneLibrary::GetActiveScene()) {
         scene->ConsumeFrameDirty();
     }
     mouse.ResetFrameFlags();
@@ -1048,12 +1047,12 @@ bool stepFrame(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
     //     之前"：任务里可能刚把所有引用交出去，场景下一帧再析构更安全。
     runFrameTasks(s);
 
-    // 5b. 待销毁的场景在这里真正析构（`SceneLibrary::DestroyScene` 只入队）。
+    // 5b. 待销毁的场景在这里真正析构（`InkingSceneLibrary::DestroyScene` 只入队）。
     //
     //     为什么必须等到帧末：销毁场景会连带拆掉它整棵子树，而上面这一帧的
     //     Render / Tick / 指针派发都在遍历那份绘制列表——遍历中途拆容器就是
     //     悬垂。攒到这一步再删，"这一刻没有人在看它"。
-    SceneLibrary::CommitPendingDestructions();
+    InkingSceneLibrary::CommitPendingDestructions();
 
     // 6. 节流。接了 vsync 就交给 SDL（它会阻塞到下一次垂直回扫），
     //    没接上时才退回固定 sleep——sleep 不扣本帧耗时，
@@ -1078,7 +1077,7 @@ bool stepFrame(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
  * 位置：**指针派发之后**（见 stepFrame 里的顺序）。这个函数只负责循环，
  * 一帧做什么全在 `stepFrame` 里——那样 `PumpOnce()` 才可能是"同一份顺序"。
  */
-void runLoop(WindowState& s, MouseInput& mouse, KeyboardInput& keyboard,
+void runLoop(WindowState& s, InkingMouseInput& mouse, InkingKeyboardInput& keyboard,
              InkingWindow& window) {
     // 零代码截图（P2-6）：`INK_CAPTURE=<路径>` 让**第一帧**落一张图。
     // 和 `INK_AUTOQUIT` 同一族——排错时"先看一眼画面"比加日志快得多，
@@ -1120,7 +1119,7 @@ constexpr float kZoomCandidates[] = {0.25f, 0.4f, 0.5f, 0.67f, 0.75f, 1.0f,
 
 InkingWindow::InkingWindow() : InkingStaticWidget(nullptr, rootAnchorData()) {}
 
-InkingScene* GetLastRenderedScene() noexcept {
+InkingScene* InkingGetLastRenderedScene() noexcept {
     return lastRenderedScene();
 }
 
@@ -1138,9 +1137,9 @@ InkingWindow& InkingWindow::Instance() {
 }
 
 InkingScene* InkingWindow::GetCurrentScene() const {
-    // 当前活跃（正在渲染）的场景。活跃态由 SceneLibrary 维护：
+    // 当前活跃（正在渲染）的场景。活跃态由 InkingSceneLibrary 维护：
     // 切场景时旧的自动进入静默，所以这里拿到的永远是"该渲染的那一个"。
-    return SceneLibrary::GetActiveScene();
+    return InkingSceneLibrary::GetActiveScene();
 }
 
 int InkingWindow::GetWindowWidth() const noexcept {
@@ -1396,9 +1395,9 @@ float InkingWindow::maxUsableZoom() const noexcept {
     }
 
     const float byWidth =
-        static_cast<float>(usable.w) / static_cast<float>(DesignWidth());
+        static_cast<float>(usable.w) / static_cast<float>(InkingDesignWidth());
     const float byHeight =
-        static_cast<float>(usable.h) / static_cast<float>(DesignHeight());
+        static_cast<float>(usable.h) / static_cast<float>(InkingDesignHeight());
     const float fit = byWidth < byHeight ? byWidth : byHeight;
     return fit < kMaxZoom ? fit : kMaxZoom;
 }
@@ -1426,9 +1425,9 @@ float InkingWindow::effectiveZoom() const noexcept {
     if (s.window != nullptr && SDL_GetWindowSize(s.window, &width, &height)
         && width > 0 && height > 0) {
         const float sx = static_cast<float>(width)
-                       / static_cast<float>(DesignWidth());
+                       / static_cast<float>(InkingDesignWidth());
         const float sy = static_cast<float>(height)
-                       / static_cast<float>(DesignHeight());
+                       / static_cast<float>(InkingDesignHeight());
         return sx < sy ? sx : sy;
     }
     return _zoom;
@@ -1438,9 +1437,9 @@ void InkingWindow::applyZoom(float zoom) {
     _zoom = zoom;
 
     const int newWidth =
-        static_cast<int>(std::lround(static_cast<float>(DesignWidth()) * zoom));
+        static_cast<int>(std::lround(static_cast<float>(InkingDesignWidth()) * zoom));
     const int newHeight =
-        static_cast<int>(std::lround(static_cast<float>(DesignHeight()) * zoom));
+        static_cast<int>(std::lround(static_cast<float>(InkingDesignHeight()) * zoom));
     const int safeWidth = newWidth > 0 ? newWidth : 1;
     const int safeHeight = newHeight > 0 ? newHeight : 1;
 
@@ -1520,9 +1519,9 @@ bool InkingWindow::SetZoom(float zoom) {
 
     WindowState& s = state();
     const int expectedWidth =
-        static_cast<int>(std::lround(static_cast<float>(DesignWidth()) * target));
+        static_cast<int>(std::lround(static_cast<float>(InkingDesignWidth()) * target));
     const int expectedHeight = static_cast<int>(
-        std::lround(static_cast<float>(DesignHeight()) * target));
+        std::lround(static_cast<float>(InkingDesignHeight()) * target));
 
     bool sameAsRecorded = std::fabs(target - _zoom) < 1e-4f;
     if (s.window != nullptr) {
@@ -1651,7 +1650,7 @@ bool InkingWindow::HasPendingCapture() const noexcept {
 /**
  * 按名字把某个场景设为活跃；找不到 / 名字为空时返回 false。
  *
- * 活跃态统一交给 SceneLibrary 管：切换时旧的自动进入静默（不渲染、
+ * 活跃态统一交给 InkingSceneLibrary 管：切换时旧的自动进入静默（不渲染、
  * 跟着渲染的逻辑也停），新的开始活跃。窗口自己不保存场景指针，
  * 免得在场景关闭 / 析构之后留下野指针。
  */
@@ -1660,7 +1659,7 @@ bool InkingWindow::HasPendingCapture() const noexcept {
  *
  * `withPreload = true` 时**先同步跑一次预加载**（含它的 UI 侧收尾）。
  *
- * 为什么 `Show()` 走同步、而 `SceneLibrary::PreloadScene()` 走任务队列：
+ * 为什么 `Show()` 走同步、而 `InkingSceneLibrary::PreloadScene()` 走任务队列：
  * `Show()` 是启动点，它返回之后马上就要渲染这个场景——这时候"加载还没好"
  * 没有意义，画出来是半成品。所以就地跑完（UI 线程），代价是启动卡在加载上；
  * 不想卡启动就在 `Show()` 之前先 `PreloadScene()` 让它在后台备好，那样这里
@@ -1668,11 +1667,11 @@ bool InkingWindow::HasPendingCapture() const noexcept {
  */
 bool showSceneByName(const std::string& sceneName, bool withPreload) {
     if (sceneName.empty()) {
-        SceneLibrary::SetActiveScene(nullptr);
+        InkingSceneLibrary::SetActiveScene(nullptr);
         return false;
     }
 
-    InkingScene* scene = SceneLibrary::FindScene(sceneName);
+    InkingScene* scene = InkingSceneLibrary::FindScene(sceneName);
     if (scene == nullptr) {
         INK_LOG_WARN(kModuleName, "找不到场景：" + sceneName);
         return false;
@@ -1683,7 +1682,7 @@ bool showSceneByName(const std::string& sceneName, bool withPreload) {
         scene->PreloadNow();
     }
 
-    SceneLibrary::SetActiveScene(scene);
+    InkingSceneLibrary::SetActiveScene(scene);
     return true;
 }
 
@@ -1743,13 +1742,13 @@ bool InkingWindow::Open(const std::string& sceneName) {
     // 两套事件（本机 SDL_hints.h 实测，SDL 3.2.0 起可用）。两套都进来之后：
     //
     //   1. `leftButtonDown` 被两条路同时驱动，状态机每帧多走一遍；
-    //   2. `MouseState::source` 在 Touch / Mouse 之间**抖动**，而长按判定要求
+    //   2. `InkingMouseState::source` 在 Touch / Mouse 之间**抖动**，而长按判定要求
     //      "来源是触摸"——抖动一次就复位，长按**永远不成立**。
     //
     // 而现象只是"长按没反应"，不报错、不断言、不崩溃。所以这条必须在建窗
     // 之前（`SDL_Init` 之后，hint 在 Init 时会被读一次）钉死。
     //
-    // 关掉之后只剩 finger 事件，`MouseInput` 那三个 `FINGER_*` 分支才是触摸的
+    // 关掉之后只剩 finger 事件，`InkingMouseInput` 那三个 `FINGER_*` 分支才是触摸的
     // **唯一**来源——读代码的人不必再猜"这条是不是也会被合成事件走到"。
     // -----------------------------------------------------------------------
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
@@ -1866,8 +1865,8 @@ bool InkingWindow::Open(const std::string& sceneName) {
         // letterbox 保证任何窗口比例下 UI 都不变形，多余空间留黑边。
         SDL_SetRenderLogicalPresentation(
             s.renderer,
-            inking::DesignWidth(),
-            inking::DesignHeight(),
+            InkingDesignWidth(),
+            InkingDesignHeight(),
             SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
         // -------------------------------------------------------------------
@@ -1885,7 +1884,7 @@ bool InkingWindow::Open(const std::string& sceneName) {
         // 有的不生效"——那种不一致比整块不透明难查得多。
         //
         // 副作用（预期内）：所有画出来的颜色从此都按 alpha 合成，
-        // `AnchorData::color` 里的 alpha 开始真的有意义。
+        // `InkingAnchorData::color` 里的 alpha 开始真的有意义。
         // -------------------------------------------------------------------
         SDL_SetRenderDrawBlendMode(s.renderer, SDL_BLENDMODE_BLEND);
 
@@ -1935,8 +1934,8 @@ bool InkingWindow::Open(const std::string& sceneName) {
     INK_LOG_PASS(kModuleName,
                  "窗口已打开 " + std::to_string(_windowWidth) + "x"
                      + std::to_string(_windowHeight)
-                     + "，设计尺寸 " + std::to_string(inking::DesignWidth()) + "x"
-                     + std::to_string(inking::DesignHeight())
+                     + "，设计尺寸 " + std::to_string(InkingDesignWidth()) + "x"
+                     + std::to_string(InkingDesignHeight())
                      + "，展示倍率 " + std::to_string(GetMagnification())
                      + "，场景：" + sceneName);
 
@@ -2026,8 +2025,8 @@ bool InkingWindow::RenderToTexture(const std::string& path, int width, int heigh
 
     // ② 与真窗口同一套呈现规则：设计坐标 → letterbox。文本层的"按设备比例
     //    烘字"也走这条逻辑尺寸（`render/` 自己问渲染器），所以字号不会忽大忽小。
-    SDL_SetRenderLogicalPresentation(renderer, inking::DesignWidth(),
-                                     inking::DesignHeight(),
+    SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                     InkingDesignHeight(),
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
@@ -2041,15 +2040,15 @@ bool InkingWindow::RenderToTexture(const std::string& path, int width, int heigh
 
     // ④ 临时切场景（空 = 用当前活跃那个），画完还原——这条函数是**只读**
     //    语义，不该把宿主的活跃场景改掉。
-    InkingScene* previous = SceneLibrary::GetActiveScene();
+    InkingScene* previous = InkingSceneLibrary::GetActiveScene();
     InkingScene* wanted =
-        sceneName.empty() ? previous : SceneLibrary::FindScene(sceneName);
+        sceneName.empty() ? previous : InkingSceneLibrary::FindScene(sceneName);
     if (wanted != nullptr) {
-        SceneLibrary::SetActiveScene(wanted);
+        InkingSceneLibrary::SetActiveScene(wanted);
     }
-    const bool rendered = SceneLibrary::RenderScene(renderer);
+    const bool rendered = InkingSceneLibrary::RenderScene(renderer);
     if (wanted != nullptr && wanted != previous) {
-        SceneLibrary::SetActiveScene(previous);
+        InkingSceneLibrary::SetActiveScene(previous);
     }
 
     // ⑤ 落盘用与截图同一条路（PNG 走 SDL_SavePNG，其它走 BMP）。
@@ -2060,5 +2059,4 @@ bool InkingWindow::RenderToTexture(const std::string& path, int width, int heigh
     return saved;
 }
 
-}  // namespace inking
 

@@ -17,11 +17,9 @@
 #include <dataStruct/InkingAffine.h>
 #include <dataStruct/InkingShapeSpec.h>
 
-namespace inking {
-
 class InkingWidget;
 
-namespace detail {
+namespace inking_detail {
 
 /**
  * 从根到 `node` 的**祖先子树变换**复合（绝对设计坐标下的相似仿射，T-7）。
@@ -30,7 +28,7 @@ namespace detail {
  * 所以这个仿射作用在"未经变换的布局坐标"上，就能把整棵子树搬到该去的地方。
  * 绘制过它、命中过它的逆——两边必须同源，所以放在一处算。
  */
-Affine AncestorAffine(const InkingWidget& node) noexcept;
+InkingAffine AncestorAffine(const InkingWidget& node) noexcept;
 
 /**
  * 从根到 `node`（**含 `node` 自己的子树变换**）的复合仿射（A5）。
@@ -40,7 +38,7 @@ Affine AncestorAffine(const InkingWidget& node) noexcept;
  * 用的是这一份，不是 `AncestorAffine(node)`（那会漏掉容器自己的开合变换，
  * 抽屉一滑，裁剪区就留在原地）。
  */
-Affine SubtreeChainAffine(const InkingWidget& node) noexcept;
+InkingAffine SubtreeChainAffine(const InkingWidget& node) noexcept;
 
 /**
  * `node` 的**裁剪链**仿射：祖先那一份 + `node` 自己的 `GetClipTransform()`。
@@ -51,7 +49,7 @@ Affine SubtreeChainAffine(const InkingWidget& node) noexcept;
  * 跟着内容一起跑——已经在框外的内容永远看不见、框内的内容滚出去还可见。
  * 祖先链照旧用各自的子树变换（祖先滚了，这个容器连同它的裁剪窗口一起动，那是对的）。
  */
-Affine ClipChainAffine(const InkingWidget& node) noexcept;
+InkingAffine ClipChainAffine(const InkingWidget& node) noexcept;
 
 /**
  * 节点 `node` 的**祖先裁剪交集**，换算成"提交给渲染器的**设备像素**坐标"（A5）。
@@ -62,7 +60,7 @@ Affine ClipChainAffine(const InkingWidget& node) noexcept;
  *
  * @return true = 有祖先裁剪它，`out` 是交集；false = 没有被任何祖先剪（`out` 不变）。
  */
-bool AncestorClipInDevice(const InkingWidget& node, ShapeBounds& out) noexcept;
+bool AncestorClipInDevice(const InkingWidget& node, InkingShapeBounds& out) noexcept;
 
 /**
  * 整棵子树（含自己）的命中包络并集，坐标**相对 `node` 左上角**（T-7）。
@@ -70,7 +68,7 @@ bool AncestorClipInDevice(const InkingWidget& node, ShapeBounds& out) noexcept;
  * 容器组件在自己的 `GetHitEnvelope()` 里调它一下就行——子节点不进表之后，
  * "这条包络要盖住哪儿"由容器自己回答。
  */
-ShapeBounds SubtreeHitEnvelope(const InkingWidget& node) noexcept;
+InkingShapeBounds SubtreeHitEnvelope(const InkingWidget& node) noexcept;
 
 /**
  * 两个矩形的交集（某一维不重叠时该维夹到 0 = 什么都不画）。
@@ -80,8 +78,8 @@ ShapeBounds SubtreeHitEnvelope(const InkingWidget& node) noexcept;
  * 对"负宽高"收口——那会让一个空裁剪变成一个大得离谱的反向矩形，于是"什么都
  * 不画"变成"什么都画"（并且只在两层裁剪不相交时才现形）。
  */
-inline ShapeBounds IntersectBounds(const ShapeBounds& a,
-                                   const ShapeBounds& b) noexcept {
+inline InkingShapeBounds IntersectBounds(const InkingShapeBounds& a,
+                                   const InkingShapeBounds& b) noexcept {
     const float minX = a.x > b.x ? a.x : b.x;
     const float minY = a.y > b.y ? a.y : b.y;
     const float aMaxX = a.x + a.width;
@@ -92,7 +90,7 @@ inline ShapeBounds IntersectBounds(const ShapeBounds& a,
     const float maxY = aMaxY < bMaxY ? aMaxY : bMaxY;
     const float w = maxX - minX;
     const float h = maxY - minY;
-    return ShapeBounds{minX, minY, w > 0.0f ? w : 0.0f, h > 0.0f ? h : 0.0f};
+    return InkingShapeBounds{minX, minY, w > 0.0f ? w : 0.0f, h > 0.0f ? h : 0.0f};
 }
 
 /**
@@ -101,21 +99,21 @@ inline ShapeBounds IntersectBounds(const ShapeBounds& a,
  * 用途：给"认外部显示变换"的组件算命中包络（`GetHitEnvelope()`）——组件被挪走 /
  * 放大之后，包络必须跟着走：表里登记的仍是老位置的话，拖过去就**点不到**了。
  *
- * 做法是四个角各过一次 `ApplyTransform` 再取 min/max。形状被旋转时包围盒会变大，
+ * 做法是四个角各过一次 `InkingApplyTransform` 再取 min/max。形状被旋转时包围盒会变大，
  * 那是**对的**：包络本来就允许保守（表只负责缩小候选范围，命中与否仍由节点的
  * `HitTest` 精判）。
  */
-inline ShapeBounds TransformBounds(const ShapeBounds& local,
-                                   const TransformSpec& transform, float cx,
+inline InkingShapeBounds TransformBounds(const InkingShapeBounds& local,
+                                   const InkingTransformSpec& transform, float cx,
                                    float cy) noexcept {
     if (transform.IsIdentity()) {
         return local;  // 没变换：原样返回（绝大多数组件的路径，零开销）
     }
-    const Point2 corners[4] = {
-        ApplyTransform(transform, local.x, local.y, cx, cy),
-        ApplyTransform(transform, local.x + local.width, local.y, cx, cy),
-        ApplyTransform(transform, local.x, local.y + local.height, cx, cy),
-        ApplyTransform(transform, local.x + local.width,
+    const InkingPoint2 corners[4] = {
+        InkingApplyTransform(transform, local.x, local.y, cx, cy),
+        InkingApplyTransform(transform, local.x + local.width, local.y, cx, cy),
+        InkingApplyTransform(transform, local.x, local.y + local.height, cx, cy),
+        InkingApplyTransform(transform, local.x + local.width,
                        local.y + local.height, cx, cy)};
 
     float minX = corners[0].x;
@@ -128,7 +126,7 @@ inline ShapeBounds TransformBounds(const ShapeBounds& local,
         maxX = corners[i].x > maxX ? corners[i].x : maxX;
         maxY = corners[i].y > maxY ? corners[i].y : maxY;
     }
-    return ShapeBounds{minX, minY, maxX - minX, maxY - minY};
+    return InkingShapeBounds{minX, minY, maxX - minX, maxY - minY};
 }
 
 /**
@@ -146,8 +144,7 @@ inline ShapeBounds TransformBounds(const ShapeBounds& local,
  *
  * @param localBounds 本地矩形；宽或高 <= 0 时返回零矩形（= 什么都不画）。
  */
-ShapeBounds ClipBoundsInDevice(const InkingWidget& node,
-                               const ShapeBounds& localBounds) noexcept;
+InkingShapeBounds ClipBoundsInDevice(const InkingWidget& node,
+                               const InkingShapeBounds& localBounds) noexcept;
 
-}  // namespace detail
-}  // namespace inking
+}  // namespace inking_detail

@@ -2,31 +2,30 @@
 
 #include <algorithm>
 
-namespace inking {
 
-float ScrollRange(float contentSize, float viewportSize) noexcept {
+float InkingScrollRange(float contentSize, float viewportSize) noexcept {
     return std::max(0.0f, contentSize - viewportSize);
 }
 
-float ClampScroll(float offset, float range) noexcept {
+float InkingClampScroll(float offset, float range) noexcept {
     if (range <= 0.0f) {
         return 0.0f;  // 没得滚：永远回到起点（别留一个"滚到一半"的假状态）
     }
     return std::clamp(offset, 0.0f, range);
 }
 
-ScrollBarMetrics ComputeScrollBar(bool vertical, float viewportWidth,
+InkingScrollBarMetrics InkingComputeScrollBar(bool vertical, float viewportWidth,
                                   float viewportHeight, float contentSize,
                                   float offset, float range,
-                                  const ScrollSpec& spec) noexcept {
-    ScrollBarMetrics bar;
+                                  const InkingScrollSpec& spec) noexcept {
+    InkingScrollBarMetrics bar;
 
-    const ScrollAxisMode mode =
+    const InkingScrollAxisMode mode =
         vertical ? spec.verticalBar : spec.horizontalBar;
-    if (mode == ScrollAxisMode::Never) {
+    if (mode == InkingScrollAxisMode::Never) {
         return bar;  // 不画（但那条轴照样能滚）
     }
-    if (mode == ScrollAxisMode::Auto && range <= 0.0f) {
+    if (mode == InkingScrollAxisMode::Auto && range <= 0.0f) {
         return bar;  // 内容没超出：自动模式不出条
     }
 
@@ -46,7 +45,7 @@ ScrollBarMetrics ComputeScrollBar(bool vertical, float viewportWidth,
 
     // 滑块位置：可滚范围里走到哪，滑块就在剩余行程里走到哪。
     const float travel = trackLength - thumbLength;
-    const float ratio = range > 0.0f ? ClampScroll(offset, range) / range : 0.0f;
+    const float ratio = range > 0.0f ? InkingClampScroll(offset, range) / range : 0.0f;
     const float thumbOffset = travel * ratio;
 
     if (vertical) {
@@ -75,8 +74,8 @@ ScrollBarMetrics ComputeScrollBar(bool vertical, float viewportWidth,
     return bar;
 }
 
-float ScrollFromTrackClick(bool vertical, float clickX, float clickY,
-                           const ScrollBarMetrics& bar, float range) noexcept {
+float InkingScrollFromTrackClick(bool vertical, float clickX, float clickY,
+                           const InkingScrollBarMetrics& bar, float range) noexcept {
     if (!bar.visible || range <= 0.0f) {
         return 0.0f;
     }
@@ -93,7 +92,7 @@ float ScrollFromTrackClick(bool vertical, float clickX, float clickY,
     return std::clamp(ratio, 0.0f, 1.0f) * range;
 }
 
-bool HitsThumb(float x, float y, const ScrollBarMetrics& bar) noexcept {
+bool InkingHitsThumb(float x, float y, const InkingScrollBarMetrics& bar) noexcept {
     // 轴不用传：`bar` 里那四个值已经是它自己那条轴的（见头文件）。
     if (!bar.visible) {
         return false;
@@ -102,4 +101,3 @@ bool HitsThumb(float x, float y, const ScrollBarMetrics& bar) noexcept {
         && y >= bar.thumbY && y < bar.thumbY + bar.thumbHeight;
 }
 
-}  // namespace inking

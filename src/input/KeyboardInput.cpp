@@ -4,8 +4,6 @@
 
 #include <algorithm>
 
-namespace inking {
-
 namespace {
 
 /// SDL 修饰键掩码 → 四个 bool。
@@ -20,27 +18,27 @@ void ReadModifiers(std::uint16_t mod, bool& shift, bool& ctrl, bool& alt,
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// KeyboardState
+// InkingKeyboardState
 // ---------------------------------------------------------------------------
 
-bool KeyboardState::IsKeyDown(std::int32_t key) const noexcept {
+bool InkingKeyboardState::IsKeyDown(std::int32_t key) const noexcept {
     return std::any_of(_down.begin(), _down.end(),
                        [key](const DownKey& down) { return down.key == key; });
 }
 
-bool KeyboardState::IsScancodeDown(std::int32_t scancode) const noexcept {
+bool InkingKeyboardState::IsScancodeDown(std::int32_t scancode) const noexcept {
     return std::any_of(
         _down.begin(), _down.end(),
         [scancode](const DownKey& down) { return down.scancode == scancode; });
 }
 
-void KeyboardState::Press(std::int32_t key, std::int32_t scancode) noexcept {
+void InkingKeyboardState::Press(std::int32_t key, std::int32_t scancode) noexcept {
     if (!IsKeyDown(key)) {
         _down.push_back(DownKey{key, scancode});
     }
 }
 
-void KeyboardState::Release(std::int32_t key) noexcept {
+void InkingKeyboardState::Release(std::int32_t key) noexcept {
     // 按 key 移除。SDL 的抬起事件带同一个 key，所以这里够用；
     // 用 erase-remove 而不是"找到第一个就删"，是为了让重复条目不可能积累
     // （`Press` 已经查过重了，这里是第二道保险）。
@@ -51,7 +49,7 @@ void KeyboardState::Release(std::int32_t key) noexcept {
                 _down.end());
 }
 
-void KeyboardState::SetModifiers(bool shift, bool ctrl, bool alt,
+void InkingKeyboardState::SetModifiers(bool shift, bool ctrl, bool alt,
                                  bool super) noexcept {
     _shift = shift;
     _ctrl = ctrl;
@@ -60,10 +58,10 @@ void KeyboardState::SetModifiers(bool shift, bool ctrl, bool alt,
 }
 
 // ---------------------------------------------------------------------------
-// KeyboardInput
+// InkingKeyboardInput
 // ---------------------------------------------------------------------------
 
-void KeyboardInput::UpdateFromSDL(const union SDL_Event& event) {
+void InkingKeyboardInput::UpdateFromSDL(const union SDL_Event& event) {
     switch (event.type) {
         case SDL_EVENT_KEY_DOWN:
         case SDL_EVENT_KEY_UP: {
@@ -78,9 +76,9 @@ void KeyboardInput::UpdateFromSDL(const union SDL_Event& event) {
             ReadModifiers(event.key.mod, shift, ctrl, alt, super);
             _state.SetModifiers(shift, ctrl, alt, super);
 
-            KeyInputEvent item;
-            item.kind = isDown ? KeyInputEvent::Kind::Down
-                               : KeyInputEvent::Kind::Up;
+            InkingKeyInputEvent item;
+            item.kind = isDown ? InkingKeyInputEvent::Kind::Down
+                               : InkingKeyInputEvent::Kind::Up;
             item.key.key = key;
             item.key.scancode = scancode;
             item.key.repeat = event.key.repeat;
@@ -107,8 +105,8 @@ void KeyboardInput::UpdateFromSDL(const union SDL_Event& event) {
             if (event.text.text == nullptr || event.text.text[0] == '\0') {
                 break;
             }
-            KeyInputEvent item;
-            item.kind = KeyInputEvent::Kind::Text;
+            InkingKeyInputEvent item;
+            item.kind = InkingKeyInputEvent::Kind::Text;
             item.text = event.text.text;
             _events.push_back(std::move(item));
             break;
@@ -119,21 +117,20 @@ void KeyboardInput::UpdateFromSDL(const union SDL_Event& event) {
     }
 }
 
-bool KeyboardInput::ConsumeFrameEvent(std::size_t index) noexcept {
+bool InkingKeyboardInput::ConsumeFrameEvent(std::size_t index) noexcept {
     if (index >= _events.size()) {
         return false;
     }
     // 单条删除（不是 erase-remove）：调用方拿的是**下标**，删一条就少一条，
-    // 所以要倒序调用——这条约定写在 `ShortcutRegistry::Dispatch` 里。
+    // 所以要倒序调用——这条约定写在 `InkingShortcutRegistry::Dispatch` 里。
     _events.erase(_events.begin() + static_cast<std::ptrdiff_t>(index));
     return true;
 }
 
-void KeyboardInput::ResetFrameFlags() noexcept {
+void InkingKeyboardInput::ResetFrameFlags() noexcept {
     // 只清本帧事件。按下的键留着——那是跨帧状态（见头文件里的说明）。
     //
     // 用 clear() 而不是"换成空 vector"：容量留着，下一帧不必重新分配。
     _events.clear();
 }
 
-}  // namespace inking

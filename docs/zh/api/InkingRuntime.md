@@ -9,13 +9,13 @@
 | --- | --- |
 | `inking.h` | 公共入口头：版本、日志、消息队列、任务队列 |
 | `event/InkingEvent.h` | 通用事件槽（令牌订阅 / 派发时快照） |
-| `dataStruct/TaskStruct.h` | `Task<T>`：依赖 + 链式后继 |
-| `thread/ThreadPool.h` | 受限线程池（注入式：谓词 / 执行 / 等待提示） |
-| `thread/TaskQueue.h` | 单例任务队列（含延迟任务） |
-| `timeline/Timeline.h` | **整个 UI 的唯一时间源**（逻辑步 / 每帧 / 自定义频率） |
+| `dataStruct/TaskStruct.h` | `InkingTask<T>`：依赖 + 链式后继 |
+| `thread/InkingThreadPool.h` | 受限线程池（注入式：谓词 / 执行 / 等待提示） |
+| `thread/InkingTaskQueue.h` | 单例任务队列（含延迟任务） |
+| `timeline/InkingTimeline.h` | **整个 UI 的唯一时间源**（逻辑步 / 每帧 / 自定义频率） |
 | `asset/InkingAsset.h` | 资源根 + 轻量混淆 + 加载 |
 | `detail/InkLog.h` | 日志（纯文本 `.log` + 按需 HTML 报告，编译期可整体去掉） |
-| `detail/MessageQueue.h` | 跨线程消息队列（生产者任意线程，消费者 UI 线程） |
+| `detail/InkingMessageQueue.h` | 跨线程消息队列（生产者任意线程，消费者 UI 线程） |
 | `detail/InkingGeometry.h` | 几何工具（祖先仿射、包络、裁剪） |
 | `detail/InkingHit.h` | 命中工具（形状 / 矩形） |
 
@@ -23,10 +23,10 @@
 
 ```C++
 // inking.h
-inline constexpr const char* kProjectName = "InkingFrontendDeveloper";
-inline constexpr const char* kVersion     = "0.8.5";
-inline constexpr const char* kVersionStage = "test";   // 0.x 发布版
-std::string sdl3_version();                            // 例如 "3.4.16"
+inline constexpr const char* InkingProjectName = "InkingFrontendDeveloper";
+inline constexpr const char* InkingVersion     = "0.8.5";
+inline constexpr const char* InkingVersionStage = "test";   // 0.x 发布版
+std::string InkingSdl3_version();                            // 例如 "3.4.16"
 ```
 
 `inking.h` **不含组件**：组件头各自带自己的依赖，全塞进来会让"只是想用日志"的翻译单元
@@ -65,19 +65,19 @@ Token tok = selectionChanged.Subscribe([] (const std::string& id, int index) { /
 selectionChanged.Unsubscribe(tok);
 ```
 
-## 三、Task 与 TaskQueue
+## 三、InkingTask 与 InkingTaskQueue
 
->**Task&lt;T&gt;**
+>**InkingTask&lt;T&gt;**
 
 ```C++
 template <typename T>
-struct Task {
+struct InkingTask {
     using Action = std::function<T(const std::vector<T>&)>;
 
-    Task& dependOn(Action fn);              // 加一个"先跑的"依赖
-    Task& dependOn(std::vector<Action> fns);
-    Task& then(Action fn);                  // 加一个后继（链式）
-    Task& then(std::vector<Action> fns);
+    InkingTask& dependOn(Action fn);              // 加一个"先跑的"依赖
+    InkingTask& dependOn(std::vector<Action> fns);
+    InkingTask& then(Action fn);                  // 加一个后继（链式）
+    InkingTask& then(std::vector<Action> fns);
 
     T execute(const T& input);              // 依赖先跑，结果按序装进 params
 };
@@ -86,15 +86,15 @@ struct Task {
 `execute` 的语义：有依赖就逐个 `dep->execute(input)` 收集返回值，把整组结果作为
 `params` 交给本任务；然后沿 `next` 链继续跑。
 
->**TaskQueue**
+>**InkingTaskQueue**
 
 ```C++
-class TaskQueue {
+class InkingTaskQueue {
 public:
-    static TaskQueue& instance();                              // 必须走 .cpp 定义
+    static InkingTaskQueue& instance();                              // 必须走 .cpp 定义
 
-    void addTask(Task<std::any> task);                         // 线程安全
-    void addTask(Task<std::any> task, std::chrono::milliseconds delay);
+    void addTask(InkingTask<std::any> task);                         // 线程安全
+    void addTask(InkingTask<std::any> task, std::chrono::milliseconds delay);
 
     bool isEmpty() const;
     bool hasDueTask() const;
@@ -103,34 +103,34 @@ public:
 };
 ```
 
-- **单例的 `instance()` 定义在 `src/thread/TaskQueue.cpp`**：头内 inline 函数的函数内静态量
+- **单例的 `instance()` 定义在 `src/thread/InkingTaskQueue.cpp`**：头内 inline 函数的函数内静态量
   在每个翻译单元各有一份，动态库下 exe 与 DLL 会**各起一个队列、各起一组管家线程**
   ——两个队列互不可见，任务落进哪一个取决于调用点（而且不报错）。搬进 `.cpp` 之后只有一个。
 - 队列用 `std::multimap<time_point, task>`：按到期时刻排序，同时刻按插入顺序（立即任务之间
   仍是先进先出）。
 - **回调跑在管家线程上**：碰 UI 状态的逻辑不能放进去。时间可以在别处算，**交付必须在
-  UI 线程**（`SceneLibrary::DrainPreloadCompletions` 就是那条回程）。
+  UI 线程**（`InkingSceneLibrary::DrainPreloadCompletions` 就是那条回程）。
 
-> ⚠ 已知缺口：`TaskQueue` 的函数内静态量会在 **DLL 卸载（`DllMain` 持加载器锁）** 时析构
+> ⚠ 已知缺口：`InkingTaskQueue` 的函数内静态量会在 **DLL 卸载（`DllMain` 持加载器锁）** 时析构
 > 并 join 管家线程，某些环境下会让进程退出看起来"挂住"。与业务逻辑无关，
 > 属于线程收尾语义，尚未修（见 `README.md` §已知限制）。
 
-## 四、ThreadPool
+## 四、InkingThreadPool
 
-**注入式**：线程池本身不认识任务是什么，认识任务的是 `TaskQueue`。
+**注入式**：线程池本身不认识任务是什么，认识任务的是 `InkingTaskQueue`。
 
 ```C++
-inline constexpr std::size_t kDefaultThreadCount = 4;
+inline constexpr std::size_t InkingDefaultThreadCount = 4;
 
-class ThreadPool {
+class InkingThreadPool {
 public:
-    ThreadPool() = default;
-    ~ThreadPool();                      // 析构里 join
+    InkingThreadPool() = default;
+    ~InkingThreadPool();                      // 析构里 join
 
     void init(std::function<bool()> predicate,                            // 有活吗
               std::function<void()> execute,                              // 有活干什么
               std::function<std::chrono::milliseconds()> waitHint = {},   // 最多睡多久
-              std::size_t threadCount = kDefaultThreadCount);
+              std::size_t threadCount = InkingDefaultThreadCount);
 
     void quit();       // 请求退出并唤醒全部（真正 join 在析构里）
     void wake();       // 唤醒一个（一条任务只需一个执行者）
@@ -140,11 +140,11 @@ public:
 ```
 
 `waitHint` 是**延迟任务的唯一实现手段**：到点时没有人会来 `notify`，只能靠超时醒来。
-所以它返回的必须是"距离最近一个任务到期还有多久"（`TaskQueue::timeUntilNextDue`）。
+所以它返回的必须是"距离最近一个任务到期还有多久"（`InkingTaskQueue::timeUntilNextDue`）。
 
 `init` **重复调用会被忽略**：避免覆盖已经在跑的线程对象导致无人 join。
 
-## 五、Timeline：唯一时间源
+## 五、InkingTimeline：唯一时间源
 
 三重频率互不整除（逻辑 50Hz / 动画 24Hz / 显示器 60~144Hz），所以**时间不能按"多少次
 tick"来数，只能按真实流逝时间累加**——错拍只影响"这一帧算几次"，不影响时间本身。
@@ -155,7 +155,7 @@ using SampleCallback = std::function<void(double stepSeconds)>;
 using LogicCallback  = std::function<void(double fixedStepSeconds)>;
 using FrameCallback  = std::function<void(double deltaSeconds)>;
 
-explicit Timeline(double logicIntervalSeconds = 1.0 / 50.0,
+explicit InkingTimeline(double logicIntervalSeconds = 1.0 / 50.0,
                   double maxCatchUpSeconds = 0.25);
 
 void Advance(double deltaSeconds);                         // 每帧调一次
@@ -196,25 +196,25 @@ std::uint64_t GetCatchUpDropCount() const noexcept; // 丢掉过几次"追不上
 ## 六、资源：Asset
 
 ```C++
-struct AssetConfig {
+struct InkingAssetConfig {
     std::string root;   // 空 = exe 目录下的 assets/
     std::string key;    // 空 = 不解密
 };
 
-void AssetConfigure(const AssetConfig& config);   // 进程级，幂等，线程安全
-AssetConfig AssetConfigSnapshot();
-void AssetResetConfig();
+void InkingAssetConfigure(const InkingAssetConfig& config);   // 进程级，幂等，线程安全
+InkingAssetConfig InkingAssetConfigSnapshot();
+void InkingAssetResetConfig();
 
-std::string AssetRoot();                          // 绝对路径（不保证目录存在）
-std::string AssetResolve(const std::string& relative);
-bool AssetExists(const std::string& relative);
-std::vector<std::uint8_t> AssetLoad(const std::string& relative);
-std::string AssetLoadText(const std::string& relative);
-bool AssetIsObfuscated(const std::uint8_t* data, std::size_t size) noexcept;
+std::string InkingAssetRoot();                          // 绝对路径（不保证目录存在）
+std::string InkingAssetResolve(const std::string& relative);
+bool InkingAssetExists(const std::string& relative);
+std::vector<std::uint8_t> InkingAssetLoad(const std::string& relative);
+std::string InkingAssetLoadText(const std::string& relative);
+bool InkingAssetIsObfuscated(const std::uint8_t* data, std::size_t size) noexcept;
 
-struct AssetStats { /* hits / misses / bytes */ };
-AssetStats AssetStatsSnapshot();
-void AssetResetStats();
+struct InkingAssetStats { /* hits / misses / bytes */ };
+InkingAssetStats InkingAssetStatsSnapshot();
+void InkingAssetResetStats();
 ```
 
 解决的核心问题只有一个：**别把所有图片都烘进 exe**。配置里写**相对路径**，文件运行期读进来
@@ -241,12 +241,12 @@ public:
     static void mark(text, site = current());       // 伪级别 MARK，不受阈值影响
     static std::filesystem::path logFilePath();     // LOG/<日期>/run-<时分秒>-<pid>.log
     static std::filesystem::path logDirectory();    // LOG/
-    static void setLevel(LogLevel);  static LogLevel level();
-    static bool parseLevel(std::string_view, LogLevel&);
+    static void setLevel(InkingLogLevel);  static InkingLogLevel level();
+    static bool parseLevel(std::string_view, InkingLogLevel&);
     static std::vector<std::string> tail(std::size_t count);
     static std::vector<std::string> grep(pattern, module);
     static std::string statistics();
-    static std::uint64_t CountOf(LogLevel);         // 按级别数"真的发生了几次"
+    static std::uint64_t CountOf(InkingLogLevel);         // 按级别数"真的发生了几次"
     static void ResetStats();                       // 只给自检用：清计数与折叠槽
     static std::filesystem::path report();          // .log -> 自包含 HTML 报告
 };
@@ -299,7 +299,7 @@ public:
 | `INKING_DEBUG_LOG`（**默认 `OFF`**） | `INK_ISDEBUG` | 调试级日志与调试断言生效 |
 
 两个宏都是 `target_compile_definitions(inking PUBLIC ...)`——**必须是 PUBLIC**，因为公开头里
-`kDefaultLogLevel` / `kDebugEnabled` 是 `inline constexpr`，库与消费者取值不同就是 ODR 违例。
+`InkingDefaultLogLevel` / `InkingDebugEnabled` 是 `inline constexpr`，库与消费者取值不同就是 ODR 违例。
 但 `INK_ISDEBUG` 由选项控制、**默认关**：`0.1.1` 之前它被无条件写成 `PUBLIC INK_ISDEBUG=1`，
 于是发布包的消费方**关不掉**调试流（实测 948 条日志里有一条重复 528 次）。
 关闭 `INK_ISLOG` 时 `INK_LOG_*` 展开成 `((void)0)`：**参数不求值、字符串不拼接**、日志代码完全不进
@@ -310,19 +310,19 @@ public:
 ## 八、消息队列
 
 ```C++
-enum class MessageType { Normal = 0, Error = 1, Pass = 2, Warn = 3 };
+enum class InkingMessageType { Normal = 0, Error = 1, Pass = 2, Warn = 3 };
 
-struct Message {
-    MessageType type = MessageType::Normal;
+struct InkingMessage {
+    InkingMessageType type = InkingMessageType::Normal;
     float delayTime = 0.0f;   // 延迟多少秒之后才输出；0 = 立即
     std::string message;
 };
 
-class MessageQueue {
+class InkingMessageQueue {
 public:
-    static void addMessage(MessageType type, float delaySeconds, const std::string& text);
+    static void addMessage(InkingMessageType type, float delaySeconds, const std::string& text);
     static void quickMessage(bool success, float delaySeconds, const std::string& text);
-    static std::vector<Message> drainMessages();
+    static std::vector<InkingMessage> drainMessages();
     static void waitForMessage(std::chrono::milliseconds timeout);
     static std::size_t pendingCount();
 };
@@ -332,7 +332,7 @@ public:
 `waitForMessage` 让 UI 线程在没有消息时阻塞（或做超时），有新消息时 `condition_variable`
 唤醒。
 
-`delayTime > 0` 时消息会变成 `TaskQueue` 里的一个延迟任务，到点后按"立即"重新入队
+`delayTime > 0` 时消息会变成 `InkingTaskQueue` 里的一个延迟任务，到点后按"立即"重新入队
 ——延迟本身不在这里等。
 
 > 编译期开关 `ISMESSAGE`（宏 `INK_ISMESSAGE`）关闭时整个类退化成空实现，
@@ -343,13 +343,13 @@ public:
 `detail/InkingGeometry.h`（不含 SDL）：
 
 ```C++
-Affine AncestorAffine(const InkingWidget& node) noexcept;        // 祖先的复合仿射
-Affine SubtreeChainAffine(const InkingWidget& node) noexcept;    // 含自己的子树链
-Affine ClipChainAffine(const InkingWidget& node) noexcept;       // 裁剪链
-bool   AncestorClipInDevice(const InkingWidget& node, ShapeBounds& out) noexcept;
-ShapeBounds SubtreeHitEnvelope(const InkingWidget& node) noexcept;
-ShapeBounds IntersectBounds(const ShapeBounds& a, const ShapeBounds& b);
-ShapeBounds TransformBounds(const ShapeBounds& local, const TransformSpec&);
+InkingAffine AncestorAffine(const InkingWidget& node) noexcept;        // 祖先的复合仿射
+InkingAffine SubtreeChainAffine(const InkingWidget& node) noexcept;    // 含自己的子树链
+InkingAffine ClipChainAffine(const InkingWidget& node) noexcept;       // 裁剪链
+bool   AncestorClipInDevice(const InkingWidget& node, InkingShapeBounds& out) noexcept;
+InkingShapeBounds SubtreeHitEnvelope(const InkingWidget& node) noexcept;
+InkingShapeBounds IntersectBounds(const InkingShapeBounds& a, const InkingShapeBounds& b);
+InkingShapeBounds TransformBounds(const InkingShapeBounds& local, const InkingTransformSpec&);
 ```
 
 它们住在 `detail/` 而不是 `InkingWidget` 里，是为了**依赖单向**：几何层包含 Widget 头，
@@ -358,11 +358,11 @@ Widget 头不包含几何层，不会循环包含。
 `detail/InkingHit.h`：
 
 ```C++
-bool HitTestShape(const InkingWidget& node, const ShapeSpec& shape,
-                  const TransformSpec& transform, float worldX, float worldY);
+bool HitTestShape(const InkingWidget& node, const InkingShapeSpec& shape,
+                  const InkingTransformSpec& transform, float worldX, float worldY);
 
-bool HitTestLocalRect(const InkingWidget& node, const ShapeBounds& bounds,
-                      const TransformSpec& transform, float worldX, float worldY);
+bool HitTestLocalRect(const InkingWidget& node, const InkingShapeBounds& bounds,
+                      const InkingTransformSpec& transform, float worldX, float worldY);
 ```
 
 两者走同一条三步：**撤祖先变换 → 减绝对位置 → 过自身变换的逆**；只有最后一步不同
@@ -377,49 +377,49 @@ bool HitTestLocalRect(const InkingWidget& node, const ShapeBounds& bounds,
 名字重查，所以能换肤。**只覆盖颜色**——字号 token 改的是几何，仍在生成期替换。
 
 ```c++
-bool InstallThemeTable(ThemeTable table);       // 装一张（同名替换；不切换）
-bool SetActiveTheme(const std::string& name);   // 切（没装过 → false，版本不动）
-const std::string& ActiveThemeName() noexcept;
-std::uint64_t ThemeVersion() noexcept;          // 装 / 切 / 清空都 +1
-std::uint32_t ResolveThemeColor(const char* token, std::uint32_t fallback);
-ThemeStats ThemeStatsSnapshot();                // hits / misses / version
-void ClearThemeTables() noexcept;               // 回到"全用字面量"
+bool InkingInstallThemeTable(InkingThemeTable table);       // 装一张（同名替换；不切换）
+bool InkingSetActiveTheme(const std::string& name);   // 切（没装过 → false，版本不动）
+const std::string& InkingActiveThemeName() noexcept;
+std::uint64_t InkingThemeVersion() noexcept;          // 装 / 切 / 清空都 +1
+std::uint32_t InkingResolveThemeColor(const char* token, std::uint32_t fallback);
+InkingThemeStats InkingThemeStatsSnapshot();                // hits / misses / version
+void InkingClearThemeTables() noexcept;               // 回到"全用字面量"
 ```
 
->**ThemeTable**
+>**InkingThemeTable**
 
 ```c++
-struct ThemeColorEntry { std::string token; std::uint32_t color; };
-struct ThemeTable { std::string name; std::vector<ThemeColorEntry> colors; };
+struct InkingThemeColorEntry { std::string token; std::uint32_t color; };
+struct InkingThemeTable { std::string name; std::vector<InkingThemeColorEntry> colors; };
 ```
 
 三个要点：
 
-1. **不装表 = 零成本**。`ResolveThemeColor` 先判空指针（这个颜色位不是语义色），
+1. **不装表 = 零成本**。`InkingResolveThemeColor` 先判空指针（这个颜色位不是语义色），
    再判"一张表都没装"，两条都在进表之前返回 `fallback`（生成期烘的字面量）。
-2. **版本号是"切换时机"**（和语言表同一套）。组件把版本放进缓存：`ButtonLook` /
-   `PanelLook` 在 `Advance` 里比一次 `ThemeVersion()`，标签在 `EffectiveTextColor`
+2. **版本号是"切换时机"**（和语言表同一套）。组件把版本放进缓存：`InkingButtonLook` /
+   `InkingPanelLook` 在 `Advance` 里比一次 `InkingThemeVersion()`，标签在 `EffectiveTextColor`
    里比一次。**不要"遍历场景通知所有组件"**——漏一个就是"有的组件还是旧配色"。
-3. **查不到不报错、不空白**：用兜底色，并记一次 miss（`ThemeStatsSnapshot` 看得见）。
+3. **查不到不报错、不空白**：用兜底色，并记一次 miss（`InkingThemeStatsSnapshot` 看得见）。
 
 生成物里的入口是 `InstallGeneratedThemes()`（启动期已自动调过一次），
 `kDefaultThemeName` 是烘焙主题名。切主题只需要：
 
 ```c++
-inking::SetActiveTheme("light");
+InkingSetActiveTheme("light");
 ```
 
 `CXXCSS.md` §3.9 讲配置侧（多份主题、`"default": true`、跨表 token 覆盖校验）。
 
 ## 常见坑
 
-1. **在 `TaskQueue` 回调里碰 UI 状态**：那是管家线程。交付回 UI 只有"帧首消费"那条路。
-2. **用 `Timeline` 之外的东西当节拍器**（例如 `sleep` 或 `TaskQueue` 的延迟任务）：
+1. **在 `InkingTaskQueue` 回调里碰 UI 状态**：那是管家线程。交付回 UI 只有"帧首消费"那条路。
+2. **用 `InkingTimeline` 之外的东西当节拍器**（例如 `sleep` 或 `InkingTaskQueue` 的延迟任务）：
    定时器粒度与线程归属都不对。
 3. **`Subclass` 里存了 `InkingEvent::Token` 却不退订**：注册者先死，表后死 ⇒ 悬垂。
-4. **把 `AssetConfigure(...).key` 当加密**：那是可逆混淆，挡不住逆向。
+4. **把 `InkingAssetConfigure(...).key` 当加密**：那是可逆混淆，挡不住逆向。
 5. **指望 `INK_LOG_*` 在关了 `ISLOG` 时还有副作用**：宏展开成 `((void)0)`，参数根本不求值。
-6. **多线程调 `SceneLibrary` / `Timeline` / 渲染**：它们明确"只在 UI 线程"，
+6. **多线程调 `InkingSceneLibrary` / `InkingTimeline` / 渲染**：它们明确"只在 UI 线程"，
    不加锁不是遗漏，是前提。
 
 ---

@@ -5,7 +5,7 @@
 // 放 src/ 而不是 include/：它 include 渲染那一侧的东西，属于**组件内部实现**，
 // 不进公开头（公开头不拖 SDL 进来，docs/AGENTS.md §6 第 8 条）。
 //
-// 命中判定**不在这里**：它已经被抽成公共件 `detail::HitTestShape`
+// 命中判定**不在这里**：它已经被抽成公共件 `inking_detail::HitTestShape`
 // （`include/ink/basic/InkingHit.h`）——面板和按钮用的是同一份"世界坐标 → 本地
 // → 形状"的推导，不能各写一遍。
 
@@ -16,7 +16,7 @@
 
 #include <cstdint>
 
-namespace inking::detail {
+namespace inking_detail {
 
 /**
  * 画这个面板**这一帧看起来的样子**（设备像素）：按形状填一笔。
@@ -27,9 +27,9 @@ namespace inking::detail {
  *
  * 子节点不在这里画：它们由场景按 z 序逐个提交，各自带上"祖先子树变换"。
  */
-void PaintPanelAppearance(const InkingAnchor& node, const ShapeSpec& shape,
+void PaintPanelAppearance(const InkingAnchor& node, const InkingShapeSpec& shape,
                           std::uint32_t displayColor,
-                          const TransformSpec& transform, float pixelX,
+                          const InkingTransformSpec& transform, float pixelX,
                           float pixelY);
 
 /**
@@ -45,9 +45,9 @@ void PaintPanelAppearance(const InkingAnchor& node, const ShapeSpec& shape,
  *   2. 把这份并集**按每个状态的变换各转一次**再取并集——容器的变换作用于
  *      整棵子树，所以整块包络一起转是对的，也比"逐个节点转了再并"更紧。
  */
-ShapeBounds PanelHitEnvelope(const InkingWidget& node, const ShapeSpec& shape,
+InkingShapeBounds PanelHitEnvelope(const InkingWidget& node, const InkingShapeSpec& shape,
                              int width, int height,
-                             const PanelAppearance& closed,
-                             const PanelAppearance& open);
+                             const InkingPanelAppearance& closed,
+                             const InkingPanelAppearance& open);
 
-}  // namespace inking::detail
+}  // namespace inking_detail

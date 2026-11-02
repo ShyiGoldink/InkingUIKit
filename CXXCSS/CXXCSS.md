@@ -5,11 +5,11 @@ CXXCSS 是本项目的**界面描述文件**：在 `CXXCSS/` 下按组件类型�
 **每个名字一个类**（按钮 / 面板 / 标签 / 图片）+ 一份**语言表**的静态数据 + 启动期就位的
 登记对象；另读一张**主题表**（`CXXCSS/Theme/*.json`），把配置里的 `"$panelSurface"` /
 `"$title"` 这类**语义名**在生成期换成具体值（§3.9，产物里一个 `$` 都不剩）。手写组件那条路
-（`ButtonData` / `PanelData` / `LabelData` / `ImageData`）仍然可用，两条路落到同一份数据结构上。
+（`InkingButtonData` / `InkingPanelData` / `InkingLabelData` / `InkingImageData`）仍然可用，两条路落到同一份数据结构上。
 
 **怎么用生成的结果**：构建脚本调 `ink_add_generated()`，代码里
 `#include <inkgen/<你的集合名>/button_service.h>`，直接用生成的类
-（`inking::cxxcss::NormalButton`；字符串查找键是 `::kName`）。
+（`cxxcss::NormalButton`；字符串查找键是 `::kName`）。
 
 > **本仓库没有消费示例**：源项目的 `examples/panel_demo/` 没有随搬家带入，`examples/`
 > 现在只有 `demo/`（手写数据那条路）。生成结果仍会被**构建期编译验证**——
@@ -54,11 +54,11 @@ CXXCSS/
 而且是**跨组件类型**的（一个按钮和一个面板同名同样是错——名字是运行期的全局查找键）；
 运行期的库也会驳回后来者，但那只是静默的错。
 
-**生成器做到哪一步**：每个独立名字一个独立的类（`normalButton` → `inking::cxxcss::NormalButton`），
+**生成器做到哪一步**：每个独立名字一个独立的类（`normalButton` → `cxxcss::NormalButton`），
 颜色 / 尺寸 / 形状 / 锚点全部烘成字面量，构造时不查任何表。还没做的是 §6 第 3 条（按布局生成
 专用查找）与"专属命中结构"这类特化。`name` 必须是**合法的 C++ 标识符**（`normalButton` 行，
 `button.example` 不行）；名字里有 `.` 或 `-` 时只是没有类——数据照样进 `RegisterAllButtons()`，
-只能按字符串名字用。生成的类放在**由构建脚本指定**的命名空间里（本项目示例用 `inking::cxxcss`）。
+只能按字符串名字用。生成的类放在**由构建脚本指定**的命名空间里（本项目示例用 `cxxcss`）。
 
 > **`width` / `height` 两种写法**：数字和"数字字符串"都收（历史遗留，见 §2.1），新配置用数字。
 
@@ -67,11 +67,11 @@ CXXCSS/
 
 | 目录 | 生成物 | 用起来 |
 | --- | --- | --- |
-| `Button/` | 一个按钮类（可选动态档） | `inking::cxxcss::NormalButton btn{parent};` |
-| `Panel/` | 一个面板类 | `inking::cxxcss::DrawerPanel drawer{parent};` |
-| `Label/` | 一个标签类 | `inking::cxxcss::MenuTitle title{parent};` |
-| `Image/` | 一个图片类（**没有 onClicked 的按钮**） | `inking::cxxcss::CardArt card{parent};` |
-| `Text/` | **语言表的静态数据 + 安装函数**（不是类） | 启动期自动装；业务侧只用 `SetTextLanguage()` |
+| `Button/` | 一个按钮类（可选动态档） | `cxxcss::NormalButton btn{parent};` |
+| `Panel/` | 一个面板类 | `cxxcss::DrawerPanel drawer{parent};` |
+| `Label/` | 一个标签类 | `cxxcss::MenuTitle title{parent};` |
+| `Image/` | 一个图片类（**没有 onClicked 的按钮**） | `cxxcss::CardArt card{parent};` |
+| `Text/` | **语言表的静态数据 + 安装函数**（不是类） | 启动期自动装；业务侧只用 `InkingSetTextLanguage()` |
 | `Theme/` | **什么都不生成**（它是生成器的输入） | 组件配置里写 `"$token"`；换主题要重新生成 |
 | `Config/`（或根下） | **一对常量 + `ApplyDesignConfig()`**（不是类） | `main()` 第一行调一次 |
 
@@ -216,7 +216,7 @@ CXXCSS/
 | 虚线边框 | 不是单一距离场 | 专门的 dash 逻辑 |
 | 形状层直接收任意贝塞尔曲线 | 需要数值最近点求解，代价高 | 先折线化成 `polygonPath`（SVG `path` 就是这么做的） |
 | 文字 | 字形是另一条路 | `text` 段（见 §5） |
-| 纹理填充 | 形状只管"点是否在内" | 纹理层 + 形状裁剪（`detail::fillShapeTextured`） |
+| 纹理填充 | 形状只管"点是否在内" | 纹理层 + 形状裁剪（`inking_detail::fillShapeTextured`） |
 
 ### 3.4 关于符号约定（一处与旧文档的偏差）
 
@@ -243,7 +243,7 @@ SDF 参考实现，抗锯齿也就是标准写法 `smoothstep(-aa, aa, d)`。
 | `stroke` | `width`（必填）、`color`（可选，默认黑） | 沿形状**边界**画一圈：一半在形状外、一半在内（照 CSS 的描边语义）。圆角 / 圆 / 星形都跟着自己的形状走。`width` 必须 > 0（不想描边就**整段省略**，别写 0） |
 | `shadow` | `offsetX` / `offsetY`（可选，默认 0）、`color`（可选，默认半透明黑） | 形状的**偏移实心副本**——**没有模糊**（所以**不认 `blur`**，写了报错）。偏移量是设计坐标 |
 
-两条要记住的：**两者都不参与命中**（命中判的是形状本体 `ShapeContains`，描边画在边界内外
+两条要记住的：**两者都不参与命中**（命中判的是形状本体 `InkingShapeContains`，描边画在边界内外
 各一半、阴影整体偏在形状之上/之下，都不算"点得中"）；**绘制顺序是"阴影 → 填充/图片 →
 描边"**（顺序反了就会被自己盖住），描边**不支持** `ring` / `arc`（它们本身就是一条细带，
 写 `stroke` 也不画、不报错）。
@@ -370,6 +370,13 @@ SDF 参考实现，抗锯齿也就是标准写法 `smoothstep(-aa, aa, d)`。
 - **默认不吃点击**（标签常压在按钮 / 图片上，吃掉点击就变成"看得见、点不动"）；
 - 占位符**查不到时原样显示**：没进语言表的字面量照样能用，不会变成空白。
 
+**`dynamic`（G-08）**：`true` → 生成的类继承 `InkingDynamicLabel`，不写 / `false` →
+`InkingStaticLabel`。**字段集一个字都不变**，差别只有"那条写尺寸的通道归谁"：
+静态档靠 `RelayoutParent()` + 自测量隐式撑高，动态档把这件事故意做成显式——
+`SetText()` 之后**仍然不改高度**，要让占位跟着文字变就自己调 `FitToContent()`
+（它量到自洽才写；在带 `layout` 的容器里返回 `false` + 一条 WARN，因为写进去的尺寸
+下一帧会被 `ApplyLayoutRect` 覆盖）。参考配置 `Label/dynamicTitle.json`。
+
 #### 字体回退链（`text.path` 写成数组，0.3.0 T-13）
 
 `text.path`（标签与按钮**同一个字段**）除了字符串，也认**字符串数组**：
@@ -382,7 +389,7 @@ SDF 参考实现，抗锯齿也就是标准写法 `smoothstep(-aa, aa, d)`。
 ```
 
 含义是"**首选那份不在，就用下一份**"，按顺序试，先能打开的胜出。第一个元素
-进主字段（`LabelData::style.fontPath` / `ButtonTextData::path`），其余进链尾
+进主字段（`InkingLabelData::style.fontPath` / `InkingButtonTextData::path`），其余进链尾
 （`fontPaths` / `paths`），所以"首选"仍然只有一个字段。
 
 三条边界（都是**故意**的，不是没做完）：
@@ -417,14 +424,14 @@ SDF 参考实现，抗锯齿也就是标准写法 `smoothstep(-aa, aa, d)`。
 }
 ```
 
-- **只允许一份**：`InstallTextTable` 的语义就是"替换整张表"，两份只有一份生效——所以生成期
+- **只允许一份**：`InkingInstallTextTable` 的语义就是"替换整张表"，两份只有一份生效——所以生成期
   直接报错（报错里会指出已经在的那份文件）；
 - `entries` 里每条的串数**必须等于** `languages` 的数量（第 i 个串就是第 i 门语言的译文）；
   某一门暂时没译文就写空串 `""`，运行期会退回显示 key；
 - 它是**全局表，不是组件**：没有尺寸 / 锚点 / 形状，也不进命中表与绘制列表；生成物是一份
   静态数据 + 一个安装函数，而且**启动期自动装一次**（和 `RegisterAllButtons()` 共用同一个
   启动对象，业务代码不用动手）；
-- 换语言只要一句 `ink::SetTextLanguage("en")`，**不需要通知任何组件**——语言版本号一变，
+- 换语言只要一句 `InkingSetTextLanguage("en")`，**不需要通知任何组件**——语言版本号一变，
   标签的排版缓存自然失效，下一帧自己重查、重排；不过行数与高度可能跟着变，所以换完之后
   **喊一次所在容器的 `Relayout()`**（重排是显式的，见 §3.7）。
 
@@ -453,17 +460,17 @@ SDF 参考实现，抗锯齿也就是标准写法 `smoothstep(-aa, aa, d)`。
 ```
 
 ```cpp
-// 底（配置驱动）：生成的类把 PanelData 烘在类里，构造即用
+// 底（配置驱动）：生成的类把 InkingPanelData 烘在类里，构造即用
 auto* box = scene.AddChild(
-    std::make_unique<ink::cxxcss::InputBox>(&scene));
+    std::make_unique<cxxcss::InputBox>(&scene));
 // 字（数据驱动）：输入框自己吃点击、自己拿键盘焦点，不需要额外开关
-inking::TextInputData text;
+InkingTextInputData text;
 text.name   = "nameInput";
 text.text   = "";                // 初始内容（占位符也行，见 §3.8）
 text.style.fontSize = 16.0f;
 text.style.color    = 0xFFEAF2FFu;   // 与底的明度差要够，否则"看不见字"
-auto* input = static_cast<inking::InkingTextInput*>(
-    box->AddChild(std::make_unique<inking::InkingTextInput>(box, text)));
+auto* input = static_cast<InkingTextInput*>(
+    box->AddChild(std::make_unique<InkingTextInput>(box, text)));
 input->submitted += [](const std::string& value) { /* Enter 提交 */ };
 ```
 
@@ -522,11 +529,11 @@ input->submitted += [](const std::string& value) { /* Enter 提交 */ };
 
 #### 颜色：运行期可切（多主题）
 
-颜色 token 的名字会跟着组件数据发出去（`ButtonAppearance::themeColor` /
-`PanelAppearance::themeColor` / `LabelData::colorToken`），所以运行期能重查：
+颜色 token 的名字会跟着组件数据发出去（`InkingButtonAppearance::themeColor` /
+`InkingPanelAppearance::themeColor` / `InkingLabelData::colorToken`），所以运行期能重查：
 
 ```c++
-inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
+InkingSetActiveTheme("light");   // 启动期已自动装好全部主题表
 ```
 
 - **`color` 字段是烘焙主题下的字面量**：一张表都没装、或者没切主题时，画面与
@@ -535,7 +542,7 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
   `"default": true` 指定它；都没标就按**文件名排序**取第一份（会打一条警告）；
 - **颜色变不改几何**：换肤只让颜色重查，不重排、不重烘命中表。顶点缓存的键里带颜色
   （`InkingBatch.h`），所以换的那一帧顶点重算一次、之后照旧复用；
-- **切失败不动版本号**：`SetActiveTheme` 传一个没装过的名字返回 `false`，界面不会
+- **切失败不动版本号**：`InkingSetActiveTheme` 传一个没装过的名字返回 `false`，界面不会
   白闪一下再回到原样。
 
 ```jsonc
@@ -569,7 +576,7 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
 ### 3.10 图片（`Image`，A11）
 
 **静态图片 = 没有 onClicked 的 button**：形状、外观、描边阴影、锚点、命中全都要，只要三态
-与回调不要。数据上它就是 `ink::ImageData : ink::ButtonData`。
+与回调不要。数据上它就是 `InkingImageData : InkingButtonData`。
 
 ```jsonc
 // CXXCSS/Image/cardArt.json —— 位图（运行期读）
@@ -594,9 +601,15 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
 
 **认的字段**：`name` / `width` / `height` / `normal` / `runtime` / `hitPassThrough` /
 `shape` / `stroke` / `shadow` / 锚点四件 / `offsetX` / `offsetY` / `layoutItem` /
-`zIndex` / `visible`。`normal` 里**只认 `type`、`source`、`fit`**；写了 `hover` /
-`onclicked` / `text` / `transition` / `dynamic` / `layout` 一律**报错**（图片没有三态、
+`zIndex` / `visible` / `dynamic`。`normal` 里**只认 `type`、`source`、`fit`**；写了 `hover` /
+`onclicked` / `text` / `transition` / `layout` 一律**报错**（图片没有三态、
 没有文字、没有过渡——静默吃掉会让人以为"悬停能换图"）。
+
+**`dynamic`**（0.9 的 G-08）：`true` → 生成的类继承 `InkingDynamicImage`
+（几何可运行期改、不进命中表），不写 / `false` → `InkingStaticImage`。
+语义与按钮的 `dynamic` **完全一致**（§4.3），只是基类不同：**字段集一个字都不变**，
+它只决定档位。这一条与帧动画**正交**——配了 `frames` / `sheet` 的配置也能写
+`"dynamic": true`，那时产物是 `InkingDynamicSprite`（见下面的帧动画一节）。
 
 **`normal.type` 的三个值**：
 
@@ -637,7 +650,7 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
 | 写法 | 字节从哪来 | 产物里有什么 |
 | --- | --- | --- |
 | 省略 `runtime`（或 `false`） | **生成期**读文件，烘成静态数组 | `const unsigned char k…[] = {…}` + 一个视图 |
-| `"runtime": true` | **运行期**从资源根读（`ink::AssetLoad`，资源根默认 exe 旁的 `assets/`） | **只有那个路径字符串**——一个字节都不烘 |
+| `"runtime": true` | **运行期**从资源根读（`InkingAssetLoad`，资源根默认 exe 旁的 `assets/`） | **只有那个路径字符串**——一个字节都不烘 |
 
 `runtime: true` 时 `source` 必须是**相对资源根**的路径；写绝对路径会报错（两条路的写法不能
 混）。图片的 `name` 必须是合法标识符（它没有"按名字查"的库，生成不出类就没有用法）。
@@ -688,7 +701,7 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
 | `startOffset` | `0` | 起始相位（秒），让同屏两个 sprite 错开 |
 | `events` | — | 帧事件：`[{ "frame": 3, "name": "hit" }]`，播到第 `frame` 帧时发这个名字 |
 
-**生成期会拦的错**（都是"能通过 `SpriteData::Validate()` 才算数"，与运行期同一份判据）：
+**生成期会拦的错**（都是"能通过 `InkingSpriteData::Validate()` 才算数"，与运行期同一份判据）：
 
 | 写法 | 结果 |
 | --- | --- |
@@ -710,7 +723,19 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
 不是"播过去"）。非循环播完还会发一次 `finished`，`Play()` 之后能再发一次；循环动画永远不发。
 
 产物差别只有一个类：`InkingSprite`（而不是 `InkingStaticImage`）+ `Data()` 返回
-`SpriteData`。参考配置：`Image/walker.json`（图集 + 两条 `step` 事件）。
+`InkingSpriteData`。参考配置：`Image/walker.json`（图集 + 两条 `step` 事件）。
+
+**再叠 `dynamic`**（G-08）：帧动画与档位是两个**正交**的开关，四种组合各有各的基类——
+
+| | 不写 `dynamic` | `"dynamic": true` |
+| --- | --- | --- |
+| 没有 `frames` / `sheet` | `InkingStaticImage` | `InkingDynamicImage` |
+| 配了 `frames` / `sheet` | `InkingSprite` | `InkingDynamicSprite` |
+
+`Data()` 的返回类型只跟着"是不是帧动画"走（`InkingImageData` / `InkingSpriteData`），与档位无关。
+`SetSpriteData` 在两档里都**不改尺寸**（改尺寸属布局层）：动态档要跟着动作换尺寸，
+自己调 `Resize`——那正是它多出来的入口。参考配置：`Image/dynamicWalker.json`（图片）
+与 `Image/dynamicRunner.json`（帧动画）。
 
 #### 图集描述（0.6.5 T-17）：一张图里的多个动画
 
@@ -738,14 +763,14 @@ inking::SetActiveTheme("light");   // 启动期已自动装好全部主题表
 }
 ```
 
-**它不是组件**：产物只有一份 `inking::AtlasData` + 一个访问函数（`AtlasSlime()`）。
+**它不是组件**：产物只有一份 `InkingAtlasData` + 一个访问函数（`AtlasSlime()`）。
 用法是把其中一条动画转成某个 sprite 的配置：
 
 ```C++
-const inking::AtlasData& atlas = inking::cxxcss::AtlasSlime();
-const inking::SpriteData walk = inking::MakeSpriteData(
+const InkingAtlasData& atlas = cxxcss::AtlasSlime();
+const InkingSpriteData walk = InkingMakeSpriteData(
     atlas, atlas.FindIndex("walk"), bytes, size);   // bytes 从 assets 读（或烘好的数组）
-auto* sprite = scene.AddChild(std::make_unique<inking::InkingSprite>(&scene, walk));
+auto* sprite = scene.AddChild(std::make_unique<InkingSprite>(&scene, walk));
 ```
 
 | 字段 | 默认 | 说明 |
@@ -760,10 +785,10 @@ auto* sprite = scene.AddChild(std::make_unique<inking::InkingSprite>(&scene, wal
 | `animations[].events` | — | 帧事件，与 `Image` 的 `events` 同形 |
 
 **网格在生成期就展开成逐帧矩形**：运行期只认帧表这一条路，所以两端的算术不会分叉。
-判据（两套切法互斥、帧矩形 > 0、`fps`、事件越界）全部复用 `SpriteData::Validate()` /
-`AtlasData::Validate()` —— 生成期不另写一套文案。
+判据（两套切法互斥、帧矩形 > 0、`fps`、事件越界）全部复用 `InkingSpriteData::Validate()` /
+`InkingAtlasData::Validate()` —— 生成期不另写一套文案。
 
-**尺寸不在描述里**：`MakeSpriteData()` 默认取第一帧的自然宽高，动画比第一帧宽/高时由
+**尺寸不在描述里**：`InkingMakeSpriteData()` 默认取第一帧的自然宽高，动画比第一帧宽/高时由
 调用方自己调 `width/height`（改尺寸会触发重布局，不该由"换动作"顺手做）。
 
 **TexturePacker 导出件不直接吃**：它有三种形态我们明确不接（`frames` 是 hash 而不是
@@ -802,15 +827,15 @@ array、`rotated`、`trimmed`），见任务书 §11——真要用得先写一�
 分发，消费方改配置改的是自己的构建产物，碰不到 DLL 里烘死的常量与窗口标志。只生成常量
 的话，效果是"配置改对了、窗口纹丝不动"——正是本仓库最忌讳的那类静默失效
 （`INK_HAS_SDL3_TTF` 那次）。所以每条设置都配了**运行期**入口
-（`inking::SetDesignSize()` / `inking::ApplyWindowConfig()`），生成物是它们的唯一正确用法：
+（`InkingSetDesignSize()` / `InkingApplyWindowConfig()`），生成物是它们的唯一正确用法：
 
 ```cpp
 #include <inkgen/button_service.h>
 
 int main() {
-    inking::cxxcss::ApplyConfig();          // ← 必须在构造任何场景 / 窗口之前
+    cxxcss::ApplyConfig();          // ← 必须在构造任何场景 / 窗口之前
     MyScene scene;                           // 场景根锚点按设计画布定型
-    inking::InkingWindow::Instance().Show(inking::cxxcss::kStartScene);
+    InkingWindow::Instance().Show(cxxcss::kStartScene);
 }
 ```
 
@@ -857,9 +882,9 @@ window 里的字段 "title" 不认识（…… **没有回读口的设置不收*
 - `design` **必填**，`width` / `height` 都是 **1..16384 的整数**：设计坐标按整像素对位，
   `1280.5` 会让"对齐没对齐"失去判据，所以直接报错；
 - **`ApplyConfig()` 必须在构造任何场景 / 窗口之前调用**：设计尺寸在那一刻被钉进根锚点、
-  `SDL_SetRenderLogicalPresentation` 与缩放档位。晚了 `SetDesignSize()` 返回 **false** 并打
+  `SDL_SetRenderLogicalPresentation` 与缩放档位。晚了 `InkingSetDesignSize()` 返回 **false** 并打
   ERROR——**不会**静默半生效（一半场景旧尺寸、一半新尺寸是最难查的形态）；
-- `ApplyWindowConfig()` **会构造窗口单例**，所以它排在 `SetDesignSize()` 之后；这个顺序
+- `InkingApplyWindowConfig()` **会构造窗口单例**，所以它排在 `InkingSetDesignSize()` 之后；这个顺序
   写死在生成代码里，别拆开自己调；
 - `name` 写不写都行：它不生成符号、也不是查找键，收它只是为了照抄别的配置时不平白报错。
 
@@ -878,7 +903,7 @@ window 里的字段 "title" 不认识（…… **没有回读口的设置不收*
 | --- | --- |
 | `name` | 与文件名、代码里使用的名字三处一致 |
 | `width` / `height` | 设计坐标尺寸 |
-| `dynamic` | 可选，布尔。`true` → 生成的类继承 `ink::InkingDynamicButton`（几何可在运行期改、不进命中表、指针由场景在"指针变化的那一帧"推一次通知、它自己读状态判）；不写或 `false` → `ink::InkingStaticButton`。见 4.3 |
+| `dynamic` | 可选，布尔。`true` → 生成的类继承 `InkingDynamicButton`（几何可在运行期改、不进命中表、指针由场景在"指针变化的那一帧"推一次通知、它自己读状态判）；不写或 `false` → `InkingStaticButton`。见 4.3 |
 | `normal` / `hover` / `onclicked` | 三态外观，结构相同 |
 | `text` | 可选。**不建议用**，见 §5 |
 | `selfAnchorX/Y`、`traceAnchorX/Y` | 锚点 |
@@ -909,7 +934,7 @@ window 里的字段 "title" 不认识（…… **没有回读口的设置不收*
 | `cover` | 保持宽高比铺满框、居中；**超出框的一边被裁掉**（像 CSS 的 `object-fit: cover`） |
 
 三种模式都**按形状裁剪**（形状外的一律不画，边缘与形状同一套抗锯齿）——实现是"形状网格 +
-纹理坐标"（`detail::fillShapeTextured`），不是先画矩形再遮盖，所以形状与图片永远同源。
+纹理坐标"（`inking_detail::fillShapeTextured`），不是先画矩形再遮盖，所以形状与图片永远同源。
 `contain` 的留白边界是**轴对齐**的（用一次裁剪矩形实现），容器**旋转**时那一圈留白不会跟着
 转（已知近似，见 `UsageReport.md` §7.4）。
 
@@ -933,9 +958,9 @@ window 里的字段 "title" 不认识（…… **没有回读口的设置不收*
 > | | Button 的 `type:"svg"`（本段） | Image 的 `type:"svg"`（§3.10） |
 > | --- | --- | --- |
 > | 用途 | 一个控件的**外形**（圆角 / 任意 path） | 整张界面**设计稿** |
-> | 解析时机 | **生成期**转成 `ShapeSpec`（几何 = 命中） | **运行期**光栅化成纹理 |
+> | 解析时机 | **生成期**转成 `InkingShapeSpec`（几何 = 命中） | **运行期**光栅化成纹理 |
 > | 支持范围 | 单图形、单填充色；`rect` / `circle` / `ellipse` / `path` | 多图元、`g` / `transform`、渐变、描边、evenodd |
-> | 命中 | 形状（`ShapeContains`） | 形状（图片本来就按形状命中） |
+> | 命中 | 形状（`InkingShapeContains`） | 形状（图片本来就按形状命中） |
 > | `text` / `use` / `clipPath` | 不允许（解析期报错） | 不渲染（加载期一条 WARN） |
 
 > 几何必须与组件框一致、三个状态的 svg 几何必须相同、显式写了 `shape` 时还要与它一致
@@ -1017,22 +1042,27 @@ window 里的字段 "title" 不认识（…… **没有回读口的设置不收*
 它的 `transition` 与 `transform` 也跟着 `normal` 走；想只要颜色继承、其余另配，就得把
 `hover` 显式写全。
 
-### 4.3 `dynamic`：这块按钮是静态档还是动态档
+### 4.3 `dynamic`：这块组件是静态档还是动态档
 
 判据只有一条（`include/ink/basic/InkingAnchor.h` 末尾那段）：**几何会不会在构造之后自己变**。
 
+**五种组件都认这个开关**：`Button` / `Image`（含帧动画，`Image` 那节有四种组合的表）
+/ `Label` / `Panel`；`dynamic` 与组件类型的其余字段**完全无关**，它只挑基类。
+下面这张差异表以按钮为例，其余四种的差别是同一件事（几何入口 / 命中 / 输入三行），
+只是基类名不同。
+
 | | 静态（不写 `dynamic`） | 动态（`"dynamic": true`） |
 | --- | --- | --- |
-| 生成出来的基类 | `ink::InkingStaticButton` | `ink::InkingDynamicButton` |
+| 生成出来的基类 | `InkingStaticButton` | `InkingDynamicButton` |
 | 几何写入口 | **没有**（类型上就调不到） | `Resize` / `ChangeSelfAnchor` / `ChangeTraceAnchor` / `ChangeOffset` |
 | 命中 | 由场景的命中表回答 | 不进表，自己判 |
 | 输入 | 场景派发**推**过来（`MouseHover` / `MousePress` / `MouseRelease`） | 自己在 `Tick` 里**拉**（`JudgePointer`，读场景的指针状态） |
-| 三态外观 / 画出来什么样 | 两份**共用**（`include/button/ButtonLook.h`、`src/button/ButtonPaint.cpp`） | 同左 |
+| 三态外观 / 画出来什么样 | 两份**共用**（`include/button/InkingButtonLook.h`、`src/button/ButtonPaint.cpp`） | 同左 |
 
 **它不是"另一个组件"，是同一个组件的另一档**：颜色、形状、文字、点击回调的用法完全一样，
 差别只在"几何能不能在运行期改"和"输入从哪来"。所以两块按钮要各自一份 json（名字也必须各自
 唯一，见 §1）——要消掉重复的公共字段用 §4.6 的 `$extends`。`dynamic`
-是**生成期**开关，不进运行期数据结构（`ButtonData` 里没有这个字段）：类型本身已经说明它属于
+是**生成期**开关，不进运行期数据结构（`InkingButtonData` 里没有这个字段）：类型本身已经说明它属于
 哪一档。参考配置：静态档 `examples/game/buttons/menuOne.json`、动态档
 `examples/galgame/buttons/CastLuolisi.json`。
 
@@ -1042,7 +1072,7 @@ window 里的字段 "title" 不认识（…… **没有回读口的设置不收*
 
 ```cpp
 button->clicked.Subscribe([] { ... });            // 点击
-button->stateChanged.Subscribe([](inking::ButtonState from, inking::ButtonState to) { ... });
+button->stateChanged.Subscribe([](InkingButtonState from, InkingButtonState to) { ... });
 ```
 
 `stateChanged` 报的是**目标状态**（`Normal` / `Hover` / `Pressed`）的变化，静态 / 动态共用
@@ -1056,7 +1086,7 @@ button->stateChanged.Subscribe([](inking::ButtonState from, inking::ButtonState 
 | 命中 | 进场景的命中表，跨组件遮挡由表 + `IsAbove` 仲裁 | 不进表（表里只留一个洞），但**几何遮挡仍按 `IsAbove`** 与静态答案合并 | 动态组件盖住下面的静态组件时，下面那个收不到输入——与静态档一致 |
 | 遮挡仲裁 | 与层级同源（表 + 局部层级） | 几何遮挡**同源**；输入归属**不同源**（它自判） | 两个动态组件重叠时按 z 序取最上面那个 |
 | 几何写入口 | 没有（类型上就调不到） | `Resize` / `ChangeSelfAnchor` / `ChangeTraceAnchor` / `ChangeOffset` | 只有动态档能"边跑边改" |
-| 三态过渡 | 每渲染帧推进（真实 delta） | 每渲染帧推进（真实 delta，同一份 `ButtonLook`） | **没有差别**——两档共用一套插值 |
+| 三态过渡 | 每渲染帧推进（真实 delta） | 每渲染帧推进（真实 delta，同一份 `InkingButtonLook`） | **没有差别**——两档共用一套插值 |
 
 **一条使用约束**：`clicked` / `stateChanged` 都是**同步**触发的（在 `MouseHover` /
 `MousePress` / `JudgePointer` 里当场 Emit）。**不要在回调里改同一个按钮的状态**
@@ -1115,15 +1145,24 @@ flag，在场景的 `Tick` 里处理）。
 的兄弟**。阴影不走装饰遍（它是"形状之下的偏移副本"，跟着描边画反而会盖住自己的内容），仍在填充
 之前。装饰笔**不是节点**：绘制列表条目数、命中表条目数都不变。
 
-**面板没有** `hover` / `onclicked`（那是指针三态）、`text`、`img` / `svg`（外观类型）、
-`dynamic`（只有静态档：开合只改变换，几何构造即定型）。**名字的限制更严**：面板的 `name`
-必须是合法标识符——按钮的名字不合法还能走"按字符串名字查"（数据进 `ButtonLibrary` 兜着），
+**面板没有** `hover` / `onclicked`（那是指针三态）、`text`、`img` / `svg`（外观类型）。
+`dynamic`（G-08）**认**，语义与按钮的完全一致（§4.3）：不写 / `false` →
+`InkingStaticPanel`（开合只改变换，几何构造即定型），`true` →
+`InkingDynamicPanel`（几何可运行期改、不进命中表）。字段集一个字都不变，
+参考配置 `Panel/dynamicDrawer.json`。
+
+**动态档不做滚轮**（滚轮按渲染帧清零、动态组件只能按固定步长回调读，一帧 0 次会丢、
+2 次以上会双读）——要滚就拖滚动条，或调 `SetScroll`。这是框架级的通道问题，
+不是配置能补的（`docs/zh/TaskGuide-G.md` 的 G-07 写了取舍）。
+
+**名字的限制更严**：面板的 `name`
+必须是合法标识符——按钮的名字不合法还能走"按字符串名字查"（数据进 `InkingButtonLibrary` 兜着），
 而面板**没有按名字查的库**，没有类就等于没有任何用法，所以生成期直接报错。
 
 ```cpp
 #include <inkgen/<你的集合>/panel_service.h>
 
-inking::cxxcss::DrawerPanel drawer{parent};   // 构造只给父级
+cxxcss::DrawerPanel drawer{parent};   // 构造只给父级
 drawer.Toggle();                           // 或 Open() / Close() / SetOpen(bool)
 ```
 
@@ -1160,7 +1199,7 @@ drawer.Toggle();                           // 或 Open() / Close() / SetOpen(boo
 | `barRadius` | 否 | `0`（默认）= **胶囊**，取短边的一半；`> 0` = 指定的圆角半径。 |
 
 `scroll` 里**不认识的字段会报错**（构建期就红）：只认上表这八个。**颜色不在配置里**
-（轨道 / 滑块 / 悬停 / 条带背景都要手写 `ScrollSpec`：`barColor` / `thumbColor` /
+（轨道 / 滑块 / 悬停 / 条带背景都要手写 `InkingScrollSpec`：`barColor` / `thumbColor` /
 `thumbHoverColor` / `barBackgroundColor`，默认值见 `InkingScroll.h`）。
 
 **这一版不做**：缓动（滚轮与点轨道都**瞬时到位**）、惯性 / 越界回弹 / 吸附对齐、
@@ -1226,7 +1265,7 @@ json"不再一眼可见，排查时看注释就知道该动父文件还是子文
 ```
 
 `align` / `alignV` 是**对齐**（不是"再挪几个像素"）：写了 `center` / `middle` 之后，
-框架会**先量一遍文字块的真实尺寸**（`ink::MeasureText`，比例字体也准）再算位置，
+框架会**先量一遍文字块的真实尺寸**（`InkingMeasureText`，比例字体也准）再算位置，
 `leftSpace` / `topSpace` 在那两个方向上就不参与了；`right` / `bottom` 则把它们当
 **边距**用。不写就是老行为（文字左上角落在 `leftSpace` / `topSpace`），既有配置
 与产物一个字节都不变。
@@ -1269,19 +1308,19 @@ json"不再一眼可见，排查时看注释就知道该动父文件还是子文
 场景不进 CXXCSS——它是**编排**（放哪些组件、按什么条件放），不是数据。
 
 ```cpp
-class MainScene : public ink::InkingScene {
+class MainScene : public InkingScene {
 public:
     static constexpr const char* kName = "mainScene";   // 一行常量
-    MainScene() : ink::InkingScene(kName) {}
+    MainScene() : InkingScene(kName) {}
     // 组件是成员；`{this}` 由默认成员初始化器填父级——少了 `asParent()` 这处样板，
     // 也不可能"忘了传 parent → 组件不登记"。
-    inking::cxxcss::NormalButton normalButton{this};
-    inking::cxxcss::DynamicTestButton dynamicTestButton{this};
+    cxxcss::NormalButton normalButton{this};
+    cxxcss::DynamicTestButton dynamicTestButton{this};
 };
 
 MainScene scene;                               // 用户代码就三行
-ink::SceneLibrary::SetActiveScene(&scene);
-ink::InkingWindow::Instance().Show();
+InkingSceneLibrary::SetActiveScene(&scene);
+InkingWindow::Instance().Show();
 ```
 
 组件的位置仍然写在**组件自己的配置**里（Button json 的锚点 / 偏移），所以"换个场景位置跟着
@@ -1315,17 +1354,18 @@ ink::InkingWindow::Instance().Show();
 | 本文档描述的格式 | **已定型**（约定） |
 | 代码生成器 `inkgen` | ✅ 构建期读 `CXXCSS/`（`ink_add_generated()` 传文件，`CONFIGURE_DEPENDS` 跟进新文件），产物落 `build/`、自动进 include 路径 |
 | 校验（`name` 与文件名 / 未知字段 / 参数 / 名字唯一） | ✅ 生成期报错、带文件与行号；名字唯一是**跨组件类型**的。`inkgen_validate_cxxcss` 单测真实配置 |
-| 每个名字一个独立类 | ✅ 按钮（`dynamic` → `InkingDynamicButton`）、面板（`InkingStaticPanel`）、标签（`InkingStaticLabel`）；自检 `inkgen_test` / `ink_panel_gen_test` / `ink_label_gen_test` |
-| `shape` 几何 + 填充 | ✅ 十三种（§3.3）；填充与命中同源（`detail::fillShape`）；自检 `ink_shape_test` |
-| `stroke` / `shadow`（B3） | ✅ 描边 = 轮廓环带（`detail::strokeShape`）、阴影 = 偏移实心副本（**无模糊**，不认 `blur`）；都不参与命中、顺序"阴影 → 填充 → 描边"、`ring` / `arc` 不支持描边；自检 `ink_decor_test` |
+| 每个名字一个独立类 | ✅ 按钮（`dynamic` → `InkingDynamicButton`）、面板（`InkingStaticPanel` / `InkingDynamicPanel`）、标签（`InkingStaticLabel` / `InkingDynamicLabel`）、图片（`InkingStaticImage` / `InkingSprite` / `InkingDynamicImage` / `InkingDynamicSprite`）；自检 `inkgen_test` / `ink_panel_gen_test` / `ink_label_gen_test` |
+| `shape` 几何 + 填充 | ✅ 十三种（§3.3）；填充与命中同源（`inking_detail::fillShape`）；自检 `ink_shape_test` |
+| `stroke` / `shadow`（B3） | ✅ 描边 = 轮廓环带（`inking_detail::strokeShape`）、阴影 = 偏移实心副本（**无模糊**，不认 `blur`）；都不参与命中、顺序"阴影 → 填充 → 描边"、`ring` / `arc` 不支持描边；自检 `ink_decor_test` |
 | `polygonPath`（B2） | ✅ 顶点表烘静态数组；符号射线法 + ear clipping 填充（非凸可用）+ miter 描边；自检 `ink_path_test`（7543 点对账） |
 | SVG `path`（B2） | ✅ 生成期离散成折线（认 `M L H V Z C S Q T A`）；**多子路径 / 孔洞与 `fill-rule` 还没做** |
-| 锚点 / 尺寸 / `zIndex` / `visible` / `offsetX` / `offsetY` | ✅ 配置与手写 `AnchorData` 两条路都通 |
+| 锚点 / 尺寸 / `zIndex` / `visible` / `offsetX` / `offsetY` | ✅ 配置与手写 `InkingAnchorData` 两条路都通 |
 | Button 的 `dynamic` / `transition` / `transform` | ✅ 见 §4.3 / §4.1.1 / §4.1.2；`transform` 不改几何也不改命中表，文字也跟着走 |
+| Image / Sprite / Label / Panel 的 `dynamic`（G-08） | ✅ 只决定生成的类继承哪一档（静态 / 动态），字段集与产物数据一个字都不变；`inkgen_compile_check` 里有四条 `static_assert(is_base_of_v<InkingDynamicXxx, …>)` + 四条反向断言 |
 | Button 的 `img` / `svg` | ✅ `img` 生成期烘字节（≤ 2 MB）+ 运行期解码 + 按形状裁剪 + `fit` 三模式；没接 SDL3_image 时按颜色填；自检 `ink_image_test` |
 | `text` 渲染 | ✅ 真文字（纹理层 + 缓存 + 跟变换走）；文案 / 颜色走运行期；独立文字组件是 `Label` |
 | `Label`（A7） | ✅ `InkingStaticLabel`：不吃点击、`MeasureLayout` 报内容尺寸、`SetText` 让容器重排；排版是纯函数；自检 `ink_text_layout_test` / `ink_label_test` |
-| `Text` + 多语言（A7） | ✅ `InkingTextTable.h`：`ResolveText` **查不到原样返回 key**；**版本号切换**（不用遍历通知） |
+| `Text` + 多语言（A7） | ✅ `InkingTextTable.h`：`InkingResolveText` **查不到原样返回 key**；**版本号切换**（不用遍历通知） |
 | `Label` / `Text` / `Theme` / `Image` 四种生成段 | ✅ 与按钮 / 面板共用同一套校验 / 重名 / 产物规则；`Text` 只允许一份 + 启动期自动装；`Theme` 生成期解析 token；`Image` 两条路各有产物差异断言；自检 `inkgen_test` |
 | Panel 的 `clipChildren`（A5） | ✅ 画出来被剪、点起来也被剪；自检 `ink_clip_test`；配置 `Panel/clipWindow.json` |
 | 场景配置 | ⛔ **已撤销**（§7.2）；场景名仍是代码里的常量 |
@@ -1336,7 +1376,7 @@ ink::InkingWindow::Instance().Show();
 的实际列表为准（明细见 `docs/UsageReport.md` §2）。
 
 > **给字段定稿的人一句提醒**：第 5 节的 `text` 字段是从原示例注释**推断**的，没有示例文件
-> 可对照。它现在已经在 `ButtonData` 与生成器里各固化了一次（`fontSize` / `leftSpace` /
+> 可对照。它现在已经在 `InkingButtonData` 与生成器里各固化了一次（`fontSize` / `leftSpace` /
 > `topSpace` / `path` / `content`）——要改名或改结构，现在改代价最小。
 
 
@@ -1415,6 +1455,7 @@ ink::InkingWindow::Instance().Show();
 | Panel | （顶层） | `shape` |  |
 | Panel | （顶层） | `layout` |  |
 | Panel | （顶层） | `layoutItem` |  |
+| Panel | （顶层） | `dynamic` |  |
 | Panel | closed / open | `type` | 两态外观；open 省略时颜色 / 描边 / 阴影继承 closed（过渡与变换不继承） |
 | Panel | closed / open | `source` |  |
 | Panel | closed / open | `transition` |  |
@@ -1436,6 +1477,7 @@ ink::InkingWindow::Instance().Show();
 | Label | （顶层） | `visible` |  |
 | Label | （顶层） | `layout` |  |
 | Label | （顶层） | `layoutItem` |  |
+| Label | （顶层） | `dynamic` |  |
 | Label | text | `content` | 标签的文字段：整块排版（换行 / 省略 / 行距），与 Button 的 text 同名不同义 |
 | Label | text | `fontSize` |  |
 | Label | text | `lineSpacing` |  |
@@ -1447,7 +1489,7 @@ ink::InkingWindow::Instance().Show();
 | Label | text | `wrap` |  |
 | Label | text | `overflow` |  |
 | Label | text | `maxLines` |  |
-| Image | （顶层） | `$comment` | 静态图片 = 没有 onClicked 的 button：没有三态、没有 dynamic；hitPassThrough = 背景不吃点击 |
+| Image | （顶层） | `$comment` | 静态图片 = 没有 onClicked 的 button：没有三态；hitPassThrough = 背景不吃点击；dynamic 只换档位、不改字段集 |
 | Image | （顶层） | `name` |  |
 | Image | （顶层） | `width` |  |
 | Image | （顶层） | `height` |  |
@@ -1474,6 +1516,7 @@ ink::InkingWindow::Instance().Show();
 | Image | （顶层） | `startFrame` |  |
 | Image | （顶层） | `startOffset` |  |
 | Image | （顶层） | `events` |  |
+| Image | （顶层） | `dynamic` |  |
 | Image | normal | `type` | 图片外观认 color / img / svg；svg 是纹理路（整份稿光栅化），与按钮的 svg 不同 |
 | Image | normal | `source` |  |
 | Image | normal | `fit` |  |
@@ -1490,7 +1533,7 @@ ink::InkingWindow::Instance().Show();
 | Image | events[] | `$comment` | 帧事件：播到第 frame 帧时发一个名字（慢帧跨帧也不漏） |
 | Image | events[] | `frame` |  |
 | Image | events[] | `name` |  |
-| Atlas | （顶层） | `$comment` | 图集描述（不是组件）：一张图里的多个具名动画；生成期转成 AtlasData 常量 |
+| Atlas | （顶层） | `$comment` | 图集描述（不是组件）：一张图里的多个具名动画；生成期转成 InkingAtlasData 常量 |
 | Atlas | （顶层） | `name` |  |
 | Atlas | （顶层） | `animations` |  |
 | Atlas | animations[] | `$comment` | 一个动画：名字 + 图集路径 + 帧矩形或网格切法 + 播放参数 |

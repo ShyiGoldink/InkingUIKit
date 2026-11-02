@@ -39,7 +39,7 @@
 #include <string>
 #include <vector>
 
-namespace inking::prefab {
+namespace inking_prefab {
 
 /**
  * @brief 当前目录里的一条（目录或文件）。
@@ -59,9 +59,9 @@ struct FileEntry {
  * @brief C5：预制路径 / 文件选择（组装自绘）。
  *
  * ```cpp
- * inking::prefab::FilePickerStyle style = inking::prefab::FilePickerStyle::MakeDefault();
+ * inking_prefab::FilePickerStyle style = inking_prefab::FilePickerStyle::MakeDefault();
  * style.extensions = {".png", ".jpg"};
- * inking::prefab::FilePicker picker(&scene, style);
+ * inking_prefab::FilePicker picker(&scene, style);
  * picker.accepted.Subscribe([](const std::vector<std::string>& paths) { ... });
  * picker.SetDirectory(std::filesystem::path(L"D:\\素材\\背景"));  // 宽字符
  * ```
@@ -223,4 +223,4 @@ private:
     InkingStaticPanel _buttons;
 };
 
-}  // namespace inking::prefab
+}  // namespace inking_prefab

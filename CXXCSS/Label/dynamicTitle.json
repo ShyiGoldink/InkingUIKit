@@ -1,0 +1,20 @@
+{
+    "$comment": [
+        "动态标签（G-08）：\"dynamic\": true ⇒ 生成的类继承 InkingDynamicLabel。",
+        "字段集与静态标签**完全相同**；差别是那条写尺寸的通道归业务代码：",
+        "  · SetText 仍然**不自动撑高**（两档同一条纪律：什么时候重排始终可见）；",
+        "  · 要让占位跟着文字变，自己调 FitToContent()；它量到自洽才写，",
+        "    放在带 layout 的容器里会返回 false + 一条 WARN（写了也会被下一帧覆盖）。"
+    ],
+    "name": "dynamicTitle",
+    "width": 240,
+    "dynamic": true,
+    "text": {
+        "content": "动态标签",
+        "fontSize": "$title",
+        "align": "center",
+        "color": "$textPrimary"
+    },
+    "offsetX": 40,
+    "offsetY": 620
+}

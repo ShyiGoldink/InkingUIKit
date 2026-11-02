@@ -1,4 +1,4 @@
-// `ApplyWindowConfig`：set + **回读校验**。
+// `InkingApplyWindowConfig`：set + **回读校验**。
 //
 // 为什么不把校验留给调用方：调用方拿到的返回值本来就不可靠——
 // `SetBorderless` / `SetRoundedCorners` / `SetFullscreen` / `SetTransparent`
@@ -13,15 +13,14 @@
 
 #include <string>
 
-namespace inking {
 
 namespace {
 
-constexpr const char* kModuleName = "WindowConfig";
+constexpr const char* kModuleName = "InkingWindowConfig";
 
 }  // namespace
 
-int ApplyWindowConfig(const WindowConfig& config) {
+int InkingApplyWindowConfig(const InkingWindowConfig& config) {
     InkingWindow& window = InkingWindow::Instance();
     int failed = 0;
 
@@ -101,4 +100,3 @@ int ApplyWindowConfig(const WindowConfig& config) {
     return failed;
 }
 
-}  // namespace inking

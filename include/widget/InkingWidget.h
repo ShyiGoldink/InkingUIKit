@@ -47,8 +47,6 @@
 
 struct SDL_Renderer;
 
-namespace inking {
-
 // 先声明两个前向类型
 //下面detail里的 FillDefaultRect 与 layout::ArrangeSubtree 都按引用/形参用到 InkingWidget。
 // 这两个声明必须排在那两个 detail 块之前，否则它们会在自己前面找不到这个名字。
@@ -56,7 +54,7 @@ class InkingScene;
 
 class InkingWidget;
 
-namespace detail {
+namespace inking_detail {
 // 顶点缓存槽：定义在 InkingBatch.h 里。公开头只前向声明。 那个类型含 SDL_Vertex，不能拖进公开头。
 struct VertexCacheSlot;
 
@@ -67,22 +65,22 @@ struct VertexCacheSlot;
  * 静态档与动态档是兄弟（都直接继承`InkingWidget`）
  * 静态版不是动态版的基类、借不到对方的实现。拆成两个实现文件之后，匿名namespace 不再共享。
  *
- * 它走的是同一套形状填充，矩形在这里就是ShapeSpec::Rect()，变换是单位变换
+ * 它走的是同一套形状填充，矩形在这里就是InkingShapeSpec::Rect()，变换是单位变换
  * 基类没有变换这个概念，变换属于组件自己的内容
  * 于是填充只有一份实现，抗锯齿、展示倍率换算这些事也不会出现"按钮走一条路、默认矩形走另一条路"。
  */
 void FillDefaultRect(const InkingWidget& node, float pixelX, float pixelY);
-}  // namespace detail
+}  // namespace inking_detail
 
-namespace detail {
+namespace inking_detail {
 namespace layout {
 /**
- * 对一个容器跑一次排布：读它的LayoutSpec与每个孩子的MeasureLayout，解出矩形，逐个写回孩子，再递归进"本身也是容器"的孩子。
+ * 对一个容器跑一次排布：读它的InkingLayoutSpec与每个孩子的MeasureLayout，解出矩形，逐个写回孩子，再递归进"本身也是容器"的孩子。
  * 只有它是 `InkingWidget::ApplyLayoutRect` 的 friend那条几何写入口。这样在编译期就对业务代码不可见。
  */
 void ArrangeSubtree(InkingWidget& container);
 }  // namespace layout
-}  // namespace detail
+}  // namespace inking_detail
 
 /**
  * @brief 节点：能进渲染树的东西。
@@ -220,8 +218,8 @@ public:
      *
      * 语义（和自渲染同源）：绕**本节点的中心**、与该节点自己那一笔用同一个原点。
      */
-    virtual TransformSpec GetSubtreeTransform() const noexcept {
-        return TransformSpec{};
+    virtual InkingTransformSpec GetSubtreeTransform() const noexcept {
+        return InkingTransformSpec{};
     }
 
     /**
@@ -243,9 +241,9 @@ public:
      *
      * 绘制与命中**必须同源**（否则就是"看着被剪了、点还是点得到"）：
      *   - 绘制：提交层按 `GetSubtreeClipBounds()` 设置裁剪矩形（见
-     *     `InkingScene::Render` 与 `detail::AncestorClipInDevice`）；
+     *     `InkingScene::Render` 与 `inking_detail::AncestorClipInDevice`）；
      *   - 命中：容器的 `HitTest` 递归之前先问"这个点在不在我的裁剪区里"，
-     *     不在就整棵子树都不命中（`detail::HitTestLocalRect`）。
+     *     不在就整棵子树都不命中（`inking_detail::HitTestLocalRect`）。
      *
      * 裁剪区**随容器自己的绘制一起变换**（含它自己的 show 变换与全部祖先变换），
      * 但**不随子孙的变换**——"抽屉里的内容滑出外层"要被外层剪掉，靠的正是这一条。
@@ -256,7 +254,7 @@ public:
      * 裁剪区：本节点**布局空间**里的矩形，相对本节点左上角（设计坐标）。
      * 只在 `HasSubtreeClip()` 为 true 时有意义；默认是本体的整块矩形。
      */
-    virtual ShapeBounds GetSubtreeClipBounds() const noexcept;
+    virtual InkingShapeBounds GetSubtreeClipBounds() const noexcept;
 
     /**
      * @brief 裁剪区跟着**哪一份变换**走（默认 = `GetSubtreeTransform()`）。
@@ -268,7 +266,7 @@ public:
      * （容器本体，不含滚动）；祖先链上更外层的容器照旧用它们各自的子树变换
      * （祖先滚了，这个容器连同它的裁剪窗口一起动，那是对的）。
      */
-    virtual TransformSpec GetClipTransform() const noexcept;
+    virtual InkingTransformSpec GetClipTransform() const noexcept;
 
     // ---------------- 标脏 ----------------
 
@@ -402,7 +400,7 @@ public:
      * 指针在这个位置上吗。坐标是**世界坐标（设计空间）**。
      *
      * 默认返回 false：基类不可实例化，也没有形状概念——"怎么算在里面"是
-     * 具体组件的知识（按钮问自己的 SDF 形状，见 `ShapeContains`）。
+     * 具体组件的知识（按钮问自己的 SDF 形状，见 `InkingShapeContains`）。
      *
      * 谁负责 z 序：**调用方**。这个函数只回答"我在不在这个点下面"，
      * 不回答"是不是我最上面"——后者要按绘制列表从高到低问，规则只有一份
@@ -469,7 +467,7 @@ public:
      * 变换通道的设计是"表冻结、查表时反变换"（`InputDesign.md` §11），
      * 靠的就是这里的包络不动、而精判用当前变换。
      */
-    virtual ShapeBounds GetHitEnvelope() const;
+    virtual InkingShapeBounds GetHitEnvelope() const;
 
     /**
      * 命中之后让不让过（三态里的 `PassThrough`）。
@@ -592,13 +590,13 @@ public:
      *         （`AcceptsExternalTransform()` 为假，同时记一笔拒绝）、这份变换
      *         与当前那份**逐位相同**（幂等）、组件已被移出场景之类。
      */
-    bool SetDisplayTransform(const TransformSpec& transform) noexcept;
+    bool SetDisplayTransform(const InkingTransformSpec& transform) noexcept;
 
     /// 清掉外部显示变换（回到"只有组件自己那份"）。同样幂等、同样标两份脏。
     bool ClearDisplayTransform() noexcept;
 
     /// 当前的外部显示变换（默认单位变换；没设过就是它）。
-    const TransformSpec& GetExternalTransform() const noexcept;
+    const InkingTransformSpec& GetExternalTransform() const noexcept;
 
     /**
      * 把"组件自己那份显示变换"与外部变换合起来——**给各组件的
@@ -609,7 +607,7 @@ public:
      *   `translate = 外.scale × R(外.rotate) × 内.translate + 外.translate`。
      * 外部是单位变换时**原样返回**（没开这条通道的组件零开销）。
      */
-    TransformSpec CombineWithExternal(const TransformSpec& own) const noexcept;
+    InkingTransformSpec CombineWithExternal(const InkingTransformSpec& own) const noexcept;
 
     /**
      * 这个组件类型认不认外部显示变换（**默认 false**，照 `WantsKeyboardFocus()`
@@ -724,16 +722,16 @@ public:
 
     // ---------------- 布局（A6） ----------------
     //
-    // 规则（`LayoutSpec`）住在**父容器**的数据里，孩子只在自己数据里写意愿
-    // （`LayoutItem`）。算出来的尺寸与位置**写进运行期几何**（`_width` /
+    // 规则（`InkingLayoutSpec`）住在**父容器**的数据里，孩子只在自己数据里写意愿
+    // （`InkingLayoutItem`）。算出来的尺寸与位置**写进运行期几何**（`_width` /
     // `_height` / `_offsetX` / `_offsetY`），所以位置推导一条路都没变——
     // 绘制 / 命中 / AABB / 子树变换都不知道"有布局这回事"。
 
     /// 我的布局规则（来自配置）。`kind == None` = 我不排孩子（老行为）。
-    const LayoutSpec& GetLayoutSpec() const noexcept { return _layout; }
+    const InkingLayoutSpec& GetLayoutSpec() const noexcept { return _layout; }
 
     /// 我在父容器布局里的意愿（margin / fillMain / min-max / selfAlign）。
-    const LayoutItem& GetLayoutItem() const noexcept { return _layoutItem; }
+    const InkingLayoutItem& GetLayoutItem() const noexcept { return _layoutItem; }
 
     /**
      * 测量钩子（`[√]`）：**我在这份约束下想要多大**。
@@ -742,7 +740,7 @@ public:
      * 问好几遍）。默认实现返回"我当前的尺寸"；内容驱动的组件重写它才有意义
      * （label 去问文字层要高度、图片去要原始尺寸……）。
      */
-    virtual LayoutSize MeasureLayout(const LayoutConstraints& constraints) const;
+    virtual InkingLayoutSize MeasureLayout(const InkingLayoutConstraints& constraints) const;
 
     /**
      * 请求重排（`[final]`）：从**我这棵子树**开始同步排一次。
@@ -778,7 +776,7 @@ protected:
     /// 只给两个派生类调：**本类不可直接实例化**，每个组件声明时必须选一种
     /// （静态还是动态）。根（窗口 / 场景）传 nullptr 当 parent。
     /// `dynamic` 就是"这个组件属于哪一档"，由派生类在构造时如实传进来。
-    InkingWidget(InkingWidget* parent, const AnchorData& data, bool dynamic);
+    InkingWidget(InkingWidget* parent, const InkingAnchorData& data, bool dynamic);
 
     /// 配置驱动：只给 parent + 名字，怎么读 CXXCSS 交给子类自己实现。
     InkingWidget(InkingWidget* parent, const std::string& name, bool dynamic);
@@ -802,7 +800,7 @@ protected:
     // 键盘 5 个（`onKeyDown` / `onKeyUp` / `onTextInput` / `onTypingChanged` /
     // `onFocusChanged`）见 `InkingKeyboardTarget.h`。**重写时要写 `override`**。
     //
-    // 0.5.0 起 `onPointerPress` / `onPointerClick` 带 `PointerButton`：
+    // 0.5.0 起 `onPointerPress` / `onPointerClick` 带 `InkingPointerButton`：
     // 组件只见 Primary（左键 / 轻点）/ Secondary（右键 / 长按），**看不见设备**。
     // 重写时记得判键——不判的话右键也会走进"左键"那条逻辑。
 
@@ -887,15 +885,15 @@ protected:
      * 那是"静态几何定死"这条铁律的实现方式）。A6 的判据是"排一列**按钮**"
      * 而按钮是静态档，所以这里必须开一条口子，但把它开得尽可能窄：
      *
-     *   - **只有 `detail::layout::ArrangeSubtree` 是它的 friend**：业务代码
+     *   - **只有 `inking_detail::layout::ArrangeSubtree` 是它的 friend**：业务代码
      *     想调是**编译错误**（不是文档约定）；
-     *   - 名字带 `Layout`、参数是布局层的 `LayoutRect`，不会被误认成 resize；
+     *   - 名字带 `Layout`、参数是布局层的 `InkingLayoutRect`，不会被误认成 resize；
      *   - 幂等：矩形没变就返回 false、**一个脏都不标**（重复排不白干）。
      *
      * 实现把矩形**反解**成锚点公式里的量：锚点归零（布局里锚点不参与定位）、
      * 尺寸取整写进 `_width` / `_height`、偏移写进 `_offsetX` / `_offsetY`。
      */
-    bool ApplyLayoutRect(const LayoutRect& rect) noexcept;
+    bool ApplyLayoutRect(const InkingLayoutRect& rect) noexcept;
 
     // ---------------- 内容驱动尺寸的自测量（0.1.1 T-01） ----------------
 
@@ -930,7 +928,7 @@ protected:
      */
     void WarnIfZeroSize(const char* moduleName) const;
 
-    friend void detail::layout::ArrangeSubtree(InkingWidget& container);
+    friend void inking_detail::layout::ArrangeSubtree(InkingWidget& container);
 
     /**
      * **唯一的第二个例外**：动画组要按"换到哪个动作"改自己的尺寸（0.6.6 T-18）。
@@ -973,9 +971,9 @@ protected:
     std::string _name;
 
     /// 布局（A6）：**我是容器时**的规则，与**我是孩子时**的意愿。
-    /// 和别的字段一样，构造时从 `AnchorData` 拆存一份（基类不存整份 data）。
-    LayoutSpec _layout{};
-    LayoutItem _layoutItem{};
+    /// 和别的字段一样，构造时从 `InkingAnchorData` 拆存一份（基类不存整份 data）。
+    InkingLayoutSpec _layout{};
+    InkingLayoutItem _layoutItem{};
 
     /**
      * 这个节点的**顶点缓存槽**（T-6）：静止帧直接复用顶点，不必每帧重算轮廓。
@@ -984,7 +982,7 @@ protected:
      */
     /// `mutable`：提交是 const 的（绘制不改节点状态），但缓存得在这儿搭起来
     /// ——缓存不是可观测状态，正是 `mutable` 该用的地方。
-    mutable std::unique_ptr<detail::VertexCacheSlot> _vertexCache;
+    mutable std::unique_ptr<inking_detail::VertexCacheSlot> _vertexCache;
 
     /// 直接子节点（非拥有）：构造时登记、`SetParent` 时搬家、析构时摘掉。
     /// （**视图**：拥有型的子节点也在这里露面；所有权见 `_ownedChildren`。）
@@ -1003,7 +1001,7 @@ protected:
      * 它**不属于几何**：本地几何一个字节都不动，只改"画在哪儿 / 画多大"，
      * 命中过它的逆（`CombineWithExternal` 给各组件合成用）。
      */
-    TransformSpec _displayTransform{};
+    InkingTransformSpec _displayTransform{};
 
     /// 外部变换真的改过几次（`GetDisplayTransformRevision()`）。
     std::uint64_t _displayTransformRevision = 0;
@@ -1075,4 +1073,3 @@ protected:
 // （实现 `src/detail/InkingGeometry.cpp`）。那样依赖是单向的：几何层包含本头，
 // 本头不包含几何层，不会循环包含。
 
-}  // namespace inking

@@ -4,9 +4,9 @@
 // basic/ShineStatusChecker（静态类 + moduleName → 指针）。
 //
 // 结构对应关系：
-//   ShineStatusChecker   → inking::SceneLibrary          （静态注册表）
-//   ShineBasicModule     → inking::InkingScene           （被登记的基类）
-//   StatusRegisterToken  → inking::SceneRegisterToken    （RAII 令牌）
+//   ShineStatusChecker   → InkingSceneLibrary          （静态注册表）
+//   ShineBasicModule     → InkingScene           （被登记的基类）
+//   StatusRegisterToken  → SceneRegisterToken    （RAII 令牌）
 //
 // 与后端不同的地方，都是本项目自己的规矩：
 //
@@ -28,7 +28,7 @@
 //      多个管家线程读写；本项目的场景层只在 UI 线程构造 / 析构（窗口主循环那
 //      一条线程），加锁既挡不住误用，又白付一次原子操作。
 //
-// 详见 docs/API.md「SceneLibrary」章节。
+// 详见 docs/API.md「InkingSceneLibrary」章节。
 
 #include <cstddef>
 #include <memory>
@@ -37,8 +37,6 @@
 
 // 只做前向声明：公开头里不拖 SDL 进来。
 struct SDL_Renderer;
-
-namespace inking {
 
 class InkingScene;
 
@@ -54,7 +52,7 @@ class InkingScene;
  * 预加载（`PreloadScene`）调度也归它：异步那条路需要一个**统一的受理入口**，
  * 否则"谁受理过"就会出现两个答案。
  */
-class SceneLibrary {
+class InkingSceneLibrary {
 public:
     /** 注册的结果。失败原因分得清，才能给出有用的日志。 */
     enum class RegisterResult {
@@ -104,7 +102,7 @@ public:
     // ---------------- 预加载 ----------------
 
     /**
-     * 按名字要求一次**异步**预加载：任务丢进 `TaskQueue`，场景的 `onPreload()`
+     * 按名字要求一次**异步**预加载：任务丢进 `InkingTaskQueue`，场景的 `onPreload()`
      * 在**管家线程**上跑，跑完由主循环帧首回到 UI 线程收尾。
      *
      * 这就是"把 init 从构造函数里拆出来、而且不卡调用方"的那条路：在
@@ -196,8 +194,7 @@ public:
     static bool IsNameTaken(const std::string& sceneName);
 
 private:
-    SceneLibrary() = delete;
-    ~SceneLibrary() = delete;
+    InkingSceneLibrary() = delete;
+    ~InkingSceneLibrary() = delete;
 };
 
-}  // namespace inking

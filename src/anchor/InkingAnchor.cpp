@@ -8,7 +8,7 @@
 // 也就是这个类的 key function：按 C++ ABI 规则，类的 vtable 与 typeinfo 只在
 // key function 的定义所在的那一个翻译单元里生成。没有它，任何构造
 // `InkingWidget` 的翻译单元都会在链接期报
-// `undefined reference to vtable for inking::InkingAnchor`，
+// `undefined reference to vtable for InkingAnchor`，
 // 且报的是 vtable（不是析构函数本身）。
 //
 // 两件事因此被这个文件钉住：
@@ -17,10 +17,7 @@
 
 #include <anchor/InkingAnchor.h>
 
-namespace inking {
-
 // 本类没有拥有任何资源：`_parent` 是非拥有裸指针（那只是定位的输入），
 // 其余成员全是 POD。所以析构是平凡的，`= default` 就是完整语义。
 InkingAnchor::~InkingAnchor() = default;
 
-}  // namespace inking

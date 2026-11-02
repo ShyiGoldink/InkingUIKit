@@ -59,7 +59,7 @@ constexpr double kDefaultFps = 24.0;
 /// `std::filesystem::path` → UTF-8 窄串。
 ///
 /// 不能直接用 `path.string()`：MinGW 下它按 "C" locale 编码，中文路径会抛
-/// `Illegal byte sequence`（`AGENTS.md` §6 那条）。`AssetLoad` 那侧收的正是
+/// `Illegal byte sequence`（`AGENTS.md` §6 那条）。`InkingAssetLoad` 那侧收的正是
 /// UTF-8（`PathUtil.h` 负责转宽字符）。
 std::string Utf8(const std::filesystem::path& path) {
     const std::u8string text = path.u8string();
@@ -114,15 +114,15 @@ std::vector<std::filesystem::path> CollectFrames(const std::string& dir) {
     return frames;
 }
 
-/// 把一个帧目录变成 `SpriteData`（`runtimeAsset = true`：字节由组件自己读进内存）。
-inking::SpriteData MakePetData(const std::vector<std::filesystem::path>& frames,
+/// 把一个帧目录变成 `InkingSpriteData`（`runtimeAsset = true`：字节由组件自己读进内存）。
+InkingSpriteData MakePetData(const std::vector<std::filesystem::path>& frames,
                                int width, int height, double fps) {
-    inking::SpriteData data;
+    InkingSpriteData data;
     data.name = "pet";
     data.width = width;
     data.height = height;
-    data.selfAnchor = inking::InkingChangeAnchor::LeftTop;
-    data.traceAnchor = inking::InkingChangeAnchor::LeftTop;
+    data.selfAnchor = InkingChangeAnchor::LeftTop;
+    data.traceAnchor = InkingChangeAnchor::LeftTop;
     data.offsetX = 0.0f;
     data.offsetY = 0.0f;
     data.fps = fps;
@@ -131,8 +131,8 @@ inking::SpriteData MakePetData(const std::vector<std::filesystem::path>& frames,
     data.runtimeAsset = true;  // 字节从文件读（不进 exe、也不进二进制资源）
 
     for (const std::filesystem::path& path : frames) {
-        inking::ButtonAppearance frame(inking::AppearanceType::Image, 0xFF000000u);
-        // `source` 有两重身份：AssetLoad 的路径 + 纹理缓存键。每帧不同是关键
+        InkingButtonAppearance frame(InkingAppearanceType::Image, 0xFF000000u);
+        // `source` 有两重身份：InkingAssetLoad 的路径 + 纹理缓存键。每帧不同是关键
         // ——同一个键会让所有帧命中同一张纹理（0.6.0 T-03 修过那个 bug）。
         frame.source = Utf8(path);
         data.frames.push_back(frame);
@@ -141,18 +141,18 @@ inking::SpriteData MakePetData(const std::vector<std::filesystem::path>& frames,
 }
 
 /// 一个只有宠物的场景。场景尺寸 = 设计尺寸 = 帧尺寸，所以贴图 1:1、不缩放。
-class PetScene : public inking::InkingScene {
+class PetScene : public InkingScene {
 public:
-    explicit PetScene(const inking::SpriteData& data)
-        : inking::InkingScene("pet") {
-        _sprite = static_cast<inking::InkingSprite*>(AddChild(
-            std::make_unique<inking::InkingSprite>(this, data)));
+    explicit PetScene(const InkingSpriteData& data)
+        : InkingScene("pet") {
+        _sprite = static_cast<InkingSprite*>(AddChild(
+            std::make_unique<InkingSprite>(this, data)));
     }
 
-    inking::InkingSprite* GetSprite() const noexcept { return _sprite; }
+    InkingSprite* GetSprite() const noexcept { return _sprite; }
 
 private:
-    inking::InkingSprite* _sprite = nullptr;
+    InkingSprite* _sprite = nullptr;
 };
 
 }  // namespace
@@ -187,8 +187,8 @@ int main(int argc, char** argv) {
     // ---- 2. 设计尺寸 = 帧尺寸 ----
     //
     // **必须是第一件事**：设计尺寸在窗口 / 场景构造那一刻就烘进根锚点与
-    // letterbox 逻辑尺寸里，晚了 `SetDesignSize` 会拒绝（`window_config.h`）。
-    if (!inking::SetDesignSize(width, height)) {
+    // letterbox 逻辑尺寸里，晚了 `InkingSetDesignSize` 会拒绝（`window_config.h`）。
+    if (!InkingSetDesignSize(width, height)) {
         std::printf("设计尺寸被拒（%d×%d）：窗口或场景已经定型？\n", width, height);
         return 1;
     }
@@ -196,7 +196,7 @@ int main(int argc, char** argv) {
     // ---- 3. 场景 + 窗口 ----
     PetScene scene(MakePetData(frames, width, height, fps));
 
-    inking::InkingWindow& window = inking::InkingWindow::Instance();
+    InkingWindow& window = InkingWindow::Instance();
     window.SetBorderless(true);              // 没有标题栏
     // `INK_PET_OPAQUE=1` 只用于排错：把透明关掉，一眼就能分出"没画"还是"没合成"。
     if (SDL_getenv("INK_PET_OPAQUE") == nullptr) {
@@ -206,10 +206,13 @@ int main(int argc, char** argv) {
     window.SetBackgroundColor(0x00000000u);  // 清屏全透明
 
     // 透明窗口**只在 Windows 的 D3D11 后端成立**：SDL 只给那条路补了透明
-    // swapchain，D3D12 明确不支持、Vulkan 多数环境不行。默认驱动由 SDL 自己挑，
-    // 挑到 D3D12 就会得到"置顶、无边框、但背景是一整块黑"——正是这一版的症状。
-    // 所以这里**强制** D3D11；建不出来再退回默认驱动（那时至少画面能出来）。
-    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "d3d11");
+    // swapchain，D3D12 明确不支持、Vulkan 多数环境不行。
+    //
+    // 驱动名是 SDL3 的 **"direct3d11"**：写成 SDL2 时代的 "d3d11" 时 SDL 找不到
+    // 这个驱动（错误串 "d3d11 not available"），而 `Open()` 仍返回 true——
+    // 窗口建出来了、透明标志也落地了，只是**什么都画不上**（2026-11-01 在
+    // `examples/atlas_frames` 上实际踩到，同一个坑）。
+    SDL_SetHint(SDL_HINT_RENDER_DRIVER, "direct3d11");
     if (!window.Open("pet")) {
         SDL_ResetHint(SDL_HINT_RENDER_DRIVER);
         std::printf("D3D11 建窗失败，退回默认驱动（背景可能不透）\n");
@@ -255,8 +258,8 @@ int main(int argc, char** argv) {
     while (window.PumpOnce()) {
         ++frameIndex;
         if (debugTrace && (frameIndex == 2 || frameIndex == 60)) {
-            const auto stats = inking::detail::TextCacheStatsSnapshot();
-            const inking::InkingSprite* sprite = scene.GetSprite();
+            const auto stats = inking_detail::TextCacheStatsSnapshot();
+            const InkingSprite* sprite = scene.GetSprite();
             std::printf(
                 "[debug] #%d index=%zu frames=%zu loaded=%zu playing=%d "
                 "time=%.4f textures=%llu currentScene=%p window=%dx%d\n",
@@ -270,7 +273,7 @@ int main(int argc, char** argv) {
                 window.GetWindowWidth(), window.GetWindowHeight());
         }
         if (shotPath != nullptr && frameIndex == 2) {
-            const bool ok = inking::InkingWindow::RenderToTexture(
+            const bool ok = InkingWindow::RenderToTexture(
                 shotPath, window.GetWindowWidth(), window.GetWindowHeight(),
                 "pet");
             std::printf("[debug] offscreen=%d → %s\n", ok ? 1 : 0, shotPath);
