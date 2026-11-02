@@ -24,10 +24,14 @@
 | 诉求 | 正确解 | 用错的后果 |
 |---|---|---|
 | 偶发拖拽 / 缩放 | A13 外部显示变换（`SetDisplayTransform`） | —— |
-| **每帧走位**的实体 | **动态档** | 用 A13 能"看见它动"，但**占位不变**、且每帧仍是整表重建（见 §2.1） |
+| **每帧走位**的实体 | **动态档** | 用 A13 能"看见它动"，但**占位不变**、且每帧仍是整表重建（见 §2.1；动态档的叶子在 `T-19` 之后不再付这笔） |
 | **运行期改尺寸 / 占位** | **动态档** | 静态档那两条写尺寸的通道（`ApplyLayoutRect` / `ApplySelfSize`）业务代码调不到 |
 
-> **一句必须说准的话**：动态档**不省**每帧重建。A13 与几何入口都调 `MarkStructureChanged()`，都是每帧一次整表重建（证据见 `TaskGuide-Dynamic.md` 附录 A.3 的更正段）。动态档买的是**占位**与**命中语义**，不是性能。任何任务如果把自己的价值写成"省重建"，写的人就是在骗自己。
+> **一句必须说准的话**：动态档买的是**占位**与**命中语义**，不是性能。
+> 写这句话时（2026-11-02 立项）A13 与四个几何入口**同价**——都调 `MarkStructureChanged()`，都是每帧一次整表重建
+> （证据见 `TaskGuide-Dynamic.md` 附录 A.3 的更正段）。同日 `T-19` 落地后，几何入口这一半分了出去：
+> **叶子移动只刷洞**。但这条要归功于 `T-19`，而且**静态档走 A13 仍然照付全价**——所以
+"用动态档就能省重建"依旧是错的推论（它省的是"因为它是叶子"，不是因为它是动态档）。
 
 四个组件的归属与确认：
 
@@ -56,29 +60,36 @@
 3. **`detail::PointerProbe` 可以直接用**：已有两个消费者（`InkingDynamicButton`、`InkingFixedPopup`），保持 `detail/` 不升 `util/`（附录 B.3），本系列不再讨论它的归属。
 4. **不需要登 CMake**：`CMakeLists.txt:82` 是 `GLOB_RECURSE`，新增 `src/**.cpp` 自动进库。
 
-### 2.1 已知成本：每帧移动 = 每帧一次整表重建（本系列不解决）
+### 2.1 已知成本：每帧移动 = 每帧一次整表重建（**叶子已由 `T-19` 收拾**，本系列不解决剩余那部分）
 
 链条（全部核对过）：
 
 ```
-ChangeOffset / Resize / SetDisplayTransform
-  → MarkStructureChanged()                 src/widget/InkingWidget.cpp:505-516
+SetDisplayTransform（A13，静态版拖动走这条）
+  → MarkStructureChanged()                 src/widget/InkingWidget.cpp（SetDisplayTransform）
   → NotifySceneStructureChanged()          _contentDirty = _orderDirty = true
-                                           src/scene/InkingScene.cpp:611-616
+                                           src/scene/InkingScene.cpp
   → 下一帧 sortDrawList()                   clear + 全量 DFS + stable_sort
-                                           src/scene/InkingScene.cpp:787-826
   → rebuildHitTable()                      每个动态节点现算包络 → AddHole
-                                           src/scene/InkingScene.cpp:1145-1163
+
+ChangeOffset / Resize / 改锚点（动态档的四个几何入口，T-19 起分两路）
+  → MarkGeometryMoved()                    子树里有静态节点？
+      ├ 有 → 上面那条（照旧全量重建）
+      └ 没有（叶子）→ MarkDirty + MarkRepaintDirty + NotifyDynamicMoved
+                      → 下一帧只跑 RefreshHoles()（列表 / 排序 / 静态条目一个字节不动）
 ```
 
 三条结论，写在这里免得每个任务各猜一遍：
 
-1. **A13 与几何入口同价**。别再拿"动态档省重烘"当理由——它不是。
+1. **A13 与几何入口原本同价，`T-19` 把几何那条分了一半出去**。所以仍然**别**拿
+   "动态档省重烘"当"用动态档代替 A13"的理由：动态档买的是**占位**与**命中语义**。
+   它确实省掉了"每帧整表重建"，但那要归功于 `T-19`（叶子只刷洞），与"是不是动态档"
+   无关——**一个每帧走 A13 的静态图仍然照付 798 µs**。
 2. **顶点缓存不复用**：顶点缓存槽（`InkingWidget.h:942-949`）是给"静止帧"用的，每帧移动的节点每次都要重算轮廓。
 3. **动态容器的包络更贵**：`GetHitEnvelope()` 对动态容器是整棵子树并集（`src/panel/InkingFixedPopup.cpp:229-232` 的 `PanelHitEnvelope`），而重烘每帧都要问一次。子节点多的动态面板要把这条列入验收的观测项（至少记一个计数，别让它悄悄变 O(N²)）。
 
-**本系列不做优化**：优化属于场景架构（增量重建 / 移动节点专用通道），要单独立项，且必须先有一个"几百个移动实体"的基准。把它塞进 G 系列会让 9 个任务各自背上一个架构问题。**叶子那条切口已立项为 `TaskGuide.md` 的 `T-19`**（见 §2.1.1）。
-#### 2.1.1 但"重烘整表"不是必须的——有具体切口（**已立项 `T-19`**，不在本系列）
+**本系列不做优化**：优化属于场景架构（增量重建 / 移动节点专用通道），要单独立项，且必须先有一个"几百个移动实体"的基准。把它塞进 G 系列会让 9 个任务各自背上一个架构问题。**叶子那条切口已立项为 `TaskGuide.md` 的 `T-19`，并于 2026-11-02 落地**（见 §2.1.1）——所以从 G-01 起，**动态档的叶子移动不再付下面那笔账**（静态版走 A13，仍然照付）。
+#### 2.1.1 但"重烘整表"不是必须的——有具体切口（**`T-19` 已落地**，不在本系列）
 
 "动态节点不进表"这句话容易让人顺推出"那它动的时候不用重烘"。**半对**，要分成两件事看：
 
@@ -95,9 +106,9 @@ ChangeOffset / Resize / SetDisplayTransform
 - **容器**有静态子孙 → 照旧全量重建；
 - z / 父子 / 可见性变 → 照旧全量重建。
 
-需要的机制（给后续立项当输入，本系列不做）：① `InkingWidget` 缓存一个"子树里有没有静态节点"（子树增删时维护）；② 场景加一条"只刷洞"的脏通道（`_holesDirty`），查询/绘制前顺带刷；③ 四个几何入口按上面三行分流。
+需要的机制（`T-19` 已按这条落地，2026-11-02）：① `InkingWidget::HasStaticInSubtree()`——**递归早退、不缓存**（缓存要在三条增删路径上维护，漏一处就是"移动中的组件点不到"）；② 场景的"只刷洞"脏通道 `_holesDirty` + `RefreshHoles()`，在 `sortDrawList()` 没有别的脏时顺带刷；③ 四个几何入口统一走 `MarkGeometryMoved()` 分流。
 
-代价与风险：洞的刷新是 O(动态节点数)，比 O(N log N) 的整表重建便宜一个量级；但"叶子/容器"的判据一旦写错，症状是**移动中的组件点不到**（洞过期）或**点到空气**（洞没跟着走）。所以它必须配一条自检：移动一个叶子后，在新位置 `QueryHit` 必须命中它、在旧位置必须不命中。
+代价与风险：洞的刷新**实测**是"扫一遍列表挑动态节点 + 算包络"（`O(列表长度)`，每项 2 ns），比整表重建便宜**两个数量级**（4000 项：8.4 µs vs 798 µs）；但"叶子/容器"的判据一旦写错，症状是**移动中的组件点不到**（洞过期）或**点到空气**（洞没跟着走）。所以它必须配一条自检：移动一个叶子后，在新位置 `QueryHit` 必须命中它、在旧位置必须不命中。
 
 #### 2.1.2 实测：这是"阶跃"，不是"渐进"（探针 `build/probe_dynamic_cost.cpp`）
 
@@ -124,6 +135,12 @@ ChangeOffset / Resize / SetDisplayTransform
 换成帧预算：1000 个静态节点 + 1 个每帧移动的组件 ≈ 178 µs ≈ 60fps 预算（16.7 ms）的 **1.1%**；4000 个 ≈ 4.8%。单看不致命，但它**乘在每一帧上**，而且不随"只有一个小东西在动"而减少。
 
 对 PvzAdventure 的含义：实体层若与大量静态 UI 同场，UI 越大、每帧越贵。**"拆场景"不是解法**——一次只有一个 active scene（`SceneLibrary::GetActiveScene()`，`src/window/InkingWindow.cpp:953-957`），拆了也只有一个在跑。真正的解法就是 §2.1.1 那条"叶子只刷洞"。
+
+> **上表是 T-19 之前的基线，别拿它当现状。** 2026-11-02 落地 `T-19` 之后重跑同一个探针，
+> "每帧都动"那一列变成 200 / 1000 / 4000 项分别 **0.30 / 1.67 / 8.4 µs**（约 95~150 倍），
+> 因为叶子移动只刷洞、不再重建整表。**仍然**有静态版那一档照付全价：走 A13 拖动的
+> `InkingStaticImage` 每帧还是 798 µs（那是"外部变换无界 ⇒ 包络算不出来"的必然代价）。
+> 读数留下的意义：它解释了**为什么**要做 T-19，以及"一个组件动、整场重建"曾经有多贵。
 
 **给 G 系列的一条纪律**：任何任务都**不要**用"帧时间"做验收判据——它会完全被这条现有成本主导，量出来的是场景规模，不是你改的东西。要量性能就量计数（包络调用次数、重建次数）。
 
@@ -154,6 +171,15 @@ ChangeOffset / Resize / SetDisplayTransform
 
 ### G-01 `InkingDynamicImage`（新增，复制静态版）
 
+- 状态：**已完成**（2026-11-02）。第 1 笔（复制）交付：`include/image/InkingDynamicImage.h` +
+  `src/image/InkingDynamicImage.cpp`，静态版**一个字没动**。
+  - 证据：`ctest` **7/7**（含 `strict_warnings` `-Werror`）；`selftest` **失败项 0**，新增
+    `CheckDynamicImage()` **15 条**断言，逐条对应下面五项验收；`selftest` 里既有断言一条未改；
+    `src/inking.cpp` 补 7 条镜像断言（含 `HasSetDisplayTransform<InkingDynamicImage>`——
+    钉住"A13 保留"这条关键决定，谁想"避免两套真相"把它关掉，构建当场红）。
+  - **落地时改掉的原稿判断**：原文偏离说"拖动期间每帧一次整表重建，与静态版 A13 拖同价"。
+    `T-19` 先落地之后这句**不再成立**——动态图片是叶子，拖动只刷洞（实测那一路 8.4 µs vs
+    798 µs）；只有静态版靠 A13 拖才付全价。两档的代价差从"零"变成了"两个数量级"。
 - **目标**：几何可在运行期改的图片。绘制、图片加载、命中形状与 `InkingStaticImage` **完全一致**；差别只有两条：几何能改、输入靠拉。
 - **落点**：新增 `include/image/InkingDynamicImage.h`、`src/image/InkingDynamicImage.cpp`；`src/inking.cpp` 补断言
 - **API**：
@@ -183,6 +209,10 @@ public:
 };
 ```
 
+**实现比上面多几个与静态版同名的观测口**（`GetDisplayTransform` / `AcceptsExternalTransform` /
+`IsDraggable` / `IsResizable` / `IsScalingDrag` / `GetData` / `ImageName` / `AssetLoadCount`）：
+静态版有的公开面它一个不少，G-02 抽 `ImageLike` 时不用回头补。
+
 - **关键决定（写下来免得后来者改回去）**：内置的**拖 / 缩功能**改的是**几何**（`ChangeOffset` / `Resize`），不是 A13；但 `AcceptsExternalTransform()` **保持 true**——外部显示变换仍然可用。
   - 为什么保留：A13 与几何是**正交**的两件事（屏幕抖动 / 整体缩放 vs 占位变化），关掉等于删掉一个已有能力。而且两套变换在绘制与命中处**天然复合**：`GetDisplayTransform()` 就是"外部变换 ∘ 配置那份"，`PaintButtonAppearance` 与 `HitTest` 读的是同一个结果（`InkingStaticImage.h:70-75`）。
   - 为什么"两套真相"不成立：风险不在"两者并存"，而在"**同一个拖动功能**同时写两边"。把拖动钉死在几何上，问题就没了；外部变换交给调用方按需叠加。
@@ -194,7 +224,7 @@ public:
   4. A13 仍可用且**与几何复合**：`ChangeOffset(30, 0)` 后再 `SetDisplayTransform(平移 5px)`，`GetDisplayTransform()` 非单位、`HitTest` 按"几何 + 变换"的合成结果判；`GetDisplayTransformRejectedCount()`（`InkingWidget.h:613`）保持 0。
   5. `src/inking.cpp` 新增 `static_assert(!HasResize<InkingStaticImage>, ...)` 等**已有**的四条不变，另加 `static_assert(std::is_base_of_v<InkingDynamicWidget, InkingDynamicImage>)`。
 - **命中表与登记影响**：**不进表**，自己维护命中状态；占地记成"洞"（遮挡由派发侧处理，与 `InkingFixedPopup` 同档）。`OwnsSubtreeHit()` 保持 false（图片是叶子）。
-- **偏离**：内置拖 / 缩不走 A13（见上，但 A13 本身保留）；不做"拖动合并成一帧"这类优化——现有静态版的逐事件写法先照抄。**拖动期间每帧一次整表重建**（§2.1），与静态版 A13 拖同价，本任务不改善它。
+- **偏离**：内置拖 / 缩不走 A13（见上，但 A13 本身保留）；不做"拖动合并成一帧"这类优化——现有静态版的逐事件写法先照抄。**拖动期间每帧一次整表重建**那句原稿判断已被 `T-19` 推翻：动态图片是叶子，移动只刷洞、不重建整表（§2.1.1）；静态版走 A13 仍照付全价，这是两档在代价上唯一实质的差别。
 
 ---
 
@@ -338,7 +368,7 @@ public:
 | 编号 | 任务 | 状态 |
 | - | - | - |
 | G-00 | 修两组、共四处错注释 | **已完成**（2026-11-02） |
-| G-01 | `InkingDynamicImage`（复制） | 未开始 |
+| G-01 | `InkingDynamicImage`（复制） | **已完成**（2026-11-02） |
 | G-02 | 抽 `ImageLike`（纯重构） | 未开始 |
 | G-03 | `InkingDynamicSprite`（复制） | 未开始 |
 | G-04 | 抽 `SpriteLike`（纯重构） | 未开始 |
@@ -362,7 +392,7 @@ public:
 | 顺手修 `CMakeLists.txt:4` 的 `VERSION 0.7.1` | 与本系列无关；它单独记在 `TaskGuide-Dynamic.md` §2.2（发布前必须处理，但别混进重构提交） |
 | 顺手合并两份默认 `onRender` | G-00 的偏离里写了：helper 已共用，override 合不了 |
 | **动态容器的滚轮** | 滚轮按渲染帧清零、动态组件只能按固定步长读（一帧 0~N 次）⇒ 会丢或双读。属框架级通道问题，见 G-07"为什么不做滚轮" |
-| **每帧重建的优化** | 只要节点每帧动，场景就每帧整表重建（§2.1）。已按 §2.1.1 立项为 **`TaskGuide.md` 的 `T-19`**（叶子只刷洞），不塞进 G；G 只管"组件能不能动" |
+| **每帧重建的优化** | 已由 **`TaskGuide.md` 的 `T-19`** 收拾（叶子只刷洞，2026-11-02 落地）。G 只管"组件能不能动"，不碰场景架构；静态版走 A13 仍每帧全量重建（外部变换无界，包络算不出来） |
 | 顺手修 A4 的文档偏离（"动态组件只能在 Tick 里读滚轮"） | 那句话现在是**对的**（隐患在时序，不在那句话），要改的是通道本身；本条与上面"滚轮"一并处理 |
 
 ## 附录 A 自检记录（MD-05，2026-11-02）

@@ -11,6 +11,7 @@
 #include <canvas/CanvasContext.h>
 #include <canvas/InkingCanvasPainter.h>
 #include <canvas/InkingStaticCanvas.h>
+#include <image/InkingDynamicImage.h>
 #include <image/InkingSprite.h>
 #include <image/InkingStaticImage.h>
 #include <image/SpriteData.h>
@@ -294,6 +295,34 @@ static_assert(HasChangeZIndex<InkingStaticImage>, "层级是骨架变化，两�
 // 那时要一起想清楚"AnchorData 加字段要同步几处"（AGENTS §6 第 83 条）。
 static_assert(std::is_base_of_v<ButtonData, ImageData>,
               "ImageData 复用 ButtonData：img 是没有 onClicked 的 button");
+
+// ---------------------------------------------------------------------------
+// 动态图片（G-01）：同一张图的另一档——几何能改、输入靠拉
+//
+// 与上面那段**镜像**：静态图片不许有几何写入口，动态图片必须有，而且两者不能
+// 同时成立。这两组断言是"静态几何定死"这条铁律在图片上的唯一编译期护栏
+// （`TaskGuide-G.md` §4 第 3 条：每新增一个动态类，在这里补一对镜像断言）。
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_base_of_v<InkingDynamicWidget, InkingDynamicImage>,
+              "动态图片属于动态档：几何会自己变，所以不进命中表、占地记成洞");
+static_assert(!std::is_base_of_v<InkingStaticWidget, InkingDynamicImage>,
+              "静态 / 动态是二选一，不能既进表又不进表");
+
+static_assert(HasResize<InkingDynamicImage>,
+              "动态组件必须有 Resize（几何写入口是这一档存在的理由）");
+static_assert(HasChangeSelfAnchor<InkingDynamicImage>,
+              "动态组件必须有 ChangeSelfAnchor");
+static_assert(HasChangeTraceAnchor<InkingDynamicImage>,
+              "动态组件必须有 ChangeTraceAnchor");
+static_assert(HasChangeOffset<InkingDynamicImage>,
+              "动态组件必须有 ChangeOffset");
+
+// A13 保留：外部显示变换与几何是**正交**的两件事（G-01 的关键决定）。
+// 哪天有人为了"避免两套真相"把它关掉，这条会红——真正的风险在"同一个拖动功能
+// 同时写两边"，而不在两种变换并存（它们在绘制与命中处天然复合）。
+static_assert(HasSetDisplayTransform<InkingDynamicImage>,
+              "动态图片仍认外部显示变换（A13）：两套变换正交、在绘制/命中处复合");
 
 // ---------------------------------------------------------------------------
 // 帧动画（0.6.0 T-03）：**静态档**——换帧只换"用哪份字节"

@@ -15,13 +15,16 @@
 | 标签 | `LabelData` | 静态 | `text/InkingStaticLabel.h` |
 | 输入框 | `TextInputData : LabelData` | 静态 | `text/InkingTextInput.h` |
 | 图片 | `ImageData : ButtonData` | 静态 | `image/InkingStaticImage.h` |
+| 动态图片 | `ImageData : ButtonData` | 动态 | `image/InkingDynamicImage.h` |
 | 帧动画 | `SpriteData : ImageData` | 静态 | `image/InkingSprite.h` |
 | 画布 | `CanvasData` | 静态 | `canvas/InkingStaticCanvas.h` |
 | 视频 | `VideoData : ButtonData` | 静态 | `video/InkingVideo.h` |
 | 音频（不是组件，是全局函数族） | — | — | `audio/InkingAudio.h` |
 
-**为什么只有按钮有动态档**：只有它需要"运行期改几何"（按下撑开、内容撑高）。
-其余组件的几何构造即定型，改尺寸/改内容只标重绘脏——这正是静态档的定义。
+**动态档不再只有按钮**：判据只有一条——**几何会不会在构造之后自己变**。按钮要它
+（按下撑开、内容撑高），图片也要（实体层每帧走位）；`TaskGuide-G.md` 把这条判据
+逐个落到 Image / Sprite / Label / Panel 上。没列进动态档的组件（画布 / 视频 / 标签 /
+面板等等）仍是构造即定型：改内容只标重绘脏，几何一个字节都不动。
 
 ## 一、按钮族
 
@@ -509,6 +512,61 @@ protected:
 
 拖拽走的是**运行期显示变换**（`SetDisplayTransform`）＋ `Resize` 的仿射表示，
 不会撑开兄弟（不改变占位）。
+
+### 动态图片 `InkingDynamicImage`（G-01）
+
+```C++
+class InkingDynamicImage : public InkingDynamicWidget {
+public:
+    InkingDynamicImage(InkingWidget* parent, const ImageData& data);
+
+    // 继承来的四个几何写入口：Resize / ChangeSelfAnchor / ChangeTraceAnchor / ChangeOffset
+
+    void SetDraggable(bool on) noexcept;   // 拖 = ChangeOffset（写**几何**）
+    void SetResizable(bool on) noexcept;   // 缩 = Resize，绕左上角，夹 [0.2, 5]
+    bool IsDragging() / IsScalingDrag() / IsDraggable() / IsResizable() const noexcept;
+
+    // 与静态版同名同义的观测口
+    bool HitTest(float worldX, float worldY) const override;
+    const ShapeSpec& GetShape() const noexcept;
+    const ButtonAppearance& GetAppearance() const noexcept;
+    std::uint32_t GetDisplayColor() const noexcept;
+    TransformSpec GetDisplayTransform() const noexcept;
+    TransformSpec GetSubtreeTransform() const noexcept override;
+    ShapeBounds GetHitEnvelope() const override;
+    bool AcceptsExternalTransform() const noexcept override { return true; }
+    const ImageData& GetData() const noexcept;
+    const std::string& ImageName() const noexcept;
+    std::size_t AssetByteCount() const noexcept;
+    bool UsingAssetBytes() const noexcept;
+    int AssetLoadCount() const noexcept;
+    bool LoadAsset(const std::string& relative);
+    void SetImageBytes(const std::uint8_t* data, std::size_t size,
+                       const std::string& name);
+};
+```
+
+**和静态版只有两条差别**：几何能改、输入靠拉。绘制（`PaintButtonAppearance`）、
+图片加载、命中形状（`HitTestShape`）逐字同源——抄第二份就会出现"按钮和图片画得
+不一样"。
+
+**内置拖动 / 缩放写的是几何，不是 A13**（这是最容易写反的一条）：
+
+| | 静态版 | 动态版 |
+| --- | --- | --- |
+| 拖动落在哪 | 外部显示变换（A13） | `ChangeOffset`（几何，占位跟着走） |
+| 缩放落在哪 | A13 的 scale + 平移补偿 | `Resize`（夹 `[0.2, 5]`，绕左上角） |
+| 外部变换还能用吗 | 能（它就是那条通道） | **能**（`AcceptsExternalTransform()` 恒 true） |
+
+A13 与几何是**正交**的两件事（屏幕抖动 / 整体缩放 vs 占位变化），在绘制与命中处
+天然复合——`GetDisplayTransform()` 就是"外部变换 ∘ 配置那份"，`HitTest` 读的是同一个
+结果。风险从来不在"两者并存"，而在"同一个拖动功能同时写两边"。
+
+**代价**：`GetOffset()`（几何）与 `GetDisplayTransform()`（显示）回答的是**不同的问题**，
+调用方别混用。
+
+**命中表**：不进表，占地记成"洞"（与 `InkingFixedPopup` 同档）。它是叶子，所以移动时
+走 `T-19` 的快路——**只刷洞、不重建整张表**（与静态版靠 A13 拖动要每帧全量重建不同）。
 
 ### 帧动画的数据面（0.6.0 T-02）
 

@@ -42,6 +42,7 @@
 #include <input/ShortcutRegistry.h>
 #include <image/ImageData.h>
 #include <image/InkingAtlas.h>
+#include <image/InkingDynamicImage.h>
 #include <image/InkingSpriteGroup.h>
 #include <image/InkingSprite.h>
 #include <util/InkingJson.h>
@@ -3735,6 +3736,114 @@ void CheckLeafHoleRefresh() {
           "T-19：档位判定没变（动态按钮是动态、容器里的静态按钮是静态）");
     Check(scene.GetHitTableEntryCount() > 0,
           "T-19：静态节点仍在表里（刷洞没有把表刷坏）");
+}
+
+// ---------------------------------------------------------------------------
+// 动态图片（G-01）：几何能改的同一张图
+// ---------------------------------------------------------------------------
+//
+// 五条验收对应 `TaskGuide-G.md` G-01 的"验收"五项。第 5 项（`src/inking.cpp`
+// 的镜像断言）是**编译期**的，这里只留它的运行时回声——真正拦住"静态档被顺手
+// 改成动态"的是那几条 `static_assert`，它们红了连 exe 都出不来。
+//
+// 第三条（拖动改的是几何、不是 A13）是本任务最容易写反的一条：静态版拖的是
+// 外部显示变换，动态版必须拖几何——否则"占位不变"，等于把动态档的存在理由丢了。
+void CheckDynamicImage() {
+    std::printf("\n-- 动态图片（G-01） --\n");
+
+    struct ProbeScene : public inking::InkingScene {
+        ProbeScene() : inking::InkingScene("probe_dynimage") {}
+    };
+
+    ProbeScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "G-01：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+
+    // 一个静态参照物：让表里真的有条目，"一条都没多"才有意义。
+    inking::AnchorData refData;
+    refData.width = 40;
+    refData.height = 40;
+    refData.offsetX = 20.0f;
+    refData.offsetY = 560.0f;
+    scene.AddChild(
+        std::make_unique<inking::InkingStaticWidget>(&scene, refData));
+    const std::size_t entriesBefore = scene.GetHitTableEntryCount();
+
+    inking::ImageData data;
+    data.name = "g01_image";
+    data.width = 100;
+    data.height = 50;
+    data.offsetX = 200.0f;
+    data.offsetY = 100.0f;
+    data.normal =
+        inking::ButtonAppearance(inking::AppearanceType::Color, 0xFF446688u);
+
+    auto* image = static_cast<inking::InkingDynamicImage*>(
+        scene.AddChild(std::make_unique<inking::InkingDynamicImage>(&scene,
+                                                                   data)));
+
+    // ---- ① 是动态档，且**不进命中表**（占地记成"洞"） ----
+    //
+    // 构造本身是骨架变化（代次会涨，别的节点也可能重排），所以这里判的是
+    // **条目数不变**、**洞多一个**——那才是"动态节点不进表"的可断言形态。
+    Check(image->IsDynamic(), "①：新类是动态档（`IsDynamic()` 为真）");
+    Check(scene.GetHitTableEntryCount() == entriesBefore,
+          "①：动态图片**不进命中表**（条目数不变）");
+    Check(scene.GetHitTableHoleCount() == 1,
+          "①：它的占地记成**一个洞**（点落在洞里才会问动态层）");
+
+    // ---- ② Resize 改尺寸，命中跟着变 ----
+    //
+    // 取一个"贴着旧右边界外侧"的世界点：宽 100 时在外，宽 120 时在内。
+    // 同一个点结果翻转，才证明"命中读的是当前几何"，不是构造时那份。
+    const float edgeX = 305.0f;  // 本地 x = 105
+    const float edgeY = 110.0f;  // 本地 y = 10
+    Check(!image->HitTest(edgeX, edgeY),
+          "②：Resize 之前，越出右边界的点不在图上（基线）");
+    Check(image->Resize(120, 80), "②：`Resize(120, 80)` 真的改了");
+    Check(image->GetWidth() == 120 && image->GetHeight() == 80,
+          "②：`GetWidth()/GetHeight()` 跟着变成 120/80");
+    Check(image->HitTest(edgeX, edgeY),
+          "②：同一个世界点在 Resize 后命中（几何驱动命中）");
+
+    // ---- ③ 内置拖动写的是**几何**，A13 一个字节都没动 ----
+    image->SetDraggable(true);
+    const float offsetBeforeDrag = image->GetOffsetX();
+
+    // "按下 + 拖 10px + 抬起"：三次指针变化，每次都要派发一次——动态档的输入
+    // 只在**指针真的变了**的那一帧被通知（`DispatchPointer` 第 0 步）。
+    scene.SetPointerState(250.0f, 140.0f, true, true);
+    scene.DispatchPointer();
+    scene.SetPointerState(260.0f, 140.0f, true, true);
+    scene.DispatchPointer();
+    scene.SetPointerState(260.0f, 140.0f, false, true);
+    scene.DispatchPointer();
+
+    Check(image->GetOffsetX() - offsetBeforeDrag == 10.0f,
+          "③：拖 10px → `GetOffsetX()` +10（拖动改几何，不是显示变换）");
+    Check(image->GetDisplayTransform().IsIdentity(),
+          "③：拖动**不改 A13**（`GetDisplayTransform()` 仍是单位变换）");
+    Check(!image->IsDragging(), "③：抬手后不再跟随（捕获已释放）");
+
+    // ---- ④ A13 仍可用，且与几何**复合** ----
+    image->ChangeOffset(30.0f, 0.0f);  // 几何先挪一次
+    inking::TransformSpec shift;
+    shift.translateX = 5.0f;
+    Check(image->SetDisplayTransform(shift), "④：A13 仍可用（`SetDisplayTransform` 生效）");
+    Check(!image->GetDisplayTransform().IsIdentity(),
+          "④：生效变换不是单位（外部那份叠上来了）");
+    // 合成结果：画在 abs + 5，命中也要在同一条上（同一个 `GetDisplayTransform`）。
+    Check(image->HitTest(image->GetAbsX() + 5.0f + 10.0f,
+                         image->GetAbsY() + 10.0f),
+          "④：命中按「几何 + 外部变换」的合成结果判");
+    Check(image->GetDisplayTransformRejectedCount() == 0,
+          "④：动态图片认外部变换（拒绝计数保持 0）");
+
+    // ---- ⑤ 档位的运行时回声（编译期那几条在 `src/inking.cpp`） ----
+    Check(image->IsDynamic(),
+          "⑤：镜像断言成立（动态图片属于动态档，静态图片的反向断言在编译期）");
 }
 
 // ---------------------------------------------------------------------------
@@ -7742,6 +7851,7 @@ int main() {
     // ---- 树的动态性（0.4.0 A 组）：A1 / A2 / A3 / A4 / A5 / B1 / B2 / D6 / D7 ----
     CheckDynamicTree();
     CheckLeafHoleRefresh();  // T-19：移动叶子只刷洞（判据是计数，不是帧时间）
+    CheckDynamicImage();     // G-01：动态图片——拖动改几何、A13 保留
 
     // ---- 场景动画时钟与频率订阅（0.6.0 T-01）----
     CheckSceneAnimationClock();
