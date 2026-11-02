@@ -8,9 +8,13 @@
 //   静态（InkingStaticButton）：几何构造即定型，没有几何写入口 → 进命中表。
 //   动态（本类）：几何随时会变 → **不进表**，自己维护命中状态，每帧收一次 Tick。
 //
-// 所以本类比静态版多的只有几何写入口（Resize / ChangeSelfAnchor /
-// ChangeTraceAnchor / ChangeOffset，继承自 InkingDynamicWidget），少的只有
-// "能被命中表回答"。三态外观与状态机是两边**共用**的一份（ButtonLook.h），
+// 所以两档的差异一共六项（对照表见 docs/zh/ComponentGuide.md §2）：几何写入口
+// （本类从 InkingDynamicWidget 继承）、命中（本类不进表）、输入（本类自己拉）、
+// 每逻辑步 Tick（本类收）、渲染帧 onAnimationTick（**两档相同**）、默认 onRender
+// （两档各一份）。早先这里写"多的只有几何写入口、少的只有能被命中表回答"，
+// 漏了输入与 Tick——而紧接着的下一节就在讲输入为什么不同，2026-11-02 改正（G-00）。
+//
+// 三态外观与状态机是两边**共用**的一份（ButtonLook.h），
 // 渲染那一笔也是（src/button/ButtonPaint.cpp）——动态按钮不是另一个组件，
 // 是同一个组件的另一档。
 //
