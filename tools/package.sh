@@ -116,6 +116,10 @@ cp examples/demo/assets/design.svg examples/demo/assets/walk.png \
 #
 # 工具链位置从 CMakeCache 读（不在脚本里写死 C:/msys64）：换了前缀也不用改
 # 脚本。`ldd` 只解析**这台机器上**的路径，所以必须在工具链 bin 的 PATH 下跑。
+#
+# **同一套逻辑还有一份**：`tools/stage_runtime_deps.sh`（构建期用它把闭包拷进
+# build/bin，好让 ctest 与"直接双击 exe"都不依赖 PATH）。改这里的规则要同步那边，
+# 反之亦然——两处都按"ldd 出名字、文件回工具链取"这条来，理由见下。
 # ---------------------------------------------------------------------------
 CXX_PATH="$(sed -n 's/^CMAKE_CXX_COMPILER:FILEPATH=//p' \
     "${BUILD_DIR}/CMakeCache.txt" | head -1)"

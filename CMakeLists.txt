@@ -522,3 +522,34 @@ install(FILES
 # 打包只能靠"手工从 build 目录复制"，而手工复制正是之前漏掉 cmake 配置的根源。
 # 让 install 一并管掉，打包就只剩一条命令。
 install(TARGETS inkgen RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+
+# ---------------------------------------------------------------------------
+# 让构建输出目录**自包含**（2026-11-02）
+#
+# 为什么：`ctest` 的 `add_test` 不设 `PATH`（见下面 selftest 那几条），而 SDL3 的
+# dll 住在工具链 bin（`SDL3_DIR` = `<msys>/ucrt64/lib/cmake/SDL3`），构建输出目录里
+# 只有 `libinking.dll`。于是 SDL_ttf 找不到 → 字体打不开 → 自检打印
+# `[skip] 没有可读字体` → `glyph_atlas_full` 的静默失效自检被跳过 →
+# `silent_failure_list_in_synced` 判红（实测 5/7，手动带 PATH 是 0 失败）。
+#
+# 拷闭包而不是只拷 SDL3*.dll：SDL3_image / SDL3_ttf 还会拉 libpng / libfreetype /
+# libharfbuzz / libglib …，只补第一层的话换台机器照样缺 dll，且是静默退出。
+#
+# 逻辑收在 `tools/stage_runtime_deps.sh`（与 `tools/package.sh` 里"运行期 DLL 闭包"
+# 那段等价）——**改一处要同步另一处**。
+# ---------------------------------------------------------------------------
+if(WIN32)
+    find_program(INKING_BASH_PROGRAM bash)
+    if(INKING_BASH_PROGRAM)
+        get_filename_component(INKING_TOOLCHAIN_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        add_custom_command(TARGET inking POST_BUILD
+            COMMAND "${INKING_BASH_PROGRAM}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tools/stage_runtime_deps.sh"
+                    "$<TARGET_FILE_DIR:inking>" "${INKING_TOOLCHAIN_BIN}"
+            COMMENT "拷贝运行期 DLL 闭包到构建输出目录（让 ctest 与直接双击都不用设 PATH）"
+            VERBATIM)
+    else()
+        message(STATUS "没找到 bash：跳过运行期 DLL 拷贝，ctest 可能需要手动设置 PATH")
+    endif()
+endif()
