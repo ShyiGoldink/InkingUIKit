@@ -786,6 +786,9 @@ void InkingScene::collectDrawList(InkingWidget* node) {
 
 void InkingScene::sortDrawList() {
     if (!_contentDirty && !_orderDirty) {
+        // T-19：列表不用动，但"某个叶子动态节点挪了"这件事仍然要结账——洞过期
+        // = 那一片点不到。没脏时这是一次 bool 比较，全静态场景仍然是真的 0 开销。
+        RefreshHoles();
         return;
     }
 
@@ -1138,18 +1141,6 @@ void InkingScene::rebuildHitTable() {
             }
         }
 
-        // 包络是组件按"自己的形状 + 所有可能的变换"上报的（本地坐标），
-        // 这里补上绝对位置。静态节点用列表里的快照，动态节点现算
-        // （它每帧都在动，快照已经过期）。
-        ShapeBounds envelope = node->GetHitEnvelope();
-        if (node->IsDynamic()) {
-            envelope.x += node->GetAbsX();
-            envelope.y += node->GetAbsY();
-        } else {
-            envelope.x += item.absX;
-            envelope.y += item.absY;
-        }
-
         if (node->IsDynamic()) {
             // 动态组件**不进表**（它自己判命中、自己维护状态，§7），
             // 但它占的地方要记成"洞"：点落在洞里才会去问动态层（§10.5 规则 3，
@@ -1157,15 +1148,92 @@ void InkingScene::rebuildHitTable() {
             //
             // **方向别搞反**（2026-11-02 更正，G-00）：洞偏大只是多问一次；洞漏登或
             // 过期 = 那一片永远问不到动态层 = **点不到**。所以动态组件每次移动
-            // 都必须刷新自己的洞（TaskGuide.md 的 T-19 专门做这件事）。
-            _hitTable.AddHole(envelope);
+            // 都必须刷新自己的洞（TaskGuide.md 的 T-19）。
+            //
+            // 判据（动态 / 可见 / 不在容器内）与"只刷洞"那条路**共用一份**
+            // （`ResolveDynamicHole`）：抄第二份就会出现"重建时留洞、刷洞时不留"，
+            // 症状是同一个组件在两条路径下一个点得到、一个点不到。
+            ShapeBounds hole{};
+            if (ResolveDynamicHole(node, hole)) {
+                _hitTable.AddHole(hole);
+            }
             continue;
         }
+
+        // 包络是组件按"自己的形状 + 所有可能的变换"上报的（本地坐标），
+        // 这里补上绝对位置。静态节点用列表里的快照——**快照过期正是"有静态子孙
+        // 就不能走快路"那条判据的全部理由**（T-19）。
+        ShapeBounds envelope = node->GetHitEnvelope();
+        envelope.x += item.absX;
+        envelope.y += item.absY;
 
         _hitTable.AddEntry(node, envelope, node->IsHitPassThrough());
     }
 
     _hitTable.Build();
+
+    // 全量重建把洞也一起重新算过了 ⇒ "只有洞脏"这条账在此结清。
+    _holesDirty = false;
+}
+
+void InkingScene::NotifyDynamicMoved() noexcept {
+    // 只置一个 bool：一帧里动多少次都只刷一次（与 `_contentDirty` 同一条规矩：
+    // 标脏的意义就是把一帧内的多次改动合并成一次处理）。
+    _holesDirty = true;
+}
+
+bool InkingScene::ResolveDynamicHole(InkingWidget* node,
+                                     ShapeBounds& out) const noexcept {
+    if (node == nullptr || !node->IsDynamic()) {
+        return false;
+    }
+    // 隐藏的组件不占洞（与 `rebuildHitTable` 的可见性筛选同一条）。
+    if (!node->IsVisibleInTree()) {
+        return false;
+    }
+    // 声明了 `OwnsSubtreeHit()` 的容器之下，子孙由容器的 `HitTest` 递归解答，
+    // 不进表也不留洞（T-7）。
+    for (const InkingWidget* up = node->GetParent(); up != nullptr;
+         up = up->GetParent()) {
+        if (up->OwnsSubtreeHit()) {
+            return false;
+        }
+    }
+
+    // 动态节点每帧都在动，绝对位置只能现算（`DrawItem::absX` 是建表时的快照）。
+    ShapeBounds envelope = node->GetHitEnvelope();
+    envelope.x += node->GetAbsX();
+    envelope.y += node->GetAbsY();
+    out = envelope;
+    return true;
+}
+
+void InkingScene::RefreshHoles() noexcept {
+    if (!_holesDirty) {
+        return;
+    }
+    _holesDirty = false;
+    ++_holeRefreshCount;
+
+    // **只动洞**：`_entries` / `_clusters` / `_cells` / `_candidates` 一个字节都
+    // 不碰（`ClearHoles()` 只清那一份线性扫的 vector）。走 `_drawList` 而不走树：
+    // 列表就是"哪些节点参与命中/绘制"的唯一答案，重走一遍树等于多一份判据。
+    //
+    // 复杂度照实说：这一趟是 `O(_drawList.size())` **过滤**（每项一次 `IsDynamic()`），
+    // 包络计算才是 `O(动态节点数)`。不维护"动态节点索引"是因为索引本身要在增删 /
+    // 换父级 / 可见性变化时维护，而那一项成本实测只有 2 ns/项（4000 项 = 8.4 µs，
+    // 对比全量重建 798 µs）。
+    _hitTable.ClearHoles();
+    for (const DrawItem& item : _drawList) {
+        ShapeBounds hole{};
+        if (ResolveDynamicHole(item.node, hole)) {
+            _hitTable.AddHole(hole);
+        }
+    }
+}
+
+std::uint64_t InkingScene::GetHoleRefreshCount() const noexcept {
+    return _holeRefreshCount;
 }
 
 InkingWidget* InkingScene::topmostDynamicHit(float designX, float designY,
@@ -1282,6 +1350,11 @@ std::size_t InkingScene::GetHitTableCellCount() noexcept {
 std::size_t InkingScene::GetHitTableMaxCellCandidates() noexcept {
     sortDrawList();
     return _hitTable.GetMaxCellCandidates();
+}
+
+std::size_t InkingScene::GetHitTableHoleCount() noexcept {
+    sortDrawList();
+    return _hitTable.GetHoleCount();
 }
 
 void InkingScene::DispatchPointer() {

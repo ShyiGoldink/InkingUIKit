@@ -3595,6 +3595,149 @@ void CheckDynamicTree() {
 }
 
 // ---------------------------------------------------------------------------
+// 移动的动态节点只刷洞（T-19）
+// ---------------------------------------------------------------------------
+//
+// 判据**只用计数**，不用帧时间：帧时间会被场景规模主导（`TaskGuide-G.md` §2.1.2
+// 实测 200/1000/4000 个静态节点分别 45/178/798 µs），量出来的是"我这台机器多少
+// 静态节点"，不是"这次改动贡献了什么"。
+//
+// 两件事要分开证：
+//   ① 移动**叶子**：`GetStructureGeneration()` 不涨（没走全量）+ `GetHoleRefreshCount()`
+//      涨（走了刷洞）+ **新旧位置的命中答案相反**（洞真的跟上了，不是白刷）；
+//   ② 移动**带静态子孙的动态容器**：代次照旧涨。静态子的绝对坐标是建表时的快照，
+//      祖先一动它就过期——这条是"为什么不能一刀切全走快路"的证据。
+void CheckLeafHoleRefresh() {
+    std::printf("\n-- 移动的动态节点只刷洞（T-19） --\n");
+
+    struct ProbeScene : public inking::InkingScene {
+        ProbeScene() : inking::InkingScene("probe_leaf_hole") {}
+    };
+
+    ProbeScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "T-19：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+
+    // 铺一批静态节点：让"全量重建"真的有东西可重建（自检里只判计数，但若场景
+    // 里一个静态节点都没有，两条路的差别会被摊平，测出来的东西没意义）。
+    for (int i = 0; i < 32; ++i) {
+        inking::AnchorData cell;
+        cell.width = 20;
+        cell.height = 20;
+        cell.offsetX = static_cast<float>((i % 8) * 24);
+        cell.offsetY = static_cast<float>((i / 8) * 24 + 400);
+        scene.AddChild(
+            std::make_unique<inking::InkingStaticWidget>(&scene, cell));
+    }
+
+    const auto makeButton = [](const char* name, int x, int y) {
+        inking::ButtonData data;
+        data.name = name;
+        data.width = 60;
+        data.height = 40;
+        data.offsetX = static_cast<float>(x);
+        data.offsetY = static_cast<float>(y);
+        data.normal = inking::ButtonAppearance(inking::AppearanceType::Color,
+                                              0xFF335577u);
+        return data;
+    };
+
+    // ---- ① 叶子：每帧走位的动态按钮 ----
+    auto* leaf = static_cast<inking::InkingDynamicButton*>(
+        scene.AddChild(std::make_unique<inking::InkingDynamicButton>(
+            &scene, makeButton("t19_leaf", 100, 100))));
+
+    // 先把表建好：这一步一定是全量重建（构造到现在一直脏着）。
+    scene.RebuildHitTable();
+
+    const float oldX = leaf->GetAbsX() + 10.0f;
+    const float oldY = leaf->GetAbsY() + 10.0f;
+    Check(scene.QueryHit(oldX, oldY).target == leaf,
+          "T-19：移动之前，原位置能命中动态按钮（基线）");
+
+    const std::uint64_t generationBefore = scene.GetStructureGeneration();
+    const std::uint64_t holesBefore = scene.GetHoleRefreshCount();
+
+    // 挪 300 像素：足够离开旧包络，两个洞不重叠，于是"旧位置不命中"才可证。
+    leaf->ChangeOffset(400.0f, 100.0f);
+    const float newX = leaf->GetAbsX() + 10.0f;
+    const float newY = leaf->GetAbsY() + 10.0f;
+
+    Check(scene.GetStructureGeneration() == generationBefore,
+          "T-19：移动叶子**不**通知场景重排（结构代次不涨）");
+
+    // 一次查询 = 一次 sortDrawList = 一次"只刷洞"。
+    // 顺序要紧：先查新位置（此时刷洞还没发生，必须靠这次查询自己刷）。
+    Check(scene.QueryHit(newX, newY).target == leaf,
+          "T-19：移动后**新位置**命中它（洞跟上了，不是过期洞）");
+    Check(scene.GetHoleRefreshCount() == holesBefore + 1,
+          "T-19：这一帧真走了「只刷洞」（计数 +1，全量重建不走这条）");
+    Check(scene.GetStructureGeneration() == generationBefore,
+          "T-19：查询也不会顺手全量重建（代次仍不涨）");
+    Check(scene.QueryHit(oldX, oldY).target != leaf,
+          "T-19：**旧位置**不再命中它（洞真的跟着走了）");
+
+    // ---- ② 带静态子孙的动态容器：必须走全量 ----
+    inking::AnchorData boxData;
+    boxData.width = 200;
+    boxData.height = 150;
+    boxData.offsetX = 700.0f;
+    boxData.offsetY = 60.0f;
+    auto* box = static_cast<inking::InkingDynamicWidget*>(
+        scene.AddChild(
+            std::make_unique<inking::InkingDynamicWidget>(&scene, boxData)));
+    inking::ButtonData innerData = makeButton("t19_inner", 20, 30);
+    auto* inner = static_cast<inking::InkingStaticButton*>(box->AddChild(
+        std::make_unique<inking::InkingStaticButton>(box, innerData)));
+
+    Check(box->HasStaticInSubtree(),
+          "T-19：容器的子树判据认得出静态子（`HasStaticInSubtree`）");
+    Check(!leaf->HasStaticInSubtree(),
+          "T-19：叶子的判据是 O(1) 且为假（没有子树）");
+
+    const std::uint64_t containerGeneration = scene.GetStructureGeneration();
+    const float innerOldX = inner->GetAbsX() + 5.0f;
+    const float innerOldY = inner->GetAbsY() + 5.0f;
+    Check(scene.QueryHit(innerOldX, innerOldY).target == inner,
+          "T-19：容器里那个静态按钮原来点得到（基线）");
+
+    box->ChangeOffset(700.0f, 260.0f);  // 往下挪 200
+    Check(scene.GetStructureGeneration() > containerGeneration,
+          "T-19：移动**带静态子孙**的容器仍走全量重建（代次涨）");
+
+    const float innerNewX = inner->GetAbsX() + 5.0f;
+    const float innerNewY = inner->GetAbsY() + 5.0f;
+    Check(scene.QueryHit(innerNewX, innerNewY).target == inner,
+          "T-19：容器挪完之后静态子的命中位置正确（快照跟着重建了）");
+    Check(scene.QueryHit(innerOldX, innerOldY).target != inner,
+          "T-19：静态子的旧位置不再命中它");
+
+    // ---- ③ 隐藏的动态节点不留洞（与 T-4 验收③同一条） ----
+    auto* hidden = static_cast<inking::InkingDynamicButton*>(
+        scene.AddChild(std::make_unique<inking::InkingDynamicButton>(
+            &scene, makeButton("t19_hidden", 900, 500))));
+    const std::size_t holesWithVisible = scene.GetHitTableHoleCount();
+    hidden->SetVisible(false);
+    Check(scene.GetHitTableHoleCount() < holesWithVisible,
+          "T-19：隐藏的动态节点**不留洞**（洞数少一个）");
+    hidden->ChangeOffset(900.0f, 560.0f);  // 隐藏状态下移动也只能刷出 0 个洞
+    Check(scene.GetHitTableHoleCount() == holesWithVisible - 1,
+          "T-19：隐藏的节点刷洞也刷不出来（可见性判据在刷洞这一侧同样生效）");
+
+    // ---- ④ 档位没被这次改动带偏 ----
+    //
+    // 编译期那条（`src/inking.cpp` 的 `static_assert(!HasResize<InkingStaticImage>)`
+    // 一族）在这里的运行时回声：动态的仍是动态、静态的仍是静态，静态节点照旧在表里
+    // ——刷洞那条路**没有**把表的条目也当成"可以只刷一半"的东西。
+    Check(leaf->IsDynamic() && !inner->IsDynamic(),
+          "T-19：档位判定没变（动态按钮是动态、容器里的静态按钮是静态）");
+    Check(scene.GetHitTableEntryCount() > 0,
+          "T-19：静态节点仍在表里（刷洞没有把表刷坏）");
+}
+
+// ---------------------------------------------------------------------------
 // 非阻塞跑帧 / 帧末任务 / 确定性时间 / 退出码 / 离屏渲染（D 组，0.3.0）
 // ---------------------------------------------------------------------------
 //
@@ -7598,6 +7741,7 @@ int main() {
 
     // ---- 树的动态性（0.4.0 A 组）：A1 / A2 / A3 / A4 / A5 / B1 / B2 / D6 / D7 ----
     CheckDynamicTree();
+    CheckLeafHoleRefresh();  // T-19：移动叶子只刷洞（判据是计数，不是帧时间）
 
     // ---- 场景动画时钟与频率订阅（0.6.0 T-01）----
     CheckSceneAnimationClock();

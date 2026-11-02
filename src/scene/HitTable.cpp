@@ -97,6 +97,13 @@ void HitTable::AddHole(const ShapeBounds& envelope) noexcept {
     _holes.push_back(Padded(envelope));
 }
 
+void HitTable::ClearHoles() noexcept {
+    // 洞是**独立线性扫**的一份 vector（`IsInDynamicHole`），所以清它一个字节都
+    // 不碰 `_entries` / `_clusters` / `_cells` / `_candidates`——`Build()` 也只
+    // 处理后面那四样（见 `Build()` 开头）。这就是"只刷洞"能成立的全部依据。
+    _holes.clear();
+}
+
 bool HitTable::IsInDynamicHole(float x, float y) const noexcept {
     // 线性扫：动态组件通常只有几个。真到了几百个再给它建索引也不迟
     // （那时该先问一句"是不是该把它们收进一个动态容器"）。

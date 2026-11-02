@@ -106,6 +106,19 @@ public:
      */
     void AddHole(const ShapeBounds& envelope) noexcept;
 
+    /**
+     * 只清洞，**不动条目 / 簇 / 格子 / 候选**（T-19）。
+     *
+     * 为什么要这一条：动态节点的**移动**既不改静态条目、也不改排序（`IsAbove`
+     * 只比树序与兄弟内 z，不看坐标），唯一过期的东西就是它的洞。于是场景有了
+     * 一条"只刷洞"的脏通道（`InkingScene::RefreshHoles`），代价从
+     * `O(静态节点数 log N)` 掉到 `O(动态节点数)`。
+     *
+     * 只在"移动的是叶子"时成立——带静态子孙的动态容器仍走全量重建（
+     * `item.absX` 是建表时冻住的快照，容器一动就过期）。
+     */
+    void ClearHoles() noexcept;
+
     /// 建簇、切格子、填 CSR 候选。条目为空时是空操作。
     void Build() noexcept;
 

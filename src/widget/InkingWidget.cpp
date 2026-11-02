@@ -521,6 +521,44 @@ void InkingWidget::NotifySceneStructureChanged() noexcept {
     }
 }
 
+bool InkingWidget::HasStaticInSubtree() const noexcept {
+    for (const InkingWidget* child : _children) {
+        if (child == nullptr) {
+            continue;
+        }
+        // 早退：一个静态子节点就够定论了——它的绝对坐标是快照。
+        if (!child->IsDynamic()) {
+            return true;
+        }
+        if (child->HasStaticInSubtree()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void InkingWidget::MarkGeometryMoved() noexcept {
+    // 两条判据合成一条：**自己不是动态档**时也走全量。静态档本来没有几何写入口
+    // （`Resize` / `ChangeOffset` 只挂在 `InkingDynamicWidget` 上），真走到了这里
+    // 只能是有人从派生类里绕进来——那种情况下快路会漏掉"自己的快照也过期了"。
+    if (!_dynamic || HasStaticInSubtree()) {
+        MarkStructureChanged();
+        return;
+    }
+
+    // 快路（T-19）：命中脏 + 重绘脏照旧，但**不让场景重排**——列表内容、排序结果、
+    // 静态条目一个字节都不用变，过期的只有我自己的洞。
+    MarkDirty();
+    MarkRepaintDirty();
+    NotifySceneDynamicMoved();
+}
+
+void InkingWidget::NotifySceneDynamicMoved() noexcept {
+    if (_scene != nullptr) {
+        _scene->NotifyDynamicMoved();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 布局（A6）
 // ---------------------------------------------------------------------------
@@ -922,6 +960,10 @@ bool InkingWidget::SetDisplayTransform(const TransformSpec& transform) noexcept 
     // 重绘 + 命中脏、表保持冻结（`AGENTS.md` §6 第 54 条那条设计没被破）。
     // 代价说清楚：拖动期间**每一帧**都会重排绘制列表 + 重烘命中表，
     // `GetStructureGeneration()` 也会跟着涨——它是"表被重烘过"的如实记账。
+    //
+    // **别把它改成 `MarkGeometryMoved()`**（T-19）：那条快路成立的前提是"洞的包络
+    // 与静态条目都不变"，而外部变换是**无界**的，包络并集根本算不出来——所以这里
+    // 只能是全量。几何那四条（`Resize` / 三个锚点 / `ChangeOffset`）才是分流的对象。
     MarkStructureChanged();
     return true;
 }

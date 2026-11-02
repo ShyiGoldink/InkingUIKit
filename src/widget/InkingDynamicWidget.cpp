@@ -28,7 +28,11 @@ InkingDynamicWidget::InkingDynamicWidget(InkingWidget* parent,
 //
 // 一律不加 virtual（子类不可重写），标脏与钩子都在内部完成；返回 bool 表示
 // 这次是否真的改了，没变就**不标脏、不触发钩子**。四条的骨架完全一样：
-//   判等 → 写字段 → MarkStructureChanged()（命中脏 + 重绘脏 + 场景重排）→ 钩子。
+//   判等 → 写字段 → MarkGeometryMoved()（见下）→ 钩子。
+//
+// **T-19 起不再直接调 `MarkStructureChanged()`**：几何移动按"子树里有没有静态
+// 节点"分流——有就照旧全量重建，没有（叶子 / 全动态子树）就只刷洞。判据住在
+// `InkingWidget::MarkGeometryMoved()` 里，四入口只负责"写字段 + 喊一声"。
 
 bool InkingDynamicWidget::Resize(int width, int height) noexcept {
     const bool changeWidth =
@@ -46,10 +50,10 @@ bool InkingDynamicWidget::Resize(int width, int height) noexcept {
         _height = height;
     }
 
-    // 几何变了：命中脏 + 重绘脏 + 让场景重算（绘制列表里缓存的绝对坐标过期了）。
-    // 最后那条正是"父级一动，静态子节点的缓存绝对坐标会过期"：
+    // 几何变了：命中脏 + 重绘脏；要不要让场景重排由 `MarkGeometryMoved()` 分流
+    // （T-19）。"父级一动，静态子节点的缓存绝对坐标会过期"那条正是分流的判据：
     // 动态节点自己每帧现算没问题，但**它的静态子孙**靠的是列表里的快照。
-    MarkStructureChanged();
+    MarkGeometryMoved();
 
     // 自己是容器 ⇒ 尺寸变了要**立刻重排孩子**（0.4.0 A4）。
     //
@@ -70,7 +74,7 @@ bool InkingDynamicWidget::ChangeSelfAnchor(const AnchorPoint& anchor) noexcept {
         return false;
     }
     _selfAnchor = anchor;
-    MarkStructureChanged();
+    MarkGeometryMoved();
     onSelfAnchorChanged();
     return true;
 }
@@ -80,7 +84,7 @@ bool InkingDynamicWidget::ChangeTraceAnchor(const AnchorPoint& anchor) noexcept 
         return false;
     }
     _traceAnchor = anchor;
-    MarkStructureChanged();
+    MarkGeometryMoved();
     onTraceAnchorChanged();
     return true;
 }
@@ -91,7 +95,7 @@ bool InkingDynamicWidget::ChangeOffset(float offsetX, float offsetY) noexcept {
     }
     _offsetX = offsetX;
     _offsetY = offsetY;
-    MarkStructureChanged();
+    MarkGeometryMoved();
     onOffsetChanged();
     return true;
 }

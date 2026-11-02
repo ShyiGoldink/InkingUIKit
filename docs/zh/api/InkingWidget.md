@@ -319,18 +319,22 @@ void ConsumeDirtyFrame() noexcept;
 
 帧末统一消费里的一步：推进安静帧计数，够数就清脏。**同一帧里标了多少次脏都只走这一回**。
 
->**IsSceneRoot() / IsDynamic() / GetSceneAncestor() / GetScene()**
+>**IsSceneRoot() / IsDynamic() / GetSceneAncestor() / GetScene() / HasStaticInSubtree()**
 
 ```C++
 bool IsSceneRoot() const noexcept;
 bool IsDynamic() const noexcept;
 InkingScene* GetSceneAncestor() noexcept;
 InkingScene* GetScene() const noexcept;
+bool HasStaticInSubtree() const noexcept;   // T-19
 ```
 
 `IsSceneRoot()`：自己就是某棵渲染树的根（场景 / 窗口），没有场景祖先可登记。
 `IsDynamic()`：构造时就定死（静态 / 动态是两个类型），不是运行期猜的。
 `GetScene()`：所属场景（非拥有），没有时为 `nullptr`。
+`HasStaticInSubtree()`：**子树里有没有静态节点**——"移动时能不能只刷洞"的唯一判据。
+递归早退（碰到的第一个静态子节点就返回，叶子 O(1)），**不缓存**（缓存要在三条增删路径上
+维护，漏一处就是"移动中的组件点不到"，不值一次早退遍历）。
 
 #### 运行期增删子节点
 

@@ -408,6 +408,57 @@ public:
     /** 一次查询最多扫过多少候选（上界；用来判断格子尺寸定得是不是太粗）。 */
     std::size_t GetHitTableMaxCellCandidates() noexcept;
 
+    /**
+     * 表里有几个动态洞（自检用；T-4 验收③"隐藏节点既不进表、也不留洞"
+     * 的**唯一客观判据**——洞的多少只影响"要不要问动态层"，查不出行为差异，
+     * 只能数）。
+     */
+    std::size_t GetHitTableHoleCount() noexcept;
+
+    // ---------------- 只刷洞（T-19） ----------------
+    //
+    // 背景：动态节点移动时，列表内容、排序结果、静态条目**都不会变**——`IsAbove`
+    // 只比树序与兄弟内 z，不看坐标；静态条目的包络是"节点自身绝对位置 + 自身包络"。
+    // 唯一会过期的是动态节点自己的**洞**（`QueryHit` 是
+    // `if (!inHole) return staticResult;`，洞过期 = 那一片点不到）。
+    //
+    // 于是有了这条只刷洞的脏通道：`_holesDirty` 由 `InkingWidget::MarkGeometryMoved()`
+    // 在"移动的是叶子"时置位，`sortDrawList()` 在**没有别的脏**时只走 `RefreshHoles()`。
+    // 判据在组件侧（`HasStaticInSubtree()`），这里只管"刷"。
+
+    /**
+     * 标"洞过期了"（T-19）。只置一个 bool，不做任何重活。
+     *
+     * **只该由 `InkingWidget::MarkGeometryMoved()` 调**：它是"移动的节点没有静态
+     * 子孙"那条快路的第二半。骨架级变化（增删 / 换父级 / z / 可见性）走
+     * `NotifyStructureChanged()`，那一条会全量重建，顺手把洞也刷掉。
+     */
+    void NotifyDynamicMoved() noexcept;
+
+    /**
+     * 只重算洞：遍历 `_drawList` 里的动态节点，重算绝对包络，`_drawList` 本身
+     * 一个字节都不动（不清、不排、不重建静态条目）。
+     *
+     * **成本的实话**（实测，`build/probe_dynamic_cost`，400 帧取均值）：扫一遍
+     * 列表挑动态节点是 `O(_drawList.size())`，每项只付一次 `IsDynamic()` 判断；
+     * 真正的包络计算才是 `O(动态节点数)`。4000 项的列表上量到 **8.4 µs/帧**，
+     * 同一个场景走全量重建是 **798 µs/帧**（约 95 倍）。所以它**不是**"与静态
+     * 节点数无关"——只是那一项便宜到 2 ns/项，比"清表 + 全量 DFS + stable_sort +
+     * 重烘"的 0.2 µs/项低两个数量级。
+     *
+     * 没脏时是空操作（一次 bool 比较）。
+     */
+    void RefreshHoles() noexcept;
+
+    /**
+     * 洞被真刷过几次（T-19 的**唯一客观观测口**）。
+     *
+     * 没有它就无法断言"真的走了新路"：`GetStructureGeneration()` 只能证明
+     * "没走全量"，证明不了"洞被刷了"。自检拿它配 `GetStructureGeneration()`
+     * 一起判——一个不涨、一个 +1，才是快路的完整证据。
+     */
+    std::uint64_t GetHoleRefreshCount() const noexcept;
+
     // ---------------- 骨架登记的写入口 ----------------
     //
     // 只由 InkingWidget 的构造 / 析构 / SetParent 调用，别在业务代码里手工调。
@@ -843,6 +894,16 @@ private:
     void rebuildHitTable();
 
     /**
+     * 这个节点该在表里**留洞**吗？该的话把**绝对**包络写进 `out`（T-19）。
+     *
+     * 三个条件与 `rebuildHitTable()` 里那三道筛选是**同一份定义**（动态档 /
+     * 可见 / 不在声明 `OwnsSubtreeHit()` 的容器里）：全量重建与增量刷洞共用它，
+     * 一处改了另一处自动跟上。抄第二份就会出现"重建时留了洞、刷洞时没留"
+     * ——症状是那个动态组件在两种路径下点得到 / 点不到随机切换。
+     */
+    bool ResolveDynamicHole(InkingWidget* node, ShapeBounds& out) const noexcept;
+
+    /**
      * 动态层最上面那个命中者（动态组件不进表，只能现问）。
      *
      * 只在"点落在某个动态洞里"时才会被调用——洞就是为省这一趟而存在的。
@@ -878,6 +939,16 @@ private:
      * 的来源（`InputDesign.md` §13）。
      */
     HitTable _hitTable;
+
+    /**
+     * 只有洞脏（T-19）：列表内容 / 排序 / 静态条目都是对的，只是某个动态节点的
+     * 占地变了。与 `_contentDirty` / `_orderDirty` **正交**——那两个一置位就是
+     * 全量重建，重建顺带把洞刷干净（所以重建的末尾会把它清掉）。
+     */
+    bool _holesDirty = false;
+
+    /// `RefreshHoles()` 真的刷了几次（T-19 的观测口，见头文件）。
+    std::uint64_t _holeRefreshCount = 0;
 
     /** 正在渲染（由 SceneLibrary 维护，同期最多一个）。 */
     bool _active = false;

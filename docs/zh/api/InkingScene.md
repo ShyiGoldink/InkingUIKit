@@ -371,6 +371,42 @@ std::size_t GetHitTableMaxCellCandidates() noexcept;
 
 自检与预算估算用。最后那个是一次查询的候选上界——用来判断格子尺寸定得是不是太粗。
 
+>**NotifyDynamicMoved() / RefreshHoles() / GetHoleRefreshCount() / GetHitTableHoleCount()**（T-19）
+
+```C++
+void NotifyDynamicMoved() noexcept;              // 只置"洞脏"，不做重活
+void RefreshHoles() noexcept;                    // 只重算洞，列表一个字不动
+std::uint64_t GetHoleRefreshCount() const noexcept;  // 洞真刷过几次
+std::size_t GetHitTableHoleCount() noexcept;         // 表里现在有几个洞
+```
+
+**动态节点移动不再让整个场景重建**。以前 `ChangeOffset` / `Resize` 会同时置内容脏与
+顺序脏 ⇒ 每帧一次"清列表 + 全量 DFS + stable_sort + 重烘表"；而其中的**列表内容、
+排序结果、静态条目其实都不会变**（`IsAbove` 只比树序与兄弟内 z，不看坐标）。唯一会
+过期的是动态节点自己的**洞**——洞过期就是那一片**点不到**（`QueryHit` 是
+`if (!inHole) return staticResult;`）。
+
+分流判据在组件侧（`InkingWidget::HasStaticInSubtree()`）：
+
+| 移动的东西 | 走的路 | 观测 |
+|---|---|---|
+| 叶子 / 全是动态节点的子树 | 只刷洞 | `GetStructureGeneration()` **不涨**、`GetHoleRefreshCount()` +1 |
+| 带**静态子孙**的动态容器 | 照旧全量重建 | `GetStructureGeneration()` 涨 |
+| 骨架变化（增删 / 换父级 / z / 可见性） | 照旧全量重建 | 同上 |
+
+为什么带静态子孙的不能走快路：静态节点的绝对坐标是建表时冻住的快照
+（`DrawItem::absX`），祖先一动就全部过期；让它"现算"等于改渲染热路径上**每一个**
+静态节点的取坐标方式。
+
+`NotifyDynamicMoved()` 只该由 `InkingWidget::MarkGeometryMoved()` 调，
+`RefreshHoles()` 由 `sortDrawList()` 在"只有洞脏"时自动调——正常业务代码两个都不用碰。
+公开只是为了自检与诊断。
+
+**成本的实话**：刷洞要扫一遍绘制列表挑动态节点（`O(列表长度)`，每项一次
+`IsDynamic()`），包络计算才是 `O(动态节点数)`。实测 4000 项列表 **8.4 µs/帧** vs 全量
+重建 **798 µs/帧**（`build/probe_dynamic_cost`，400 帧均值，不含渲染）。
+所以它是"便宜两个数量级"，**不是**"与静态节点数无关"。
+
 > **怎么读这些数（口径）**
 
 上面这一族的**口径与读法**在 [../UsageReport.md §3「观测口与读数口径」](../UsageReport.md)
