@@ -331,6 +331,13 @@ bool InkingWidget::HitTest(float /*worldX*/, float /*worldY*/) const {
     return false;
 }
 
+InkingCursorShape InkingWidget::GetCursorShape() const noexcept {
+    // 默认箭头：**声明才有**，和 `WantsKeyboardFocus()` / `AcceptsExternalTransform()`
+    // 同一条先例（框架给的通道一律"默认不要"）。不声明就变成手型的话，
+    // "整块面板都是手型"这种问题会难查到没人愿意查。
+    return InkingCursorShape::Default;
+}
+
 InkingWidget* InkingWidget::HitTestNode(float worldX, float worldY) noexcept {
     // 默认实现 = **"容器"语义**（0.4.0 A1）：子树优先，子树里没有 Block 才轮到自己。
     //

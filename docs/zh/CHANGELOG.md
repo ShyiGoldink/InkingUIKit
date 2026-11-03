@@ -101,6 +101,23 @@
 - 自检 `tabbar_switch_probe`：三页、切页后同一位置 `QueryHit` 落到新页、同页再切零事件、
   越界拒绝、点标签走同一个 `Select` 出口。
 
+### 新增（UIKit 齐全度 · f 批：系统集成）
+
+> 来源：同任务书 T-09 / T-10。
+
+- **光标形状**（`input/CursorShape.h` + `InkingWidget::GetCursorShape()`）：
+  组件声明"指针停在我身上时该长什么样"，默认 `Default`（箭头）。按钮 / 滑块 /
+  三件套 = `Hand`，输入框 = `Text`。窗口每帧读**一次**当前悬停节点，
+  **形状变了才** `SDL_SetCursor`（每帧无条件调在 Windows 上会闪）；
+  每种形状一个缓存的 `SDL_Cursor*`，窗口收尾时统一 `SDL_DestroyCursor`。
+  观测口 `InkingWindow::GetCursorUpdateCount()` 记的是"判定"次数（无头下没有真光标）。
+- **文件拖放**（`InkingScene::filesDropped`）：拖放是**第四类输入**，不进指针通道。
+  窗口在事件循环里只收集，**帧末一次性派发**给活跃场景——一次拖 3 个文件是
+  **一条**事件带 3 个路径，不是三次回调；订阅者因此可以在回调里安全切场景。
+  没有活跃场景时丢弃并计数（`GetDroppedWithoutSceneCount()`），不静默。
+- 自检 `cursor_shape_probe` + `drop_file_probe`：悬停按钮换一次、悬停不动不重复、
+  移开换回；拖 3 个文件一条派发、无场景时丢弃 +1 且不派发。
+
 ### 修复
 
 - **视频自检把丢帧判据写成了"必须为 0"**：主时钟是真实时间，机器一忙（编译 / 并行测试）

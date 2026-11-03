@@ -302,6 +302,26 @@ struct WindowState {
         std::function<void()> action;
     };
     std::vector<FrameTask> frameTasks;
+
+    // ---- 光标（T-09）----
+    //
+    // 每种形状缓存一个 `SDL_Cursor*`，**不在每帧创建**：`SDL_CreateSystemCursor`
+    // 会真的向系统要一个光标对象，每帧建一个等于每帧漏一个（而且 Windows 上
+    // 表现为光标闪烁）。建不出来（无头 / 后端不支持）就留空，下一帧不再重试。
+    SDL_Cursor* cursors[InkingCursorShapeCount] = {};
+    InkingCursorShape appliedCursor = InkingCursorShape::Default;
+    bool cursorApplied = false;
+    /// **决定换光标**的次数（观测口）。无头下 `SDL_SetCursor` 是空操作，
+    /// 所以计数记的是"判定"，不是"系统真的换了"。
+    std::uint64_t cursorUpdates = 0;
+
+    // ---- 文件拖放（T-10）----
+    //
+    // 一次拖多个文件 = 一帧里多条 `SDL_EVENT_DROP_FILE`。先攒着，**帧末一次性派发**：
+    // 订阅者可能在回调里切场景，而事件循环里正在遍历事件队列。
+    std::vector<std::string> pendingDrops;
+    std::uint64_t droppedFiles = 0;        ///< 见过的路径总数（含被丢弃的）
+    std::size_t droppedWithoutScene = 0;   ///< 没有活跃场景时被丢弃的路径数
 };
 
 /** 返回唯一的窗口状态。 */
@@ -330,6 +350,19 @@ void releaseWindow(WindowState& s) {
         SDL_DestroyWindow(s.window);
         s.window = nullptr;
     }
+
+    // 光标对象也要收：它们由我们建、由我们销毁（`SDL_Quit` 之后句柄就失效了）。
+    for (SDL_Cursor*& cursor : s.cursors) {
+        if (cursor != nullptr) {
+            SDL_DestroyCursor(cursor);
+            cursor = nullptr;
+        }
+    }
+    s.cursorApplied = false;
+    s.appliedCursor = InkingCursorShape::Default;
+
+    // 没派发出去的拖放路径跟着窗口一起丢（计数留着：它是"发生过什么"的记录）。
+    s.pendingDrops.clear();
 
     if (s.open) {
         SDL_Quit();
@@ -450,6 +483,20 @@ bool pumpEvents(WindowState& s, InkingMouseInput& mouse, InkingKeyboardInput& ke
             case SDL_EVENT_MOUSE_MOTION:
             case SDL_EVENT_MOUSE_WHEEL:
                 mouse.UpdateFromSDL(event);
+                break;
+
+            // 文件拖放（T-10）：**第四类输入**，不进指针通道（它没有坐标）。
+            // 一次拖多个文件会来多条；先攒着，帧末一次性派发（见 `dispatchDroppedFiles`）。
+            // 只认 `DROP_FILE`：`DROP_TEXT` 是拖文本，语义与"拖文件"不是一回事。
+            case SDL_EVENT_DROP_FILE:
+                if (event.drop.data != nullptr && event.drop.data[0] != '\0') {
+                    s.pendingDrops.emplace_back(event.drop.data);
+                    ++s.droppedFiles;
+                    // INFO 而不是 DEBUG：拖放是**用户主动、极稀疏**的事件，也正是
+                    // "拖了没反应"时要查的那条线——放进 DEBUG 等于发布版里查不到。
+                    INK_LOG_INFO(kModuleName,
+                                 std::string("拖入文件：") + event.drop.data);
+                }
                 break;
 
             // 触摸（B6）：最简映射——第一根手指当成鼠标（只认第一根，见
@@ -937,6 +984,95 @@ void warnIfBackgroundAlphaIgnored(std::uint32_t background, bool transparent) {
  *
  * @return 还要不要继续跑（false = 收到关窗请求 / 冒烟时间到）。
  */
+
+/**
+ * 形状 → 系统光标。**首次用到才建**，之后复用缓存。
+ *
+ * 建不出来时返回 nullptr 并**留下 nullptr**（下一帧不再重试）：无头驱动 /
+ * 某些后端没有系统光标。`SDL_SetCursor(nullptr)` 是安全空操作，于是"没有光标"
+ * 不会把这一帧搞崩——但计数照样会加，因为观测口记的是"判定"，不是"系统换了"。
+ */
+SDL_Cursor* cursorFor(WindowState& s, InkingCursorShape shape) {
+    const auto index = static_cast<std::size_t>(shape);
+    if (index >= InkingCursorShapeCount) {
+        return nullptr;
+    }
+    if (s.cursors[index] == nullptr) {
+        SDL_SystemCursor id = SDL_SYSTEM_CURSOR_DEFAULT;
+        switch (shape) {
+            case InkingCursorShape::Hand:
+                id = SDL_SYSTEM_CURSOR_POINTER;  // 指着"能点"的那只手
+                break;
+            case InkingCursorShape::Text:
+                id = SDL_SYSTEM_CURSOR_TEXT;     // I 形
+                break;
+            case InkingCursorShape::Crosshair:
+                id = SDL_SYSTEM_CURSOR_CROSSHAIR;
+                break;
+            case InkingCursorShape::Default:
+            default:
+                id = SDL_SYSTEM_CURSOR_DEFAULT;
+                break;
+        }
+        s.cursors[index] = SDL_CreateSystemCursor(id);
+    }
+    return s.cursors[index];
+}
+
+/**
+ * 光标跟这一帧的**悬停节点**走（T-09）。
+ *
+ * 位置：键盘派发之后（悬停已经由 `DispatchPointer` 定下来）、绘制之前——
+ * 这样"这一帧看到的画面"和"这一帧的光标"指的是同一个东西。
+ *
+ * **只在形状变化时调 `SDL_SetCursor`**：每帧无条件调在 Windows 上表现为
+ * 光标闪烁 / 被系统主题覆盖（SDL 每次调用都会重新设一遍窗口光标）。
+ */
+void applyCursor(WindowState& s) {
+    if (s.window == nullptr) {
+        return;  // 没窗口：没有"谁悬停在谁身上"这回事
+    }
+    InkingCursorShape shape = InkingCursorShape::Default;
+    if (InkingScene* scene = InkingSceneLibrary::GetActiveScene()) {
+        if (InkingWidget* hovered = scene->GetHoveredNode()) {
+            shape = hovered->GetCursorShape();
+        }
+    }
+    if (s.cursorApplied && shape == s.appliedCursor) {
+        return;  // 没变：一个字节都不做
+    }
+    SDL_SetCursor(cursorFor(s, shape));
+    s.appliedCursor = shape;
+    s.cursorApplied = true;
+    ++s.cursorUpdates;
+}
+
+/**
+ * 把这一帧攒下的拖放路径**一次性**派发给活跃场景（T-10）。
+ *
+ * 位置：帧末、场景脏消费之后（顺序见 `stepFrame` 的 5）。**不在事件循环里派发**：
+ * 订阅者可能在回调里切场景 / 关场景，而事件循环此刻正在遍历事件队列。
+ *
+ * 没有活跃场景时**丢弃并计数**——不静默：拖进来一个文件、程序毫无反应，是那种
+ * "只能靠猜"的故障。
+ */
+void dispatchDroppedFiles(WindowState& s) {
+    if (s.pendingDrops.empty()) {
+        return;
+    }
+    // 先搬出来再派发：回调里如果再收到拖放事件（同一帧内不会，但下一帧就来了），
+    // 也不该被这一趟吞掉。
+    std::vector<std::string> paths;
+    paths.swap(s.pendingDrops);
+
+    InkingScene* scene = InkingSceneLibrary::GetActiveScene();
+    if (scene == nullptr) {
+        s.droppedWithoutScene += paths.size();
+        return;
+    }
+    scene->DispatchFilesDropped(paths);
+}
+
 bool stepFrame(WindowState& s, InkingMouseInput& mouse, InkingKeyboardInput& keyboard,
                InkingWindow& window) {
     // 0. 时钟初始化：第一次进来（或重新 Open 之后）才做。
@@ -997,6 +1133,10 @@ bool stepFrame(WindowState& s, InkingMouseInput& mouse, InkingKeyboardInput& key
     //     它同样要放在推进时间线之前，理由和指针那条一样。
     dispatchKeyboard(keyboard);
 
+    // 2d. 光标（T-09）：跟着**这一帧的悬停节点**走。放在这里而不是绘制之后：
+    //     光标和画面指的是同一帧的同一个悬停结果。
+    applyCursor(s);
+
     // 3. 推进时间线。delta 用**真实流逝时间**，所以某帧掉到 30ms 也不会
     //    让逻辑时间相对墙上时钟漂移——累加器会把欠的步补上。
     //
@@ -1036,6 +1176,11 @@ bool stepFrame(WindowState& s, InkingMouseInput& mouse, InkingKeyboardInput& key
     if (InkingScene* scene = InkingSceneLibrary::GetActiveScene()) {
         scene->ConsumeFrameDirty();
     }
+
+    // 5c. 文件拖放（T-10）：帧末一次性派发给活跃场景。放在脏消费之后、帧末任务
+    //     之前——订阅者拿到的场景状态是这一帧定稿的，而且此时仍在事件循环之外。
+    dispatchDroppedFiles(s);
+
     mouse.ResetFrameFlags();
     // 键盘的瞬时部分同理：本帧事件清掉，**按着的键留着**（跨帧状态）。
     keyboard.ResetFrameFlags();
@@ -1322,6 +1467,18 @@ void InkingWindow::RequestClose(int exitCode) {
 }
 
 int InkingWindow::GetExitCode() const noexcept { return _exitCode; }
+
+std::uint64_t InkingWindow::GetCursorUpdateCount() const noexcept {
+    return state().cursorUpdates;
+}
+
+std::uint64_t InkingWindow::GetDroppedFileCount() const noexcept {
+    return state().droppedFiles;
+}
+
+std::size_t InkingWindow::GetDroppedWithoutSceneCount() const noexcept {
+    return state().droppedWithoutScene;
+}
 
 void InkingWindow::SetExitConfirmHandler(ExitConfirmHandler handler) {
     _exitConfirm = std::move(handler);

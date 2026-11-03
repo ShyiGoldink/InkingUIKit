@@ -148,6 +148,11 @@ public:
     /// 命中：**整块 base**（点勾上、点框角都算点它），见 `ToggleParts::base`。
     bool HitTest(float worldX, float worldY) const override;
 
+    /// 指针在勾选件上 = 手型（T-09）。基类声明一次，三件套一起继承。
+    InkingCursorShape GetCursorShape() const noexcept override {
+        return InkingCursorShape::Hand;
+    }
+
     /// 没有三态变换，也不认 A13 外部变换。
     InkingTransformSpec GetDisplayTransform() const noexcept { return {}; }
 

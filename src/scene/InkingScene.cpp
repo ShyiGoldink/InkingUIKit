@@ -989,6 +989,15 @@ InkingWidget* InkingScene::GetHoveredNode() const noexcept {
     return _hoveredNode;
 }
 
+void InkingScene::DispatchFilesDropped(const std::vector<std::string>& paths) {
+    if (paths.empty()) {
+        return;  // 空列表不派发：那会让订阅者收到一条"什么都没有"的事件
+    }
+    // `InkingEvent` 的派发是**快照**语义（先把订阅者拷一份再逐个调），
+    // 所以回调里退订 / 切场景都不会把这一趟搞乱（见 `InkingEvent.h` 第 3 条）。
+    filesDropped.Emit(paths);
+}
+
 // ---------------------------------------------------------------------------
 // 键盘（A3）：焦点归属 + 事件派发
 // ---------------------------------------------------------------------------

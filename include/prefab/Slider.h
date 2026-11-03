@@ -182,6 +182,11 @@ public:
     /// 键盘焦点：滑块要（否则"点得进去、按箭头没反应"，§6 第 57 条）。
     bool WantsKeyboardFocus() const noexcept override { return true; }
 
+    /// 指针在滑块上 = 手型（T-09）：它能拖，和按钮同一条"这里能操作"。
+    InkingCursorShape GetCursorShape() const noexcept override {
+        return InkingCursorShape::Hand;
+    }
+
     /**
      * @brief 命中：**整块组件框**（见文件头 ②）。
      *

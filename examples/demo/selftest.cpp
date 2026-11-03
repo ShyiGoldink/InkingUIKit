@@ -37,6 +37,7 @@
 #include <detail/InkLog.h>
 #include <detail/InkingPointerProbe.h>
 #include <detail/InkingPopupPlacement.h>
+#include <input/CursorShape.h>
 #include <input/KeyboardInput.h>
 #include <input/Shortcut.h>
 #include <input/ShortcutRegistry.h>
@@ -9368,6 +9369,133 @@ void CheckTabBar() {
     InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// T-09 / T-10：系统集成（光标形状 + 文件拖放）
+// ---------------------------------------------------------------------------
+//
+// 两条都只能靠**代理量**验：光标长什么样、从资源管理器拖进来有没有反应，都得
+// 人看一眼（那是 `USER.md` 里"主观量交给用户"的那一档）。这里钉的是**判定**：
+//   - 光标：形状变了才调 `SDL_SetCursor`（计数能断言"悬停 5 帧只换 1 次"）；
+//   - 拖放：一次拖 N 个文件 = 一条事件带 N 个路径；没场景时丢弃要计数。
+void CheckSystemIntegration() {
+    std::printf("\n-- 系统集成：光标形状 / 文件拖放（T-09 / T-10）--\n");
+
+    struct SysScene : public InkingScene {
+        SysScene() : InkingScene("probe_sysint") {}
+    };
+    SysScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "T-09：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+
+    // 一个按钮（有光标声明）放在 (100,100) 80×30。
+    InkingButtonData buttonData;
+    buttonData.name = "t09_button";
+    buttonData.width = 80;
+    buttonData.height = 30;
+    buttonData.offsetX = 100.0f;
+    buttonData.offsetY = 100.0f;
+    auto* button = static_cast<InkingStaticButton*>(
+        scene.AddChild(std::make_unique<InkingStaticButton>(&scene, buttonData)));
+    scene.TickFrame(1.0f / 60.0f);
+
+    Check(button->GetCursorShape() == InkingCursorShape::Hand,
+          "T-09：按钮声明了手型（默认是箭头）");
+
+    InkingWindow& window = InkingWindow::Instance();
+    window.SetFixedDelta(1.0f / 60.0f);
+    Check(window.Open("probe_sysint"), "T-09：窗口打开（dummy 驱动 + 软渲染器）");
+
+    // 设计坐标 → 窗口坐标（letterbox：等比缩放 + 居中留边）。
+    const float designW = static_cast<float>(InkingDesignWidth());
+    const float designH = static_cast<float>(InkingDesignHeight());
+    const float windowW = static_cast<float>(window.GetWindowWidth());
+    const float windowH = static_cast<float>(window.GetWindowHeight());
+    const float scale = std::min(windowW / designW, windowH / designH);
+    const float offsetX = (windowW - designW * scale) * 0.5f;
+    const float offsetY = (windowH - designH * scale) * 0.5f;
+
+    const auto pushMotion = [&](float designX, float designY) {
+        SDL_Event event{};
+        event.type = SDL_EVENT_MOUSE_MOTION;
+        event.motion.x = designX * scale + offsetX;
+        event.motion.y = designY * scale + offsetY;
+        SDL_PushEvent(&event);
+    };
+
+    // ---- ① 光标：悬停按钮 → 手型；悬停不动不重复设置；移开换回箭头 ----
+    const std::uint64_t before = window.GetCursorUpdateCount();
+    pushMotion(140.0f, 115.0f);  // 按钮中心
+    window.PumpOnce();
+    const std::uint64_t afterHover = window.GetCursorUpdateCount();
+    std::printf("         悬停按钮后：换光标 %llu 次（之前 %llu）；hovered = %s\n",
+                static_cast<unsigned long long>(afterHover),
+                static_cast<unsigned long long>(before),
+                scene.GetHoveredNode() == button ? "按钮" : "空");
+    Check(afterHover == before + 1,
+          "T-09：① 悬停按钮 → 换一次光标（手型）");
+
+    for (int i = 0; i < 5; ++i) {
+        pushMotion(140.0f, 115.0f);
+        window.PumpOnce();
+    }
+    Check(window.GetCursorUpdateCount() == afterHover,
+          "T-09：① 悬停不动跑 5 帧 → **不重复设置**（形状没变）");
+
+    pushMotion(900.0f, 600.0f);  // 空白处
+    window.PumpOnce();
+    std::printf("         移到空白后：换光标 %llu 次\n",
+                static_cast<unsigned long long>(window.GetCursorUpdateCount()));
+    Check(window.GetCursorUpdateCount() == afterHover + 1,
+          "T-09：① 移开 → 换回箭头（再 +1）");
+
+    // ---- ② 拖放：一次拖 3 个文件 = 一条事件带 3 个路径 ----
+    int dropEvents = 0;
+    std::vector<std::string> lastPaths;
+    scene.filesDropped.Subscribe(
+        [&dropEvents, &lastPaths](const std::vector<std::string>& paths) {
+            ++dropEvents;
+            lastPaths = paths;
+        });
+
+    const auto pushDrop = [](const char* path) {
+        SDL_Event event{};
+        event.type = SDL_EVENT_DROP_FILE;
+        event.drop.data = path;  // 只在这里用到，下一次 PumpOnce 之前一直有效
+        SDL_PushEvent(&event);
+    };
+    const std::uint64_t dropsBefore = window.GetDroppedFileCount();
+    pushDrop("C:/tmp/一.txt");
+    pushDrop("C:/tmp/二.txt");
+    pushDrop("C:/tmp/三.txt");
+    window.PumpOnce();
+    std::printf("         拖 3 个文件 → 事件 %d 条 / 路径 %zu 个\n", dropEvents,
+                lastPaths.size());
+    Check(window.GetDroppedFileCount() == dropsBefore + 3,
+          "T-10：② 窗口收下 3 条路径");
+    Check(dropEvents == 1 && lastPaths.size() == 3,
+          "T-10：② **一次派发**带 3 个路径（不是三次回调）");
+    Check(!lastPaths.empty() && lastPaths.front() == "C:/tmp/一.txt",
+          "T-10：② 路径原样保留（UTF-8，顺序不变）");
+
+    // ---- ③ 没有活跃场景：丢弃 + 计数（不静默） ----
+    const std::size_t droppedBefore = window.GetDroppedWithoutSceneCount();
+    InkingSceneLibrary::SetActiveScene(nullptr);
+    pushDrop("C:/tmp/孤儿.txt");
+    window.PumpOnce();
+    std::printf("         无场景时丢弃 %zu 条（之前 %zu）\n",
+                window.GetDroppedWithoutSceneCount(), droppedBefore);
+    Check(window.GetDroppedWithoutSceneCount() == droppedBefore + 1,
+          "T-10：③ 没有活跃场景时丢弃并计数（不静默）");
+    Check(dropEvents == 1, "T-10：③ 丢弃的那条**不会**被派发给订阅者");
+    InkingSceneLibrary::SetActiveScene(&scene);
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+    window.RequestClose(0);
+    window.PumpOnce();  // 收掉窗口（releaseWindow 里顺带销毁光标缓存）
+}
+
 }  // namespace
 
 int main() {
@@ -9672,6 +9800,13 @@ int main() {
     // 它会自己 SDL_Init，并在收尾时 SDL_Quit——放在前面会把上面用到的
     // 渲染器一起拆掉（那种顺序错误会表现成"随机几个检查失败"）。
     CheckHeadlessPump();
+
+    // ---- 光标 / 文件拖放（T-09 / T-10）----
+    //
+    // **必须排在裸窗口销毁之后、纹理账本之后**：它自己 `Open()` 一次窗口，
+    // 收尾时 `releaseWindow` 会 `SDL_Quit()`——放在前面会把上面所有用例正在用的
+    // 渲染器一起拆掉（与 `CheckHeadlessPump` 同一条纪律）。
+    CheckSystemIntegration();
 
     // ---- 清单的元自检放在**真正的最后**：前面的检查全部登记完才对账（T-14） ----
     //

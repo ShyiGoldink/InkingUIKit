@@ -716,6 +716,25 @@ std::size_t GetMaxCellCandidates() const noexcept;
 
 1. **以为 `CloseScene` 会析构场景**：不会。生命周期始终归调用方（或 `AdoptScene` 之后归库）。
 2. **在 `onPreload` 里建组件 / 建纹理**：数据竞争，偶发、不报错。放 `onPreloadFinished`。
+## 九、文件拖放（T-10）
+
+```C++
+InkingEvent<const std::vector<std::string>&> filesDropped;   // 一次拖放一条
+```
+
+拖放是**第四类输入**（指针 / 键盘 / 窗口之外）：没有坐标、没有按下抬起，所以不进
+指针通道。落点在**场景**而不是窗口——"拖进来的文件归谁"取决于当前展示的是哪一章，
+窗口不知道这个语义。
+
+三条约定：
+
+1. **一次派发**：一次拖 3 个文件 = 一条事件带 3 个路径（窗口层在帧末统一派发，
+   不在事件循环里派发）——所以订阅者可以在回调里安全切场景 / 关场景；
+2. **路径是 UTF-8 原样串**：要 `std::filesystem::path` 请走宽字符转换，
+   别拿窄串直接构造（中文目录下会抛）；
+3. **没有活跃场景时丢弃并计数**（`InkingWindow::GetDroppedWithoutSceneCount()`），
+   不静默。
+
 3. **两个同名场景**：后者静默进入停放态（`IsRejected()`）。除了"什么都没发生"，没有别的提示。
 4. **把"关闭"当"销毁"**：关掉只是停；要释放显式 `DestroyScene` + 帧末提交。
 5. **在静默场景里指望 `onRenderBoundTick`**：静默不渲染，那组回调也不跑。
@@ -723,4 +742,4 @@ std::size_t GetMaxCellCandidates() const noexcept;
 
 ---
 
-> 本文档对应版本：**0.8.5（0.x 发布版）**。
+> 本文档对应版本：**0.9.0（未发布）**。

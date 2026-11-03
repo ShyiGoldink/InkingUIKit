@@ -307,6 +307,27 @@ public:
     /// 有人请求过关窗吗（主循环每帧查一次）。自检观测口。
     bool IsCloseRequested() const noexcept;
 
+    // ---------------- 光标与文件拖放（T-09 / T-10） ----------------
+
+    /**
+     * @brief **决定换光标**的次数（观测口）。
+     *
+     * 记的是"形状变了、于是调了一次 `SDL_SetCursor`"，不是"系统真的换了"——
+     * 无头驱动下 `SDL_CreateSystemCursor` 可能返回空，那时调用是空操作，
+     * 但判定照样发生。自检就是靠它断言"悬停 5 帧只换 1 次"。
+     */
+    std::uint64_t GetCursorUpdateCount() const noexcept;
+
+    /// 见过的拖放路径总数（含没有场景时被丢弃的）。
+    std::uint64_t GetDroppedFileCount() const noexcept;
+
+    /**
+     * @brief 没有活跃场景时被丢弃的**路径数**。
+     *
+     * 丢弃要留个记号：不静默。有它才能回答"拖了没反应，是没收到还是丢了"。
+     */
+    std::size_t GetDroppedWithoutSceneCount() const noexcept;
+
     // ---------------- 退出闸门（"要不要问一句再退"） ----------------
     //
     // 为什么是回调而不是虚函数：本类是**私有构造的单例**，外面派生不出实例，

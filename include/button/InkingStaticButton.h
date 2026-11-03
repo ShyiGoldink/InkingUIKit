@@ -143,6 +143,11 @@ public:
      */
     bool HitTest(float worldX, float worldY) const override;
 
+    /// 指针在按钮上 = 手型（T-09）——"这里能点"是按钮唯一要声明的事。
+    InkingCursorShape GetCursorShape() const noexcept override {
+        return InkingCursorShape::Hand;
+    }
+
     // ---------------- 属性（运行期可改） ----------------
 
     /// 形状定义：渲染 / 命中 / 包围盒三者都从它派生（见 InkingShapeSpec.h）。

@@ -337,7 +337,7 @@ INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 本机走 dire
 | detail | `InkLog.h` `InkingGeometry.h` `InkingHit.h` `InkingMessageQueue.h` | Runtime / Widget |
 | event | `InkingEvent.h` | Runtime |
 | image | `InkingImageData.h` `InkingSpriteData.h` `InkingStaticImage.h` `InkingSprite.h` | Components |
-| input | `InkingKeyboardTarget.h` `InkingPointerHandler.h` `InkingPointerButton.h` `InkingKeyboardInput.h` `InkingMouseInput.h` `InkingShortcut.h` `InkingShortcutRegistry.h` `InkingTextEditState.h` | KeyboardTarget / PointerHandler / Input |
+| input | `CursorShape.h` `InkingKeyboardTarget.h` `InkingPointerHandler.h` `InkingPointerButton.h` `InkingKeyboardInput.h` `InkingMouseInput.h` `InkingShortcut.h` `InkingShortcutRegistry.h` `InkingTextEditState.h` | KeyboardTarget / PointerHandler / Input |
 | layout | `InkingLayoutSolver.h` | LayoutSolver |
 | panel | `InkingStaticPanel.h` `InkingPanelData.h` `InkingPanelLook.h` | Components |
 | prefab | `Dialog.h` `FilePicker.h` `FilePickerData.h` `ListRow.h` `ListView.h` `ListViewData.h` `MenuBar.h` `MenuBarData.h` `OptionBar.h` `OptionBarData.h` `PrefabParts.h` `PrefabTheme.h` `ProgressBar.h` `Select.h` `SelectData.h` `Slider.h` `TabBar.h` `ToastHost.h` `ToggleLike.h` `Tooltip.h` | Prefab |

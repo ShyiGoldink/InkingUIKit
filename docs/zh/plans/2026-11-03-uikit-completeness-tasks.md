@@ -1,6 +1,6 @@
 # 任务书：UIKit 齐全度补齐（自身规划）
 
-> 状态：**执行中**（批次 a~e 已完成，仅 f 待做；本文件按任务逐条跟踪，完成规则见 §1）
+> 状态：**全部完成**（a~f 六批 / 10 个任务；本文件按任务逐条跟踪，完成规则见 §1）
 > 日期：2026-11-03
 > 来源：Shyi 2026-11-03「检查检查这个库，看看作为一个简单的 UI 库是否齐全」；
 > 盘点结论见 `docs/zh/plans/2026-11-03-uikit-completeness-audit.md`，核实结论见 §2
@@ -272,91 +272,15 @@ const SliderParts& GetParts() const noexcept;
 
 ## 8. 第六批 f：`0.9.0`（系统集成）
 
-### T-09 加鼠标光标形状
+> 本批已完成，按 §1.2 压成一行（细目在 `git log --grep=T-09` / `T-10`）：
 
-- **状态**：未开始
-- **落点**：`include/widget/InkingWidget.h`（虚函数）、`include/window/InkingWindow.h`、
-  `src/window/InkingWindow.cpp`（`runLoop` 的帧末）
+- T-09 加鼠标光标形状-已完成（2026-11-03，`input/CursorShape.h` +
+  `InkingWidget::GetCursorShape()` + `InkingWindow` 的 `applyCursor`；
+  `cursor_shape_probe` 绿：悬停按钮换 1 次、悬停不动跑 5 帧不再换、移开换回箭头）
 
-**准备怎么改**
-
-三个候选：
-
-| 方案 | 做法 | 代价 | 结论 |
-| - | - | - | - |
-| A 节点声明光标 | `InkingWidget::GetCursorShape()` 虚函数，默认 `Default`；窗口每帧问**当前命中的节点** | 一次虚调用/帧；语义最准（手型来自「这里能点」而不是坐标） | **推荐** |
-| B 全局按区域设 | 窗口暴露 `SetCursorShape`，调用方自己判 | 0 改动到 widget | 退路（A 被发现太重时） |
-| C 一律手型 | 命中任何可点节点就变手型 | 最省 | 不做：文本区域该是 I 形光标 |
-
-**只在形状变化时调 `SDL_SetCursor`**：每帧无条件调会把光标重置（Windows 上表现为光标
-闪烁 / 被系统主题覆盖）。
-
-**大致改动逻辑**
-
-1. `InkingWidget` 加 `virtual InkingCursorShape GetCursorShape() const`，默认 `Default`；
-   `InkingTextInput` 覆写成 `Text`；按钮 / 滑块 / 勾选件覆写成 `Hand`。
-2. `InkingWindow` 在 `runLoop` 的帧末：取当前悬停节点（场景已有这个状态，指针脏那条路
-   里就有），问它的 `GetCursorShape()`，与上一次比对，**不同才** `SDL_SetCursor`。
-3. 光标对象在窗口里缓存（每种形状一个 `SDL_Cursor*`），退出时统一 `SDL_DestroyCursor`
-   ——**不在每帧创建**。
-
-**与改动前对比**
-
-| 场景 | 改动前 | 改动后 |
-| - | - | - |
-| 悬停在按钮上 | 箭头 | 手型 |
-| 悬停在输入框上 | 箭头 | I 形 |
-| 悬停在空白 / 标签上 | 箭头 | **不变**（默认 `Default`） |
-| 悬停不动 | — | **不重复调用** `SDL_SetCursor`（记忆上一次的形状） |
-| 没接 SDL 视频驱动（无头自检） | — | 空操作，不崩 |
-
-**验收**：`cursor_shape_probe`——无头环境下断言「每帧 `SDL_SetCursor` 调用次数」这个计数：
-悬停按钮 5 帧断言 1 次（变化那一次）、悬停不动再 5 帧断言仍是 1 次。
-
-**风险与回退**：风险是「无头自检里没有真窗口，`SDL_CreateSystemCursor` 可能失败」。
-回退：整个光标层用 `#if` 或运行时判空「没有窗口就整段跳过」，并留一个计数观测口。
-
-### T-10 加文件拖放
-
-- **状态**：未开始
-- **落点**：`include/scene/InkingScene.h`（事件槽）、`src/window/InkingWindow.cpp`
-  （`runLoop` 的事件分派）
-
-**准备怎么改**
-
-现有事件分派只认**指针 / 键盘 / 窗口**三类（`docs/zh/InputDesign.md` 那条「输入统一成
-Primary/Secondary」只管指针）。文件拖放是**第四类**，不该硬塞进指针通道——它没有坐标、
-没有按下抬起、跟谁在哪儿被拖进来的无关。
-
-落点选**场景**而不是窗口：因为「拖进来的文件归谁」取决于当前场景（视觉小说里是当前
-章节），而窗口不知道场景的语义。
-
-**大致改动逻辑**
-
-1. `InkingScene` 加公开事件槽 `InkingEvent<const std::vector<std::string>&> filesDropped`。
-2. `InkingWindow::runLoop` 的事件循环里加一个 `SDL_EVENT_DROP_FILE` 分支：
-   收集这一帧内的全部路径（SDL 一次拖多个文件会发多条），在**帧末**一次性派发给当前场景
-   ——不在事件循环中间派发，避免回调里切场景。
-3. 路径转 `std::filesystem::path` 走宽字符（`AGENTS.md` §6 第 53 条：窄串构造 `path`
-   在中文目录下会抛异常）。
-4. 没有活动场景时**丢弃并计数**，不静默。
-
-**与改动前对比**
-
-| 场景 | 改动前 | 改动后 |
-| - | - | - |
-| 拖一个文件进窗口 | 无反应 | `filesDropped` 一次，带 1 个路径 |
-| 一次拖 3 个文件 | — | **一次派发**带 3 个路径（不是三次回调） |
-| 拖进时窗口没有活动场景 | — | 丢弃 + `GetDroppedWithoutSceneCount()` 加一 |
-| 路径含中文 | — | 正常（走宽字符） |
-| 现有的指针 / 键盘分派 | 正常 | **不变**（只加一个 `case`，不动既有分支） |
-
-**验收**：`drop_file_probe`——直接调窗口的「投喂一条 `SDL_EVENT_DROP_FILE`」入口
-（自检里可以用 `SDL_PushEvent`），断言场景收到一次、路径数正确；
-再在没有场景时不崩且计数 +1。
-
-**风险与回退**：风险是「`SDL_PushEvent` 在无头驱动下不可用」。回退：把「收集 + 帧末派发」
-整段抽成一个不依赖 SDL 的内部函数，自检直接调它（照 `HitTable` 那种「纯函数可单测」的写法）。
+- T-10 加文件拖放-已完成（2026-11-03，`InkingScene::filesDropped` +
+  窗口事件循环收集 / 帧末派发；`drop_file_probe` 绿：一次拖 3 个文件 = 一条事件带
+  3 个路径、路径原样保留、无场景时丢弃 +1 且不派发）
 
 ---
 
@@ -371,7 +295,7 @@ Primary/Secondary」只管指针）。文件拖放是**第四类**，不该硬�
 | c | `toggle_like_probe` 绿；三件套**只发 `clicked` / `cancelled` 两个槽**、不引入 `toggled`（§2.5.1 已论证：一个 bool 把"用户点了它"和"它被别人顶掉"混成同一件事）；`mark ⊆ base`；一次换人 = 1 + N 条事件 |
 | d | `tooltip_delay_probe` + `dialog_modal_probe` + `toast_lifetime_probe` 绿；Tooltip / Toast 在 `QueryHit` 里**不可见**（盖在按钮上仍点到按钮）；开着的 Dialog 让底下按钮的 `QueryHit` 落到遮罩、且**点面板后焦点仍归它** |
 | e | `tabbar_switch_probe` 绿；切页后旧页 `QueryHit` 不可达 |
-| f | `cursor_shape_probe` + `drop_file_probe` 绿；无头自检下两者都是安全空操作 |
+| f | `cursor_shape_probe` + `drop_file_probe` 绿；无头自检下两者都是安全空操作；两点都挂在 **`stepFrame`**（不是 `runLoop`），否则 `PumpOnce()` 那条路验不到 |
 
 ### 9.2 进度表
 
@@ -385,12 +309,12 @@ Primary/Secondary」只管指针）。文件拖放是**第四类**，不该硬�
 | T-06 | 加 `Dialog` 弹窗 | d | **已完成**（2026-11-03） |
 | T-07 | 加 `Toast` 通知 | d | **已完成**（2026-11-03） |
 | T-08 | 加 `TabBar` 标签页 | e | **已完成**（2026-11-03） |
-| T-09 | 加鼠标光标形状 | f | 未开始 |
-| T-10 | 加文件拖放 | f | 未开始 |
+| T-09 | 加鼠标光标形状 | f | **已完成**（2026-11-03） |
+| T-10 | 加文件拖放 | f | **已完成**（2026-11-03） |
 
 完成一个任务后，本节状态改 `已完成`，对应段落按 §1.2 压缩成一行——**两处必须同时改**。
 
-### 9.3 批次 a~e 执行记录（与任务书字面不同的地方）
+### 9.3 批次 a~f 执行记录（与任务书字面不同的地方）
 
 写在这里是因为 §1.2 把细目压掉了，而这几条是**实测后改的口径**，不是遗漏：
 
@@ -410,6 +334,9 @@ Primary/Secondary」只管指针）。文件拖放是**第四类**，不该硬�
 | 12 | T-08「复用 `OptionBar` 做标签条，选中态走它的激活通道」 | 标签条**直接摆 `InkingStaticButton`**，选中指示由 TabBar 在装饰遍画下划线 | `OptionBar` 的项宽冻在构造期（`SetItems` 不回读 style），且 `itemLook.width <= 0` 时每项撑成**容器整宽**（竖向菜单语义）——横向标签条要"宽 / 项数"、项数又随 `AddPage` 变，两条路都比直接摆按钮差。它也没有"选中态"这个第四态，只有 `Activate()` 的动作通道 |
 | 13 | T-08 第 2 条「第一页设为可见」 | 首页自动选中**不发 `pageChanged`** | 那是初始状态不是"换了页"；发了的话订阅者每个回调都得先写 `if (before < 0) return;` |
 | 14 | T-01 验收「③ 丢帧计数为 0」 | 改成**比例判据**（丢帧 ≤ 两成） | 主时钟是真实时间，机器一忙一次 sleep 打盹就丢一帧：同一份代码实测跑出过 28/0 与 28/1。历史 bug 的形态是"出一帧丢一大半"，比例判据照样抓得住 |
+| 15 | T-09 第 2 条「在 **`runLoop` 的帧末**取悬停节点、比形状」 | 挂在 **`stepFrame`**（键盘派发之后） | `runLoop` 只是 `while (stepFrame(...))`，无头自检走的 `PumpOnce()` 完全不经过它——挂错地方会读到"`SDL_SetCursor` 0 次"，看起来像没实现（`stepFrame` 顶上那段注释就是为这个坑写的） |
+| 16 | T-09 验收「断言每帧 `SDL_SetCursor` 调用次数」 | 断言 `InkingWindow::GetCursorUpdateCount()`：记的是**判定**次数 | 无头驱动下 `SDL_CreateSystemCursor` 可能返回空，`SDL_SetCursor` 是空操作；按真实调用计数会永远是 0 |
+| 17 | T-10 第 3 条「路径转 `std::filesystem::path` 走宽字符」 | 事件里带 **UTF-8 原样串**，转换交给调用方；文档写明"别拿窄串直接构造 path" | 事件类型是 `const std::vector<std::string>&`；在窗口层转成 path 再转回串等于绕一圈，而宽字符那条纪律属于**用**路径的人 |
 
 顺带修掉的三处既有缺陷（都在本批的验证路径上撞见，不修则"绿"是假的）：
 

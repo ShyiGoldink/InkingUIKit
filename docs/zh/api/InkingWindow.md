@@ -462,6 +462,24 @@ SDL_VIDEO_DRIVER=dummy INK_CAPTURE=/tmp/shot.png INK_AUTOQUIT=1 ./inking_demo.ex
    改之前先看清谁在读它。
 3. **自己 `exit()` 而不走 `RequestExit()`**：跳过帧末析构与纹理释放。
 4. **在 `Show()` 之前依赖 `HasWindow()`**：还没建窗口时它一直是 false。
+## 光标与文件拖放（T-09 / T-10）
+
+两件事都挂在一帧的固定位置（`stepFrame`），**都只在 `stepFrame` 里**——`PumpOnce()`
+不走 `runLoop`，挂错地方的话无头自检会读到 0 次，看起来像"能力没实现"。
+
+| 时机 | 做什么 |
+| - | - |
+| 键盘派发之后 | `applyCursor`：取场景的 `GetHoveredNode()`，问它的 `GetCursorShape()`，**形状变了才** `SDL_SetCursor` |
+| 帧末（脏消费之后） | `dispatchDroppedFiles`：把这一帧收集的路径一次性派发给活跃场景 |
+
+```C++
+std::uint64_t GetCursorUpdateCount() const noexcept;    // 换光标的次数（判定，不是系统真的换了）
+std::uint64_t GetDroppedFileCount() const noexcept;     // 见过的路径总数
+std::size_t GetDroppedWithoutSceneCount() const noexcept; // 没场景时丢弃的路径数
+```
+
+光标对象**每人一个缓存的 `SDL_Cursor*`**（不在每帧创建），窗口收尾时统一销毁。
+
 5. **指望全屏下 `SetZoom` 生效**：全屏下是空操作。
 6. **在按钮回调里调 `Capture()`**：那一刻后缓冲里是上一帧、甚至未定义的内容
    （`Present` 之后不保证保留）。回调里请用 `RequestCapture()`。
@@ -469,4 +487,4 @@ SDL_VIDEO_DRIVER=dummy INK_CAPTURE=/tmp/shot.png INK_AUTOQUIT=1 ./inking_demo.ex
 
 ---
 
-> 本文档对应版本：**0.8.5（0.x 发布版）**。
+> 本文档对应版本：**0.9.0（未发布）**。

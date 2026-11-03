@@ -36,6 +36,7 @@
 #include <dataStruct/InkingShapeSpec.h>
 #include <dataStruct/InkingTransform.h>
 #include <dataStruct/InkingLayout.h>
+#include <input/CursorShape.h>
 #include <input/InkingKeyboardTarget.h>
 #include <input/InkingPointerHandler.h>
 #include <anchor/InkingAnchor.h>
@@ -410,6 +411,18 @@ public:
      * `PassThrough`，见 `SetHitPassThrough`（把几何与策略分开）。
      */
     virtual bool HitTest(float worldX, float worldY) const;
+
+    /**
+     * @brief 指针停在我身上时，系统光标该是什么形状（T-09）。默认 `Default`。
+     *
+     * 谁能声明：只有"这里确实能做事"的组件——按钮 / 滑块 / 勾选件 = `Hand`，
+     * 输入框 = `Text`。**不要**给容器声明：容器的悬停目标最终是它里面的具体组件，
+     * 容器自己抢着声明会让"整块面板都是手型"。
+     *
+     * 窗口每帧读**一次**（当前悬停节点），形状不变就一个字节都不做——所以这里
+     * 是个纯查询，不许有副作用（`AGENTS.md` §3 第 3 条：查询不标脏）。
+     */
+    virtual InkingCursorShape GetCursorShape() const noexcept;
 
     /**
      * @brief 命中测试的**节点版**：这个点落在我的子树里，"最上面那个该收事件"的

@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include <event/InkingEvent.h>
 #include <scene/HitTable.h>
 #include <scene/SceneLibrary.h>
 #include <scene/SceneRegisterToken.h>
@@ -608,6 +609,31 @@ public:
 
     /** 指针现在悬停在哪个节点上（没有时为 nullptr）。自检观测口。 */
     InkingWidget* GetHoveredNode() const noexcept;
+
+    // ---------------- 文件拖放（T-10） ----------------
+    //
+    // 它是**第四类输入**（指针 / 键盘 / 窗口之外）：没有坐标、没有按下抬起，
+    // 也不该塞进指针通道（`docs/zh/InputDesign.md` 那条"输入统一成 Primary /
+    // Secondary"只管指针）。落点在**场景**而不是窗口：拖进来的文件归谁，取决于
+    // 当前展示的是哪一章 / 哪一页，而窗口不知道这个语义。
+
+    /**
+     * @brief 这一帧被拖进来的文件（**一次拖放一条事件**）。
+     *
+     * 一次拖 3 个文件 → 一条事件带 3 个路径（不是三次回调）。窗口层在**帧末**
+     * 统一派发，所以订阅者可以在回调里安全地切场景 / 关场景——那时不在事件循环里。
+     *
+     * 路径是 SDL 给的 **UTF-8 原样串**。要 `std::filesystem::path` 请走宽字符转换
+     * （`AGENTS.md` §6 第 53 条：窄串直接构造 `path` 在中文目录下会抛异常）。
+     */
+    InkingEvent<const std::vector<std::string>&> filesDropped;
+
+    /**
+     * @brief 把这一帧收集到的拖放路径派发出去。**只由窗口层调**。
+     *
+     * 空列表是空操作（不派发一条"什么都没有"的事件）。
+     */
+    void DispatchFilesDropped(const std::vector<std::string>& paths);
 
     // ---------------- 键盘（A3） ----------------
     //

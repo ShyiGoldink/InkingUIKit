@@ -198,6 +198,13 @@ class DemoScene : public InkingScene {
 public:
     DemoScene() : InkingScene("demo") {
         BuildUi();
+        // 文件拖放（T-10）：一次拖 N 个文件 = 一条事件带 N 个路径。
+        // 示例只留一行日志——"拖进来没反应"时，先看 Log.html 里有没有这一条，
+        // 就知道是没收到、还是收到了没人管。
+        filesDropped.Subscribe([](const std::vector<std::string>& paths) {
+            INK_LOG_INFO("DemoScene", "filesDropped：" + std::to_string(paths.size()) +
+                                          " 个文件");
+        });
     }
 
 private:

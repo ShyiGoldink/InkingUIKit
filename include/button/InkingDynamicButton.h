@@ -119,6 +119,11 @@ public:
      */
     bool HitTest(float worldX, float worldY) const override;
 
+    /// 静态档同一条：指针在按钮上就是手型（T-09）。
+    InkingCursorShape GetCursorShape() const noexcept override {
+        return InkingCursorShape::Hand;
+    }
+
     // ---------------- 属性（运行期可改） ----------------
 
     /// 形状定义：渲染 / 命中 / 包围盒三者都从它派生（InkingShapeSpec.h）。

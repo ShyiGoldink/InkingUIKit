@@ -74,6 +74,11 @@ public:
     /// 吃点击（矩形本体即热区）：点它定位光标、拖它扩选。
     bool HitTest(float worldX, float worldY) const override;
 
+    /// 指针在输入框上 = I 形光标（T-09）："这里能打字"与"这里能点"是两件事。
+    InkingCursorShape GetCursorShape() const noexcept override {
+        return InkingCursorShape::Text;
+    }
+
     // ---------------- 内容 ----------------
 
     const std::string& GetEditText() const noexcept { return _edit.Text(); }
