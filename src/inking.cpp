@@ -26,7 +26,13 @@
 #include <prefab/ListView.h>
 #include <prefab/MenuBar.h>
 #include <prefab/OptionBar.h>
+#include <prefab/ProgressBar.h>
 #include <prefab/Select.h>
+#include <prefab/Slider.h>
+#include <prefab/ToastHost.h>
+#include <prefab/ToggleLike.h>
+#include <prefab/Tooltip.h>
+#include <prefab/Dialog.h>
 #include <text/InkingDynamicLabel.h>
 #include <text/InkingStaticLabel.h>
 #include <text/LabelLike.h>
@@ -73,6 +79,10 @@ concept HasSetVisible = requires(T& node) { node.SetVisible(true); };
 
 template <typename T>
 concept HasChangeZIndex = requires(T& node) { node.ChangeZIndex(1); };
+
+/// T-03：进度条只该有 `SetProgress` 一个改状态的写入口（`SetValue` 是滑块的）。
+template <typename T>
+concept HasSetValue = requires(T& node) { node.SetValue(0.0f); };
 
 /// A13：运行期显示变换的写入口（在**基类**上，所有组件都能调）。
 template <typename T>
@@ -574,6 +584,99 @@ static_assert(std::has_virtual_destructor_v<InkingStaticVideo>,
               "视频持有解码状态（pimpl），析构必须虚");
 static_assert(!std::is_copy_constructible_v<InkingStaticVideo>,
               "解码状态与音频流句柄不能跟着对象被拷贝走");
+
+// ---------------------------------------------------------------------------
+// 计量两件套（T-02 / T-03）：滑块与进度条
+//
+// 两者都是**静态档**：几何构造即定型，运行期变的只是"值 / 进度"这一层内容。
+// 所以这里钉的与图片 / 视频是同一批契约，不是新契约——
+// **没有**几何写入口、**不能**同时是动态档、骨架变化（层级 / 可见性）照常有。
+//
+// 进度条额外钉一条：**它不是可交互控件**（只读，没有事件槽）。所以这里断言它
+// 没有自己的指针钩子可重写——用"它根本不重写 onPointerPress"这件事来表达是
+// 做不到的（虚函数总是存在），于是换成"它没有 `SetProgress` 以外能改状态的
+// 公开写入口"这条更实在的：`SetProgress` 存在、`SetValue` 不存在。
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_base_of_v<InkingStaticWidget, inking_prefab::Slider>,
+              "滑块是静态组件：几何构造即定型，变的是值不是几何");
+static_assert(!std::is_base_of_v<InkingDynamicWidget, inking_prefab::Slider>,
+              "静态 / 动态是二选一，不能既进表又不进表");
+static_assert(!HasResize<inking_prefab::Slider>, "静态组件不该有 Resize");
+static_assert(!HasChangeOffset<inking_prefab::Slider>,
+              "静态组件不该有 ChangeOffset");
+static_assert(HasChangeZIndex<inking_prefab::Slider>,
+              "层级是骨架变化，两版都该有");
+
+static_assert(std::is_base_of_v<InkingStaticWidget, inking_prefab::ProgressBar>,
+              "进度条是静态组件：只标重绘脏，不开每帧路径");
+static_assert(!std::is_base_of_v<InkingDynamicWidget, inking_prefab::ProgressBar>,
+              "进度条不开每帧推进（游标式进度要另做 DynamicProgressBar）");
+static_assert(!HasResize<inking_prefab::ProgressBar>, "静态组件不该有 Resize");
+static_assert(!HasChangeOffset<inking_prefab::ProgressBar>,
+              "静态组件不该有 ChangeOffset");
+
+static_assert(HasSetValue<inking_prefab::Slider>,
+              "滑块的写入口是 SetValue（夹取 + 量化 + 变了才发事件）");
+static_assert(!HasSetValue<inking_prefab::ProgressBar>,
+              "进度条没有 SetValue：那是滑块的语义（只读控件不该有可拖的含义）");
+
+// ---------------------------------------------------------------------------
+// 勾选三件套（T-04）：Checkbox / Radio / Switch 共用一个 `ToggleLike`
+//
+// 三个都是静态档，且**共用同一条选中态语义**——所以断言只写一遍、对三个类型
+// 各展开一次（模板一开就知道有没有哪个子类偷懒没继承到）。
+// 另外钉住两条这一段特有的边界：
+//   - `Radio` 不可拷贝：它持有一个指向组的外链，拷贝会得到"两份都以为自己
+//     在组里"的悬垂状态；
+//   - 三件套**没有** `SetValue`（那是滑块的语义），写入口只有 `SetChecked`。
+// ---------------------------------------------------------------------------
+
+template <typename T>
+constexpr bool IsToggleStatic() {
+    return std::is_base_of_v<InkingStaticWidget, T> &&
+           !std::is_base_of_v<InkingDynamicWidget, T>;
+}
+
+static_assert(IsToggleStatic<inking_prefab::Checkbox>(), "复选框是静态组件");
+static_assert(IsToggleStatic<inking_prefab::Radio>(), "单选框是静态组件");
+static_assert(IsToggleStatic<inking_prefab::Switch>(), "开关是静态组件");
+
+static_assert(!HasResize<inking_prefab::Checkbox> &&
+                  !HasResize<inking_prefab::Radio> &&
+                  !HasResize<inking_prefab::Switch>,
+              "三件套都该是静态组件：不该有 Resize");
+static_assert(!HasChangeOffset<inking_prefab::Checkbox> &&
+                  !HasChangeOffset<inking_prefab::Radio> &&
+                  !HasChangeOffset<inking_prefab::Switch>,
+              "三件套都该是静态组件：不该有 ChangeOffset");
+static_assert(!HasSetValue<inking_prefab::Checkbox> &&
+                  !HasSetValue<inking_prefab::Radio> &&
+                  !HasSetValue<inking_prefab::Switch>,
+              "三件套的写入口是 SetChecked，不是滑块的 SetValue");
+static_assert(!std::is_copy_constructible_v<inking_prefab::Radio>,
+              "Radio 持有组的外链：拷贝会得到两份都以为自己在组里的状态");
+
+// ---------------------------------------------------------------------------
+// 浮层三件套（T-05 / T-06 / T-07）
+//
+// 一个"档位"上的判断是关键：**浮层里只有 Dialog 是静态档**。
+//   - `Tooltip` / `ToastHost` 要**移动**（落位 / 重排），静态档没有几何写入口，
+//     所以必须是动态档；
+//   - `Dialog` 的几何 = 整块设计画布，**永远不变**（变的是可见性），所以它是静态档
+//     ——于是它进命中表，"盖住底下"这件事是表在回答，不用每帧算。
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_base_of_v<InkingDynamicWidget, inking_prefab::Tooltip>,
+              "Tooltip 要落位（改锚点 / 偏移）⇒ 必须是动态档");
+static_assert(!std::is_base_of_v<InkingDynamicWidget, inking_prefab::Dialog>,
+              "Dialog 的几何是整块画布、永不变 ⇒ 静态档，进命中表");
+static_assert(std::is_base_of_v<InkingDynamicWidget, inking_prefab::ToastHost>,
+              "ToastHost 要重排子项（改偏移）⇒ 必须是动态档");
+static_assert(!HasResize<inking_prefab::Dialog>,
+              "Dialog 的尺寸就是画布：不该有 Resize（遮罩尺寸一变，模态就有缝）");
+static_assert(std::has_virtual_destructor_v<inking_prefab::Dialog>,
+              "Dialog 有虚函数（钩子 + 事件槽）⇒ 析构必须虚");
 
 // ---------------------------------------------------------------------------
 // 资源模块（A11）：外置资源 + 轻量混淆

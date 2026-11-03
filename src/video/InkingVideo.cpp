@@ -3,6 +3,7 @@
 #include <asset/InkingAsset.h>
 #include <audio/InkingAudio.h>
 #include <button/ButtonPaint.h>
+#include <dataStruct/InkingColor.h>
 #include <detail/InkLog.h>
 #include <render/InkingDraw.h>
 #include <detail/InkingHit.h>
@@ -718,8 +719,9 @@ void InkingStaticVideo::applyData(const InkingVideoData& data) {
 #else
     INK_LOG_WARN(std::string(InkingVideoModuleName),
                  "构建时没接 FFmpeg：视频组件是**空转档**（能编、能跑、画面不动，"
-                 "画兜底色）。启用方式见 docs/SETUP.md 的「FFmpeg（视频）」一节。"
-                 "素材：" + _data.source);
+                 "画兜底色）。CMake 配置阶段应当已经打过一条 WARNING——"
+                 "装开发包（msys2：pacman -S mingw-w64-ucrt-x86_64-ffmpeg）后"
+                 "重新 cmake 配置即可。素材：" + _data.source);
 #endif
 }
 
@@ -919,11 +921,22 @@ void InkingStaticVideo::onRender(float pixelX, float pixelY) const {
         spec.frameHeight = static_cast<float>(GetHeight()) * mag;
         spec.imageWidth = static_cast<float>(impl.textureWidth);
         spec.imageHeight = static_cast<float>(impl.textureHeight);
+        // tint **必须把 RGB 归白、只借 alpha**（T-01 实测的坑）。
+        //
+        // `fillShapeTextured` 的顶点色是"纹理 × 顶点色"：RGB 也参与乘法。
+        // 而 `_data.normal.color` 的语义是"**没有画面时的兜底色**"（见
+        // `VideoData.h`），默认值是不透明黑 0xFF000000 —— 直接当 tint 传进去，
+        // 整段画面会被乘成黑色：**帧在走、计数在涨、一个像素都不出**。
+        // 自检就是这样先跑出"解码 28 帧 / 上屏 28 帧 / 抽到 1 种颜色"的。
+        // 这里只取它的 alpha 做淡入淡出，与 `fillShapeTextured` 的契约一致。
+        const std::uint32_t tint =
+            (static_cast<std::uint32_t>(InkingColorAlpha(_data.normal.color)) << 24)
+            | 0x00FFFFFFu;
         // 画面走**形状层**：形状裁剪 / UV / 跟随变换 / 圆角羽化全复用 B1 那份实现。
         inking_detail::fillShapeTextured(inking_detail::currentRenderer(), GetShape(), GetWidth(),
                                   GetHeight(), mag, pixelX, pixelY,
                                   GetDisplayTransform(), impl.texture, spec,
-                                  _data.normal.color);
+                                  tint);
         return;
     }
 #else

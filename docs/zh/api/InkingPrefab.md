@@ -18,9 +18,21 @@
 | `FilePicker` | 路径框 + 快捷位置 + 盘符栏 + 列表 + 按钮栏 | `prefab/FilePicker.h` |
 | `MenuPopup` | 定点弹出的竖排菜单（项可绑局部快捷键） | `prefab/MenuPopup.h` |
 | `ListRow` | 带选中色的列表行（`InkingStaticButton`） | `prefab/ListRow.h` |
+| `Slider` | 轨道 + 已填充 + 圆盘的滑块（点 / 拖 / 键盘） | `prefab/Slider.h` |
+| `ProgressBar` | 确定进度条（只读） | `prefab/ProgressBar.h` |
+| `Checkbox` / `Radio` / `Switch` | 勾选三件套（+ 显式 `RadioGroup`） | `prefab/ToggleLike.h` |
+| `Tooltip` | 悬停提示（延迟弹出、不挡点击） | `prefab/Tooltip.h` |
+| `Dialog` | 模态对话框（遮罩 + 居中面板 + Esc/Enter） | `prefab/Dialog.h` |
+| `ToastHost` | 通知条宿主（连发堆叠、到期自消失） | `prefab/ToastHost.h` |
 | `PrefabTheme` | 一套配色 / 圆角 / 字体路径常量 | `prefab/PrefabTheme.h` |
 
 所有预制件都在 `prefab` 命名空间下（`ListRow` 也是）。
+
+上一段那句"不新增底层能力"对**复合件**（MenuBar / OptionBar / ListView / Select /
+FilePicker / MenuPopup / ListRow）严格成立；`Slider` / `ProgressBar` / 三件套 / 浮层三件套是 0.9.0 新增的
+**单件**（叶子控件），它们确实有自己的 `onRender`——但绘制只调
+`inking_detail::fillShape`（全仓库唯一的填充入口），命中与绘制读同一份 `GetParts()`，
+没有第二份坐标计算。
 
 ## 一、MenuBar
 
@@ -448,7 +460,260 @@ public:
 选中态的实现是**一层覆盖**：把外观那一笔的颜色换成 `selectedColor`（文字照旧）。
 真要做"选中态是外观的第四态"得改按钮的三态模型，那是底层的事。
 
-## 七、PrefabTheme
+## 七、Slider
+
+```C++
+struct SliderData : public InkingAnchorData {   // 定位 / 尺寸 / 层级复用锚点那一份
+    std::string name = "slider";
+    float min = 0, max = 1, value = 0, step = 0;  // step <= 0 = 连续
+    float trackHeight = 6, thumbDiameter = 18;
+    InkingButtonAppearance track, fill, thumb;    // 三份外观（§2.5.2）
+    InkingStrokeSpec thumbStroke;
+    InkingShapeSpec trackShape = InkingShapeSpec::Capsule();
+    InkingShapeSpec thumbShape = InkingShapeSpec::Circle();
+    static SliderData MakeDefault();             // 主题色那一套
+};
+
+struct SliderParts { InkingShapeBounds track, fill, thumb; };
+
+class Slider : public InkingStaticWidget {
+public:
+    InkingEvent<float, float> changed;   // (现在, 之前)，**只在真变时**发
+    InkingEvent<> released;              // 主键抬起一次；业务提交用它
+    bool SetValue(float v);              // 夹取 + 量化；没变返回 false
+    float GetValue() const noexcept;
+    float GetRatio() const noexcept;     // 0~1（max == min 时恒 0，不给 NaN）
+    const SliderParts& GetParts() const noexcept;
+    bool HitTest(float worldX, float worldY) const override;
+    bool WantsKeyboardFocus() const noexcept override;  // 要（←/→/Home/End）
+};
+```
+
+```C++
+inking_prefab::Slider slider(&panel);            // 默认 200×28 / 0~1 / 连续
+slider.changed.Subscribe([](float now, float before) { SetVolume(now); });
+slider.released.Subscribe([] { SaveSettings(); });   // 拖完才落盘
+```
+
+四条会咬人的：
+
+1. **热区是整块组件框**，不是那 6 像素高的轨道条（6px 在 1080p 下点不中）。
+   "圆盘不单独进命中"这条由"没有第二个热区"满足。
+2. **圆盘比轨道高是设计**：默认盘 18、轨 6，所以"盘落在轨道内"只在**水平方向**
+   成立，纵向同心、垂直溢出。硬把盘裁进轨道会变成"半个圆"。
+3. **值没变就不发事件**：同一位置连点两次，第二次 `changed` 一次都不来
+   （`SetValue` 返回 false 且一个脏都不标）。
+4. **量化相对 `min` 取整**，不是相对 0——否则 `[-1, 1]` 步长 `0.5` 取不到 `min`。
+
+第一版没有 `SetPainter`（见"常见坑"第 7 条），也不做竖向 / 双滑块。
+
+## 八、ProgressBar
+
+```C++
+struct ProgressBarData : public InkingAnchorData {
+    std::string name = "progressBar";
+    float progress = 0;                            // 0~1，构造时夹
+    InkingButtonAppearance track, fill;
+    InkingShapeSpec shape = InkingShapeSpec::Capsule();
+    static ProgressBarData MakeDefault();
+};
+
+struct ProgressBarParts { InkingShapeBounds track, fill; };
+
+class ProgressBar : public InkingStaticWidget {
+public:
+    bool SetProgress(float p);                     // 夹到 [0,1]；没变返回 false
+    float GetProgress() const noexcept;
+    const ProgressBarParts& GetParts() const noexcept;
+};
+```
+
+**只读**：没有事件槽、不吃点击、不进键盘焦点。进度 0 时**不画**填充块（不是画一个
+0 宽块——0 宽的三角化没有意义，还会多一条提交记录）。每帧喂同一个值零额外重绘。
+
+填充宽与 `Slider` 共用 `prefab/PrefabParts.h` 的 `FillBoundsInTrack`（一份实现，
+两个调用方）——抄两份就会出现"滑块 74.0 像素、进度条 73.6 像素"那种并排才看得出的差。
+
+## 九、勾选三件套（Checkbox / Radio / Switch）
+
+一个基类 + 三个子类 + 一个显式的组（都在 `prefab/ToggleLike.h`）：
+
+```C++
+struct ToggleData : public InkingAnchorData {
+    std::string name = "toggle";
+    bool checked = false;
+    InkingButtonAppearance base, mark;       // 框底/圆底/轨道 + 勾/圆点/滑块
+    InkingStrokeSpec baseStroke;
+    InkingShapeSpec baseShape, markShape;    // markShape 默认 Rect() 是"用内置的"
+    float markInset = 0.18f;                 // Checkbox/Radio 的内缩比例
+    float knobInset = 2.0f;                  // Switch 滑块与轨道边的间距
+};
+
+struct ToggleParts { InkingShapeBounds base, mark; };
+
+ToggleData MakeCheckboxData();   // 18×18 白底 + 主色勾
+ToggleData MakeRadioData();      // 18×18 白底 + 主色圆点
+ToggleData MakeSwitchData();     // 40×22 沉色轨道 + 白滑块
+
+class ToggleLike : public InkingStaticWidget {
+public:
+    InkingEvent<> clicked;       // 变成选中 / 开（**程序调 SetChecked 也会发**）
+    InkingEvent<> cancelled;     // 变成未选中 / 关
+    bool IsChecked() const noexcept;
+    bool SetChecked(bool checked);           // 同值返回 false、零事件
+    const ToggleParts& GetParts() const noexcept;
+};
+
+class Checkbox : public ToggleLike { /* 内置勾：两段圆头线 */ };
+class Radio : public ToggleLike {
+public:
+    void SetGroup(RadioGroup* group) noexcept;   // 不接管所有权
+};
+
+class RadioGroup {                 // 只管互斥，不拥有成员
+    void Add(Radio*); void Remove(Radio*);
+    void Select(Radio*);           // 先清其它、再选它
+    Radio* GetChecked() const noexcept;
+};
+
+class Switch : public ToggleLike {
+    void SetAnimated(bool animated) noexcept;   // 关掉后立刻到位
+    float GetKnobRatio() const noexcept;        // 0 = 关端，1 = 开端
+};
+```
+
+```C++
+inking_prefab::Checkbox agree(&panel);
+agree.clicked.Subscribe([]{ Enable(); });
+agree.cancelled.Subscribe([]{ Disable(); });
+
+inking_prefab::RadioGroup mode;            // 互斥由它负责
+mode.Add(&radioA); mode.Add(&radioB);      // 用 radio.SetGroup(&mode) 也一样
+radioA.SetGroup(&mode); radioB.SetGroup(&mode);
+```
+
+五条会咬人的：
+
+1. **事件只有一对槽**（`clicked` / `cancelled`），没有 `SetOnClicked`。三个控件差别只在
+   **谁触发**：Checkbox / Switch 是用户点它；**Radio 是"同组另一个被选中"**。
+2. **`RadioGroup::Select` 一次发 1 + N 条**：目标 `clicked`、组内其它各一条 `cancelled`。
+   这是设计（"一组变化各发各的"）——业务上"从谁换到谁"一个 bool 表达不了。
+3. **点已选中的 Radio 不翻转、不发事件**（单选不可反选）；没挂组的 `Radio` 单用也安全，
+   只是没有互斥。
+4. **`SetChecked` 只标重绘脏**：几何没变，所以命中表不重烘、父容器不重排。
+5. **Switch 的状态只由滑块位置表达**：轨道颜色不随状态变。要变色就自己订阅两个槽换
+   `base` 的外观（这一版没有 `SetData`，所以那意味着重建组件）——写在这里免得当成 bug。
+
+`markShape` 默认 `Rect()` 是一个**哨兵**：表示"用内置的那个 mark"（Checkbox 画勾、
+其余画圆）。给它别的形状（`Circle` / `PolygonPath`）就按那个画——"换勾的样式"于是只是
+换一个形状。内置勾是**两段圆头线**（不是 `PolygonPath`：路径顶点是组件本地坐标、不随框
+缩放，换个尺寸就得换一份点表）。
+
+## 十、Tooltip
+
+```C++
+struct TooltipData {
+    std::string fontPath; float fontSize = 14.0f;
+    float delay = 0.4f;                        // 停留多久才弹
+    float paddingX = 10, paddingY = 6, maxWidth = 320, radius = 8, gap = 6;
+    InkingButtonAppearance panel;              // 深色底
+    std::uint32_t textColor = 0xFFFFFFFF;
+    static TooltipData MakeDefault();
+};
+
+class Tooltip : public InkingDynamicPanel {
+public:
+    bool ShowFor(InkingWidget* anchor, const std::string& text);  // 开始计时
+    void Hide();                                                  // 复位 + 收起
+    bool IsShowing() const noexcept;    // **真的画出来了**
+    bool IsPending() const noexcept;    // 还在计时
+    bool HitTest(float, float) const override { return false; }   // 不参与命中
+    InkingWidget* HitTestNode(float, float) noexcept override;    // 恒 nullptr
+};
+```
+
+四条：
+
+1. **它不挡点击**：`HitTest` 恒 false、`HitTestNode` 恒 nullptr（子树里有什么都不算）。
+   所以"提示盖在按钮上、点下去还是按钮"是构造上成立的，不靠调用方配。
+2. **不基于 `InkingFixedPopup`**：那个类 `OwnsSubtreeHit()` 为真 = 吃掉子树命中，
+   和 Tooltip 要的"穿透"正好相反。
+3. **计时挂在 `onAnimationTick`**（每渲染帧、带 delta、非 const）。所以探针能按帧
+   精确喂时间，不依赖墙上时间。⚠️ **计时期间节点必须可见**——不可见的节点收不到
+   任何每帧钩子，计时就永远不走。因此 `IsVisible()` 在计时期间已是真，
+   "用户看得到"要看 `IsShowing()`。
+4. 落位复用 `inking_detail::SolvePopupPlacement`：定点 = 锚点矩形底部中点、
+   期望 `(0.5, 0)` 向下展开；下方放不下就翻到上方再夹紧。
+
+## 十一、Dialog
+
+```C++
+struct DialogData {
+    int width = 420, height = 240; float radius = 16;
+    InkingButtonAppearance panel, scrim;       // scrim 默认 0x66000000
+    static DialogData MakeDefault();
+};
+
+class Dialog : public InkingStaticPanel {
+public:
+    InkingEvent<> accepted, cancelled;
+    InkingEvent<int> action;                   // 确认时带"默认动作"索引
+    void Open(); void Close();                 // Close 不发任何事件
+    bool Accept(); bool Cancel();              // 关 → 再发事件
+    bool IsOpen() const noexcept;
+    InkingWidget* AddItem(std::unique_ptr<InkingWidget>);
+    void SetDefaultAction(int index) noexcept;
+    void SetCloseOnScrimClick(bool on) noexcept;   // 默认 false
+};
+```
+
+**它不是 `InkingFixedPopup`**（与任务书初稿不同，理由见任务书 §9.3）：
+
+- `FixedPopup` 是**点锚定**的（`OpenAt(x,y)` 贴着指针展开），而对话框是**居中**的；
+- 模态要挡住的是**整块画布**，所以必须有一个铺满的实体去命中。于是本类**自己就是
+  遮罩**（静态面板、几何 = 设计画布），中间那块框是它的子面板——命中、绘制顺序、
+  "关掉就完全不存在"三件事一起成立，不需要两个节点各抬一次 z。
+
+模态的四条行为定死，不留给调用方猜：
+
+| 项 | 行为 |
+| - | - |
+| 点遮罩 | 默认**不关**（防误触丢数据）；`SetCloseOnScrimClick(true)` 之后 = 取消 |
+| Esc | 关 + `cancelled` |
+| Enter | 关 + `accepted` + `action(默认索引)` |
+| 焦点 | 打开即夺取；**每次点面板被清掉后下一帧自己收回来**（不然 Esc 从此没落点）；关掉即释放 |
+
+事件顺序固定"**先关、再发**"：订阅者在回调里读到 `IsOpen()` 为假。
+
+## 十二、ToastHost
+
+```C++
+struct ToastData {
+    float width = 260, marginRight = 24, marginBottom = 24, gap = 8;
+    float paddingX = 12, paddingY = 8, radius = 10, fontSize = 14;
+    InkingButtonAppearance panel; std::uint32_t textColor;
+    static ToastData MakeDefault();
+};
+
+class ToastHost : public InkingDynamicPanel {
+public:
+    InkingEvent<int> dismissed;               // 带 Show() 返回的 id
+    int Show(const std::string& text, float seconds = 2.0f);   // 返回 id（从 1 起）
+    std::size_t GetToastCount() const noexcept;
+    void Clear();                             // 不发 dismissed
+};
+```
+
+四条：
+
+1. **对指针透明**（同 Tooltip）——通知不该挡点击。
+2. **位置自己算**：栈的增删是运行期的，而布局求解器那套是构造期定型。
+   从下往上堆，新的贴最下面。
+3. **到期在 `onAnimationTick` 里"先收集 → 循环外统一删 → 再重排"**，不在遍历中途删。
+4. `dismissed` 带的是**id**不是下标：前面那条消失之后下标会整体前移。
+   `Clear()` 不发 `dismissed`——那是"到期"的通知，不是"被清掉"。
+
+## 十三、PrefabTheme
 
 命名空间 `inking_prefab::theme`，一组 `inline constexpr` 常量 + 一个函数：
 
@@ -477,7 +742,12 @@ std::string DefaultFontPath();
 4. **`Select` 自己开 `clipChildren`**：展开的那一列被自己剪掉。
 5. **`FilePicker::SetDirectory` 传窄串**：中文目录抛异常。传 `std::filesystem::path`。
 6. **菜单栏不重写 `HandlesSubtreeWheel`**：滚轮被指针下的按钮吃掉（本类已重写，别删）。
+7. **`Slider` / `ProgressBar` 没有 `SetPainter`**：`InkingCanvasContext` 的构造是
+   `private`（`friend` 只有 `InkingStaticCanvas`，必须带一个 `CanvasRecorder`），
+   叶组件挂不了绘制器。要整块自绘请把 `InkingStaticCanvas` 叠在上面。
+8. **部件外观写成 `type == Image`**：部件级贴图没接，三笔会按各自 `color` 画成纯色
+   （构造时有一条 `WARN`，不静默）。要贴图就叠一个 `InkingStaticImage`。
 
 ---
 
-> 本文档对应版本：**0.8.5（0.x 发布版）**。
+> 本文档对应版本：**0.9.0（未发布：0.x 发布版）**。

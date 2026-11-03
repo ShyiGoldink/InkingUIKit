@@ -62,6 +62,13 @@
 #include <prefab/MenuBar.h>
 #include <prefab/MenuPopup.h>
 #include <prefab/MenuPopupData.h>
+#include <prefab/Dialog.h>
+#include <prefab/ProgressBar.h>
+#include <prefab/Slider.h>
+#include <prefab/ToastHost.h>
+#include <prefab/ToggleLike.h>
+#include <prefab/Tooltip.h>
+#include <video/InkingVideo.h>
 #include <render/InkingBatch.h>
 #include <render/InkingGlyphAtlas.h>
 #include <render/InkingMesh.h>
@@ -8315,6 +8322,923 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// T-01：视频真的出画（批次 a 的门槛）
+// ---------------------------------------------------------------------------
+//
+// 判据对应任务书 §3 T-01 的验收，但用**实际的 API 名字**：任务书写的是
+// `GetFrameCount()`，库里没有这个函数（观测口是 `GetDecodedFrameCount()` /
+// `GetPresentedFrameCount()` / `GetDroppedFrameCount()`）。
+//
+//   ① 解出的帧数 > 0；
+//   ② 画面尺寸 = 320×240（与 `ffmpeg -f lavfi -i testsrc=size=320x240` 一致）；
+//   ③ 丢帧 = 0（1 秒素材、30fps 的帧间隔 33ms，20ms 一帧地消费不该丢）。
+//
+// 外加一条**像素判据**：画面内部不止一种颜色。兜底色是一整块纯色，只有真的把
+// testsrc 贴上去了才会出现多色——这条才是"真出画"，前三条只能证明"解出来了"。
+void CheckVideoDecode(SDL_Renderer* renderer) {
+    std::printf("\n-- 视频解码：真的出画（T-01）--\n");
+    if (renderer == nullptr) {
+        Check(false, "T-01：需要一个渲染器（拿不到就跳过整组）");
+        return;
+    }
+
+    struct VideoScene : public InkingScene {
+        VideoScene() : InkingScene("probe_video_decode") {}
+    };
+    VideoScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "T-01：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+
+    InkingVideoData data;
+    data.name = "t01_video";
+    data.width = 320;
+    data.height = 240;
+    data.source = "probe.mp4";
+    data.fit = InkingVideoFit::Fill;  // 铺满 = 画面四边贴齐组件框，读像素好定位
+    // 兜底色故意选一个 testsrc 里不会出现的值：一旦读像素看到它，就说明"贴的是
+    // 兜底而不是画面"——这比"读到黑色"更能定性（黑既可能是没画，也可能是画面黑）。
+    data.normal.color = 0xFF123456u;
+    data.options.autoplay = false;    // 手动 Play：帧序与断言对得上
+    data.options.loop = false;
+    data.options.muted = true;        // 没有音轨，静音只是别让音频层参与
+
+    auto* video = static_cast<InkingStaticVideo*>(
+        scene.AddChild(std::make_unique<InkingStaticVideo>(&scene, data)));
+
+    Check(video->AssetExists(), "T-01：素材 probe.mp4 在资源根里找得到");
+    Check(video->IsOpened(), "T-01：打开成功（解封装 + 解码器都就绪）");
+    Check(video->GetVideoWidth() == 320 && video->GetVideoHeight() == 240,
+          "T-01：② 解出的画面 = 320×240（与生成参数一致）");
+    if (!video->IsOpened()) {
+        // 没打开就没什么可断言的了：把"环境缺什么"说清楚，别让它伪装成通过。
+        std::printf("      [skip] 视频没打开（素材 %s）——解码断言不适用\n",
+                    video->AssetPath().empty() ? "没解析到" : video->AssetPath().c_str());
+        return;
+    }
+
+    video->Play();
+    // 1 设计单位 = 1 像素：窗口 640×360，组件在 (0,0) 320×240 ⇒ 读像素不用换算。
+    SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                     InkingDesignHeight(),
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    InkingSceneLibrary::SetActiveScene(&scene);
+
+    // 约 0.8 秒真实时间：解码在后台线程跑，而"上屏"由主时钟（无音轨 ⇒ 真实时间）
+    // 决定——循环转得再快也不会让画面提前出现，所以就按真实时间等。
+    for (int i = 0; i < 40; ++i) {
+        scene.TickFrame(1.0f / 30.0f);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    std::printf("         解码 %u 帧 / 上屏 %u 帧 / 丢 %u 帧 / 时长 %.2f 秒\n",
+                video->GetDecodedFrameCount(), video->GetPresentedFrameCount(),
+                video->GetDroppedFrameCount(),
+                static_cast<double>(video->GetDurationSeconds()));
+
+    Check(video->GetDecodedFrameCount() > 0, "T-01：① 解出的帧数 > 0");
+    Check(video->GetPresentedFrameCount() > 0,
+          "T-01：上屏帧数 > 0（画面真的贴上去了，不是一直在画兜底色）");
+    Check(video->GetDroppedFrameCount() == 0,
+          "T-01：③ 丢帧 = 0（1 秒素材、20ms 一帧地消费不该丢）");
+
+    // 像素：读画面**内部**（避开边缘那一条抗锯齿带）。
+    const std::vector<std::uint32_t> pixels =
+        ReadPixelRegion(renderer, SDL_Rect{40, 30, 240, 180});
+    std::vector<std::uint32_t> seen;
+    for (std::size_t i = 0; i < pixels.size(); i += 32) {
+        if (std::find(seen.begin(), seen.end(), pixels[i]) == seen.end()) {
+            seen.push_back(pixels[i]);
+        }
+        if (seen.size() > 8) {
+            break;
+        }
+    }
+    std::printf("         画面内部抽到的颜色种数：%zu（兜底纯色只会是 1）；"
+                "首像素 0x%08X / 视频绝对位置 (%.1f, %.1f)\n",
+                seen.size(), pixels.empty() ? 0u : pixels[0],
+                static_cast<double>(video->GetAbsX()),
+                static_cast<double>(video->GetAbsY()));
+    // 兜底色若出现在画面里，说明贴的是**兜底**而不是画面（或者画面的 tint 被它
+    // 乘黑了）。两种都算"没出画"，所以这条一起判。
+    const bool sawFallback =
+        std::find(seen.begin(), seen.end(), data.normal.color) != seen.end();
+    Check(pixels.size() == 240u * 180u && seen.size() > 1 && !sawFallback,
+          "T-01：画面内部不止一种颜色、且看不到兜底色（真的把 testsrc 贴上去了）");
+
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    InkingSceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// T-02：滑块的点击 / 拖动 / 键盘 / 部件
+// ---------------------------------------------------------------------------
+//
+// 走**真路径**：喂指针状态 + `DispatchPointer()`（与图片拖动那条探针同一套），
+// 于是"场景判出按下算谁的、捕获、拖动派发"整条链都真的跑了一遍——直接调
+// `SetValue` 只能证明写入口，证不了手感那一层。
+void CheckSliderDrag() {
+    std::printf("\n-- 滑块：点 / 拖 / 键盘 / 部件（T-02）--\n");
+
+    struct SliderScene : public InkingScene {
+        SliderScene() : InkingScene("probe_slider") {}
+    };
+    SliderScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "T-02：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+
+    inking_prefab::SliderData data = inking_prefab::SliderData::MakeDefault();
+    data.name = "t02_slider";
+    data.width = 200;
+    data.height = 28;
+    data.offsetX = 20.0f;
+    data.offsetY = 20.0f;
+    data.min = 0.0f;
+    data.max = 100.0f;
+    data.step = 1.0f;  // 量化到整数，断言才能用"≈ 且 ±1 个 step"
+    data.value = 0.0f;
+
+    auto* slider = static_cast<inking_prefab::Slider*>(
+        scene.AddChild(std::make_unique<inking_prefab::Slider>(&scene, data)));
+
+    // 静态组件进**全局命中表**，而表是"结构脏就重烘"——所以喂指针之前必须先跑一帧，
+    // 否则 `DispatchPointer` 问的是一张还没建的表，按下算不到滑块头上
+    // （症状就是"值一直是 0、事件一次都没有"，看起来像组件没接指针）。
+    scene.TickFrame(1.0f / 60.0f);
+
+    int changedCount = 0;
+    float lastNow = -1.0f;
+    float lastBefore = -1.0f;
+    int releasedCount = 0;
+    slider->changed.Subscribe([&changedCount, &lastNow, &lastBefore](float now,
+                                                                    float before) {
+        ++changedCount;
+        lastNow = now;
+        lastBefore = before;
+    });
+    slider->released.Subscribe([&releasedCount] { ++releasedCount; });
+
+    // 轨道跨度：[20, 220]（offsetX 20 + 宽 200），纵向中心 y = 34。
+    const float trackLeft = 20.0f;
+    const float trackWidth = 200.0f;
+    const float probeY = 34.0f;
+
+    // ---- ① 点轨道 25% 处：值 = 25 ----
+    scene.SetPointerState(trackLeft + trackWidth * 0.25f, probeY, true, true);
+    scene.DispatchPointer();
+    std::printf("         点 25%% → 值 %.1f（期望 25）、changed %d 次\n",
+                static_cast<double>(slider->GetValue()), changedCount);
+    Check(std::fabs(slider->GetValue() - 25.0f) <= 1.0f,
+          "T-02：① 点轨道 25% → 值 ≈ 25（±1 个 step）");
+    Check(changedCount == 1 && lastNow == slider->GetValue() &&
+              lastBefore == 0.0f,
+          "T-02：① 只发一次 changed，且参数是（新值, 旧值）");
+
+    // ---- ② 拖到 75%：值跟着走；同一点再派发不发事件 ----
+    scene.SetPointerState(trackLeft + trackWidth * 0.75f, probeY, true, true);
+    scene.DispatchPointer();
+    Check(std::fabs(slider->GetValue() - 75.0f) <= 1.0f,
+          "T-02：② 拖到 75% → 值 ≈ 75（累计位移，不是本次增量）");
+
+    const int changedAt75 = changedCount;
+    scene.SetPointerState(trackLeft + trackWidth * 0.75f, probeY, true, true);
+    scene.DispatchPointer();
+    Check(changedCount == changedAt75,
+          "T-02：② 同一位置再派发 → **不发** changed（Emit 只在真变时）");
+
+    // ---- ③ 抬起：released 一次；changed 累计 2 次（25 → 75）----
+    scene.SetPointerState(trackLeft + trackWidth * 0.75f, probeY, false, true);
+    scene.DispatchPointer();
+    Check(releasedCount == 1, "T-02：③ 抬起 → released 一次");
+    Check(changedCount == 2, "T-02：③ changed 累计 2 次（25 → 75，中间没有多余事件）");
+
+    // ---- ④ 部件：填充 = 轨道 × 比例；圆盘水平落在轨道内、纵向同心 ----
+    // 取副本（理由同 T-03 那一处：`GetParts()` 返回的是内部那一份缓存）。
+    const inking_prefab::SliderParts parts = slider->GetParts();
+    std::printf("         部件：轨道 %.0f×%.0f / 填充 %.1f / 圆盘 (%.1f, %.1f) %.0f×%.0f\n",
+                static_cast<double>(parts.track.width),
+                static_cast<double>(parts.track.height),
+                static_cast<double>(parts.fill.width),
+                static_cast<double>(parts.thumb.x),
+                static_cast<double>(parts.thumb.y),
+                static_cast<double>(parts.thumb.width),
+                static_cast<double>(parts.thumb.height));
+    Check(std::fabs(parts.fill.width - parts.track.width * 0.75f) <= 1.5f,
+          "T-02：④ 填充宽 = 轨道宽 × 0.75（与值同步）");
+    Check(parts.thumb.x >= parts.track.x - 0.01f &&
+              parts.thumb.x + parts.thumb.width <=
+                  parts.track.x + parts.track.width + 0.01f,
+          "T-02：④ 圆盘的**水平范围**落在轨道内（垂直溢出是设计：盘 18 > 轨 6）");
+    Check(std::fabs((parts.thumb.y + parts.thumb.height * 0.5f) -
+                    (parts.track.y + parts.track.height * 0.5f)) <= 0.01f,
+          "T-02：④ 圆盘与轨道纵向同心");
+
+    // ---- ⑤ 键盘：焦点 + 右箭头 = +1 step ----
+    Check(slider->WantsKeyboardFocus(), "T-02：⑤ 滑块要键盘焦点（否则箭头静默无效）");
+    const float beforeKey = slider->GetValue();
+    scene.SetKeyboardFocus(slider);
+    InkingKeyboardInput keys;
+    SDL_Event keyDown{};
+    keyDown.type = SDL_EVENT_KEY_DOWN;
+    keyDown.key.key = SDLK_RIGHT;
+    keys.UpdateFromSDL(keyDown);
+    scene.SetKeyboardInput(keys);
+    scene.DispatchKeyboard();
+    std::printf("         按 → ：%.1f → %.1f\n", static_cast<double>(beforeKey),
+                static_cast<double>(slider->GetValue()));
+    Check(std::fabs(slider->GetValue() - (beforeKey + 1.0f)) <= 0.01f,
+          "T-02：⑤ 焦点在滑块上按 → ：值 +1 step");
+
+    // ---- ⑥ 命中表不重烘：改值只标重绘脏 ----
+    const std::uint64_t before = scene.GetStructureGeneration();
+    slider->SetValue(10.0f);
+    Check(scene.GetStructureGeneration() == before,
+          "T-02：⑥ 改值不动骨架代次（轨道几何没变，只有画面变了）");
+}
+
+// ---------------------------------------------------------------------------
+// T-03：进度条的部件 / 幂等 / 像素
+// ---------------------------------------------------------------------------
+void CheckProgressBar(SDL_Renderer* renderer) {
+    std::printf("\n-- 进度条：部件 / 幂等 / 像素（T-03）--\n");
+
+    struct BarScene : public InkingScene {
+        BarScene() : InkingScene("probe_progress_bar") {}
+    };
+    BarScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "T-03：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+
+    inking_prefab::ProgressBarData data =
+        inking_prefab::ProgressBarData::MakeDefault();
+    data.name = "t03_bar";
+    data.width = 200;
+    data.height = 20;
+    data.offsetX = 20.0f;
+    data.offsetY = 20.0f;
+    data.progress = 0.0f;
+
+    auto* bar = static_cast<inking_prefab::ProgressBar*>(
+        scene.AddChild(std::make_unique<inking_prefab::ProgressBar>(&scene, data)));
+
+    // ---- ① 几何：fill = track × progress ----
+    Check(bar->SetProgress(0.5f), "T-03：① SetProgress(0.5) 真的改了");
+    Check(!bar->SetProgress(0.5f),
+          "T-03：① 同值再来一次返回 false（每帧喂同一个值 ⇒ 零额外重绘）");
+    // `GetParts()` 返回的是**现算的那一份**（内部缓存），所以这里取副本：
+    // 拿引用的话下一次 `SetProgress` 会把手里这份也改掉（同一个对象）。
+    const inking_prefab::ProgressBarParts half = bar->GetParts();
+    Check(std::fabs(half.fill.width - half.track.width * 0.5f) <= 0.01f,
+          "T-03：① 填充宽 = 轨道宽 × 0.5");
+
+    // ---- ② 进度 0：填充段零宽零高（onRender 据此不画这一笔）----
+    Check(bar->SetProgress(0.0f), "T-03：② SetProgress(0) 真的改了");
+    const inking_prefab::ProgressBarParts zero = bar->GetParts();
+    Check(zero.fill.width == 0.0f && zero.fill.height == 0.0f,
+          "T-03：② 进度 0 ⇒ 填充段零宽零高（不是「零宽的三角化」）");
+
+    // ---- ③ 越界夹取 ----
+    bar->SetProgress(1.5f);
+    Check(bar->GetProgress() == 1.0f, "T-03：③ 1.5 → 夹到 1（不报错、不越界）");
+    bar->SetProgress(-1.0f);
+    Check(bar->GetProgress() == 0.0f, "T-03：③ -1 → 夹到 0");
+
+    // ---- ④ 进度不变几何：容器不重排 ----
+    Check(bar->GetWidth() == 200 && bar->GetHeight() == 20,
+          "T-03：④ 进度变化不改组件尺寸（容器不重排）");
+
+    // ---- ⑤ 像素：左半是填充色、右半是轨道色；进度 0 时左半也是轨道色 ----
+    if (renderer == nullptr) {
+        std::printf("      [skip] 没有渲染器——像素断言不适用\n");
+        return;
+    }
+    SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                     InkingDesignHeight(),
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    InkingSceneLibrary::SetActiveScene(&scene);
+    scene.TickFrame(1.0f / 60.0f);
+
+    // 组件真的落在哪：用**它自己的绝对坐标**，别拿配置里的 offset 猜
+    // （锚点 / 父级排版都会挪它）。
+    const int absX = static_cast<int>(std::lround(bar->GetAbsX()));
+    const int absY = static_cast<int>(std::lround(bar->GetAbsY()));
+    const auto sampleAt = [&](int localX) {
+        const std::vector<std::uint32_t> one = ReadPixelRegion(
+            renderer, SDL_Rect{absX + localX, absY + 10, 1, 1});
+        return one.empty() ? 0u : one[0];
+    };
+    const auto renderFrame = [&] {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+    };
+    // 通道差（颜色比对的容差：软件后端不抖动，但仍不写死逐位相等）。
+    const auto nearColor = [](std::uint32_t a, std::uint32_t b) {
+        for (int shift = 0; shift <= 16; shift += 8) {
+            const int left = static_cast<int>((a >> shift) & 0xFFu);
+            const int right = static_cast<int>((b >> shift) & 0xFFu);
+            const int delta = left > right ? left - right : right - left;
+            if (delta > 12) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    bar->SetProgress(0.5f);
+    renderFrame();
+    const std::uint32_t leftHalf = sampleAt(50);    // 0~100 这一段是填充
+    const std::uint32_t rightHalf = sampleAt(150);  // 100~200 这一段是轨道
+    std::printf("         进度 0.5：左半 0x%08X / 右半 0x%08X\n", leftHalf,
+                rightHalf);
+    Check(!nearColor(leftHalf, rightHalf),
+          "T-03：⑤ 进度 0.5 时左右两半**颜色不同**（填充真的画出来了）");
+
+    bar->SetProgress(0.0f);
+    renderFrame();
+    const std::uint32_t leftAtZero = sampleAt(50);
+    std::printf("         进度 0.0：左半 0x%08X（应与右半同色）\n", leftAtZero);
+    Check(nearColor(leftAtZero, rightHalf),
+          "T-03：⑤ 进度 0 时左半与右半同色（填充块真的没画）");
+
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    InkingSceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// T-04：勾选三件套（翻 / 互斥 / 部件 / 勾的方向）
+// ---------------------------------------------------------------------------
+//
+// 走真路径（喂指针 + `DispatchPointer`），所以"命中 → 点击 → 翻转 → 发事件"
+// 整条链都跑了一遍。三件套共用同一个基类，所以断言也共用一套写法。
+void CheckToggleLike(SDL_Renderer* renderer) {
+    std::printf("\n-- 勾选三件套：翻 / 互斥 / 部件（T-04）--\n");
+
+    struct ToggleScene : public InkingScene {
+        ToggleScene() : InkingScene("probe_toggle_like") {}
+    };
+    ToggleScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "T-04：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+
+    inking_prefab::ToggleData cbData = inking_prefab::MakeCheckboxData();
+    cbData.name = "t04_checkbox";
+    cbData.offsetX = 20.0f;
+    cbData.offsetY = 20.0f;
+    auto* box = static_cast<inking_prefab::Checkbox*>(
+        scene.AddChild(std::make_unique<inking_prefab::Checkbox>(&scene, cbData)));
+
+    inking_prefab::ToggleData r1Data = inking_prefab::MakeRadioData();
+    r1Data.name = "t04_radio_1";
+    r1Data.offsetX = 60.0f;
+    r1Data.offsetY = 20.0f;
+    auto* radio1 = static_cast<inking_prefab::Radio*>(
+        scene.AddChild(std::make_unique<inking_prefab::Radio>(&scene, r1Data)));
+
+    inking_prefab::ToggleData r2Data = inking_prefab::MakeRadioData();
+    r2Data.name = "t04_radio_2";
+    r2Data.offsetX = 90.0f;
+    r2Data.offsetY = 20.0f;
+    auto* radio2 = static_cast<inking_prefab::Radio*>(
+        scene.AddChild(std::make_unique<inking_prefab::Radio>(&scene, r2Data)));
+
+    inking_prefab::ToggleData swData = inking_prefab::MakeSwitchData();
+    swData.name = "t04_switch";
+    swData.offsetX = 20.0f;
+    swData.offsetY = 60.0f;
+    auto* toggle = static_cast<inking_prefab::Switch*>(
+        scene.AddChild(std::make_unique<inking_prefab::Switch>(&scene, swData)));
+
+    // 静态组件进全局命中表：喂指针之前先跑一帧（同 T-02 那条）。
+    scene.TickFrame(1.0f / 60.0f);
+
+    const auto clickAt = [&scene](float x, float y) {
+        scene.SetPointerState(x, y, true, true);
+        scene.DispatchPointer();
+        scene.SetPointerState(x, y, false, true);
+        scene.DispatchPointer();
+    };
+
+    // ---- ① Checkbox：点一次翻过去、再点翻回来 ----
+    int boxClicked = 0;
+    int boxCancelled = 0;
+    box->clicked.Subscribe([&boxClicked] { ++boxClicked; });
+    box->cancelled.Subscribe([&boxCancelled] { ++boxCancelled; });
+
+    clickAt(29.0f, 29.0f);  // 复选框中心（20 + 18/2）
+    Check(box->IsChecked() && boxClicked == 1,
+          "T-04：① 点 Checkbox 一次 → 选中 + `clicked` 一条");
+
+    clickAt(29.0f, 29.0f);
+    Check(!box->IsChecked() && boxCancelled == 1,
+          "T-04：① 再点一次 → 未选中 + `cancelled` 一条");
+
+    // ---- ② SetChecked 是幂等的：同值返回 false 且零事件 ----
+    const int clickedBefore = boxClicked;
+    const int cancelledBefore = boxCancelled;
+    Check(!box->SetChecked(false),
+          "T-04：② `SetChecked(同值)` 返回 false（幂等）");
+    Check(boxClicked == clickedBefore && boxCancelled == cancelledBefore,
+          "T-04：② 幂等调用一条事件都不发");
+    Check(box->SetChecked(true) && boxClicked == clickedBefore + 1,
+          "T-04：② `SetChecked(真值)` 也走事件（程序入口与用户点击同一个出口）");
+
+    // ---- ③ Radio：组内只有一个为真；点已选中的不翻转 ----
+    inking_prefab::RadioGroup group;
+    radio1->SetGroup(&group);
+    radio2->SetGroup(&group);
+    Check(group.GetCount() == 2, "T-04：③ 两个单选挂进了同一个组");
+
+    int r1Clicked = 0;
+    int r1Cancelled = 0;
+    int r2Clicked = 0;
+    radio1->clicked.Subscribe([&r1Clicked] { ++r1Clicked; });
+    radio1->cancelled.Subscribe([&r1Cancelled] { ++r1Cancelled; });
+    radio2->clicked.Subscribe([&r2Clicked] { ++r2Clicked; });
+
+    clickAt(69.0f, 29.0f);  // 第一个单选
+    Check(radio1->IsChecked() && !radio2->IsChecked() && r1Clicked == 1,
+          "T-04：③ 点第一个 → 它选中、另一个未选中、`clicked` 一条");
+
+    clickAt(69.0f, 29.0f);  // 再点已选中的那个
+    Check(radio1->IsChecked() && r1Cancelled == 0 && r1Clicked == 1,
+          "T-04：③ 点**已选中**的单选 → 不翻转、零事件（单选不可反选）");
+
+    clickAt(99.0f, 29.0f);  // 第二个单选
+    std::printf("         组内：r1=%d r2=%d / r1.cancelled=%d / r2.clicked=%d\n",
+                radio1->IsChecked() ? 1 : 0, radio2->IsChecked() ? 1 : 0,
+                r1Cancelled, r2Clicked);
+    Check(!radio1->IsChecked() && radio2->IsChecked(),
+          "T-04：③ 点另一个 → 组内只有一个为真（互斥）");
+    Check(r1Cancelled == 1 && r2Clicked == 1,
+          "T-04：③ 一次换人 = 1 条 `clicked` + 1 条 `cancelled`（各发各的）");
+    Check(group.GetChecked() == radio2,
+          "T-04：③ `RadioGroup::GetChecked()` 指向新的那个");
+
+    // ---- ④ 部件：mark 落在 base 之内（三件各验一次）----
+    const auto markInsideBase = [](const inking_prefab::ToggleParts& parts) {
+        return parts.mark.x >= parts.base.x - 0.01f &&
+               parts.mark.y >= parts.base.y - 0.01f &&
+               parts.mark.x + parts.mark.width <=
+                   parts.base.x + parts.base.width + 0.01f &&
+               parts.mark.y + parts.mark.height <=
+                   parts.base.y + parts.base.height + 0.01f;
+    };
+    Check(markInsideBase(box->GetParts()), "T-04：④ Checkbox 的勾落在框内");
+    Check(markInsideBase(radio1->GetParts()), "T-04：④ Radio 的点落在圆内");
+
+    // ---- ⑤ Switch：关过渡时立刻到位，且布局一个像素不变 ----
+    const int switchWidth = toggle->GetWidth();
+    const int switchHeight = toggle->GetHeight();
+    toggle->SetAnimated(false);
+    clickAt(40.0f, 71.0f);  // 开关中心（20 + 40/2, 60 + 22/2）
+    const inking_prefab::ToggleParts onParts = toggle->GetParts();
+    std::printf("         开关：checked=%d / knob=%.2f / 滑块 (%.1f, %.1f) %.0f×%.0f\n",
+                toggle->IsChecked() ? 1 : 0,
+                static_cast<double>(toggle->GetKnobRatio()),
+                static_cast<double>(onParts.mark.x),
+                static_cast<double>(onParts.mark.y),
+                static_cast<double>(onParts.mark.width),
+                static_cast<double>(onParts.mark.height));
+    Check(toggle->IsChecked() && toggle->GetKnobRatio() == 1.0f,
+          "T-04：⑤ `SetAnimated(false)` 后点开关 → 立刻到开端（不留半路）");
+    Check(toggle->GetWidth() == switchWidth &&
+              toggle->GetHeight() == switchHeight,
+          "T-04：⑤ 过渡开关不影响布局（组件框一个像素不变）");
+    Check(markInsideBase(onParts), "T-04：⑤ 滑块落在轨道内");
+    Check(std::fabs((onParts.mark.x + onParts.mark.width) -
+                    (onParts.base.x + onParts.base.width - swData.knobInset)) <=
+              0.01f,
+          "T-04：⑤ 开到顶时滑块右缘贴住轨道内侧");
+
+    // ---- ⑥ Switch 的过渡：中间在半路，0.15 秒后到位 ----
+    //
+    // ⚠️ `TickAnimation` 只在**活跃场景**的 `TickFrame` 里跑（停放 / 关闭的场景不
+    // 推进动画）——所以这一段必须先把它设为活跃，否则滑块一步都不动，
+    // 而现象是"过渡没生效"，看起来像组件的问题。
+    InkingSceneLibrary::SetActiveScene(&scene);
+    toggle->SetAnimated(true);
+    clickAt(40.0f, 71.0f);  // 关回去
+    Check(!toggle->IsChecked() && toggle->GetKnobRatio() == 1.0f,
+          "T-04：⑥ 刚点完还在开端（过渡从下一帧开始推进）");
+    scene.TickFrame(0.05f);
+    const float midRatio = toggle->GetKnobRatio();
+    std::printf("         过渡一帧（0.05s）后 knob=%.2f\n",
+                static_cast<double>(midRatio));
+    Check(midRatio > 0.0f && midRatio < 1.0f,
+          "T-04：⑥ 过渡中滑块在半路（0 < knob < 1）");
+    scene.TickFrame(0.2f);  // 一次走完剩下的
+    Check(toggle->GetKnobRatio() == 0.0f, "T-04：⑥ 累计超过 0.15 秒后到位");
+
+    // ---- ⑦ 像素：内置勾是"从下往上挑"的，不是反过来的那道 ----
+    if (renderer == nullptr) {
+        std::printf("      [skip] 没有渲染器——勾的方向断言不适用\n");
+        return;
+    }
+    box->SetChecked(true);
+    SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                     InkingDesignHeight(),
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    InkingSceneLibrary::SetActiveScene(&scene);
+    scene.TickFrame(1.0f / 60.0f);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    InkingSceneLibrary::RenderScene(renderer);
+
+    const inking_prefab::ToggleParts boxParts = box->GetParts();
+    const int markX = static_cast<int>(std::lround(box->GetAbsX() + boxParts.mark.x));
+    const int markY = static_cast<int>(std::lround(box->GetAbsY() + boxParts.mark.y));
+    const int markW = std::max(1, static_cast<int>(std::lround(boxParts.mark.width)));
+    const int markH = std::max(1, static_cast<int>(std::lround(boxParts.mark.height)));
+    const std::vector<std::uint32_t> marks =
+        ReadPixelRegion(renderer, SDL_Rect{markX, markY, markW, markH});
+
+    const std::uint32_t tickColor = cbData.mark.color;
+    const auto isTick = [tickColor](std::uint32_t pixel) {
+        for (int shift = 0; shift <= 16; shift += 8) {
+            const int a = static_cast<int>((pixel >> shift) & 0xFFu);
+            const int b = static_cast<int>((tickColor >> shift) & 0xFFu);
+            const int delta = a > b ? a - b : b - a;
+            if (delta > 24) {  // 边缘那圈是羽化混出来的，只数接近实心的
+                return false;
+            }
+        }
+        return true;
+    };
+
+    int total = 0;
+    int bottomLeft = 0;
+    int topRight = 0;
+    int topLeftCorner = 0;
+    if (marks.size() == static_cast<std::size_t>(markW * markH)) {
+        for (int y = 0; y < markH; ++y) {
+            for (int x = 0; x < markW; ++x) {
+                if (!isTick(marks[static_cast<std::size_t>(y * markW + x)])) {
+                    continue;
+                }
+                ++total;
+                if (x < markW / 2 && y >= markH / 2) {
+                    ++bottomLeft;
+                }
+                if (x >= markW / 2 && y < markH / 2) {
+                    ++topRight;
+                }
+                if (x < 4 && y < 4) {
+                    ++topLeftCorner;
+                }
+            }
+        }
+    }
+    std::printf("         勾的像素：总 %d / 左下 %d / 右上 %d / 左上角 %d（%d×%d）\n",
+                total, bottomLeft, topRight, topLeftCorner, markW, markH);
+    Check(total > 0, "T-04：⑦ 选中时勾真的画出来了（不是空白框）");
+    Check(bottomLeft > 0 && topRight > 0 && topLeftCorner == 0,
+          "T-04：⑦ 勾的方向对：左下 → 右上，左上角是空的（反过来就是画倒了）");
+
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    InkingSceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// T-05：Tooltip（延迟 / 穿透 / 落位）
+// ---------------------------------------------------------------------------
+//
+// 三条判据都是"看得见的行为"，不是内部字段：
+//   ① 不到 `delay` 不弹、到点就弹；
+//   ② `Hide()` 之后计时**复位**（不是暂停——再等多久都不该弹）；
+//   ③ 提示盖住的那个按钮**点得到**（穿透），且落位在锚点下方、水平居中。
+void CheckTooltip() {
+    std::printf("\n-- Tooltip：延迟 / 穿透 / 落位（T-05）--\n");
+
+    struct TipScene : public InkingScene {
+        TipScene() : InkingScene("probe_tooltip") {}
+    };
+    TipScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "T-05：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+    // `TickFrame` 只在**活跃**场景里推进动画（停放 / 关闭的场景直接返回）——
+    // 计时挂在 `onAnimationTick` 上，所以这里必须先让它活跃。
+    InkingSceneLibrary::SetActiveScene(&scene);
+
+    // 锚点：100,100 处的 80×30 按钮。
+    InkingButtonData anchorData;
+    anchorData.name = "t05_anchor";
+    anchorData.width = 80;
+    anchorData.height = 30;
+    anchorData.offsetX = 100.0f;
+    anchorData.offsetY = 100.0f;
+    auto* anchor = static_cast<InkingStaticButton*>(
+        scene.AddChild(std::make_unique<InkingStaticButton>(&scene, anchorData)));
+
+    // 提示会落在这块按钮**上面**（锚点下方 6px，正好盖住它）——用来验穿透。
+    InkingButtonData underData;
+    underData.name = "t05_under";
+    underData.width = 80;
+    underData.height = 30;
+    underData.offsetX = 100.0f;
+    underData.offsetY = 140.0f;
+    auto* under = static_cast<InkingStaticButton*>(
+        scene.AddChild(std::make_unique<InkingStaticButton>(&scene, underData)));
+
+    inking_prefab::TooltipData data = inking_prefab::TooltipData::MakeDefault();
+    data.delay = 0.1f;
+    inking_prefab::Tooltip tip(&scene, data);
+
+    scene.TickFrame(1.0 / 60.0);
+    Check(!tip.IsShowing() && !tip.IsPending(), "T-05：初始既不显示、也不计时");
+
+    Check(tip.ShowFor(anchor, "保存当前文档"), "T-05：ShowFor 接上了锚点");
+    Check(tip.IsPending() && !tip.IsShowing(), "T-05：进入计时，还没弹出来");
+
+    scene.TickFrame(1.0 / 60.0);
+    scene.TickFrame(1.0 / 60.0);
+    Check(!tip.IsShowing(),
+          "T-05：① 跑 2 帧（0.033s < delay 0.1s）→ 不弹");
+
+    for (int i = 0; i < 5; ++i) {
+        scene.TickFrame(1.0 / 60.0);
+    }
+    std::printf("         提示 %d×%d @ (%.1f, %.1f)；锚点底边 y=%.1f\n",
+                tip.GetWidth(), tip.GetHeight(),
+                static_cast<double>(tip.GetAbsX()),
+                static_cast<double>(tip.GetAbsY()),
+                static_cast<double>(anchor->GetAbsY() + anchor->GetHeight()));
+    Check(tip.IsShowing(), "T-05：① 跑够 7 帧（0.117s ≥ 0.1s）→ 弹出来");
+
+    // 落位：在锚点下方、水平居中。
+    const float anchorCenterX =
+        anchor->GetAbsX() + static_cast<float>(anchor->GetWidth()) * 0.5f;
+    const float tipCenterX =
+        tip.GetAbsX() + static_cast<float>(tip.GetWidth()) * 0.5f;
+    Check(tip.GetAbsY() >= anchor->GetAbsY() + anchor->GetHeight(),
+          "T-05：③ 落在锚点**下方**（不是盖在它身上）");
+    Check(std::fabs(tipCenterX - anchorCenterX) <= 1.0f,
+          "T-05：③ 水平居中对齐锚点");
+
+    // 穿透：提示正中间那一点，点到的是**底下那块按钮**。
+    const float probeX = tipCenterX;
+    const float probeY = tip.GetAbsY() + static_cast<float>(tip.GetHeight()) * 0.5f;
+    Check(!tip.HitTest(probeX, probeY), "T-05：③ `HitTest` 恒 false（提示不参与命中）");
+    const InkingHitResult hit = scene.QueryHit(probeX, probeY);
+    std::printf("         提示正中点击 → 命中 %s\n",
+                hit.target == under ? "底层按钮（正确）"
+                                    : (hit.target == nullptr ? "空（穿透后没东西）"
+                                                             : "别的节点"));
+    Check(hit.target == under,
+          "T-05：③ 点击**穿过提示**落到下面的按钮（提示不挡）");
+
+    // 计时复位：`Hide()` 之后跑多久都不弹。
+    Check(tip.ShowFor(anchor, "第二句"), "T-05：再次 ShowFor 会重新计时");
+    tip.Hide();
+    Check(!tip.IsPending() && !tip.IsShowing(), "T-05：② `Hide()` 立刻复位");
+    for (int i = 0; i < 10; ++i) {
+        scene.TickFrame(1.0 / 60.0);
+    }
+    Check(!tip.IsShowing(), "T-05：② `Hide()` 之后跑 10 帧也不弹（计时真的清零了）");
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// T-06：Dialog（模态 / 遮罩 / Esc / Enter）
+// ---------------------------------------------------------------------------
+//
+// "模态"只能靠**命中表**证明：开着的时候，遮罩位置上那一点必须不再回答底下那个
+// 按钮。所以判据全部走 `QueryHit` 与真派发，不看内部字段。
+void CheckDialog() {
+    std::printf("\n-- Dialog：模态 / 遮罩 / 键盘（T-06）--\n");
+
+    struct DlgScene : public InkingScene {
+        DlgScene() : InkingScene("probe_dialog") {}
+    };
+    DlgScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "T-06：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+    InkingSceneLibrary::SetActiveScene(&scene);
+
+    // 底下的按钮：位置在左上角附近，**离居中的对话框很远**（不会被面板盖住，
+    // 只被遮罩盖住——这样才能区分"面板挡住"和"遮罩挡住"）。
+    InkingButtonData underData;
+    underData.name = "t06_under";
+    underData.width = 80;
+    underData.height = 30;
+    underData.offsetX = 40.0f;
+    underData.offsetY = 40.0f;
+    auto* under = static_cast<InkingStaticButton*>(
+        scene.AddChild(std::make_unique<InkingStaticButton>(&scene, underData)));
+
+    inking_prefab::DialogData dd = inking_prefab::DialogData::MakeDefault();
+    dd.width = 420;
+    dd.height = 240;
+    inking_prefab::Dialog dialog(&scene, dd);
+
+    int acceptedCount = 0;
+    int cancelledCount = 0;
+    int lastAction = -1;
+    dialog.accepted.Subscribe([&acceptedCount] { ++acceptedCount; });
+    dialog.cancelled.Subscribe([&cancelledCount] { ++cancelledCount; });
+    dialog.action.Subscribe([&lastAction](int index) { lastAction = index; });
+    dialog.SetDefaultAction(2);
+
+    const auto clickAt = [&scene](float x, float y) {
+        scene.SetPointerState(x, y, true, true);
+        scene.DispatchPointer();
+        scene.SetPointerState(x, y, false, true);
+        scene.DispatchPointer();
+    };
+    const auto pressKey = [&scene](SDL_Keycode code) {
+        InkingKeyboardInput keys;
+        SDL_Event event{};
+        event.type = SDL_EVENT_KEY_DOWN;
+        event.key.key = code;
+        keys.UpdateFromSDL(event);
+        scene.SetKeyboardInput(keys);
+        scene.DispatchKeyboard();
+    };
+
+    scene.TickFrame(1.0 / 60.0);
+
+    // ---- ① 关着：底下按钮正常命中 ----
+    Check(!dialog.IsOpen(), "T-06：① 构造出来是关着的");
+    Check(scene.QueryHit(60.0f, 50.0f).target == under,
+          "T-06：① 关着的时候点到的是底下那个按钮（基线）");
+
+    // ---- ② 打开：遮罩铺满，底下点不到 ----
+    dialog.Open();
+    scene.TickFrame(1.0 / 60.0);
+    const InkingHitResult openHit = scene.QueryHit(60.0f, 50.0f);
+    std::printf("         打开后同一位置命中 %s\n",
+                openHit.target == &dialog
+                    ? "对话框遮罩（正确）"
+                    : (openHit.target == under ? "仍是底下按钮（模态失效）"
+                                               : "别的节点"));
+    Check(openHit.target == &dialog,
+          "T-06：② 打开后按钮位置**点到的是遮罩**（模态生效）");
+    Check(scene.GetKeyboardFocus() == &dialog,
+          "T-06：② 打开时自己拿键盘焦点（Esc / Enter 才有地方落）");
+
+    // ---- ③ 点遮罩：默认**不关** ----
+    clickAt(60.0f, 50.0f);
+    Check(dialog.IsOpen() && cancelledCount == 0,
+          "T-06：③ 点遮罩默认不关、也不发 `cancelled`（防误触丢数据）");
+
+    // ---- ④ 点面板内部：不算点遮罩 ----
+    const int panelCenterX = InkingDesignWidth() / 2;
+    const int panelCenterY = InkingDesignHeight() / 2;
+    clickAt(static_cast<float>(panelCenterX), static_cast<float>(panelCenterY));
+    Check(dialog.IsOpen(), "T-06：④ 点面板本体不会关");
+    // 点面板会把焦点清掉（场景的规则：点到的组件不想要焦点就别留着）。
+    // 下一帧由对话框自己把焦点收回来——不然 Esc / Enter 从此没有落点。
+    scene.TickFrame(1.0 / 60.0);
+    Check(scene.GetKeyboardFocus() == &dialog,
+          "T-06：④ 点面板之后焦点**仍归对话框**（模态的键盘也归它）");
+
+    // ---- ⑤ Esc：关 + `cancelled` 一条 ----
+    pressKey(SDLK_ESCAPE);
+    std::printf("         Esc 之后：open=%d / accepted=%d / cancelled=%d\n",
+                dialog.IsOpen() ? 1 : 0, acceptedCount, cancelledCount);
+    Check(!dialog.IsOpen(), "T-06：⑤ Esc 关掉");
+    Check(cancelledCount == 1 && acceptedCount == 0,
+          "T-06：⑤ Esc 只发 `cancelled` 一条，`accepted` 一条都不发");
+    Check(scene.GetKeyboardFocus() == nullptr,
+          "T-06：⑤ 关掉后焦点释放（不留一个指向不可见节点的焦点）");
+
+    // ---- ⑥ Enter：关 + `accepted` 与 `action` 各一条 ----
+    dialog.Open();
+    scene.TickFrame(1.0 / 60.0);
+    pressKey(SDLK_RETURN);
+    std::printf("         Enter 之后：open=%d / accepted=%d / action=%d\n",
+                dialog.IsOpen() ? 1 : 0, acceptedCount, lastAction);
+    Check(!dialog.IsOpen() && acceptedCount == 1 && cancelledCount == 1,
+          "T-06：⑥ Enter 关掉并发 `accepted`（`cancelled` 没多出来）");
+    Check(lastAction == 2, "T-06：⑥ `action` 带出 `SetDefaultAction(2)` 那个索引");
+
+    // ---- ⑦ 允许"点遮罩关闭"时，点的语义是**取消** ----
+    dialog.SetCloseOnScrimClick(true);
+    dialog.Open();
+    scene.TickFrame(1.0 / 60.0);
+    clickAt(60.0f, 50.0f);
+    Check(!dialog.IsOpen() && cancelledCount == 2 && acceptedCount == 1,
+          "T-06：⑦ 打开这个开关后，点遮罩 = 取消");
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// T-07：Toast（堆叠 / 到期 / 不泄漏）
+// ---------------------------------------------------------------------------
+//
+// "不泄漏"这条只能这么验：`GetOwnedChildCount()` 归零 + `RemoveChild` 走拥有型
+// 路径（不接返回值 ⇒ 当场析构）。悬垂指针不会自己喊，所以数必须对得上。
+void CheckToast() {
+    std::printf("\n-- Toast：堆叠 / 到期 / 清空（T-07）--\n");
+
+    struct ToastScene : public InkingScene {
+        ToastScene() : InkingScene("probe_toast") {}
+    };
+    ToastScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "T-07：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+    InkingSceneLibrary::SetActiveScene(&scene);
+
+    inking_prefab::ToastData data = inking_prefab::ToastData::MakeDefault();
+    inking_prefab::ToastHost host(&scene, data);
+
+    std::vector<int> dismissed;
+    host.dismissed.Subscribe([&dismissed](int id) { dismissed.push_back(id); });
+
+    // ---- ① 连发三条：id 自增、都挂着、纵向不重叠 ----
+    const int idA = host.Show("第一条", 0.5f);
+    const int idB = host.Show("第二条", 1.0f);
+    const int idC = host.Show("第三条", 1.0f);
+    scene.TickFrame(1.0 / 60.0);
+    std::printf("         id = %d / %d / %d；挂着 %zu 条\n", idA, idB, idC,
+                host.GetToastCount());
+    Check(idA == 1 && idB == 2 && idC == 3, "T-07：① id 从 1 起自增、永不复用");
+    Check(host.GetToastCount() == 3, "T-07：① 连发三条 → 三条都在");
+
+    {
+        std::vector<float> tops;
+        for (InkingWidget* node : host.GetChildren()) {
+            tops.push_back(node->GetAbsY());
+        }
+        bool stacked = tops.size() == 3;
+        for (std::size_t i = 1; stacked && i < tops.size(); ++i) {
+            stacked = std::fabs(tops[i] - tops[i - 1]) >= 1.0f;
+        }
+        std::printf("         三条的 y = %.0f / %.0f / %.0f\n",
+                    tops.empty() ? 0.0 : static_cast<double>(tops[0]),
+                    tops.size() < 2 ? 0.0 : static_cast<double>(tops[1]),
+                    tops.size() < 3 ? 0.0 : static_cast<double>(tops[2]));
+        Check(stacked, "T-07：① 三条纵向堆叠、互不重叠");
+        Check(!tops.empty() && tops.back() > tops.front(),
+              "T-07：① 新的一条贴在最下面（从下往上堆）");
+    }
+
+    // ---- ② 到期：第一条先走，`dismissed` 带的是它的 id ----
+    scene.TickFrame(0.5f);
+    std::printf("         0.5s 后：挂着 %zu 条 / dismissed=%zu\n",
+                host.GetToastCount(), dismissed.size());
+    Check(host.GetToastCount() == 2 && dismissed.size() == 1 &&
+              dismissed.front() == idA,
+          "T-07：② 0.5s 后第一条自己消失，`dismissed` 带的是它的 id");
+
+    // ---- ③ 同一批到期：一次性全移除，不留空位 ----
+    scene.TickFrame(0.6f);  // 累计 1.1s > 1.0s
+    Check(host.GetToastCount() == 0 && dismissed.size() == 3,
+          "T-07：③ 同一批到期 → 一次性全部移除（`dismissed` 共 3 条）");
+
+    // ---- ④ 清空：不发 `dismissed`（那是"到期"，不是"被清掉"） ----
+    dismissed.clear();
+    host.Show("x", 10.0f);
+    host.Show("y", 10.0f);
+    Check(host.GetToastCount() == 2, "T-07：④ 再发两条 → 挂着两条");
+    host.Clear();
+    Check(host.GetToastCount() == 0 && dismissed.empty(),
+          "T-07：④ `Clear()` 清空但**不发** `dismissed`");
+
+    // ---- ⑤ 不参与命中：通知盖在按钮上也点得到下面 ----
+    InkingButtonData underData;
+    underData.name = "t07_under";
+    underData.width = 120;
+    underData.height = 40;
+    underData.offsetX = static_cast<float>(InkingDesignWidth() - 300);
+    underData.offsetY = static_cast<float>(InkingDesignHeight() - 80);
+    auto* under = static_cast<InkingStaticButton*>(
+        scene.AddChild(std::make_unique<InkingStaticButton>(&scene, underData)));
+    host.Show("盖在按钮上的通知", 5.0f);
+    scene.TickFrame(1.0 / 60.0);
+    const InkingHitResult hit = scene.QueryHit(
+        under->GetAbsX() + 10.0f, under->GetAbsY() + 10.0f);
+    std::printf("         通知盖住按钮时点击 → 命中 %s\n",
+                hit.target == under ? "底层按钮（正确）"
+                                    : (hit.target == nullptr ? "空" : "别的节点"));
+    Check(hit.target == under,
+          "T-07：⑤ 通知对指针透明（盖在按钮上也点到按钮）");
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+}
+
 }  // namespace
 
 int main() {
@@ -8589,6 +9513,18 @@ int main() {
 
     // ---- 动画组：一个节点承载多个动作（0.6.6 T-18）----
     CheckSpriteGroup();
+
+    // ---- 0.9.0 批次 a+b：视频出画 / 滑块 / 进度条（T-01 ~ T-03）----
+    //
+    // 排在纹理字节账本**之前**：那一组会清空纹理缓存，而视频这一条要建纹理、
+    // 还要真的读回像素。顺序反了会变成"账本里突然多出一张别人的纹理"。
+    CheckVideoDecode(rnd);
+    CheckSliderDrag();
+    CheckProgressBar(rnd);
+    CheckToggleLike(rnd);
+    CheckTooltip();
+    CheckDialog();
+    CheckToast();
 
     // ---- 纹理字节账本：建→放→归零→峰值（0.8.2 T-05，放在最后：会清空纹理缓存）----
     CheckTextureBytes(rnd);

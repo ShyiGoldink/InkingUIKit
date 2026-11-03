@@ -29,11 +29,11 @@
 > 替换 DLL 即可换用修改版。源码与构建脚本见 MSYS2 包仓库
 > <https://packages.msys2.org/>（搜索上表包名），或各项目上游站点。
 
-## 构建期依赖（不分发）
+## 运行期依赖（随包分发）
 
 | 组件 | 用途 | 说明 |
 | --- | --- | --- |
-| FFmpeg（libavcodec / avformat / avutil / swresample / swscale） | 视频解码 | `src/video/` 走 `INK_HAS_FFMPEG` 分支，本版未开启，二进制**不引用**其符号 ⇒ `bin/` 内无 FFmpeg DLL。**自己构建** SDK 时仍需要其开发包（`pkg-config`）。 |
+| FFmpeg（libavcodec / avformat / avutil / swresample / swscale） | 视频解码 | 0.9.0 起**默认开启**：CMake 探测到开发包就定义 `INK_HAS_FFMPEG` 并私有链接，`bin/` 内带齐 `av*.dll`（含 `dav1d` / `x264` 等传递依赖，以 `ldd` 实得为准）。**动态链接**：符合 LGPL-2.1+ 的要求，替换 DLL 即可换构建。探测不到时不链接、`bin/` 内无 FFmpeg DLL、二进制不引用其符号。 |
 | CMake / Ninja / GCC | 构建 | 不随包分发。 |
 
 ## 本仓库自身

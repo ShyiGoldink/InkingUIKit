@@ -443,8 +443,11 @@ add_custom_command(TARGET my_app POST_BUILD
 
 - 或者：把 `<SDK>/bin` 加进 PATH（只在调试时推荐）
 - 找不到时的表现是**静默退出**（退出码 `0xC0000135`），没有报错窗口 —— 跑不起来先查这个。
-- 本包**不含** FFmpeg DLL：`src/video/` 的 FFmpeg 分支（`INK_HAS_FFMPEG`）当前未开启，
-  二进制不引用其符号。构建期仍需要它的开发包（`find_package` 会检查）。
+- FFmpeg 是**可选**依赖，也是本 SDK 里**唯一**不传播给消费方的那一个（0.9.0 起）：
+  CMake 探测到 `libavcodec` 等开发包就定义 `INK_HAS_FFMPEG` 并**私有**链接，`bin/`
+  里随之带齐 `av*.dll`（视频组件真出画）；探测不到就打一条 `WARNING`、
+  `src/video/` 编成空实现，二进制**不引用**任何 `av*` 符号。所以只要 UI 的工程
+  不必装 FFmpeg 开发包，公开头也一个都不 include 它。
 
 ### CMake 导出了什么
 
@@ -452,14 +455,17 @@ add_custom_command(TARGET my_app POST_BUILD
 
 | 名字 | 内容 |
 | --- | --- |
-| `inking` | 库目标（传播 include、四个 SDL 目标、FFmpeg、三个编译宏） |
+| `inking` | 库目标（传播 include、四个 SDL 目标、三个编译宏；FFmpeg **不传播**） |
 | `INKING_SDK_DIR` | SDK 根目录 |
 | `INKING_INKGEN` | `bin/inkgen.exe` 的绝对路径 |
 | `INKING_CXXCSS_DIR` | `examples/CXXCSS`（配置样例） |
 | `INKING_INKGEN_CMAKE` | 生成模块路径（`include()` 它才有 `ink_add_generated`） |
 
-`inking` 会**传播** include 目录、四个 SDL 目标、FFmpeg 与三个编译宏
+`inking` 会**传播** include 目录、四个 SDL 目标与三个编译宏
 （`INK_ISLOG` / `INK_ISDEBUG` / `INK_ISMESSAGE`）——所以消费方不需要自己再配一遍。
+**FFmpeg 不在传播之列**：它是库自己的私有依赖（公开头不拖它进来），消费方的编译
+命令行里不会多出 `-IC:/msys64/ucrt64/include`，也不需要在 `target_link_libraries`
+里写它。
 
 ```cpp
 #include <window/InkingWindow.h>
@@ -571,7 +577,7 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 > | --- | --- | --- |
 > | SDL3 / SDL3_image / SDL3_ttf / SDL3_mixer | zlib | 保留版权声明即可 |
 > | FreeType / HarfBuzz / GLib 等传递依赖 | FTL / MIT / LGPL-2.1+ | 保留声明；LGPL 组件保持动态链接 |
-> | FFmpeg | **LGPL-2.1+** | 本包不分发（二进制未引用）；若你启用 `INK_HAS_FFMPEG`，须**动态链接**并随分发提供其许可与源码获取方式 |
+> | FFmpeg | **LGPL-2.1+** | 本包**动态链接**分发（`bin/` 带 `av*.dll`；可执行文件按自身目录找 DLL，替换成自己的 FFmpeg 构建即可）；再分发时须一并提供其许可与源码获取方式 |
 >
 > 预编译包已经把随包 DLL 的许可原文放在 `licenses/`，
 > 清单与源码获取方式见 `licenses/THIRD-PARTY-NOTICES.md`。

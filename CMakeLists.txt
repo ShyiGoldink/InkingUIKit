@@ -128,6 +128,9 @@ set_target_properties(inking PROPERTIES
 # 全部 PUBLIC：公开头虽然**只前向声明** SDL_Renderer（不拖 SDL 进来），但
 # `render/InkingBatch.h` 等确实用了 `SDL_Vertex` 完整类型，消费者需要同一套
 # 头与库版本 —— 所以传播给它。
+#
+# FFmpeg 是**唯一例外**：可选、PRIVATE（只给 `src/video/` 用，公开头不拖它进来），
+# 探测与取舍写在下面那段。
 # ---------------------------------------------------------------------------
 find_package(SDL3 CONFIG REQUIRED)
 find_package(SDL3_image CONFIG REQUIRED)
@@ -135,16 +138,53 @@ find_package(SDL3_ttf CONFIG REQUIRED)
 find_package(SDL3_mixer CONFIG REQUIRED)
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
-    libavcodec libavformat libavutil libswresample libswscale)
 
 target_link_libraries(inking
     PUBLIC
         SDL3::SDL3
         SDL3_image::SDL3_image
         SDL3_ttf::SDL3_ttf
-        SDL3_mixer::SDL3_mixer
-        PkgConfig::FFMPEG)
+        SDL3_mixer::SDL3_mixer)
+
+# ---------------------------------------------------------------------------
+# FFmpeg：**可选**依赖（T-01）
+#
+# 判据跟着「探测结果」走，不跟着「人手开关」走。候选与取舍见
+# `docs/zh/plans/2026-11-03-uikit-completeness-tasks.md` §3 T-01：
+#
+#   A 探测 + 命中才定义宏（本实现）—— 没有「忘了开」这个状态；
+#   B `-DINK_WITH_FFMPEG=ON` 手动开 —— 不记得开的人，视频永远是空壳；
+#   C 保持 REQUIRED —— 没装 FFmpeg 的机器**整包编不过**，把可选依赖变硬。
+#
+# 为什么必须有这条 WARNING：没装的人看到的是"视频组件的每一帧都是兜底色"，
+# 而 `INK_HAS_FFMPEG` 缺失时 `src/video/InkingVideo.cpp` 整个走 `#else` 空实现
+# ——能编、能链、能跑，只是永远不出画。这与 `INK_HAS_SDL3_MIXER` 那次
+# （宏漏定义 ⇒ 音频恒静音、CMake 照样链接）是同一个形状的坑（§6 第 30 / 43 条）。
+#
+# 为什么 PRIVATE：公开头 `include/video/InkingVideo.h` **不 include FFmpeg**
+# （pimpl，头注释第 19-22 行把这条写在设计决定里）。消费者不需要 FFmpeg 的
+# include 路径，PUBLIC 传播会让"只要 UI、不要视频"的人被迫装开发包。
+#
+# ⚠️ `INK_HAS_FFMPEG` 与 FFmpeg 链接**必须同进同出**：只做一半就是
+# 「有宏没库」的链接错误，或者「有库没宏」的静默空壳。
+# ---------------------------------------------------------------------------
+pkg_check_modules(FFMPEG QUIET IMPORTED_TARGET
+    libavcodec libavformat libavutil libswresample libswscale)
+
+if(FFMPEG_FOUND)
+    target_link_libraries(inking PRIVATE PkgConfig::FFMPEG)
+    target_compile_definitions(inking PRIVATE INK_HAS_FFMPEG)
+    # 版本号取单模块那份：`pkg_check_modules` 一次查多个模块时**不写**
+    # `FFMPEG_VERSION`（只写 `FFMPEG_<模块>_VERSION`），用前者会打印成空括号。
+    message(STATUS "Inking：视频已开启（FFmpeg libavcodec ${FFMPEG_libavcodec_VERSION}）")
+else()
+    message(WARNING
+        "Inking：找不到 FFmpeg（libavcodec / libavformat / libavutil / "
+        "libswresample / libswscale）。视频组件会编成**空实现**："
+        "`InkingStaticVideo` 能构造、能查询，但一个像素都不出。"
+        "要视频请装 FFmpeg 开发包（msys2：pacman -S mingw-w64-ucrt-x86_64-ffmpeg），"
+        "然后重新 cmake 配置。")
+endif()
 
 # ---------------------------------------------------------------------------
 # 可选能力的编译开关（文字 / 图片）
@@ -402,6 +442,12 @@ if(INK_BUILD_TESTS)
         INK_HAS_SDL3_TTF
         INK_HAS_SDL3_IMAGE
         INK_HAS_SDL3_MIXER)
+    # `INK_HAS_FFMPEG` 同理（T-01），**必须跟着探测结果走**：漏了这一行，这道门
+    # 编译的是 `#else` 那半份空实现，`src/video/InkingVideo.cpp` 的真实分支一条
+    # 告警都不会被看到——"门是绿的"于是没有含义。
+    if(FFMPEG_FOUND)
+        target_compile_definitions(inking_strict PRIVATE INK_HAS_FFMPEG)
+    endif()
     target_compile_options(inking_strict PRIVATE
         # **-O0**：这道门只关心**前端**告警（unused / shadow / cast-qual /
         # useless-cast / 参数名），它们与优化等级无关；而 Release 的 -O3 让这道门

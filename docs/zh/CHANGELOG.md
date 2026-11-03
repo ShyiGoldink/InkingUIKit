@@ -5,7 +5,7 @@
 
 ---
 
-## 0.9.0（未发布：几何分档收口 + 命名空间收口）
+## 0.9.0（未发布：几何分档收口 + 命名空间收口 + UIKit 齐全度 a/b 批）
 
 > 本节在发版时随 `InkingVersion` 一起定稿；明细见 `docs/zh/TaskGuide-G.md`（G-00…G-08）
 > 与 `docs/zh/TaskGuide-N.md`（N-01…N-04）。
@@ -29,6 +29,122 @@
   **头文件路径与 CMake 目标名不变**（`#include <button/ButtonData.h>`、
   `inking::inking` 照旧）。升级方法：把 `inking::X` 换成 `X`，再按编译报错把
   没带前缀的类型 / 函数 / 常量补上 `Inking`。
+
+### 新增（UIKit 齐全度 · a/b 批：视频接线 + 计量两件套）
+
+> 来源：任务书 [`plans/2026-11-03-uikit-completeness-tasks.md`](plans/2026-11-03-uikit-completeness-tasks.md)
+> T-01 / T-02 / T-03；估值见 [`plans/2026-11-03-uikit-completeness-audit.md`](plans/2026-11-03-uikit-completeness-audit.md)。
+
+- **`inking_prefab::Slider`**（`include/prefab/Slider.h`）：轨道 / 已填充 / 圆盘三个
+  可独立换外观的部件，`GetParts()` 把绘制与命中的几何合成一份；事件只有两个槽
+  `changed(now, before)` + `released()`（写入口 `SetValue` 夹取 + 按 `step` 量化，
+  **值没变就不发事件**）；拖动用"相对按下点的累计位移"，点轨道当场跳过去；
+  要键盘焦点（←/→/Home/End）。默认外观取 `PrefabTheme`（紫主色 + 白盘）。
+- **`inking_prefab::ProgressBar`**（`include/prefab/ProgressBar.h`）：静态档 + 确定
+  进度，只读（没有事件槽、不吃点击）；`SetProgress` 夹到 `[0,1]`、同值返回 false
+  （每帧喂同一个值 ⇒ 零额外重绘）；进度 0 时**不画**填充块。填充宽与 `Slider`
+  共用同一个纯函数（`prefab/PrefabParts.h` 的 `FillBoundsInTrack`）。
+- **视频真的出画**：`INK_HAS_FFMPEG` 现在由 CMake **探测**决定（见下"变更"），
+  素材 `examples/demo/assets/probe.mp4`（320×240 / 30fps / 1 秒）与自检
+  `video_decode_probe` 一起落地，断言"解出帧数 > 0、画面 320×240、丢帧 0、
+  画面内部不止一种颜色且看不到兜底色"。
+
+### 新增（UIKit 齐全度 · c 批：勾选三件套）
+
+> 来源：同任务书 T-04。
+
+- **`inking_prefab::ToggleLike` + `Checkbox` / `Radio` / `Switch`**
+  （`include/prefab/ToggleLike.h`）：三者共用一个基类——选中态、`clicked` /
+  `cancelled` 两个槽、`SetChecked` 的幂等规则、`GetParts()` 的两块矩形都只有一份
+  实现，子类只覆盖"mark 摆在哪 / 长什么样"。勾 / 点 / 滑块都是可换的形状
+  （`markShape` 默认 `Rect()` 是"用内置的"哨兵）。
+- **`RadioGroup`**（显式对象，不拥有成员）：`Select()` 先清其它、再选目标，
+  所以不会有一帧"两个同时选中"；一次换人发 **1 条 `clicked` + N 条 `cancelled`**。
+  `Radio` 析构自动退组，组比成员先死也安全。
+- **`Switch` 的 0.15 秒过渡**挂 `onAnimationTick`（每渲染帧），`SetAnimated(false)`
+  之后立刻到位且布局一个像素不变。
+- **`prefab/PrefabParts.h` 新增 `FillPart` / `StrokePart`**：三个调用方
+  （Slider / ProgressBar / ToggleLike）共用同一份"设计坐标 → 设备像素"换算，
+  此前 `Slider.cpp` 与 `ProgressBar.cpp` 各抄了一份。
+- 自检 `toggle_like_probe`：翻转 / 幂等 / 组内互斥 / `mark ⊆ base` / 过渡到位 /
+  **勾的方向**（读像素：左下与右上各有勾色、左上角为空——画倒了会当场红）。
+
+### 新增（UIKit 齐全度 · d 批：浮层三件套）
+
+> 来源：同任务书 T-05 / T-06 / T-07。
+
+- **`inking_prefab::Tooltip`**（`prefab/Tooltip.h`）：停留 `delay` 秒后弹出，位置复用
+  `inking_detail::SolvePopupPlacement`（下方放不下自动翻到上方再夹紧）；计挂在
+  `onAnimationTick`（每渲染帧、带 delta、非 const），所以探针能按帧精确喂时间。
+  **对指针完全透明**：`HitTest` 恒 false + `HitTestNode` 恒 nullptr——提示盖在按钮上，
+  点下去还是那个按钮。
+- **`inking_prefab::Dialog`**（`prefab/Dialog.h`）：模态 = **自己就是那层全屏遮罩**
+  （静态面板、几何 = 设计画布、进命中表），中间那块框是它的子面板。三个槽
+  `accepted` / `cancelled` / `action(int)`；Esc 取消、Enter 确认并带出
+  `SetDefaultAction()` 的索引；点遮罩**默认不关**。事件顺序固定"先关、再发"。
+  焦点：打开即夺取，**每次点面板被清掉后下一帧自己收回**，关掉即释放。
+- **`inking_prefab::ToastHost`**（`prefab/ToastHost.h`）：连发多条从下往上堆、
+  到期自消失；`Show()` 返回自增 id（`dismissed` 带 id 而不是下标——下标会前移）；
+  `Clear()` 不发 `dismissed`。到期处理是"**先收集 → 循环外统一删 → 再重排**"，
+  不在遍历中途删子节点。同样对指针透明。
+- 自检 `tooltip_delay_probe` / `dialog_modal_probe` / `toast_lifetime_probe`。
+
+### 修复
+
+- **`Dialog` 的键盘焦点会被点面板清掉**：场景的规则是"点到的组件不想要焦点就别留着"，
+  于是"点一下对话框"之后 Esc / Enter 就没有落点（现象是"快捷键突然没反应"）。
+  现在对话框在 `onAnimationTick` 里把焦点收回子树——**只补不抢**：焦点已经在子树里
+  （例如点进了内容里的输入框）就一个字节都不动。
+
+### 变更（依赖面：FFmpeg 从"从未开启"变成"探测到就开启"）
+
+- `pkg_check_modules(FFMPEG ...)` 去掉 `REQUIRED`、加 `QUIET`；命中则
+  `target_compile_definitions(inking PRIVATE INK_HAS_FFMPEG)` + 私有链接，
+  未命中打一条 `WARNING` 并编成空实现。判据跟着**探测结果**走，不跟人手开关走
+  ——没有"忘了开"这个状态（理由与 `INK_HAS_SDL3_MIXER` 漏定义那次同源）。
+- **FFmpeg 从 PUBLIC 改 PRIVATE**：公开头只做 pimpl、不 include 它，传播只会让
+  "只要 UI、不要视频"的工程被迫装开发包。**注意**：`bin/` 从此带 `av*.dll`
+  （`ldd` 驱动的 `stage_runtime_deps.sh` 自动收齐，包括 `dav1d` / `x264`），
+  按 LGPL-2.1+ 动态链接分发。
+- `examples/demo/CMakeLists.txt`：资源拷贝从"每个 exe 各挂一条 POST_BUILD"改成
+  一个 `inking_demo_assets` 目标拷一次。原写法在并行链接时两个 `copy_directory`
+  同时写 `bin/assets/`，Windows 上偶发 `Error copying directory ... Permission
+  denied`，整条 `cmake --build` 随机失败。
+
+### 修复
+
+- **视频画面被兜底色乘成黑色**：`fillShapeTextured` 的顶点色是"纹理 × 顶点色"，
+  RGB 也参与乘法，而 `InkingVideoData::normal.color` 的语义是"**没有画面时的
+  兜底色**"、默认值为不透明黑。于是默认配置下视频"解码在走、帧数在涨、
+  一个像素都不出"。现在有画面时只借它的 **alpha** 做淡入淡出、RGB 归白
+  （自检先跑出"解码 28 帧 / 上屏 28 帧 / 抽到 1 种颜色"，修完是 9 种颜色）。
+- **滑块点不到**：`InkingWidget::HitTest` 基类恒返回 `false`，新控件不重写就是
+  "按下去什么都不发生、也不报错"。`Slider` 现在按整块组件框答（`HitTestLocalRect`，
+  与绘制同一套坐标）。
+
+### 文档
+
+- `README.md` / `tools/THIRD-PARTY-NOTICES.md` / `tools/BUILD.txt` 三处口径改成
+  "0.9.0 起默认开启 + 动态链接分发"（`BUILD.txt` 是 0.8.5 的发布清单，仍保留
+  当时的记录，只加"0.9.0 已解决"的标注，不改哈希行）。
+
+### 已知限制（本批）
+
+- 新控件**不进 CXXCSS**（配置量小；扩张生成器要改三处 + 13 条自检）。
+- `Slider` / `ProgressBar` / 三件套 **都没有 `SetPainter` 第三档**：`InkingCanvasContext`
+  的构造是 `private`（`friend` 只有 `InkingStaticCanvas`，必须带一个 `CanvasRecorder`），
+  叶组件挂不了绘制器。要整块自绘请把 `InkingStaticCanvas` 叠在上面。
+- 部件级**贴图**（`InkingButtonAppearance::type == Image`）没接：部件会按各自
+  `color` 画成纯色，`Slider` / `ProgressBar` 构造时会打一条 `WARN`（不静默）。
+- `Slider` 只做横向、不做双滑块（区间选择）；三件套**没有键盘空格切换**、不做三态
+  Checkbox（半勾）。
+- `Switch` 的状态**只由滑块位置表达**（轨道颜色不随状态变）；要变色得换 `base` 外观，
+  而这一版没有 `SetData` ⇒ 意味着重建组件。
+- `Tooltip` **不换行**：`maxWidth` 只夹面板宽，超长文本会溢出（多行要动文字层）；
+  落位只算一次（锚点在延迟期间移动不会跟随）。
+- `Dialog` 的遮罩面板必须**晚于**它要挡住的内容创建（同级按注册序号 + z 比较）。
+  需要压住"更晚创建"的东西时，对 Dialog 自己调 `ChangeZIndex`。
+- `Dialog` 的 `Close()` 不发事件（程序关掉不算"用户取消"）——想区分请自己记账。
 
 ---
 

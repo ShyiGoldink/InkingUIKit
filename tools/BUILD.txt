@@ -44,9 +44,10 @@ inking 0.8.5（发布版）—— Windows x64 构建信息
   FreeType          2.14.3（pkg-config 报的是 26.6.20，那是 libtool 版本号）
   HarfBuzz          14.5.0
   GLib              2.90.0
-  FFmpeg            libavcodec / libavformat 63.1.102——**仅构建期检查**，
-                    当前二进制未引用（`INK_HAS_FFMPEG` 未被任何 CMake 文件定义，
-                    见「已知限制」最后一条）
+  FFmpeg            libavcodec / libavformat 63.1.102——**构建期检查**；
+                    本包（0.8.5）的二进制**未引用**它（那时 `INK_HAS_FFMPEG`
+                    没有任何 CMake 文件定义）。0.9.0 起改为"探测到就默认开启"，
+                    见「已知限制」最后一条与 docs/zh/CHANGELOG.md
 
 产物（包内路径 / 字节数 / SHA-256）
   bin/libinking.dll               1,880,636  494FA7B5F4F75B5F43014F430D6EF91F4EE7A7070DB42CD2AC4E25C4067725E5
@@ -71,8 +72,11 @@ inking 0.8.5（发布版）—— Windows x64 构建信息
   来源与许可见 licenses/THIRD-PARTY-NOTICES.md。
   **为什么带**：解压即可运行示例，不需要装 MSYS2、不需要把 ucrt64\bin 加进 PATH；
   漏拷 DLL 的表现是静默退出（0xC0000135），没有报错窗口。
-  **FFmpeg 不在其中**：src/video/ 的 FFmpeg 分支（INK_HAS_FFMPEG）当前未开启，
+  **FFmpeg 不在本包（0.8.5）之中**：那时 `INK_HAS_FFMPEG` 没有 CMake 文件定义，
   链接器未引入其符号，故无需分发；自己重建 SDK 时仍需其开发包（pkg-config）。
+  0.9.0 起默认开启 ⇒ 包内带 `avcodec-63` / `avformat-63` / `avutil-61` /
+  `swresample-7` / `swscale-10` 及 `libdav1d` / `libx264` 等传递依赖
+  （以 `ldd libinking.dll` 实得为准），按 LGPL-2.1+ **动态链接**分发。
 
 文档（docs/ 下，38 个文件，**整份带进包里**）
   zh/UsageGuide.md                 手把手教程：设计大小 → 场景 → 组件 → CMake → 运行
@@ -240,11 +244,15 @@ inking 0.8.5（发布版）—— Windows x64 构建信息
   - **文字纹理预算的瞬时上界是"预算 + 本帧新增"**：淘汰只发生在帧首，本帧刚烘出来的
     纹理不能丢（丢了当场缺字）；字形图集不参与淘汰，预算比图集（≈4 MB）还小时
     会**放弃淘汰**（否则每帧清空重烘，比不设预算更糟）。
-  - **视频解码这条路是空的**：`src/video` 的 FFmpeg 分支
-    （`#if defined(INK_HAS_FFMPEG)`）**从未被任何 CMake 文件定义过**，所以
-    `InkingStaticVideo` 编进去的一直是"没有画面 → 退回兜底色"那条实现。
-    能编、能链、功能是空的（与 0.6.x 的 `INK_HAS_SDL3_MIXER` 漏定义同型）。
-    打开它属于另一个任务：先要一个视频素材 + 一条"解出第一帧、像素不是全黑"的断言。
+  - ~~视频解码这条路是空的~~（**0.9.0 T-01 已解决**，本条保留的是 0.8.5 的状态）：
+    `src/video` 的 FFmpeg 分支（`#if defined(INK_HAS_FFMPEG)`）**那时没有任何
+    CMake 文件定义过**，所以 `InkingStaticVideo` 编进去的一直是"没有画面 → 退回
+    兜底色"那条实现——能编、能链、功能是空的（与 0.6.x 的 `INK_HAS_SDL3_MIXER`
+    漏定义同型）。0.9.0 起 `CMakeLists.txt` 探测到 FFmpeg 就定义该宏并私有链接；
+    配套素材 `examples/demo/assets/probe.mp4`（320×240 / 30fps / 1 秒，
+    由 `ffmpeg -f lavfi -i testsrc=size=320x240:rate=30 -t 1` 生成）与自检
+    `video_decode_probe` 一起落地：断言"解出帧数 > 0、画面 320×240、丢帧 0、
+    画面内部不止一种颜色（且看不到兜底色）"。
 
 重新打包（维护者，三条命令）
   1. cmake --build build-release -j        ← 先构建。**不构建就打包会被第 3 步拦下**
