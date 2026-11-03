@@ -340,7 +340,7 @@ INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 本机走 dire
 | input | `InkingKeyboardTarget.h` `InkingPointerHandler.h` `InkingPointerButton.h` `InkingKeyboardInput.h` `InkingMouseInput.h` `InkingShortcut.h` `InkingShortcutRegistry.h` `InkingTextEditState.h` | KeyboardTarget / PointerHandler / Input |
 | layout | `InkingLayoutSolver.h` | LayoutSolver |
 | panel | `InkingStaticPanel.h` `InkingPanelData.h` `InkingPanelLook.h` | Components |
-| prefab | `Dialog.h` `FilePicker.h` `FilePickerData.h` `ListRow.h` `ListView.h` `ListViewData.h` `MenuBar.h` `MenuBarData.h` `OptionBar.h` `OptionBarData.h` `PrefabParts.h` `PrefabTheme.h` `ProgressBar.h` `Select.h` `SelectData.h` `Slider.h` `ToastHost.h` `ToggleLike.h` `Tooltip.h` | Prefab |
+| prefab | `Dialog.h` `FilePicker.h` `FilePickerData.h` `ListRow.h` `ListView.h` `ListViewData.h` `MenuBar.h` `MenuBarData.h` `OptionBar.h` `OptionBarData.h` `PrefabParts.h` `PrefabTheme.h` `ProgressBar.h` `Select.h` `SelectData.h` `Slider.h` `TabBar.h` `ToastHost.h` `ToggleLike.h` `Tooltip.h` | Prefab |
 | render | `InkingBatch.h` `InkingDraw.h` `InkingGlyphAtlas.h` `InkingMesh.h` `InkingText.h` | Render |
 | scene | `InkingHitTable.h` `InkingScene.h` `InkingSceneLibrary.h` `SceneRegisterToken.h` | Scene |
 | text | `InkingStaticLabel.h` `InkingTextInput.h` `InkingTextTable.h` `InkingLabelData.h` | Components |

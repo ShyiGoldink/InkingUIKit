@@ -29,6 +29,7 @@
 #include <prefab/ProgressBar.h>
 #include <prefab/Select.h>
 #include <prefab/Slider.h>
+#include <prefab/TabBar.h>
 #include <prefab/ToastHost.h>
 #include <prefab/ToggleLike.h>
 #include <prefab/Tooltip.h>
@@ -677,6 +678,22 @@ static_assert(!HasResize<inking_prefab::Dialog>,
               "Dialog 的尺寸就是画布：不该有 Resize（遮罩尺寸一变，模态就有缝）");
 static_assert(std::has_virtual_destructor_v<inking_prefab::Dialog>,
               "Dialog 有虚函数（钩子 + 事件槽）⇒ 析构必须虚");
+
+// ---------------------------------------------------------------------------
+// TabBar（T-08）
+//
+// 它也是**静态档**：几何在构造期定型（标签的偏移、内容区的位置都算好了），
+// 运行期变的只有"哪一页可见"——那是骨架变化，不是几何变化。所以"没有 Resize /
+// ChangeOffset"这条铁律照样成立，而切页靠可见性拿到的命中表重烘是白拿的。
+// ---------------------------------------------------------------------------
+
+static_assert(std::is_base_of_v<InkingStaticPanel, inking_prefab::TabBar>,
+              "TabBar 用面板组装：容器语义（子树命中 / 裁剪）白拿");
+static_assert(!std::is_base_of_v<InkingDynamicWidget, inking_prefab::TabBar>,
+              "TabBar 的几何不变：切页改的是可见性，不是坐标");
+static_assert(!HasResize<inking_prefab::TabBar>, "静态组件不该有 Resize");
+static_assert(!HasChangeOffset<inking_prefab::TabBar>,
+              "静态组件不该有 ChangeOffset");
 
 // ---------------------------------------------------------------------------
 // 资源模块（A11）：外置资源 + 轻量混淆

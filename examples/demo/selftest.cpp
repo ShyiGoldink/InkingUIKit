@@ -65,6 +65,7 @@
 #include <prefab/Dialog.h>
 #include <prefab/ProgressBar.h>
 #include <prefab/Slider.h>
+#include <prefab/TabBar.h>
 #include <prefab/ToastHost.h>
 #include <prefab/ToggleLike.h>
 #include <prefab/Tooltip.h>
@@ -8404,8 +8405,18 @@ void CheckVideoDecode(SDL_Renderer* renderer) {
     Check(video->GetDecodedFrameCount() > 0, "T-01：① 解出的帧数 > 0");
     Check(video->GetPresentedFrameCount() > 0,
           "T-01：上屏帧数 > 0（画面真的贴上去了，不是一直在画兜底色）");
-    Check(video->GetDroppedFrameCount() == 0,
-          "T-01：③ 丢帧 = 0（1 秒素材、20ms 一帧地消费不该丢）");
+    // 丢帧**不是**要求恰好 0：主时钟是真实时间（无音轨那条路），而这台机器上
+    // 还有别的活（编译 / 测试并行），一次 sleep 打盹就会让队首落后超过 60ms 的
+    // 阈值、丢一帧。要求"0"等于把断言绑在机器负载上——实测同一份代码跑出过
+    // 28/0 与 28/1 两种结果。
+    //
+    // 但也不能不判：历史上那个 bug 的形态是"队首判据方向写反 ⇒ 队列被一路清空、
+    // 一帧都上不了屏（自检读出'已出帧 0，丢 19'）"。所以判据取**比例**：
+    // 丢帧不超过两成，真坏掉时是"出一帧丢一大半"，一眼就红。
+    const std::uint32_t presented = video->GetPresentedFrameCount();
+    const std::uint32_t dropped = video->GetDroppedFrameCount();
+    Check(presented > 0 && dropped <= std::max<std::uint32_t>(2, presented / 5),
+          "T-01：③ 丢帧 ≤ 两成（真坏了是「出一帧丢一大半」，不是差这一两帧）");
 
     // 像素：读画面**内部**（避开边缘那一条抗锯齿带）。
     const std::vector<std::uint32_t> pixels =
@@ -9239,6 +9250,124 @@ void CheckToast() {
     InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// T-08：TabBar（切页 / 命中 / 事件）
+// ---------------------------------------------------------------------------
+//
+// "切走的页点不到"只能靠**命中查询**证明：可见性是骨架变化 ⇒ 命中表重烘。
+// 所以判据里的主角是 `QueryHit`——不是 alpha、也不是坐标。
+void CheckTabBar() {
+    std::printf("\n-- TabBar：切页 / 命中 / 事件（T-08）--\n");
+
+    struct TabScene : public InkingScene {
+        TabScene() : InkingScene("probe_tabbar") {}
+    };
+    TabScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "T-08：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+    InkingSceneLibrary::SetActiveScene(&scene);
+
+    inking_prefab::TabBarData data = inking_prefab::TabBarData::MakeDefault();
+    data.name = "t08_tabs";
+    data.width = 480;
+    data.height = 320;
+    data.offsetX = 100.0f;
+    data.offsetY = 60.0f;
+    inking_prefab::TabBar tabs(&scene, data);
+
+    // 每页塞一块**可命中**的按钮（铺满内容区）：这样"点到的是哪一页"能用
+    // `QueryHit` 直接读出来。
+    const auto makePage = [&](const char* name, std::uint32_t color) {
+        InkingButtonData pageData;
+        pageData.name = name;
+        pageData.width = 480;
+        pageData.height = 320 - 36;  // = 内容区高（标签条 36）
+        pageData.normal = InkingButtonAppearance(InkingAppearanceType::Color, color);
+        return std::unique_ptr<InkingWidget>(
+            std::make_unique<InkingStaticButton>(nullptr, pageData));
+    };
+
+    int lastNow = -9;
+    int lastBefore = -9;
+    int changeCount = 0;
+    tabs.pageChanged.Subscribe([&](int now, int before) {
+        lastNow = now;
+        lastBefore = before;
+        ++changeCount;
+    });
+
+    Check(tabs.AddPage("一", makePage("t08_page0", 0xFFDDDDDDu)) == 0,
+          "T-08：加第一页 → 索引 0");
+    Check(tabs.AddPage("二", makePage("t08_page1", 0xFFCCCCCCu)) == 1, "T-08：加第二页");
+    Check(tabs.AddPage("三", makePage("t08_page2", 0xFFBBBBBBu)) == 2, "T-08：加第三页");
+    std::printf("         页数 %d / 当前页 %d / 内容区 %d×%d\n",
+                tabs.GetPageCount(), tabs.GetVisiblePageIndex(),
+                tabs.GetContentWidth(), tabs.GetContentHeight());
+
+    Check(tabs.GetPageCount() == 3 && tabs.GetVisiblePageIndex() == 0,
+          "T-08：① 三页，第一页自动成为当前页");
+    Check(tabs.GetContentWidth() == 480 && tabs.GetContentHeight() == 320 - 36,
+          "T-08：① 内容区 = 整框减掉标签条那一条（480×284）");
+
+    auto* page0 = tabs.GetPage(0);
+    auto* page1 = tabs.GetPage(1);
+    auto* page2 = tabs.GetPage(2);
+    Check(page0 != nullptr && page0->IsVisible() && !page1->IsVisible() &&
+              !page2->IsVisible(),
+          "T-08：① 只有第一页可见（其余 `SetVisible(false)`）");
+
+    scene.TickFrame(1.0 / 60.0);
+
+    // ---- ② 切页：命中跟着走 ----
+    const float insideX = 100.0f + 240.0f;                 // 内容区中央
+    const float insideY = 60.0f + 36.0f + 142.0f;
+    Check(scene.QueryHit(insideX, insideY).target == page0,
+          "T-08：② 切页前，内容区中间点到的是第 1 页");
+
+    Check(tabs.Select(1), "T-08：② `Select(1)` 真的切了");
+    scene.TickFrame(1.0 / 60.0);
+    const InkingHitResult afterSwitch = scene.QueryHit(insideX, insideY);
+    std::printf("         切到第 2 页后，同一位置命中 %s\n",
+                afterSwitch.target == page1
+                    ? "第 2 页（正确）"
+                    : (afterSwitch.target == page0 ? "仍是第 1 页（可见性没生效）"
+                                                   : "别的节点"));
+    Check(afterSwitch.target == page1,
+          "T-08：② 切到第 2 页后，同一位置点到的是**第 2 页**");
+    Check(!page0->IsVisible() && page1->IsVisible(),
+          "T-08：② 旧页隐藏、新页可见（先藏后显）");
+    Check(changeCount == 1 && lastNow == 1 && lastBefore == 0,
+          "T-08：② `pageChanged` 一条，参数是（现在 1, 之前 0）");
+
+    // ---- ③ 切到当前页：零事件 ----
+    Check(!tabs.Select(1), "T-08：③ 切到当前页返回 false");
+    Check(changeCount == 1, "T-08：③ 切到当前页**不发**事件");
+
+    // ---- ④ 越界：拒绝且不发事件 ----
+    Check(!tabs.Select(-1) && !tabs.Select(3), "T-08：④ 越界索引被拒绝");
+    Check(changeCount == 1 && tabs.GetVisiblePageIndex() == 1,
+          "T-08：④ 越界之后当前页没变、也没发事件");
+
+    // ---- ⑤ 点标签按钮：走同一条 `Select` 出口 ----
+    // 标签条：第 i 个标签占 [100 + i×96, +96)，纵向在 60~96。
+    const float tab2X = 100.0f + 2.0f * 96.0f + 48.0f;
+    const float tabY = 60.0f + 18.0f;
+    scene.SetPointerState(tab2X, tabY, true, true);
+    scene.DispatchPointer();
+    scene.SetPointerState(tab2X, tabY, false, true);
+    scene.DispatchPointer();
+    std::printf("         点第 3 个标签 → 当前页 %d / 事件 %d 条\n",
+                tabs.GetVisiblePageIndex(), changeCount);
+    Check(tabs.GetVisiblePageIndex() == 2 && changeCount == 2,
+          "T-08：⑤ 点标签切页（与 `Select` 同一个出口，不是第二套逻辑）");
+    Check(scene.QueryHit(insideX, insideY).target == page2,
+          "T-08：⑤ 点标签之后命中也跟着换到第 3 页");
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+}
+
 }  // namespace
 
 int main() {
@@ -9525,6 +9654,7 @@ int main() {
     CheckTooltip();
     CheckDialog();
     CheckToast();
+    CheckTabBar();
 
     // ---- 纹理字节账本：建→放→归零→峰值（0.8.2 T-05，放在最后：会清空纹理缓存）----
     CheckTextureBytes(rnd);

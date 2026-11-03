@@ -24,12 +24,13 @@
 | `Tooltip` | 悬停提示（延迟弹出、不挡点击） | `prefab/Tooltip.h` |
 | `Dialog` | 模态对话框（遮罩 + 居中面板 + Esc/Enter） | `prefab/Dialog.h` |
 | `ToastHost` | 通知条宿主（连发堆叠、到期自消失） | `prefab/ToastHost.h` |
+| `TabBar` | 标签页（顶 / 底 / 左三档、切页改可见性） | `prefab/TabBar.h` |
 | `PrefabTheme` | 一套配色 / 圆角 / 字体路径常量 | `prefab/PrefabTheme.h` |
 
 所有预制件都在 `prefab` 命名空间下（`ListRow` 也是）。
 
 上一段那句"不新增底层能力"对**复合件**（MenuBar / OptionBar / ListView / Select /
-FilePicker / MenuPopup / ListRow）严格成立；`Slider` / `ProgressBar` / 三件套 / 浮层三件套是 0.9.0 新增的
+FilePicker / MenuPopup / ListRow）严格成立；`Slider` / `ProgressBar` / 三件套 / 浮层三件套 / `TabBar` 是 0.9.0 新增的
 **单件**（叶子控件），它们确实有自己的 `onRender`——但绘制只调
 `inking_detail::fillShape`（全仓库唯一的填充入口），命中与绘制读同一份 `GetParts()`，
 没有第二份坐标计算。
@@ -713,7 +714,64 @@ public:
 4. `dismissed` 带的是**id**不是下标：前面那条消失之后下标会整体前移。
    `Clear()` 不发 `dismissed`——那是"到期"的通知，不是"被清掉"。
 
-## 十三、PrefabTheme
+## 十三、TabBar
+
+```C++
+enum class TabBarSide : std::uint8_t { Top, Bottom, Left };
+
+struct TabBarData : public InkingAnchorData {   // 定位 / 尺寸复用锚点那一份
+    std::string name = "tabBar";
+    TabBarSide side = TabBarSide::Top;
+    float stripThickness = 36.0f;    // 标签条厚度
+    float tabLength = 96.0f;         // 单个标签沿条方向的长度（固定值，不均分）
+    float gap = 0.0f;                // 标签条与内容区之间
+    InkingButtonData tab;            // 标签按钮的三态外观
+    std::uint32_t selectedTextColor = theme::kAccentStrong;
+    std::uint32_t textColor = theme::kTextPrimary;
+    InkingButtonAppearance content, background;
+    std::uint32_t indicatorColor = theme::kAccent;
+    float indicatorHeight = 3.0f;
+    static TabBarData MakeDefault();
+};
+
+class TabBar : public InkingStaticPanel {
+public:
+    InkingEvent<int, int> pageChanged;              // (现在, 之前)
+    int AddPage(const std::string& title, std::unique_ptr<InkingWidget> page);
+    bool Select(int index);                         // 换页才 true
+    int GetPageCount() const noexcept;
+    int GetVisiblePageIndex() const noexcept;       // 空时 −1
+    InkingWidget* GetPage(int index) const noexcept;
+    int GetContentWidth() const noexcept;
+    int GetContentHeight() const noexcept;
+};
+```
+
+```C++
+inking_prefab::TabBar tabs(&panel);
+tabs.AddPage("常规", std::make_unique<GeneralPage>(nullptr));
+tabs.AddPage("音量", std::make_unique<AudioPage>(nullptr));
+tabs.pageChanged.Subscribe([](int now, int before) { ... });
+```
+
+五条：
+
+1. **切页 = 改可见性**，不是挪坐标、更不是调 alpha。可见性是骨架变化，命中表跟着重烘
+   ——所以"切走的那页点不到"是白拿的；用 alpha 藏会出现"看不见但点得到"。
+2. **顺序是先藏后显**：反过来的话中间那一帧两页同显。
+3. **第一页自动成为当前页，但那次不发 `pageChanged`**——那是初始状态，不是"用户换了页"。
+   否则订阅者每个回调都得先写 `if (before < 0) return;`。
+4. **页内容的原点是内容区左上角**：页是自己的锚点 / 偏移说了算，TabBar 不重排
+   （静态组件没有几何写入口）。要铺满就照 `GetContentWidth()/GetContentHeight()` 配。
+5. **标签宽是固定值**（`tabLength`），不做均分、不做滚动——见下。
+
+**为什么没复用 `OptionBar` 做标签条**（与任务书初稿不同）：它的项宽存在自己的 style 里、
+`SetItems` 不回读；且 `itemLook.width <= 0` 时**每项撑成容器整宽**（竖向菜单语义）。
+横向标签条要"每项 = 宽 / 项数"、项数又随 `AddPage` 变，两条路都比直接摆
+`InkingStaticButton` 差。选中指示也不是它的词汇（它没有"选中态"这个第四态），
+所以下划线由 TabBar 自己在**装饰遍**（`onRenderDecoration`）画——那一遍在子孙之上。
+
+## 十四、PrefabTheme
 
 命名空间 `inking_prefab::theme`，一组 `inline constexpr` 常量 + 一个函数：
 
