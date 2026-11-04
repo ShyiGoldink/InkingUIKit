@@ -176,7 +176,12 @@ void ToastHost::relayoutToasts() {
     const float x = std::max(0.0f, hostWidth - _data.marginRight - width);
 
     // 文字高 → 单条高（量一遍就够：同一条文案不会变）。
+    //
+    // ⚠️ **必须给一个样本串**：`InkingMeasureText` 量的是"这段文字排出来多高"，
+    // 空串量出来是 0，于是条高 = 0 + 上下留白 = 16 —— 文字被裁掉大半。
+    // 行高只跟字号 / 字体有关、跟字数无关，所以固定样本就够（0.9.0 修）。
     InkingTextRequest request;
+    request.text = "国";  // 任取一个会真的走排版的样本
     request.fontSize = _data.fontSize;
     request.fontPath =
         _data.fontPath.empty() ? theme::DefaultFontPath() : _data.fontPath;

@@ -116,9 +116,20 @@ cmake --build build -j
 ### 3. 跑起来
 
 ```bash
-./build/bin/inking_demo.exe            # 真窗口演示（ESC 退出，F11 全屏）
+./build/bin/inking_showcase.exe        # **控件总览**：一页看齐所有预制件（先看这个）
+./build/bin/inking_demo.exe            # 最小可运行示例（ESC 退出，F11 全屏）
 ./build/bin/inking_demo_selftest.exe   # 无头自检：dummy 视频驱动 + 软件渲染器
 ```
+
+`inking_showcase` 长这样（左：浅色；右：在**外观**页点深色色板之后，运行期即时换肤）：
+
+| 浅色 `light` | 深色 `dark` |
+| --- | --- |
+| ![浅色](docs/showcase.png) | ![深色](docs/showcase-dark.png) |
+
+截图参数：`INKING_SHOWCASE_SNAPSHOT=out.png` 离屏出一张；`INKING_SHOWCASE_OVERLAY=1`
+连通知与对话框一起摆；`INKING_SHOWCASE_THEME=dark` 启动即深色；
+`INKING_SHOWCASE_SWITCH_TO=dark` **先按浅色跑一帧再切**（验的是运行中换肤那条路）。
 
 自检的输出末行是结论：
 
@@ -175,7 +186,8 @@ PUBLIC**——两者都会改公开头里 `inline` 函数的**内容**（`Inking
 | `build/bin/libinking.dll` | **动态库本体**（Release 约 1.6 MB） |
 | `build/lib/libinking.dll.a` | 导入库（链接用） |
 | `build/bin/inkgen.exe` | `CXXCSS/*.json` → C++ 的构建期生成器（只依赖标准库） |
-| `build/bin/inking_demo.exe` | 演示程序 |
+| `build/bin/inking_demo.exe` | 演示程序（最小示例） |
+| `build/bin/inking_showcase.exe` | 控件总览（一页看齐预制件） |
 | `build/bin/inking_demo_selftest.exe` | 无头自检 |
 | `build/inkgen/all/button_service.h` | 生成结果（看得见就能审） |
 

@@ -67,6 +67,7 @@ struct InkingButtonData {
     InkingButtonTextData text{};
     std::string label;             // text.content.normal 的运行时形态
     std::uint32_t textColor = 0xFFFFFFFFu;
+    const char* textColorToken = nullptr;   // 文字色的主题 token（换肤用）；nullptr = 纯颜色
 
     InkingAnchorPoint selfAnchor{}, traceAnchor{};
     float offsetX = 0.0f, offsetY = 0.0f;

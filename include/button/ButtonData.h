@@ -255,6 +255,17 @@ struct InkingButtonData {
     /// 等 text 段定稿，这个字段要么被配置覆盖，要么被删掉。
     std::uint32_t textColor = 0xFFFFFFFFu;
 
+    /**
+     * 文字色来自哪个**主题 token**（不带 `$`）；`nullptr` = 不是语义色。
+     *
+     * 为什么需要它：`textColor` 是纯颜色，运行期换主题时**不会**跟着变。深色主题下
+     * "浅底按钮配深字"就会变成"深底配深字"——一个字都看不见，而且不报错。
+     * 给了 token 之后，每次绘制按当前主题重查（文字不进缓存，所以版本一变下一帧就对）。
+     *
+     * 与 `InkingButtonAppearance::themeColor` 同一条约定：**必须指向静态生命周期的串**。
+     */
+    const char* textColorToken = nullptr;
+
     InkingAnchorPoint selfAnchor{};   ///< 自身锚点
     InkingAnchorPoint traceAnchor{};  ///< 上级锚点
     float offsetX = 0.0f;  ///< 对齐之后再挪一点，设计坐标

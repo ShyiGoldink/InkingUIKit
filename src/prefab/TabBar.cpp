@@ -60,14 +60,19 @@ TabRects ComputeRects(const TabBarData& data) {
 }
 
 InkingPanelData MakePanelData(const TabBarData& data, const TabRects& rects,
-                              std::uint32_t color, const char* suffix) {
+                              const InkingButtonAppearance& look,
+                              const char* suffix) {
     InkingPanelData panel;
     panel.name = (data.name.empty() ? "tabBar" : data.name) + suffix;
     panel.width = std::max(1, static_cast<int>(std::lround(rects.content.width)));
     panel.height = std::max(1, static_cast<int>(std::lround(rects.content.height)));
     panel.shape = InkingShapeSpec::Rect();
-    panel.closed.color = color;
-    panel.open.color = color;
+    panel.closed.color = look.color;
+    panel.open.color = look.color;
+    // **token 要一起传**：只搬 `color` 的话，配置里写的 `themeColor` 到这儿就断了，
+    // 症状是"运行期换主题，别的都变了、标签页还是浅色"（而且不报错）。
+    panel.closed.themeColor = look.themeColor;
+    panel.open.themeColor = look.themeColor;
     panel.openInheritsClosed = false;
     return panel;
 }
@@ -114,7 +119,7 @@ TabBar::TabBar(InkingWidget* parent, const TabBarData& data)
                   0.0f, 0.0f, static_cast<float>(std::max(1, data.width)),
                   static_cast<float>(std::max(1, data.height))};
               InkingPanelData panel =
-                  MakePanelData(data, rects, data.background.color, "");
+                  MakePanelData(data, rects, data.background, "");
               // 定位从 `InkingAnchorData` 那一份搬过来（与 Slider / Toggle 同一口径：
               // 锚点 / 偏移用框架同一套规则，不另造字段）。
               panel.selfAnchor = data.selfAnchor;
@@ -128,7 +133,7 @@ TabBar::TabBar(InkingWidget* parent, const TabBarData& data)
     auto content = std::make_unique<InkingStaticPanel>(
         nullptr, [&data, &rects] {
             InkingPanelData panel =
-                MakePanelData(data, rects, data.content.color, ".content");
+                MakePanelData(data, rects, data.content, ".content");
             // 内容区贴在"整框减标签条"的那块上：左上空 + 偏移。
             panel.traceAnchor = InkingChangeAnchor::LeftTop;
             panel.selfAnchor = InkingChangeAnchor::LeftTop;

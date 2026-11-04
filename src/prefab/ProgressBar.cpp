@@ -1,6 +1,7 @@
 #include <prefab/ProgressBar.h>
 
 #include <detail/InkLog.h>
+#include <theme/InkingTheme.h>
 #include <prefab/PrefabParts.h>
 #include <prefab/PrefabTheme.h>
 #include <render/InkingDraw.h>
@@ -103,12 +104,14 @@ void ProgressBar::onRender(float pixelX, float pixelY) const {
 
     // ① 轨道总是画。
     FillPart(renderer, _data.shape, parts.track, magnification, pixelX, pixelY,
-             _data.track.color);
+             InkingResolveThemeColor(_data.track.themeColor,
+                                                   _data.track.color));
 
     // ② 填充块：`progress == 0` 时**不画**（不是画一个 0 宽块——0 宽的三角化
     //    没有意义，而且会多一条提交记录）。
     FillPart(renderer, _data.shape, parts.fill, magnification, pixelX, pixelY,
-             _data.fill.color);
+             InkingResolveThemeColor(_data.fill.themeColor,
+                                                   _data.fill.color));
 }
 
 }  // namespace inking_prefab

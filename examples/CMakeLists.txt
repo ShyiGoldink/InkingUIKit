@@ -1,5 +1,7 @@
 # 示例工程：用动态库写一个最小可运行的 Inking 应用
 add_subdirectory(demo)
+add_subdirectory(showcase)
+add_subdirectory(probe_template)
 add_subdirectory(pet)
 add_subdirectory(sharp)
 add_subdirectory(atlas_frames)

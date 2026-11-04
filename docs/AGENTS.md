@@ -121,6 +121,14 @@ Windows 下 exe 按"自身所在目录 → PATH"找 DLL，分开放会变成"程
 
 **第 2 条** 自检必须过：`inking_demo_selftest` 的**失败项 0**（读 stdout 末行）。
 
+> **新控件的细账别往 `selftest.cpp` 里加**（它已 ~9800 行，验的是"库作为 DLL、消费者
+> 视角能不能用"）。复制 `examples/probe_template/main.cpp`，改顶部标的五处，然后
+> `ctest --test-dir build -R probe_template`——单文件、约 1.7 s、退出码 = 失败项数。
+> 模板自带"状态 / 事件 / 像素"三块与一条防假绿断言（左右两半颜色必须不同）。
+>
+> **想看控件长什么样**跑 `build/bin/inking_showcase.exe`（一页摆齐预制件）；
+> 只想出一张图就 `INKING_SHOWCASE_SNAPSHOT=out.png`（离屏读回，不抓屏）。
+
 **第 3 条** 文档与实现**同步**：改了公开面就改 `docs/zh/api/*.md` 与 `CHANGELOG.md`；
 改了设计约定就改对应设计文档，**并把条号冲突一并处理**（见 §6 顶部）。
 

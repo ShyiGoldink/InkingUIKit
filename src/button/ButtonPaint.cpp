@@ -2,6 +2,7 @@
 
 #include <render/InkingDraw.h>
 #include <render/InkingText.h>
+#include <theme/InkingTheme.h>
 
 #include <SDL3/SDL.h>
 
@@ -303,7 +304,11 @@ void PaintButtonText(const InkingAnchor& node, const InkingButtonData& data,
         data.text.fontSize > 0.0f ? data.text.fontSize : kDefaultFontSize;
     request.fontPath = data.text.path;
     request.fontPaths = data.text.paths;
-    request.color = VisibleTextColor(data.textColor);
+    // 文字色：配了 token 就按当前主题重查（运行期换肤），否则用配置里的字面量。
+    // 这一步**不能省**：`textColor` 只是"默认主题下的值"，深色主题下浅底按钮
+    // 会变成深底深字（一个字都看不见，而且不报错）。
+    request.color = VisibleTextColor(
+        InkingResolveThemeColor(data.textColorToken, data.textColor));
     // 位置：`align` / `alignV` 为默认值时就是配置里的 leftSpace / topSpace；
     // 写了居中 / 右对齐 / 贴底时先量一遍文字块再算（见 `ButtonTextOffset`）。
     const InkingPoint2 offset = ButtonTextOffset(node, data);

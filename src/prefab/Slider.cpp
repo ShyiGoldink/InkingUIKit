@@ -1,6 +1,7 @@
 #include <prefab/Slider.h>
 
 #include <detail/InkLog.h>
+#include <theme/InkingTheme.h>
 #include <detail/InkingHit.h>
 #include <input/KeyboardInput.h>
 #include <prefab/PrefabParts.h>
@@ -32,7 +33,9 @@ constexpr float kSpanEpsilon = 1e-6f;
 /// 几何转成形状、只留填充色，所以和 `Color` 同路；`Image` 需要部件级纹理层，
 /// 这一版没接——构造时会**明确喊一条 WARN**（不静默画错）。
 std::uint32_t FillColorOf(const InkingButtonAppearance& appearance) noexcept {
-    return appearance.color;
+    // 配了 `themeColor` 就按当前主题重查——**不能只返回 `color`**：那样运行期
+    // 换主题时滑块会留着旧色（"别的地方都变了，就这一条轨道没变"，不报错）。
+    return InkingResolveThemeColor(appearance.themeColor, appearance.color);
 }
 
 }  // namespace
