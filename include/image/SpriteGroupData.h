@@ -104,6 +104,21 @@ struct InkingSpriteGroupData {
     int margin = 0;
     int spacing = 0;
 
+    /**
+     * @brief 摆放（0.9.0 T-05 补）：自身锚点 / 上级锚点 / 偏移。
+     *
+     * 为什么必须有：**静态档的几何构造即定型**（`InkingAnchor` 没有公开写入口，
+     * 那是编译期保证）。没有这几个字段，组只能躺在父容器左上角，除非父容器声明
+     * 布局——而那要求"组是个布局项"，与"精灵按锚点摆"是两件事。字段名与语义
+     * 照抄 `InkingSpriteData`，不另造。
+     *
+     * 动态档也可以改（四个写入口都在），但配置里的值仍是初值。
+     */
+    InkingAnchorPoint selfAnchor{};
+    InkingAnchorPoint traceAnchor{};
+    float offsetX = 0.0f;
+    float offsetY = 0.0f;
+
     /// 动画表（顺序 = 声明顺序；第 0 个是默认动作）。
     std::vector<InkingSpriteGroupAnimation> animations;
 

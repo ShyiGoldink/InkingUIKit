@@ -41,8 +41,10 @@ InkingImageData InkingDynamicSpriteGroup::imageDataFor(
     image.normal.imageSize = data.imageSize;
     image.runtimeAsset = data.imageBytes == nullptr || data.imageSize == 0;
     image.shape = InkingShapeSpec::Rect();
-    image.selfAnchor = InkingChangeAnchor::LeftTop;
-    image.traceAnchor = InkingChangeAnchor::LeftTop;
+    image.selfAnchor = data.selfAnchor;
+    image.traceAnchor = data.traceAnchor;
+    image.offsetX = data.offsetX;
+    image.offsetY = data.offsetY;
     return image;
 }
 

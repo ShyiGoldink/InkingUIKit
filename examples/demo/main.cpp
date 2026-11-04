@@ -11,6 +11,7 @@
 //   <text/InkingStaticLabel.h>     只读文字
 //   <image/InkingSprite.h>         帧动画（序列帧 / 图集，0.6.x）
 //   <image/InkingAnimateGroup.h>    动画组（一个角色多个动作，0.6.6）
+//   <image/InkingSpriteGroup.h>    块叠加组（一个 sprite 由多块拼成，0.9.0）
 //
 // 三件事在这份代码里各演示一条：
 //   1. **两种按钮的分工**：静态按钮走点击回调；动态按钮在 `onTick` 里自己
@@ -35,6 +36,7 @@
 #include <image/ImageData.h>
 #include <image/InkingSprite.h>
 #include <image/InkingAnimateGroup.h>
+#include <image/InkingSpriteGroup.h>
 #include <image/InkingStaticImage.h>
 #include <image/SpriteData.h>
 #include <input/Shortcut.h>
@@ -259,6 +261,8 @@ private:
                        InkingShortcut::Parse("Ctrl+Enter"));
         bar->AddButton(item, "切换动作", [this] { ToggleWalkerGroup(); },
                        InkingShortcut::Parse("F2"));
+        bar->AddButton(item, "叠块", [this] { ToggleSpriteGroup(); },
+                       InkingShortcut::Parse("F3"));
         bar->AddButton(item, "退出",
                        [] { InkingWindow::Instance().RequestExit(); },
                        InkingShortcut::Parse("Ctrl+Q"));
@@ -357,6 +361,7 @@ private:
         AddSpinner();
         AddWalker();
         AddWalkerGroup();
+        AddSpriteGroup();
     }
 
     /**
@@ -488,6 +493,68 @@ private:
         }
     }
 
+    /**
+     * **块叠加组**（0.9.0 T-05）：一个 sprite 由**多块**拼成。
+     *
+     * 跟上面的动画组不是一件事：动画组是"一个角色的多个动作、一帧一块"，块叠加组是
+     * "同一个 sprite 在一帧里画几块"（每块取图集里不同的格，同框叠图）。
+     *
+     * 两个动作用同一张 `walk.png`（4 格 / 48×48），区别只有每帧画几块：
+     *   - `idle`：每帧 **1 块**（正常角色）；
+     *   - `ghost`：每帧 **2 块**（相邻两格叠在一起 ⇒ 看起来是重影）。
+     *
+     * 这一页想让人看见的是：**2 块一帧仍然只有 1 次提交**——不是"两块各画一次"。
+     * 判据在自检里（`CheckSpriteGroup` / `CheckSpriteBatching` 的 K=1/2/4）。
+     */
+    void AddSpriteGroup() {
+        InkingSpriteGroupData group;
+        group.source = "walk.png";
+        group.frameWidth = 48;
+        group.frameHeight = 48;
+        group.columns = 4;
+        group.rows = 1;
+        // 静态档**几何构造即定型**（没有公开的几何写入口），所以位置只能配在这里。
+        group.selfAnchor = InkingChangeAnchor::Center;
+        group.traceAnchor = InkingChangeAnchor::Center;
+        group.offsetX = -520.0f;
+        group.offsetY = 260.0f;
+
+        InkingSpriteGroupAnimation idle;
+        idle.name = "idle";
+        idle.fps = 8.0;
+        idle.loop = true;
+        idle.frames = {{0}, {1}, {2}, {3}};
+
+        InkingSpriteGroupAnimation ghost;
+        ghost.name = "ghost";
+        ghost.fps = 8.0;
+        ghost.loop = true;
+        // 每帧两块：相邻两格叠一起。**顺序就是叠加顺序**（后面的盖在前面上）。
+        ghost.frames = {{0, 1}, {1, 2}, {2, 3}, {3, 0}};
+
+        group.animations.push_back(std::move(idle));
+        group.animations.push_back(std::move(ghost));
+
+        _spriteGroup = static_cast<InkingSpriteGroup*>(AddChild(
+            std::make_unique<InkingSpriteGroup>(this, group, "idle")));
+        _blockLabel = AddLabel("block_action", "叠块：idle 1 块（F3 切换）", 380,
+                               40, 20.0f, kTextDim, 330.0f, -520.0f);
+    }
+
+    /// 菜单「叠块」用：在 idle（1 块）与 ghost（2 块）之间来回。
+    void ToggleSpriteGroup() {
+        if (_spriteGroup == nullptr || _blockLabel == nullptr) {
+            return;
+        }
+        const std::string next =
+            _spriteGroup->GetCurrentAnimation() == "idle" ? "ghost" : "idle";
+        if (_spriteGroup->SwitchTo(next)) {
+            _blockLabel->SetText(next == "ghost"
+                                     ? "叠块：ghost 2 块（F3 切换）"
+                                     : "叠块：idle 1 块（F3 切换）");
+        }
+    }
+
     InkingStaticLabel* AddLabel(const std::string& name,
                                         const std::string& text, int width,
                                         int height, float fontSize,
@@ -509,6 +576,8 @@ private:
     InkingSprite* _spinner = nullptr;
     InkingAnimateGroup* _walkerGroup = nullptr;
     InkingStaticLabel* _actionLabel = nullptr;
+    InkingSpriteGroup* _spriteGroup = nullptr;
+    InkingStaticLabel* _blockLabel = nullptr;
     int _steps = 0;
     inking_prefab::MenuBar* _menuBar = nullptr;
     std::unique_ptr<inking_prefab::MenuPopup> _menu;

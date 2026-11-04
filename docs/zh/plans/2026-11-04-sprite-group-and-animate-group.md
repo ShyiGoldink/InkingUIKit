@@ -124,40 +124,7 @@
 
 ---
 
-### T-07 合批断言与 demo
-
-- **状态**：未开始
-- **落点**：`examples/demo/selftest.cpp` 的 `CheckSpriteBatching`（:7798）附近新增一段；`examples/demo/main.cpp` 加一页示例
-
-**准备怎么改**
-
-「一帧 K 块只有一次 drawcall」是这轮的核心收益，必须变成**可断言的数**，不能只写在设计里（`AGENTS.md` §4 第 4 条）。
-
-| 方案 | 做法 | 代价 | 结论 |
-| - | - | - | - |
-| A 扩 `CheckSpriteBatching` | 在同一条自检里加「多块组」一段 | 复用现成的开关与读回工具 | **推荐** |
-| B 另写一条自检 | 独立函数 | 重复 `SetImageBatchingEnabled` 的开关与还原 | 退路 |
-
-**大致改动逻辑**
-
-1. 在 `CheckSpriteBatching` 末尾加一段：建一个 2 块 × 1 帧的组，`BatchStatsSnapshot()` 取前后差值，断言 `textureDraws == 1`、`geometrySubmissions == 1`。
-2. 同一个组改成 1 块再测一次，断言 `textureDraws` 仍是 1（对照组：**不是**「块多所以提交多」）。
-3. `examples/demo/main.cpp`：加一个用 `walk.png` 的块叠加示例（两个格号叠一帧），菜单项切换动画。素材沿用现有 `walk.png`，**不引入第三方素材**（`tools/THIRD-PARTY-NOTICES.md` 的规矩）。
-4. 哪一步不能反：开关必须在 `CheckSpriteBatching` 末尾**还原**（那里已有 `SetImageBatchingEnabled(false)` 的对照段，照抄收尾）。
-
-**与改动前对比**
-
-| 场景 | 改动前 | 改动后 |
-| - | - | - |
-| 同图集 2 块一帧 | 不存在（一帧一块） | `textureDraws` = 1 |
-| 同图集 1 块一帧 | `textureDraws` = 1 | **不变**（对照组） |
-| 两块来自不同图集 | 不存在 | 2（**不承诺合批**，跨纹理本来就刷批） |
-
-**验收**：`CheckSpriteBatching` 的新段落打印前后差值并 `Check`；`selftest` 末行「失败项：0」。
-
-**风险与回退**：风险是「一次提交」被别的绘制插进来打断（描边、文字、contain 图都会刷批）。缓解：断言的组里不配描边、不加标签。回退：删掉该段。
-
----
+- T-07 合批断言与 demo-已完成（2026-11-04，`CheckSpriteBatching` 末尾加一段：块叠加组 **K=1 / 2 / 4** 三档各渲一帧，`textureDraws` 与 `geometrySubmissions` 增量**都是 1**（实测 `几何 1/1/1，纹理批 1/1/1`）——`CheckSpriteGroup` 已比过 K=2 vs K=1，这里把 K 拉到 4，「每块各提一次」的实现会在 K=4 上露头而 K=1 看不出来。开关不需要动（`imageBatching()` 默认就是开的，上面两块各自还原过）。demo 加「叠块」F3 菜单项：同一张 `walk.png` 的两个动作——`idle` 每帧 1 块、`ghost` 每帧 2 块（相邻两格叠一起 ⇒ 重影），**没引入第三方素材**。**顺带补了 T-05 的一个缺口**：`InkingSpriteGroupData` 加四个摆放字段（`selfAnchor`/`traceAnchor`/`offsetX`/`offsetY`）——静态档几何构造即定型、没有公开写入口，没有这几个字段组只能躺在父容器左上角。构建 0 warning、`selftest` 末行失败项 0、`ctest` 8 条全绿。**demo 的 F3 视觉效果需要人看一眼**（窗口行为，按 `AGENTS.md` §4 第 5 条不自己宣布通过））
 
 ### T-08 文档、CHANGELOG、版本号收口
 
@@ -219,7 +186,7 @@
 | T-04 | 新增块叠加组的数据面 | 0.9.0-d | 已完成 |
 | T-05 | 静态档 `InkingSpriteGroup` | 0.9.0-d | 已完成 |
 | T-06 | 动态档 `InkingDynamicSpriteGroup` | 0.9.0-e | 已完成 |
-| T-07 | 合批断言与 demo | 0.9.0-e | 未开始 |
+| T-07 | 合批断言与 demo | 0.9.0-e | 已完成 |
 | T-08 | 文档、CHANGELOG、版本号收口 | 0.9.0-e | 未开始 |
 
 完成任务后，本节状态改 `已完成`，§3～§7 对应段落按 **§1.2** 压缩成一行——两处必须同时改。

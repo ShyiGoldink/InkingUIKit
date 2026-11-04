@@ -171,6 +171,21 @@
   `applyPendingSpriteData`）；三个既有精灵自检（图集 / 事件 / 换配置）**一条断言
   不改**就过。
 
+### 新增（合批断言扩到 K=1/2/4 + demo 叠块示例，0.9.0 T-07）
+
+- `CheckSpriteBatching` 末尾加一段：块叠加组 **K=1 / 2 / 4** 三档各渲一帧，
+  `textureDraws` 与 `geometrySubmissions` 的增量**都是 1**。`CheckSpriteGroup` 已经
+  比过 K=2 vs K=1；这里把 K 拉到 4——"每块各提一次"那种实现会在 K=4 上直接露头
+  （K=1 时根本看不出来）。实测 `几何 1/1/1，纹理批 1/1/1`。
+- `examples/demo`：菜单加「叠块」（F3），用现成的 `walk.png`（4 格 48×48）演示
+  同一个节点的两个动作——`idle`（每帧 **1 块**）与 `ghost`（每帧 **2 块**，相邻两格
+  叠一起 ⇒ 重影）。**没有引入第三方素材**（`tools/THIRD-PARTY-NOTICES.md` 的规矩）。
+- 数据面补四个摆放字段（`InkingSpriteGroupData` 的 `selfAnchor` / `traceAnchor` /
+  `offsetX` / `offsetY`，0.9.0 T-05 收尾）：静态档**几何构造即定型**（`InkingAnchor`
+  没有公开写入口，那是编译期保证），没有这几个字段组只能躺在父容器左上角，除非
+  父容器声明布局——而"组是个布局项"与"精灵按锚点摆"是两件事。字段名与语义照抄
+  `InkingSpriteData`。
+
 ### 新增（块叠加组的动态档 `InkingDynamicSpriteGroup`，0.9.0 T-06）
 
 - **`include/image/InkingDynamicSpriteGroup.h`**：`InkingDynamicWidget` +

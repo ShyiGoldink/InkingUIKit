@@ -7807,6 +7807,10 @@ void CheckDynamicSpriteGroup(SDL_Renderer* renderer) {
         group.frameHeight = 40;
         group.columns = 6;
         group.rows = 1;
+        // 显式写左上角：自检的读回区域是从 (0,0) 起的 40×40（默认值也是它，
+        // 但读回区域不该依赖"默认值正好合适"）。
+        group.selfAnchor = InkingChangeAnchor::LeftTop;
+        group.traceAnchor = InkingChangeAnchor::LeftTop;
 
         InkingSpriteGroupAnimation idle;
         idle.name = "idle";
@@ -7937,6 +7941,10 @@ void CheckSpriteGroup(SDL_Renderer* renderer) {
         group.frameHeight = 40;
         group.columns = 6;
         group.rows = 1;
+        // 显式写左上角：自检的读回区域是从 (0,0) 起的 40×40（默认值也是它，
+        // 但读回区域不该依赖"默认值正好合适"）。
+        group.selfAnchor = InkingChangeAnchor::LeftTop;
+        group.traceAnchor = InkingChangeAnchor::LeftTop;
 
         InkingSpriteGroupAnimation idle;
         idle.name = "idle";
@@ -8682,6 +8690,72 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
         Check(offPixel == 0xFF000000u,
               "T-08：确认那条快路**确实不看 transform**（关开关时同一点是空的）——"
               "这是 0.6.1 的既有缺陷，本任务顺带修掉");
+    }
+
+    // ---- 块叠加组：一帧 K 块，提交次数与 K 无关（0.9.0 T-07） ----
+    //
+    // `CheckSpriteGroup` 已经比过 K=2 vs K=1；这里把 K 拉到 4——"每块各提一次"
+    // 那种实现会在 K=4 上直接露头（K=1 时根本看不出来）。
+    //
+    // 开关在这里**不需要动**：整段默认开着（`imageBatching()` 的默认值），
+    // 上面那两个块各自还原过，所以进来时一定是 true。
+    {
+        const std::vector<std::uint8_t> groupAtlas = MakeSheetBmp(240, 40, 40, 0);
+        const auto measureGroup = [&](int blocks) {
+            InkingSpriteGroupData group;
+            group.source = "batch_sgroup";
+            group.imageBytes = groupAtlas.data();
+            group.imageSize = groupAtlas.size();
+            group.frameWidth = 40;
+            group.frameHeight = 40;
+            group.columns = 6;
+            group.rows = 1;
+
+            InkingSpriteGroupAnimation idle;
+            idle.name = "idle";
+            idle.fps = 12.0;
+            idle.loop = true;
+            std::vector<int> cells;
+            for (int b = 0; b < blocks; ++b) {
+                cells.push_back(b);
+            }
+            idle.frames.push_back(std::move(cells));
+            group.animations.push_back(std::move(idle));
+
+            auto scene = std::make_unique<InkingScene>(
+                std::string("sprite_batch_group_") + std::to_string(blocks));
+            auto* node = static_cast<InkingSpriteGroup*>(scene->AddChild(
+                std::make_unique<InkingSpriteGroup>(scene.get(), group)));
+            node->Pause();
+            node->SeekToFrame(0);
+
+            InkingSceneLibrary::SetActiveScene(scene.get());
+            scene->TickFrame(1.0f / 60.0f);
+            const Counts before = snapshot();
+            RenderSvgFrame(renderer, *scene);
+            const Counts after = snapshot();
+            EndSvgFrame(renderer);
+            InkingSceneLibrary::SetActiveScene(nullptr);
+            return Counts{after.geometry - before.geometry,
+                          after.texture - before.texture,
+                          after.draws - before.draws};
+        };
+
+        const Counts one = measureGroup(1);
+        const Counts two = measureGroup(2);
+        const Counts four = measureGroup(4);
+        std::printf("         块叠加组 K=1/2/4：几何 %llu/%llu/%llu，"
+                    "纹理批 %llu/%llu/%llu\n",
+                    static_cast<unsigned long long>(one.geometry),
+                    static_cast<unsigned long long>(two.geometry),
+                    static_cast<unsigned long long>(four.geometry),
+                    static_cast<unsigned long long>(one.draws),
+                    static_cast<unsigned long long>(two.draws),
+                    static_cast<unsigned long long>(four.draws));
+        Check(one.draws == 1 && two.draws == 1 && four.draws == 1,
+              "T-07：一帧 K 块的纹理提交数与 K 无关（K=1/2/4 都是 1）");
+        Check(one.geometry == 1 && two.geometry == 1 && four.geometry == 1,
+              "T-07：几何提交数也是 1——K 块合进同一次 SDL_RenderGeometry");
     }
 }
 

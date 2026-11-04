@@ -36,10 +36,13 @@ InkingImageData InkingSpriteGroup::imageDataFor(
     image.normal.imageSize = data.imageSize;
     image.runtimeAsset = data.imageBytes == nullptr || data.imageSize == 0;
     image.shape = InkingShapeSpec::Rect();
-    // 定位：左上角对齐父级左上角、偏移 0（与自检 / demo 的读回区域对得上）。
-    // 要别的摆法就调 `ChangeSelfAnchor` / `ChangeOffset`（静态档也有那几个入口）。
-    image.selfAnchor = InkingChangeAnchor::LeftTop;
-    image.traceAnchor = InkingChangeAnchor::LeftTop;
+    // 摆放：静态档**几何构造即定型**（没有公开写入口），所以配置里的锚点 / 偏移
+    // 就是它唯一的位置来源。默认左上角对齐、偏移 0——与 `InkingImageData` 的默认
+    // 一致，于是"没配"和"配成 0,0"是同一个效果（不需要额外的"未配置"哨兵）。
+    image.selfAnchor = data.selfAnchor;
+    image.traceAnchor = data.traceAnchor;
+    image.offsetX = data.offsetX;
+    image.offsetY = data.offsetY;
     return image;
 }
 
