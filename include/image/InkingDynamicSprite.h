@@ -36,7 +36,7 @@
 //   与 `InkingDynamicImage` 同档：`HitTest` 自己判、自己维护状态，场景只在点落进
 //   它的洞里时才来问它。四个几何入口都走 `MarkGeometryMoved()`（T-19）——精灵是
 //   叶子，于是移动只刷洞、不重建整表。`OwnsSubtreeHit()` 保持 false（精灵不当容器；
-//   要"一个节点多个动作"用 `InkingSpriteGroup`，那是另一件事）。
+//   要"一个节点多个动作"用 `InkingAnimateGroup`，那是另一件事）。
 //
 //   洞过期 = 那一片**点不到**，所以"`Resize` 之后命中跟着变"是 G-03 的验收项之一：
 //   它同时证明几何真的改了、且洞跟着刷了。

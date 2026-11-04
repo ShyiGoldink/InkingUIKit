@@ -1,4 +1,4 @@
-#include <image/InkingSpriteGroup.h>
+#include <image/InkingAnimateGroup.h>
 
 #include <detail/InkLog.h>
 
@@ -8,10 +8,10 @@ namespace {
 ///
 /// **不在这里打日志**：它会在构造函数的 mem-initializer 里被调一次，报错要等
 /// 组件本身构造完再打（那时 `GetConfigError()` 之类的观测口才可用）。
-std::size_t InitialIndex(const InkingSpriteGroupData& group,
+std::size_t InitialIndex(const InkingAnimateGroupData& group,
                          const std::string& wanted) noexcept {
     if (group.animations.empty()) {
-        return InkingSpriteGroupData::kNotFound;
+        return InkingAnimateGroupData::kNotFound;
     }
     if (wanted.empty()) {
         return 0u;
@@ -21,7 +21,7 @@ std::size_t InitialIndex(const InkingSpriteGroupData& group,
 
 }  // namespace
 
-std::size_t InkingSpriteGroupData::FindIndex(const std::string& animationName) const noexcept {
+std::size_t InkingAnimateGroupData::FindIndex(const std::string& animationName) const noexcept {
     for (std::size_t i = 0; i < animations.size(); ++i) {
         if (animations[i].first == animationName) {
             return i;
@@ -30,7 +30,7 @@ std::size_t InkingSpriteGroupData::FindIndex(const std::string& animationName) c
     return kNotFound;
 }
 
-std::string InkingSpriteGroupData::Validate() const {
+std::string InkingAnimateGroupData::Validate() const {
     if (animations.empty()) {
         return "动画组里没有任何动作";
     }
@@ -51,14 +51,14 @@ std::string InkingSpriteGroupData::Validate() const {
     return {};
 }
 
-InkingSpriteGroup::InkingSpriteGroup(InkingWidget* parent,
-                                     const InkingSpriteGroupData& data,
+InkingAnimateGroup::InkingAnimateGroup(InkingWidget* parent,
+                                     const InkingAnimateGroupData& data,
                                      const std::string& initialAnimation)
     // 基类要先拿到一份**具体的**配置：空组时给一份空配置（`IsValid()` 会是假，
     // 与"配置坏了照样构造"的既有口径一致）。
     : InkingSprite(parent, [&data, &initialAnimation]() -> InkingSpriteData {
           const std::size_t index = InitialIndex(data, initialAnimation);
-          if (index != InkingSpriteGroupData::kNotFound) {
+          if (index != InkingAnimateGroupData::kNotFound) {
               return data.animations[index].second;
           }
           // 名字写错 / 空表：基类也要拿一份**能播的**配置。给空配置的话，
@@ -70,17 +70,17 @@ InkingSpriteGroup::InkingSpriteGroup(InkingWidget* parent,
     _group = data;
     _groupError = _group.Validate();
     if (!_groupError.empty()) {
-        INK_LOG_ERROR(std::string(InkingSpriteGroupModuleName),
+        INK_LOG_ERROR(std::string(InkingAnimateGroupModuleName),
                       "动画组配置不合法：" + _groupError);
         return;
     }
 
     const std::size_t index = InitialIndex(_group, initialAnimation);
-    if (index == InkingSpriteGroupData::kNotFound) {
+    if (index == InkingAnimateGroupData::kNotFound) {
         // 初始名字写错：退回第 0 个**并说出来**。静默退会让"一开始播错了动作"
         // 看起来像数据配错，而真正的问题只在那一行初始名上。
         _currentAnimation = _group.animations.front().first;
-        INK_LOG_ERROR(std::string(InkingSpriteGroupModuleName),
+        INK_LOG_ERROR(std::string(InkingAnimateGroupModuleName),
                       "初始动作 \"" + initialAnimation + "\" 不存在，已退回第 0 个 \""
                           + _currentAnimation + "\"（可选："
                           + std::to_string(_group.animations.size()) + " 个）");
@@ -89,20 +89,20 @@ InkingSpriteGroup::InkingSpriteGroup(InkingWidget* parent,
     _currentAnimation = _group.animations[index].first;
 }
 
-bool InkingSpriteGroup::SwitchTo(const std::string& name, bool keepPhase,
+bool InkingAnimateGroup::SwitchTo(const std::string& name, bool keepPhase,
                                  bool resize) {
     if (!_groupError.empty()) {
         // 组数据本身就不合法：任何切换都会落在"没有动作"上，直接拒绝，
         // 免得一条配置错刷出 N 条 ERROR。
-        INK_LOG_ERROR(std::string(InkingSpriteGroupModuleName),
+        INK_LOG_ERROR(std::string(InkingAnimateGroupModuleName),
                       "动画组配置不合法，切换被忽略（要 \"" + name + "\"）："
                           + _groupError);
         return false;
     }
 
     const std::size_t index = _group.FindIndex(name);
-    if (index == InkingSpriteGroupData::kNotFound) {
-        INK_LOG_ERROR(std::string(InkingSpriteGroupModuleName),
+    if (index == InkingAnimateGroupData::kNotFound) {
+        INK_LOG_ERROR(std::string(InkingAnimateGroupModuleName),
                       "动作 \"" + name + "\" 不存在（当前 \"" + _currentAnimation
                           + "\"，可选 " + std::to_string(_group.animations.size())
                           + " 个）——不静默停在旧动作上");
@@ -132,11 +132,11 @@ bool InkingSpriteGroup::SwitchTo(const std::string& name, bool keepPhase,
     return true;
 }
 
-const std::string& InkingSpriteGroup::GetCurrentAnimation() const noexcept {
+const std::string& InkingAnimateGroup::GetCurrentAnimation() const noexcept {
     return _currentAnimation;
 }
 
-std::vector<std::string> InkingSpriteGroup::GetAnimationNames() const {
+std::vector<std::string> InkingAnimateGroup::GetAnimationNames() const {
     std::vector<std::string> names;
     names.reserve(_group.animations.size());
     for (const auto& entry : _group.animations) {
@@ -145,11 +145,11 @@ std::vector<std::string> InkingSpriteGroup::GetAnimationNames() const {
     return names;
 }
 
-const InkingSpriteGroupData& InkingSpriteGroup::GetGroupData() const noexcept {
+const InkingAnimateGroupData& InkingAnimateGroup::GetGroupData() const noexcept {
     return _group;
 }
 
-const std::string& InkingSpriteGroup::GetGroupError() const noexcept {
+const std::string& InkingAnimateGroup::GetGroupError() const noexcept {
     return _groupError;
 }
 

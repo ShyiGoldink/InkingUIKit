@@ -25,14 +25,14 @@
 | 组件 | 要补的动态档 | 连带（本轮一并规划） |
 |---|---|---|
 | Image | `InkingDynamicImage` | — |
-| Sprite | `InkingDynamicSprite` | `InkingSpriteGroup`（**本轮不设计，但必须保持可编译**，见 §2.3） |
+| Sprite | `InkingDynamicSprite` | `InkingAnimateGroup`（**本轮不设计，但必须保持可编译**，见 §2.3） |
 | Label | `InkingDynamicLabel` | `InkingTextInput`（`InkingStaticLabel` 的子类） |
 | Panel | `InkingDynamicPanel` | FilePicker / ListView / MenuBar / OptionBar / Select；**`InkingFixedPopup` / `MenuPopup`**（见 §2.3） |
 
 **明确不覆盖**：
 
 - `Canvas`、`Video`、`Scene`、`Window`——它们的几何在设计期就定了，没有运行期移动的需求。
-- **`InkingSpriteGroup` 的双档设计**——它自己需要更详细的设计（子项坐标跟随、组内几何传播、成组动画），另开一份任务书。本轮只要求它在 Sprite 分档之后**仍然能编译且行为不变**。
+- **`InkingAnimateGroup` 的双档设计**——它自己需要更详细的设计（子项坐标跟随、组内几何传播、成组动画），另开一份任务书。本轮只要求它在 Sprite 分档之后**仍然能编译且行为不变**。
 
 > **前置（`MD-01` 之后加）**：「要补动态档」这句话已被附录 A.3 拆成三种诉求——**偶发拖拽**（A13 已够）、**每帧走位**（必须动态档，用 A13 会每帧重烘命中表）、**运行期改占位**（必须动态档）。`MD-02` 开工前每个组件都要能说出自己属于哪一种。
 
@@ -101,18 +101,18 @@
 
 结论：**`PanelLike` 不抽**。两档的差异不在绘制，而在状态机（`PanelLook`，314 行）、滚动、容器命中三组，而这三组 `FixedPopup` 一组都没有。`InkingDynamicPanel` 按独立实现做。`InkingStaticPanel.h:289-290` 那句"`PanelLook` 是静态 / 动态 Panel 共用的一份"是对的——**正因为它在，`PanelLike` 没有生存空间**。
 
-**(b) 四个组件是继承链，不是兄弟；`InkingSpriteGroup` 会被悬空。**
+**(b) 四个组件是继承链，不是兄弟；`InkingAnimateGroup` 会被悬空。**
 
 Button 那套模子能成立，前提是 `StaticButton` 与 `DynamicButton` 是**兄弟**。四个目标组件的现状不是：
 
 ```
-InkingStaticImage ← InkingSprite ← InkingSpriteGroup
+InkingStaticImage ← InkingSprite ← InkingAnimateGroup
 InkingStaticLabel ← InkingTextInput
 InkingStaticPanel ← FilePicker / ListView / MenuBar / OptionBar / Select
 InkingDynamicWidget ← InkingFixedPopup ← MenuPopup
 ```
 
-`InkingSprite` 今天是 `InkingStaticImage` 的**子类**。一旦 Image 分出静态 / 动态两档，Sprite 必须选定跟哪一档；Sprite 选定之后，`InkingSpriteGroup`（本轮不设计）**必须至少还能编译**。（**已解**：零改名方案下 `InkingSprite` 仍是静态档，`SpriteGroup` 什么都不用改——见附录 C.4。）最小处置是让它挂静态那一档（行为不变），真正的双档设计留给后续任务书——**但这条"最小处置"必须写进交付物**，否则抽完 `SpriteLike` 当天就编不过。
+`InkingSprite` 今天是 `InkingStaticImage` 的**子类**。一旦 Image 分出静态 / 动态两档，Sprite 必须选定跟哪一档；Sprite 选定之后，`InkingAnimateGroup`（本轮不设计）**必须至少还能编译**。（**已解**：零改名方案下 `InkingSprite` 仍是静态档，`SpriteGroup` 什么都不用改——见附录 C.4。）最小处置是让它挂静态那一档（行为不变），真正的双档设计留给后续任务书——**但这条"最小处置"必须写进交付物**，否则抽完 `SpriteLike` 当天就编不过。
 
 同一张图还有个后果：`InkingDynamicSprite` 与 `InkingStaticSprite` 之间**没有任何公共基类**（Button 也是这样）。所以任何持有 `InkingSprite*` 的现有代码，都装不下一个动态精灵。这直接推翻 §`MD-03` 里"老代码零改动"的收益——见 `MD-03`。
 
@@ -168,7 +168,7 @@ InkingDynamicWidget ← InkingFixedPopup ← MenuPopup
 
 | 批次 | 发布前必须满足 |
 |---|---|
-| 全量 | `docs/zh/TaskGuide-G.md` 存在且**不等于**本文件；五段式齐全；编号 `G` 系列连续、首项 `G-00`；兼容策略写明"零改名"且与附录 C.4 的对照表一致；覆盖 Image / Sprite / Label / Panel 四组件，显式排除 `Canvas` / `Video` / `Scene` / `Window`，并写明 `InkingSpriteGroup` 本轮不动且零改动；`TaskGuide.md` §1.1 已加 `G` 行 |
+| 全量 | `docs/zh/TaskGuide-G.md` 存在且**不等于**本文件；五段式齐全；编号 `G` 系列连续、首项 `G-00`；兼容策略写明"零改名"且与附录 C.4 的对照表一致；覆盖 Image / Sprite / Label / Panel 四组件，显式排除 `Canvas` / `Video` / `Scene` / `Window`，并写明 `InkingAnimateGroup` 本轮不动且零改动；`TaskGuide.md` §1.1 已加 `G` 行 |
 
 ### 5.2 进度表
 
@@ -187,7 +187,7 @@ InkingDynamicWidget ← InkingFixedPopup ← MenuPopup
 | 不做的事 | 原因 |
 |---|---|
 | 写任何 `.h` / `.cpp` | 本任务只产出文档；重构是下一份任务书的事 |
-| **`InkingSpriteGroup` 的双档设计** | 它需要更详细的设计（子项坐标跟随、组内几何传播、成组动画），另开任务书；本轮只保它编译 |
+| **`InkingAnimateGroup` 的双档设计** | 它需要更详细的设计（子项坐标跟随、组内几何传播、成组动画），另开任务书；本轮只保它编译 |
 | 评估工期、排版本号 | 那是 Shyi 排期时的事，调研阶段给的估时只会误导 |
 | 覆盖 `Canvas` / `Video` / `Scene` / `Window` | 它们几何不变，补了也没人用 |
 | 顺手补 `InkingTextInput` / 五个预制件的动态档 | 它们继承 Panel / Label，父类补完再决定要不要派生；本轮只在兼容表里登记 |
@@ -204,9 +204,9 @@ InkingDynamicWidget ← InkingFixedPopup ← MenuPopup
 
 | 组件 | 绘制位置 | 几何依赖 | 派生影响 | 输入通道 |
 |---|---|---|---|---|
-| `InkingStaticImage`<br>`image/InkingStaticImage.h:47` | `onRender`（`src/image/InkingStaticImage.cpp:399`）**薄包装**，整笔委托 `detail::PaintButtonAppearance`（`:404`，与 Button 同一份） | **只读**：`GetShape()`（`InkingStaticImage.h:62`）→ `GetWidth/GetHeight`；**不写**几何。拖 / 缩走 A13 `SetDisplayTransform`（`InkingWidget.h:581`），不动 `_width/_height` | `InkingSprite`（`:61`）→ `InkingSpriteGroup`（`InkingSpriteGroup.h:76`） | **推**：`onPointerPress`（`src/image/InkingStaticImage.cpp:312`）、`onPointerDrag`（`:332`）；无 `onPointerStateChanged` |
-| `InkingSprite`<br>`image/InkingSprite.h:61` | **没有自己的 `onRender`**（`include/` 与 `src/` 均 0 处）。换帧只在内容层：`applyFrame`（`:239`）→ `SetImageBytes` / `SetRenderSourceRect`（`InkingStaticImage.h:146,164`） | 同 Image。且**刻意不动尺寸**：`SetSpriteData` 不改 `width/height`（`:145-147` 明写"改尺寸属布局层"） | `InkingSpriteGroup`（`InkingSpriteGroup.h:76`）——**它已经在改自己尺寸**（`src/image/InkingSpriteGroup.cpp:130` → `ApplySelfSize`，靠 `InkingWidget.h:907` 的 friend） | **继承 Image 的推**（自身 0 处输入重写） |
-| `InkingStaticLabel`<br>`text/InkingStaticLabel.h:30` | `onRender`（`src/text/InkingStaticLabel.cpp:222`）：按**当前** `_width/_height` 排版（`:230`）再逐行提交文字层 | **只读** `_width/_height`。写尺寸的两条通道都不归业务代码：布局 `ApplyLayoutRect`（`InkingWidget.h:860`，仅 `detail::layout::ArrangeSubtree` 是 friend，调用点 `src/layout/InkingLayoutBinding.cpp:48`）、内容自测量 `ApplySelfSize`（`:931`，private，仅 `InkingSpriteGroup` friend） | `InkingTextInput`（`text/InkingTextInput.h:65`） | **无**：默认不进命中、不吃点击（`InkingStaticLabel.h:27-28`）。派生类 `InkingTextInput` 是推（`:179,180`） |
+| `InkingStaticImage`<br>`image/InkingStaticImage.h:47` | `onRender`（`src/image/InkingStaticImage.cpp:399`）**薄包装**，整笔委托 `detail::PaintButtonAppearance`（`:404`，与 Button 同一份） | **只读**：`GetShape()`（`InkingStaticImage.h:62`）→ `GetWidth/GetHeight`；**不写**几何。拖 / 缩走 A13 `SetDisplayTransform`（`InkingWidget.h:581`），不动 `_width/_height` | `InkingSprite`（`:61`）→ `InkingAnimateGroup`（`InkingAnimateGroup.h:76`） | **推**：`onPointerPress`（`src/image/InkingStaticImage.cpp:312`）、`onPointerDrag`（`:332`）；无 `onPointerStateChanged` |
+| `InkingSprite`<br>`image/InkingSprite.h:61` | **没有自己的 `onRender`**（`include/` 与 `src/` 均 0 处）。换帧只在内容层：`applyFrame`（`:239`）→ `SetImageBytes` / `SetRenderSourceRect`（`InkingStaticImage.h:146,164`） | 同 Image。且**刻意不动尺寸**：`SetSpriteData` 不改 `width/height`（`:145-147` 明写"改尺寸属布局层"） | `InkingAnimateGroup`（`InkingAnimateGroup.h:76`）——**它已经在改自己尺寸**（`src/image/InkingAnimateGroup.cpp:130` → `ApplySelfSize`，靠 `InkingWidget.h:907` 的 friend） | **继承 Image 的推**（自身 0 处输入重写） |
+| `InkingStaticLabel`<br>`text/InkingStaticLabel.h:30` | `onRender`（`src/text/InkingStaticLabel.cpp:222`）：按**当前** `_width/_height` 排版（`:230`）再逐行提交文字层 | **只读** `_width/_height`。写尺寸的两条通道都不归业务代码：布局 `ApplyLayoutRect`（`InkingWidget.h:860`，仅 `detail::layout::ArrangeSubtree` 是 friend，调用点 `src/layout/InkingLayoutBinding.cpp:48`）、内容自测量 `ApplySelfSize`（`:931`，private，仅 `InkingAnimateGroup` friend） | `InkingTextInput`（`text/InkingTextInput.h:65`） | **无**：默认不进命中、不吃点击（`InkingStaticLabel.h:27-28`）。派生类 `InkingTextInput` 是推（`:179,180`） |
 | `InkingStaticPanel`<br>`panel/InkingStaticPanel.h:33` | **两趟**：`onRender`（`src/panel/InkingStaticPanel.cpp:286`，填充 + 阴影 + 滚动条）、`onRenderDecoration`（`:355`，描边在子孙之上）。都委托 `src/panel/PanelPaint.cpp:48` 那三个 helper | **只读** `GetWidth/GetHeight`（→ `ContentViewportWidth/Height` `:219-220`、`GetSubtreeClipBounds` `:213`）；不写几何。**但每帧改子树变换**：滚动走 `_scrollX/_scrollY` → `GetSubtreeTransform`（`:182`），不是几何 | FilePicker `prefab/FilePicker.h:69`、ListView `:62`、MenuBar `:68`、OptionBar `:63`、Select `:53`（全 `: public InkingStaticPanel`） | **推**：`onPointerWheel`（`:249`）、`onPointerPress`（`:254`）、`onPointerDrag`（`:257`） |
 | `InkingFixedPopup`<br>`panel/InkingFixedPopup.h:68` | 两趟，**8 行 + 3 行薄包装**：`onRender`（`src/panel/InkingFixedPopup.cpp:234`）、`onRenderDecoration`（`:246`），同样走 `PanelPaint` 三个 helper | **既读也写**：落位走 `ChangeSelfAnchor` + `ChangeOffset`（`applyPlacement` `:180`）——唯一已在用动态几何入口的面板类 | `MenuPopup`（`prefab/MenuPopup.h:61`） | **拉**：`onPointerStateChanged`（`:158`）+ `detail::PointerProbe _probe`（`:204`） |
 
@@ -365,7 +365,7 @@ MD-01 本来只回答"结构长什么样"。但读的过程中撞到一件事，
 
 | 层 | 落点 | 兼容负担 |
 |---|---|---|
-| A 库内部 | `include/`、`src/`（含 `src/inking.cpp:148-158` 的静态档断言、`src/image/InkingSpriteGroup.cpp`） | **无**：自己改 |
+| A 库内部 | `include/`、`src/`（含 `src/inking.cpp:148-158` 的静态档断言、`src/image/InkingAnimateGroup.cpp`） | **无**：自己改 |
 | B **代码生成器** | `tools/inkgen/Emit.cpp`（初稿完全没提这一层） | **硬约束**，见 C.2 |
 | C 示例 | 6 个工程：`demo/main.cpp`、`demo/selftest.cpp`、`minimal/`、`sharp/`、`atlas_frames/`、`pet/` | 跟着改，但零改名的话一处都不用动 |
 | D 外部 | PvzAdventure；**以及下游项目里已经生成并提交的 `.h` / `.cpp`** | 改不动，只能不破坏 |
@@ -412,7 +412,7 @@ MD-01 本来只回答"结构长什么样"。但读的过程中撞到一件事，
 | `InkingSprite` | 同上，走 `SpriteLike`，仍是静态档 | **零** | **零** |
 | `InkingStaticLabel` | `InkingStaticWidget` + `LabelLike` | **零** | **零** |
 | `InkingStaticPanel` | **不变**（A.2 判定不抽 `Like`；`InkingDynamicPanel` 独立实现） | **零** | **零** |
-| `InkingSpriteGroup` | 不变（挂 `InkingSprite`，即静态档）——§2.3b 的"悬空"问题由此消失 | **零** | **零** |
+| `InkingAnimateGroup` | 不变（挂 `InkingSprite`，即静态档）——§2.3b 的"悬空"问题由此消失 | **零** | **零** |
 | `InkingTextInput` / FilePicker / ListView / MenuBar / OptionBar / Select | 不变 | **零** | **零** |
 | `InkingFixedPopup` / `MenuPopup` | 不变 | **零** | **零** |
 | **新增** | `InkingDynamicImage` / `InkingDynamicSprite` / `InkingDynamicLabel` / `InkingDynamicPanel` | — | 加 `dynamic` 支持（新功能） |

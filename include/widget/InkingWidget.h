@@ -953,7 +953,7 @@ protected:
      * 开得同样窄：一个具体类、不是"所有派生类"，而且它只能通过 `ApplySelfSize`
      * （不动锚点 / 不动 offset 那一版）改尺寸。
      */
-    friend class InkingSpriteGroup;
+    friend class InkingAnimateGroup;
 
 private:
     /**

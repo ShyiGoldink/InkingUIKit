@@ -946,30 +946,30 @@ InkingSpriteData InkingMakeSpriteData(const InkingAtlasData& atlas, std::size_t 
 重名动画在 `Validate()` 里报错：`FindIndex()` 只命中第一个，第二条会被**静默忽略**——
 "某个动作永远播不出来"比报错难查得多。
 
-### 动画组 `InkingSpriteGroup`（0.6.6 T-18）
+### 动画组 `InkingAnimateGroup`（0.6.6 T-18）
 
 一个角色有几个动作、切换其中一个。**一个节点**承载全部动作，`SwitchTo()` 换的是
 **配置**不是节点（节点数恒 1）。
 
 ```C++
-struct InkingSpriteGroupData {
+struct InkingAnimateGroupData {
     std::vector<std::pair<std::string, InkingSpriteData>> animations;  // 顺序 = 声明顺序
     static constexpr std::size_t kNotFound = static_cast<std::size_t>(-1);
     std::size_t FindIndex(const std::string& name) const noexcept;
     std::string Validate() const;   // 空表 / 动作名为空 / 重名
 };
 
-class InkingSpriteGroup : public InkingSprite {
+class InkingAnimateGroup : public InkingSprite {
 public:
-    InkingSpriteGroup(InkingWidget* parent, const InkingSpriteGroupData& data,
-                      const std::string& initialAnimation = {});
+    InkingAnimateGroup(InkingWidget* parent, const InkingAnimateGroupData& data,
+                       const std::string& initialAnimation = {});
 
     InkingEvent<const std::string&, const std::string&> animationChanged;  // (新, 旧)
 
     bool SwitchTo(const std::string& name, bool keepPhase = false, bool resize = true);
     const std::string& GetCurrentAnimation() const noexcept;
     std::vector<std::string> GetAnimationNames() const;   // 给 UI 做下拉
-    const InkingSpriteGroupData& GetGroupData() const noexcept;
+    const InkingAnimateGroupData& GetGroupData() const noexcept;
     const std::string& GetGroupError() const noexcept;
 };
 ```

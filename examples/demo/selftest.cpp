@@ -45,7 +45,7 @@
 #include <image/InkingAtlas.h>
 #include <image/InkingDynamicImage.h>
 #include <image/InkingDynamicSprite.h>
-#include <image/InkingSpriteGroup.h>
+#include <image/InkingAnimateGroup.h>
 #include <image/InkingSprite.h>
 #include <util/InkingJson.h>
 #include <image/InkingStaticImage.h>
@@ -7633,11 +7633,11 @@ void CheckDynamicPanel() {
 //
 // 验收的重点是"**只有一个节点**"这件事——它看不见（画出来一模一样），只能靠
 // `GetOwnedChildCount()==0` 与 `animationChanged` 的计数钉住。
-void CheckSpriteGroup() {
-    std::printf("\n-- 动画组 InkingSpriteGroup（0.6.6 T-18） --\n");
+void CheckAnimateGroup() {
+    std::printf("\n-- 动画组 InkingAnimateGroup（0.6.6 T-18） --\n");
 
     const auto makeGroup = []() {
-        InkingSpriteGroupData group;
+        InkingAnimateGroupData group;
         struct Spec {
             const char* name;
             int frames;
@@ -7661,19 +7661,19 @@ void CheckSpriteGroup() {
 
     // ① 数据层：查找 / 重名 / 空表
     {
-        const InkingSpriteGroupData group = makeGroup();
+        const InkingAnimateGroupData group = makeGroup();
         Check(group.Validate().empty(), "T-18：合法的动作表通过 Validate");
         Check(group.FindIndex("run") == 1
-                  && group.FindIndex("nope") == InkingSpriteGroupData::kNotFound,
+                  && group.FindIndex("nope") == InkingAnimateGroupData::kNotFound,
               "T-18：FindIndex 按名字找、找不到给 kNotFound");
 
-        InkingSpriteGroupData duplicated = group;
+        InkingAnimateGroupData duplicated = group;
         duplicated.animations[2].first = "idle";
         std::printf("         重名：%s\n", duplicated.Validate().c_str());
         Check(!duplicated.Validate().empty(),
               "T-18：重名动作在 Validate 里报错");
 
-        InkingSpriteGroupData empty;
+        InkingAnimateGroupData empty;
         Check(!empty.Validate().empty(), "T-18：空动作表报错");
     }
 
@@ -7683,8 +7683,8 @@ void CheckSpriteGroup() {
     // ② 构造 + 切换
     {
         InkLog::ResetStats();
-        auto* group = static_cast<InkingSpriteGroup*>(scene.AddChild(
-            std::make_unique<InkingSpriteGroup>(&scene, makeGroup(), "run")));
+        auto* group = static_cast<InkingAnimateGroup*>(scene.AddChild(
+            std::make_unique<InkingAnimateGroup>(&scene, makeGroup(), "run")));
 
         int changes = 0;
         std::string lastNew;
@@ -7768,8 +7768,8 @@ void CheckSpriteGroup() {
     // ③ 初始名字写错：退回第 0 个 + 一条 ERROR（不是空白）
     {
         InkLog::ResetStats();
-        auto* group = static_cast<InkingSpriteGroup*>(scene.AddChild(
-            std::make_unique<InkingSpriteGroup>(&scene, makeGroup(),
+        auto* group = static_cast<InkingAnimateGroup*>(scene.AddChild(
+            std::make_unique<InkingAnimateGroup>(&scene, makeGroup(),
                                                         "typo")));
         std::printf("         初始名写错：动作=%s 帧数=%zu\n",
                     group->GetCurrentAnimation().c_str(), group->GetFrameCount());
@@ -9866,7 +9866,7 @@ int main() {
     CheckAtlasData(rnd);
 
     // ---- 动画组：一个节点承载多个动作（0.6.6 T-18）----
-    CheckSpriteGroup();
+    CheckAnimateGroup();
 
     // ---- 0.9.0 批次 a+b：视频出画 / 滑块 / 进度条（T-01 ~ T-03）----
     //

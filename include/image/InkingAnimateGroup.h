@@ -20,7 +20,7 @@
 //
 //   - `InkingSprite::SetSpriteData()`：**不动** `width/height`（改尺寸会触发重布局，
 //     那是调用方的事）；
-//   - `InkingSpriteGroup::SwitchTo()`：**默认**把 `width/height` 改成新动作的配置值
+//   - `InkingAnimateGroup::SwitchTo()`：**默认**把 `width/height` 改成新动作的配置值
 //     （`resize = false` 可关）。
 //
 // 两处相反是有意的：组就是"一个角色"，角色的轮廓随动作变（待机 40 宽、攻击 56 宽）
@@ -35,7 +35,7 @@
 #include <vector>
 
 /// 模块名常量（日志用；约定：每个模块都暴露一个）。
-inline constexpr const char* InkingSpriteGroupModuleName = "InkingSpriteGroup";
+inline constexpr const char* InkingAnimateGroupModuleName = "InkingAnimateGroup";
 
 /**
  * @brief 一个角色的全部动作：**名字 → 一份 `InkingSpriteData`**（顺序 = 声明顺序）。
@@ -46,7 +46,7 @@ inline constexpr const char* InkingSpriteGroupModuleName = "InkingSpriteGroup";
  * 每条 `InkingSpriteData` 都是**完整配置**（素材、fps、loop、事件、宽高），组不替它们
  * 补默认值——"待机 12fps 循环、攻击 8fps 不循环"本来就是两条独立的配置。
  */
-struct InkingSpriteGroupData {
+struct InkingAnimateGroupData {
     std::vector<std::pair<std::string, InkingSpriteData>> animations;
 
     /// 找不到时的返回值（**不是** 0：0 是第一个动作）。
@@ -71,9 +71,9 @@ struct InkingSpriteGroupData {
  * 构造时的 `initialAnimation` 决定先播哪个（空 = 第 0 个；名字不存在 → 记 ERROR
  * 并退回第 0 个——"少一个动作"不该让整个界面起不来）。
  */
-class InkingSpriteGroup : public InkingSprite {
+class InkingAnimateGroup : public InkingSprite {
 public:
-    InkingSpriteGroup(InkingWidget* parent, const InkingSpriteGroupData& data,
+    InkingAnimateGroup(InkingWidget* parent, const InkingAnimateGroupData& data,
                       const std::string& initialAnimation = std::string());
 
     /**
@@ -108,13 +108,13 @@ public:
     std::vector<std::string> GetAnimationNames() const;
 
     /// 构造时那份组数据。
-    const InkingSpriteGroupData& GetGroupData() const noexcept;
+    const InkingAnimateGroupData& GetGroupData() const noexcept;
 
     /// 组这一层的错误说明（空表 / 重名 / 动作名为空）；空串 = 合法。
     const std::string& GetGroupError() const noexcept;
 
 private:
-    InkingSpriteGroupData _group{};
+    InkingAnimateGroupData _group{};
     std::string _currentAnimation;
     std::string _groupError;
 };

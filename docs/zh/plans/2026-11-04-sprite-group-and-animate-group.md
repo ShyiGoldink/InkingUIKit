@@ -74,7 +74,7 @@
 
 | 条目 | 判定 | 证据 |
 | - | - | - |
-| 现有 `InkingSpriteGroup` 是「一个角色多个动作、一个节点换配置」 | 成立 | `include/image/InkingSpriteGroup.h:41-121`；`vector<pair<string, InkingSpriteData>>` + `SwitchTo` |
+| 现有 `InkingSpriteGroup` 是「一个角色多个动作、一个节点换配置」 | 成立（**T-02 已改名为 `InkingAnimateGroup`**） | `include/image/InkingAnimateGroup.h:41-121`；`vector<pair<string, InkingSpriteData>>` + `SwitchTo` |
 | 合批按**纹理**分，同纹理连续 N 笔 = 一次 `SDL_RenderGeometry` | 成立 | `src/render/InkingBatch.cpp:174-191`；`textureDraws` 计数 `:92` |
 | 一批顶点上限 16384 | 成立 | `src/render/InkingBatch.cpp:19` |
 | `contain` 适配绕开批次（要裁剪） | 成立 | `src/render/InkingDraw.cpp:681-692` |
@@ -84,7 +84,7 @@
 | 帧事件回调里切配置是 UB（遍历 `_sprite.events` 中被替换） | 成立（**T-01 已修**：快照派发 + 切换延后） | `src/image/InkingSprite.cpp:558-587` 边遍历边回调；`:183-205` 整个替换 `_sprite` |
 | `resolveFrame` 是文件内纯函数，外部不可用 | 成立 | `src/image/InkingSprite.cpp:36-80`（匿名命名空间） |
 | 当前版本号 | 成立 | `include/inking.h:20` = `"0.8.5"`；`docs/zh/CHANGELOG.md:1` = 0.9.0 未发布 |
-| `InkingSpriteGroup` 的引用面 | 成立 | **15 个文件**命中（排除 `dist/`、`build*/`）；其中 **13 个要改**：`include/image/InkingSpriteGroup.h`、`src/image/InkingSpriteGroup.cpp`、`include/widget/InkingWidget.h`、`include/image/InkingDynamicSprite.h`、`examples/demo/{main,selftest}.cpp`、`docs/zh/{CHANGELOG,TaskGuide-Dynamic,TaskGuide-G,api/InkingComponents}.md`、`docs/zh/plans/` 两份、`README.md`。另 2 份 `.workbuddy/memory/` 是历史记录，不动 |
+| `InkingSpriteGroup` 的引用面 | 成立（**T-02 已按此清单全部改完**；实测 14 个文件，比这里多一份 `plans/2026-11-03-uikit-completeness-audit.md`） | **15 个文件**命中（排除 `dist/`、`build*/`）；其中 **13 个要改**：`include/image/InkingSpriteGroup.h`、`src/image/InkingSpriteGroup.cpp`、`include/widget/InkingWidget.h`、`include/image/InkingDynamicSprite.h`、`examples/demo/{main,selftest}.cpp`、`docs/zh/{CHANGELOG,TaskGuide-Dynamic,TaskGuide-G,api/InkingComponents}.md`、`docs/zh/plans/` 两份、`README.md`。另 2 份 `.workbuddy/memory/` 是历史记录，不动 |
 
 **本轮不做技术验证的部分**：多块叠加的一次提交由 T-07 用 `BatchStats::textureDraws` 直接断言，不预设结论。
 
@@ -98,55 +98,7 @@
 
 ## 4. 第二批：0.9.0-b（命名归位）
 
-### T-02 把 `InkingSpriteGroup` 改名为 `InkingAnimateGroup`
-
-- **状态**：未开始
-- **落点**：`include/image/InkingSpriteGroup.h` → `include/image/InkingAnimateGroup.h`、`src/image/InkingSpriteGroup.cpp` → `src/image/InkingAnimateGroup.cpp`、`include/widget/InkingWidget.h` 的 friend、`include/image/InkingDynamicSprite.h` 的注释、`examples/demo/{main,selftest}.cpp`、`README.md`、`docs/zh/` 五个文档（`CHANGELOG` / `TaskGuide-Dynamic` / `TaskGuide-G` 加注，`api/InkingComponents` 与 `plans/` 两份改类名）
-
-**准备怎么改**
-
-语义反了：现在这个名字指的是「一个角色的多个动画」，而它该指「一个 sprite 由多块拼成」。T-05 要用后者，所以必须先腾出名字。
-
-三个候选：
-
-| 方案 | 做法 | 代价 | 结论 |
-| - | - | - | - |
-| A 硬改名 | 旧名 → `InkingAnimateGroup`，`InkingSpriteGroup` 留给 T-05 | 13 个文件；动态库符号全换 | **推荐** |
-| B 新组件另取名 | 旧不动，新叫 `InkingLayerSprite` | 零破坏，但名字没说到「组」 | 退路 |
-| C 保留旧名做别名 | `using InkingSpriteGroup = InkingAnimateGroup;` | 新组件无法占用这个名字，分家的目的落空 | 不做 |
-
-硬约束两条：
-
-- **一次提交做完**（旧改名 + 全部引用 + 文档）。分两次做，中间那一版 `docs/AGENTS.md` §4 第 3 条（文档与实现同步）是红的。
-- **旧文档里的历史叙述不改写**。`CHANGELOG.md` 的 0.6.6 一节、`2026-10-25-0.6.x-frame-animation.md` 里写的 `InkingSpriteGroup` 就是当时那个类，改了就成伪造记录。只在这两处各加一行「（0.9.0 起该名指另一组件，见 CHANGELOG）」的注。
-
-**大致改动逻辑**
-
-1. `git mv` 两个文件（**先 mv 再改内容**，否则 git 看不到重命名，diff 会变成「删 121 行 + 加 121 行」）。
-2. 三处符号替换：类名 `InkingSpriteGroup` → `InkingAnimateGroup`、结构体 `InkingSpriteGroupData` → `InkingAnimateGroupData`、模块名 `InkingSpriteGroupModuleName` → `InkingAnimateGroupModuleName`。
-3. `include/widget/InkingWidget.h` 的 friend 声明同步——**改错会编译失败，这是本条最好的护栏**。
-4. 自检函数 `CheckSpriteGroup` → `CheckAnimateGroup`，并同步 `main()` 里的调用点（`examples/demo/selftest.cpp:7636`、`:9803`）。
-5. `examples/demo/main.cpp` 的菜单项与标签文案不变（用户看到的还是「切换动作」），只改类型名。
-6. `docs/zh/api/InkingComponents.md:933` 一节标题与类名同步；`README.md` 的 API 清单同步。
-
-**与改动前对比**
-
-| 场景 | 改动前 | 改动后 |
-| - | - | - |
-| 声明的类型名 | `InkingSpriteGroup` | `InkingAnimateGroup` |
-| `SwitchTo` / `animationChanged` / `keepPhase` / `resize` / 组内尺寸跟着动作改 | — | **不变**（纯重命名，自检断言一条不改就过） |
-| 动态库导出符号 | `InkingSpriteGroup*` | 全部换名（破坏性；0.x 阶段允许，写进 CHANGELOG） |
-
-**验收**
-
-- 构建 0 warning；`selftest` 末行「失败项：0」。
-- `nm -g libinking.dll` 里 `InkingSpriteGroup` 零命中、`InkingAnimateGroup` 出现（判据可脚本化）。
-- `grep -rn "InkingSpriteGroup" include src examples docs/zh README.md` 只剩下「0.9.0 起该名另指」的注与 T-05 新增的头文件。
-
-**风险与回退**
-
-- **风险**：名字整体对调。改完后 `InkingSpriteGroup` / `InkingSpriteGroupData` 在仓库里指**另一件事**，任何漏改的旧引用都变成「符号对得上、说的是另一件东西」。缓解手段是第 3 步的 friend 声明（编译期）加 grep 复核。
-- **回退**：独立提交，`git revert`；回退后 T-05 必须换一个不冲突的名字。
+- T-02 把 `InkingSpriteGroup` 改名为 `InkingAnimateGroup`-已完成（2026-11-04，`git mv` 两个文件 + 9 个文件符号替换：类名 / `InkingAnimateGroupData` / `InkingAnimateGroupModuleName`，`InkingWidget.h` 的 friend 与全部 include 同步（改错就编不过，这是本题自带的护栏）；`CheckSpriteGroup` → `CheckAnimateGroup` 含 `main()` 调用点。构建 0 warning、`selftest` 末行失败项 0、`nm` 里旧名 **0 命中** / 新名 18 个；4 份历史文档（`CHANGELOG` 0.6.6 节 / `TaskGuide-G` / `plans/2026-10-25` / `plans/2026-11-03` 审计）按 §4 硬约束**只加注不改写**，`docs/zh/api/InkingComponents.md` 与 `TaskGuide-Dynamic.md` 是当前文档，类名直接改）
 
 ---
 
@@ -496,7 +448,7 @@ void setTiming(double fps, bool loop, std::size_t startFrame,
 | 编号 | 任务 | 批次 | 状态 |
 | - | - | - | - |
 | T-01 | 让帧事件派发可在回调里换配置 | 0.9.0-a | 已完成 |
-| T-02 | 把 `InkingSpriteGroup` 改名为 `InkingAnimateGroup` | 0.9.0-b | 未开始 |
+| T-02 | 把 `InkingSpriteGroup` 改名为 `InkingAnimateGroup` | 0.9.0-b | 已完成 |
 | T-03 | 让帧机支持「每帧一组矩形」 | 0.9.0-c | 未开始 |
 | T-04 | 新增块叠加组的数据面 | 0.9.0-d | 未开始 |
 | T-05 | 静态档 `InkingSpriteGroup` | 0.9.0-d | 未开始 |

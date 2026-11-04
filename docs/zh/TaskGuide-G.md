@@ -6,6 +6,7 @@
 > - **编号来源**：`docs/zh/TaskGuide.md` §1.1 的系列表已登记 `G` 一行。`G-00`…`G-08` 只增不改；废止的编号保留并注明"未落地"。
 > - **上游依据**：`docs/zh/TaskGuide-Dynamic.md` 的附录 A / B / C（`MD-01`~`MD-03` 的执行结果）。本文所有"现状 / 兼容 / 为什么这么做"都能在那三份附录里找到带行号的证据，本文不重复举证。
 > - **本系列不改名字**：`InkingStaticImage` / `InkingStaticLabel` / `InkingStaticPanel` / `InkingSprite` 四个旧名一个都不动（附录 C.4）。
+> - **⚠ 0.9.0 起 `InkingSpriteGroup` 改名为 `InkingAnimateGroup`**：那个名字让给了"一个 sprite 由多块拼成"的新组件（见 `plans/2026-11-04-sprite-group-and-animate-group.md`）。**本文里出现的 `InkingSpriteGroup` / `CheckSpriteGroup` 都是当时那个类**，按历史记录读，一个字都不改。
 > - **优先级**：本系列是**能力补齐**，不是 1.0 前的主线。四个组件都**必须**有动态档——只有 Button 一个有，组件能力是残缺的；但排期上让位于纯静态 UI 的完善，不抢主线资源。批次之间允许拉长，不要求连续做完。
 
 ---

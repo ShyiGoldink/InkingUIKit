@@ -10,7 +10,7 @@
 //   <button/InkingDynamicButton.h> 动态按钮（几何自己动 → 不进表，每帧 Tick）
 //   <text/InkingStaticLabel.h>     只读文字
 //   <image/InkingSprite.h>         帧动画（序列帧 / 图集，0.6.x）
-//   <image/InkingSpriteGroup.h>    动画组（一个角色多个动作，0.6.6）
+//   <image/InkingAnimateGroup.h>    动画组（一个角色多个动作，0.6.6）
 //
 // 三件事在这份代码里各演示一条：
 //   1. **两种按钮的分工**：静态按钮走点击回调；动态按钮在 `onTick` 里自己
@@ -34,7 +34,7 @@
 #include <config/window_config.h>
 #include <image/ImageData.h>
 #include <image/InkingSprite.h>
-#include <image/InkingSpriteGroup.h>
+#include <image/InkingAnimateGroup.h>
 #include <image/InkingStaticImage.h>
 #include <image/SpriteData.h>
 #include <input/Shortcut.h>
@@ -465,12 +465,12 @@ private:
             return data;
         };
 
-        InkingSpriteGroupData group;
+        InkingAnimateGroupData group;
         group.animations.emplace_back("walk", makeAnimation("walk", 8.0, 96));
         group.animations.emplace_back("run", makeAnimation("run", 20.0, 120));
 
-        _walkerGroup = static_cast<InkingSpriteGroup*>(AddChild(
-            std::make_unique<InkingSpriteGroup>(this, group, "walk")));
+        _walkerGroup = static_cast<InkingAnimateGroup*>(AddChild(
+            std::make_unique<InkingAnimateGroup>(this, group, "walk")));
         _actionLabel = AddLabel("walker_action", "动作：walk（F2 切换）", 360, 40,
                                 20.0f, kTextDim, 300.0f, -300.0f);
     }
@@ -507,7 +507,7 @@ private:
     InkingStaticLabel* _stepsLabel = nullptr;
     InkingStaticButton* _button = nullptr;
     InkingSprite* _spinner = nullptr;
-    InkingSpriteGroup* _walkerGroup = nullptr;
+    InkingAnimateGroup* _walkerGroup = nullptr;
     InkingStaticLabel* _actionLabel = nullptr;
     int _steps = 0;
     inking_prefab::MenuBar* _menuBar = nullptr;

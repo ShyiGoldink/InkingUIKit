@@ -537,6 +537,9 @@ Contain 越全屏越清，方向与预测一致；**同时记录一条保留意�
 
 **0.6.6（动画组）**
 
+> （**0.9.0 起该名指另一组件**：`InkingSpriteGroup` 改名为 `InkingAnimateGroup`，
+> 旧名让给"一个 sprite 由多块拼成"的新组件。下面这条说的仍是当时那个类，不改写。）
+
 - **`InkingSpriteGroup`**（派生 `InkingSprite`）：一个角色多个动作，
   `SwitchTo("run")` 换的是**配置**不是节点 ⇒ 节点数恒 1（没有隐藏节点参与绘制
   遍历与命中）。`animationChanged(新, 旧)` 在换完之后发。

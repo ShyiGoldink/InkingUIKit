@@ -80,6 +80,9 @@ CMakeLists.txt:174-177   target_compile_definitions(inking PRIVATE
 `InkingStaticPanel` / `InkingDynamicPanel` / `InkingFixedPopup` · `InkingTextInput` · `InkingStaticCanvas` ·
 `InkingStaticVideo`（空壳）
 
+> **0.9.0 起**清单里的 `InkingSpriteGroup` 已改名为 `InkingAnimateGroup`，旧名让给了
+> "一个 sprite 由多块拼成"的新组件（见 `2026-11-04-sprite-group-and-animate-group.md`）。
+
 **预制件**（`prefab/`，10 个实现）：`MenuBar` · `MenuPopup` · `OptionBar` · `Select`（下拉/选择器，
 带过滤）· `ListView` · `ListRow` · `FilePicker`
 

@@ -22,7 +22,7 @@
 >   **不做**运行期重采样与按尺寸缓存表，"任意尺寸不失真"这条明确放弃；
 >   文字光栅上限改为可配（`inking_detail::SetTextRasterCap`，默认仍是 3×）+ 触顶 WARN；
 >   `INK_ISDEBUG` 下对偏小的素材 WARN（发布包零成本）。
-> - **0.6.6 新增：动画组 `InkingSpriteGroup`**——一个角色多个动作，
+> - **0.6.6 新增：动画组 `InkingAnimateGroup`**——一个角色多个动作，
 >   `SwitchTo("run")` 换的是**配置**不是节点（节点数恒 1，没有隐藏节点参与绘制
 >   遍历与命中）；`animationChanged`、`resize` 可关。
 > - **0.6.5 新增**：运行期换配置 `InkingSprite::SetSpriteData(data, keepPhase)`
