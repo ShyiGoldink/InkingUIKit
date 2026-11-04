@@ -781,7 +781,8 @@ public:
 | 序列帧 | 换**字节视图**（`SetImageBytes`，KB 级拷贝） | 每帧一次拷贝 |
 | 图集 | 换**源矩形**（`SetRenderSourceRect`） | 零拷贝、零 `SDL_CreateTexture`，纹理只建 1 张 |
 
-分叉点只在 `applyFrame()` 一处（每帧带不带 `sourceRect`），**不写两套状态机**——
+分叉点只在 `applyFrame()` 一处（每帧带不带 `sourceRects` 表；0.9.0 T-03 从「一个矩形」
+泛化成表，单块档恒一个元素），**不写两套状态机**——
 否则"序列帧的暂停"和"图集的暂停"迟早不一致，而这种不一致只表现为"某个模式有点怪"。
 
 **时间从场景时钟来**（`InkingScene::AnimationSeconds`，0.6.0 T-01），帧号是时间的纯函数：

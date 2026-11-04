@@ -104,54 +104,7 @@
 
 ## 5. 第三批：0.9.0-c（帧机泛化）
 
-### T-03 让帧机支持「每帧一组矩形」
-
-- **状态**：未开始
-- **落点**：`include/image/SpriteLike.h` 的 `LoadedFrame`（:288）、`Hooks`（:171）、`applyFrame` 声明；`src/image/InkingSprite.cpp` 的 `loadFrameBytes`（:183 之后）、`applyFrame`（:589）
-
-**准备怎么改**
-
-T-05 的组一帧要画 K 块，而现有帧机每帧只存一个 `sourceRect`。三条路：
-
-| 方案 | 做法 | 代价 | 结论 |
-| - | - | - | - |
-| A 泛化 `InkingSpriteLike` | `LoadedFrame::sourceRects` 变 `vector`；`Hooks::setSourceRect` 变 `setSourceRects(指针, 个数)` | 受保护构造签名变（ABI） | **推荐** |
-| B 新组自己写帧机 | 不动现有 | 帧机第二份，帧事件写两遍 | 不做 |
-| C 把帧机拆成纯值类型 | 帧机只输出 `FrameStep`，落帧由组件做 | `Hooks` 从 6 个降到 4 个，改动最大 | 退路（不排本轮） |
-
-选 A。理由不是「改动小」，是**帧事件只写一遍**——T-01 刚修完的那套语义（快照、pending、区间扫描、回绕拆段）没有任何理由再写一次。
-
-硬约束：**单块退化成 `size() == 1`**。三档现有配置产出的 `sourceRects` 必须恰好一个元素，且元素值与改动前的 `sourceRect` 逐字节相同。
-
-**大致改动逻辑**
-
-1. `LoadedFrame::sourceRect` → `std::vector<InkingShapeBounds> sourceRects`（空 = 整张纹理，序列帧用）。
-2. `Hooks::setSourceRect` → `setSourceRects`，签名 `void(const InkingShapeBounds* rects, std::size_t count)`。用指针 + 个数而不是 `const vector&`：调用点就在 `applyFrame` 里，不构造临时对象。
-3. `applyFrame`：`if (!frame.sourceRects.empty()) _hooks.setSourceRects(frame.sourceRects.data(), frame.sourceRects.size());`。
-4. `loadFrameBytes`：图集模式填 `sourceRects.assign(1, CellRect(i))`；序列帧留空。
-5. 三处 `hooksFor`（`InkingSprite` :667 附近、`InkingDynamicSprite`、T-05 新组）：单块两档绑 `if (count == 1) SetRenderSourceRect(rects[0]);`，并在 `count > 1` 时记一条 WARN（配置永远不该给多块，给了就是数据层漏了校验）。
-6. `InkingAnimateGroup` 是 `InkingSprite` 的派生类，`SetSpriteData` 语义不动，**零改动**——这是本条最容易踩的下游。
-
-**与改动前对比**
-
-| 场景 | 改动前 | 改动后 |
-| - | - | - |
-| 图集单块（现有全部用法） | 每帧一个 `sourceRect` | 每帧一个元素的 `sourceRects`，值相同 |
-| 序列帧 | `sourceRect` 全零 = 整张纹理 | **不变**（`sourceRects` 为空，判据与原来等价） |
-| `InkingAnimateGroup` 换动作 | 走 `SetSpriteData` | **不变**（不碰 `sourceRects`，只换 `_sprite`） |
-| 导出符号 | `InkingSpriteLike` 构造函数签名 | **变化**（`Hooks` 布局变了；不是「少了符号」） |
-
-**验收**
-
-- 现有 `CheckSpriteSheet` / `CheckSpriteSheetFirstFrame` / `CheckSpriteUnevenFrames` / `CheckSpriteEvents` / `CheckSpriteBatching` / `CheckRuntimeSwap` **一条断言不改就过**。
-- 新增一条：图集单块配置构造后，`GetFrameCount()` 与改动前一致、离屏读回的像素与改动前逐点相同（复用 `CheckSpriteSheet` 的读回段即可，不另写）。
-- `nm -g` 前后差分写进 CHANGELOG 的 0.9.0 一节（只记录，不要求「零变化」）。
-
-**风险与回退**
-
-- **风险一**：`LoadedFrame` 从 POD 小结构变成含 `vector` 的结构，每帧一次小分配。缓解：`_frames` 是构造期一次性建好，运行期换帧只读不写。
-- **风险二**：`Hooks::setSourceRects` 是 `std::function`，签名变等于 `std::function` 的类型变，所有绑定点都要重编（这是编译期能抓到的）。
-- **回退**：独立提交 `git revert`。
+- T-03 让帧机支持「每帧一组矩形」-已完成（2026-11-04，`LoadedFrame::sourceRect` → `sourceRects`（矩形表，空 = 不设源矩形）+ `Hooks::setSourceRect` → `setSourceRects(指针, 个数)`；`Hooks` 布局变 = ABI 破坏，仓内两处 `hooksFor` 同步、无外部派生类。**单块退化判据**：现有三档恒 1 个元素、值与改动前逐字节相同——六条精灵自检**一条断言不改**就过（`CheckSpriteSheet` 本身就是离屏逐像素比对，够硬，没另加重复断言）。`applyFrame` 的「切不出矩形就不动源矩形」从判一块扩到判每一块（单块时与原判据等价）。单块档收到多块 = 数据层漏校验：画第一块 + 一条 WARN，不整帧丢。构建 0 warning、`selftest` 末行失败项 0、`ctest` 8 条全绿；`nm` 差分 **+2 / −1**（模板实例与 COMDAT 存在性，无公开符号消失），已按验收记进 `CHANGELOG` 的 0.9.0 节）
 
 ---
 
@@ -449,7 +402,7 @@ void setTiming(double fps, bool loop, std::size_t startFrame,
 | - | - | - | - |
 | T-01 | 让帧事件派发可在回调里换配置 | 0.9.0-a | 已完成 |
 | T-02 | 把 `InkingSpriteGroup` 改名为 `InkingAnimateGroup` | 0.9.0-b | 已完成 |
-| T-03 | 让帧机支持「每帧一组矩形」 | 0.9.0-c | 未开始 |
+| T-03 | 让帧机支持「每帧一组矩形」 | 0.9.0-c | 已完成 |
 | T-04 | 新增块叠加组的数据面 | 0.9.0-d | 未开始 |
 | T-05 | 静态档 `InkingSpriteGroup` | 0.9.0-d | 未开始 |
 | T-06 | 动态档 `InkingDynamicSpriteGroup` | 0.9.0-e | 未开始 |

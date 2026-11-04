@@ -30,8 +30,18 @@ InkingSpriteLike::Hooks InkingDynamicSprite::hooksFor(InkingDynamicSprite& self)
     hooks.loadAsset = [&self](const std::string& relative) {
         return self.LoadAsset(relative);
     };
-    hooks.setSourceRect = [&self](const InkingShapeBounds& srcRect) {
-        self.SetRenderSourceRect(srcRect);
+    hooks.setSourceRects = [&self](const InkingShapeBounds* rects,
+                                   std::size_t count) {
+        // 与静态档同一套（`InkingSprite::hooksFor` 里有完整理由）：单块档只该拿到
+        // 一块；多块是数据层漏校验，画第一块 + 一条 WARN。
+        if (count != 1) {
+            INK_LOG_WARN(std::string(InkingSpriteModuleName),
+                         "单块动态精灵收到 " + std::to_string(count)
+                             + " 个源矩形，只画第一块（检查数据层）");
+        }
+        if (count > 0 && rects != nullptr) {
+            self.SetRenderSourceRect(rects[0]);
+        }
     };
     hooks.frameChanged = [&self](std::size_t now, std::size_t before) {
         self.frameChanged.Emit(now, before);

@@ -53,9 +53,10 @@
  *   - **图集**：字节是同一张，换帧 = 换**源矩形**（`SetRenderSourceRect`），
  *     纹理一次建好、之后一个字节都不动（0.6.1 T-05）。
  *
- * 分叉点收在 `InkingSpriteLike::LoadedFrame`（每帧带一个 `sourceRect`）与
- * `InkingSpriteLike::applyFrame()` 一处，不写成两个 `if` 分支各走一遍——否则"序列帧的
- * 暂停语义"和"图集的暂停语义"迟早会不一致，而这种不一致只会表现为"某个模式有点怪"。
+ * 分叉点收在 `InkingSpriteLike::LoadedFrame`（每帧带一张 `sourceRects` 表；
+ * 单块档恒为 1 个元素，0.9.0 T-03 泛化）与 `InkingSpriteLike::applyFrame()` 一处，
+ * 不写成两个 `if` 分支各走一遍——否则"序列帧的暂停语义"和"图集的暂停语义"迟早会
+ * 不一致，而这种不一致只会表现为"某个模式有点怪"。
  *
  * **G-04 起帧机在 `InkingSpriteLike`**（两档共用，纯重构）：本类只剩"静态档的接线"——
  * 构造时把 `SetImageBytes` / `SetRenderSourceRect` 与三个事件槽绑给帧机，

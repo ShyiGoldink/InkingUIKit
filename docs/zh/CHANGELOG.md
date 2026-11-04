@@ -171,6 +171,26 @@
   `applyPendingSpriteData`）；三个既有精灵自检（图集 / 事件 / 换配置）**一条断言
   不改**就过。
 
+### 变更（帧机泛化：每帧一组矩形，0.9.0 T-03）
+
+- `InkingSpriteLike::LoadedFrame` 的 `sourceRect`（一个矩形）→ `sourceRects`
+  （**矩形表**，空 = 不设源矩形，序列帧用）。`Hooks::setSourceRect(const&)` →
+  `setSourceRects(const InkingShapeBounds*, std::size_t)`。理由只有一个：块叠加组
+  的一帧要画 K 块，而帧事件那套语义（快照派发、切换延后、区间扫描、回绕拆段）
+  宁可只写一遍，也不给新组件抄第二份。
+- **破坏性（ABI）**：`Hooks` 布局变了，任何自己派生 `InkingSpriteLike` 并填 `Hooks`
+  的代码要整包重编。仓里没有这样的代码（两个档的 `hooksFor` 是同仓库的）。
+- **单块退化成 `size() == 1`**：现有三档产出的表恒为一个元素，值与改动前逐字节相同。
+  判据是行为零变化——`CheckSpriteSheet` / `CheckSpriteSheetFirstFrame` /
+  `CheckSpriteUnevenFrames` / `CheckSpriteEvents` / `CheckSpriteBatching` /
+  `CheckRuntimeSwap` **一条断言不改**就过（`CheckSpriteSheet` 本来就是离屏逐像素
+  比对，不是"看起来对"）。
+- 单块档收到多块源矩形（数据层漏校验才会出现）时：**画第一块 + 一条 WARN**，
+  不整帧丢弃——丢弃会让"配错了"表现成"东西没了"，更难查。
+- `nm -g libinking.dll` 差分（对比 T-02 之后）：**+2 / −1**，全是模板实例与 COMDAT
+  存在性（`std::string::replace` 的实例化、`InkingButtonData::Normalize` 的有无），
+  **没有公开 API 符号消失**。只记录，本任务不要求"零变化"。
+
 ### 修复（UIKit 齐全度 f 批：换肤接线 / 通知条高 / 自检护栏）
 
 - **运行期换主题时"有的地方不跟着变"**（三处独立的接线缺口，症状都是一句

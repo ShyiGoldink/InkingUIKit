@@ -180,8 +180,18 @@ protected:
         /// 从资源根读一份图并接到绘制层（运行期读的那条路）。返回 false = 读不到
         /// （组件自己会记 ERROR 并保留旧图）。
         std::function<bool(const std::string&)> loadAsset;
-        /// 换源矩形（图集切格）。全零 = 整张纹理。
-        std::function<void(const InkingShapeBounds&)> setSourceRect;
+        /**
+         * 换这一帧的**源矩形表**（图集切格）。0.9.0 T-03 从"一个矩形"泛化成表。
+         *
+         * `count == 1` 是现有三档的全部用法，语义与改动前那个 `setSourceRect`
+         * 逐字节相同；`count > 1` 只有块叠加组（T-05）会用——那时组件要把每块
+         * 各画一次，同一帧仍然只有一次提交。
+         *
+         * 用**指针 + 个数**而不是 `const std::vector&`：调用点就在 `applyFrame` 里，
+         * 没必要为一次回调构造临时对象。
+         */
+        std::function<void(const InkingShapeBounds* rects, std::size_t count)>
+            setSourceRects;
         /// 帧变了（新帧号, 旧帧号）。
         std::function<void(std::size_t, std::size_t)> frameChanged;
         /// 播到某个**有事件的帧**了（事件名, 帧号）。
@@ -296,8 +306,13 @@ private:
         /// 纹理缓存键：`source` 非空就用它（同源两帧共用纹理是**正确**的），
         /// 为空时退化成 `<组件名>#<帧号>`。
         std::string name;
-        /// 这一帧在纹理里的像素矩形（图集切格）。全零 = 整张纹理（序列帧）。
-        InkingShapeBounds sourceRect{};
+        /// 这一帧在纹理里的像素矩形表（图集切格）。**空 = 不设源矩形**（序列帧用，
+        /// 序列帧靠 `data` 换整张图）。
+        ///
+        /// 为什么是 `vector`（0.9.0 T-03）：块叠加组的一帧要画 K 块。单块档永远
+        /// **恰好一个**元素，值与 T-03 之前那个 `sourceRect` 逐字节相同；图集里
+        /// 切不出矩形的帧留空（与改动前"全零 → 不动源矩形"等价）。
+        std::vector<InkingShapeBounds> sourceRects;
     };
 
     /**

@@ -368,17 +368,19 @@ void InkingSpriteLike::loadFrameBytes() {
         const bool byRects = !_sprite.sheet.frameRects.empty();
         _frames.resize(count);
         for (std::size_t i = 0; i < count; ++i) {
-            _frames[i].sourceRect =
+            const InkingShapeBounds cell =
                 _sprite.sheet.CellRect(byRects ? i : first + i);
-            if (_frames[i].sourceRect.width <= 0.0f
-                || _frames[i].sourceRect.height <= 0.0f) {
+            if (cell.width <= 0.0f || cell.height <= 0.0f) {
                 // 越界格（`count > rows×columns` 已被拦，但 count 与几何不一致时
-                // 仍可能算不出矩形）：跳过这一格，画面停在上一帧。
+                // 仍可能算不出矩形）：源矩形表留空 ⇒ `applyFrame` 不动源矩形，
+                // 画面停在上一帧（与改动前"全零矩形"那条判据等价）。
                 INK_LOG_ERROR(std::string(InkingSpriteModuleName),
                               "第 " + std::to_string(i) + " 帧切不出矩形（"
                                   + _sprite.name + "）：检查 columns / rows");
                 continue;
             }
+            // 单块：**恰好一个**元素，值就是改动前那个 `sourceRect`（0.9.0 T-03）。
+            _frames[i].sourceRects.assign(1, cell);
             ++_loadedFrameCount;
         }
         return;
@@ -661,8 +663,22 @@ void InkingSpriteLike::applyFrame(std::size_t index, bool fromPlayback) {
     }
     if (_mode == FrameMode::Sheet) {
         // 切不出矩形的帧（几何不一致）不动源矩形：停在上一帧的画面上。
-        if (frame.sourceRect.width > 0.0f && frame.sourceRect.height > 0.0f) {
-            _hooks.setSourceRect(frame.sourceRect);
+        //
+        // 判据落在**每一块**上：单块（现有三档的全部用法）就是改动前那条
+        // `width > 0 && height > 0`，逐字节等价；多块（T-05 的块叠加组）时
+        // 任一块切不出就整帧不动——半帧可画半帧不可画不是"部分成功"，是数据错。
+        bool allUsable = !frame.sourceRects.empty();
+        if (allUsable) {
+            for (const InkingShapeBounds& rect : frame.sourceRects) {
+                if (rect.width <= 0.0f || rect.height <= 0.0f) {
+                    allUsable = false;
+                    break;
+                }
+            }
+        }
+        if (allUsable) {
+            _hooks.setSourceRects(frame.sourceRects.data(),
+                                  frame.sourceRects.size());
         }
     }
 
@@ -726,8 +742,20 @@ InkingSpriteLike::Hooks InkingSprite::hooksFor(InkingSprite& self) {
     hooks.loadAsset = [&self](const std::string& relative) {
         return self.LoadAsset(relative);
     };
-    hooks.setSourceRect = [&self](const InkingShapeBounds& srcRect) {
-        self.SetRenderSourceRect(srcRect);
+    hooks.setSourceRects = [&self](const InkingShapeBounds* rects,
+                                   std::size_t count) {
+        // 单块档只该拿到一块（`InkingSpriteData` 的图集是"一帧一格"）。拿到多块
+        // = 数据层漏了校验——那是 T-05 的块叠加组才有的形态，不该走这条路。
+        // 兜底要**出声**（`AGENTS.md` §6 第 30 条）：画第一块 + 一条 WARN，
+        // 比"整帧不更新"好查得多（后者连出没出画都说不清）。
+        if (count != 1) {
+            INK_LOG_WARN(std::string(InkingSpriteModuleName),
+                         "单块精灵收到 " + std::to_string(count)
+                             + " 个源矩形，只画第一块（检查数据层）");
+        }
+        if (count > 0 && rects != nullptr) {
+            self.SetRenderSourceRect(rects[0]);
+        }
     };
     hooks.frameChanged = [&self](std::size_t now, std::size_t before) {
         self.frameChanged.Emit(now, before);
