@@ -442,5 +442,5 @@ const bool clean  = InkingImageScaleSpec::IsCleanRatio(sigma);
 
 ---
 
-> 本文档对应版本：**0.9.2（0.x 发布版）**。发现文档与代码不一致时，
+> 本文档对应版本：**1.0.0（预览版）**。发现文档与代码不一致时，
 > **以头文件注释为准**，并请把差异记到 `docs/zh/CHANGELOG.md`。

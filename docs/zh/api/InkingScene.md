@@ -766,4 +766,4 @@ InkingEvent<const std::vector<std::string>&> filesDropped;   // 一次拖放一�
 
 ---
 
-> 本文档对应版本：**0.9.2（0.x 发布版）**。
+> 本文档对应版本：**1.0.0（预览版）**。

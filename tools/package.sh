@@ -24,18 +24,21 @@ BUILD_DIR="build-release"
 
 version_of() {
     # 从公开头里读，避免版本号出现第二份真相。
-    sed -n 's/.*kVersion[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+    # 常量在 0.9 的命名收口里改成了 `InkingVersion` / `InkingVersionStage`：
+    # 这里必须写全名——`InkingVersion` 是 `InkingVersionStage` 的前缀，只写
+    # `Version` 那种宽松写法会同时命中两行（版本号读成阶段名）。
+    sed -n 's/.*InkingVersion[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
         include/inking.h | head -1
 }
 stage_of() {
-    sed -n 's/.*kVersionStage[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
+    sed -n 's/.*InkingVersionStage[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
         include/inking.h | head -1
 }
 
 VER="$(version_of)"
 STAGE="$(stage_of)"
 if [ -z "$VER" ] || [ -z "$STAGE" ]; then
-    echo "读不出版本号（include/inking.h 的 kVersion / kVersionStage）" >&2
+    echo "读不出版本号（include/inking.h 的 InkingVersion / InkingVersionStage）" >&2
     exit 1
 fi
 

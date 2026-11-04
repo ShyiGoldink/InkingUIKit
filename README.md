@@ -2,10 +2,14 @@
 
 **一个用 SDF 形状 + 锚点定位写 UI 的 C++20 前端框架（动态链接库）。**
 
-> ## ✅ 当前版本：**0.9.2 发布版**（`0.9.2-release`）
+> ## ✅ 当前版本：**1.0.0 预览版**（`1.0.0-preview`）
 >
-> - 0.x 期间接口 / ABI / 行为仍可能在次版本变化，升级请对照
->   [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)；`1.0.0` 起才冻结。
+> - **预览版 ≠ 冻结**：功能面已按 1.0 收齐、可整包交付评估，但**公开面盘点**
+>   （哪些符号是承诺、哪些可改）还没做完，接口 / ABI 仍可能在正式版前变化。
+>   升级请对照 [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)；**正式 `1.0.0`
+>   才冻结**。
+> - **本预览包的内容 = 0.9.2**（没有新增功能，只是把 0.9.x 累积的能力整包交付）。
+>   下面四条是 0.9.x 相对 0.8.5 的净增量。
 > - **0.9.2 新增：letterbox 留白（黑边）可以配色 / 铺底图**。`SetBackdrop` 画在
 >   清屏之后、场景之前、覆盖整幅窗口像素，所以黑边填的就是它；写 `$token` 就跟着
 >   运行期主题走，`SetBackdropImage` 再加一张 cover 底图。配置里是
@@ -75,13 +79,13 @@
 > - **0.5.0 有破坏性接口改动**：指针钩子改为
 >   `onPointerPress(InkingPointerButton, bool)` / `onPointerClick(InkingPointerButton, float, float)`，
 >   迁移样板见 CHANGELOG「0.5.0 / 变更」。
-> - **预编译包目前是 0.8.5**（[`dist/inking-0.8.5-win64.zip`](dist/)）——0.9.0 的包待出，
->   从源码构建就是 0.9.0。0.7.1 / 0.5.3 那两份
+> - **预编译包当前是 1.0.0 预览版**（[`dist/inking-1.0.0-preview-win64.zip`](dist/)）
+>   ——0.9.x 的实现全在里面，`BUILD.txt` 带本版验证记录。0.8.5 / 0.7.1 / 0.5.3 那几份
 >   保留不删（有人可能钉着它）。也可以用源码构建（`cmake -B build -G Ninja` +
 >   `cmake --build build`），DLL 即 `build/bin/libinking.dll`。两种方式都需要
 >   MSYS2 UCRT64（MinGW ABI）——**运行**示例不需要，**编译**才需要。
 > - 只在 **Windows + MSYS2 UCRT64 + Ninja** 上构建过；Linux / macOS 未验证。
-> - 可用于内部评估与产品集成验证；正式 `1.0.0` 预计 2026 年 11 月底前推出。
+> - 可用于内部评估与产品集成验证；正式 `1.0.0` 计划在完成公开面盘点后推出。
 
 ---
 
@@ -232,7 +236,7 @@ tools/package.sh          # 搬运 + 收 DLL 闭包 + 许可 + 校验和 + zip
 ```
 
 ```
-inking-0.8.5-win64/
+inking-1.0.0-preview-win64/
 ├─ BUILD.txt            版本阶段、工具链、依赖版本、SHA-256、验证记录、已知限制、许可
 ├─ README.md            本文件
 ├─ bin/                 libinking.dll · inking_demo.exe · inking_demo_selftest.exe
@@ -270,7 +274,7 @@ target_link_libraries(my_app PRIVATE inking)
 
 ## 用预编译包（不编译源码）
 
-把 `inking-0.8.5-win64.zip` 解到任意目录，那个目录就是 **SDK 根**（下文写 `<SDK>`）：
+把 `inking-1.0.0-preview-win64.zip` 解到任意目录，那个目录就是 **SDK 根**（下文写 `<SDK>`）：
 
 ```
 <SDK>/
@@ -548,7 +552,7 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 | [`docs/zh/API.md`](docs/zh/API.md) | **从这里读起**：五分钟上手 + 模块地图 + 头文件全量索引 |
 | [`docs/zh/api/`](docs/zh/api/) | 18 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver / FixedPopup / Json + Anchor / InkingShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
 | [`CXXCSS/CXXCSS.md`](CXXCSS/CXXCSS.md) | 配置格式：目录与命名、公共骨架、形状层词汇表、Button 字段全表 |
-| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.9.2 的逐条变化） |
+| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 1.0.0-preview 的逐条变化） |
 | [`examples/minimal/README.md`](examples/minimal/README.md) | 最小工程：三步构建 + 运行期 DLL 拷贝 |
 
 ---
@@ -625,4 +629,4 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 
 ---
 
-> 版本 `0.9.2`（发布版） · 最后更新 2026-11-04
+> 版本 `1.0.0`（预览版） · 最后更新 2026-11-04
