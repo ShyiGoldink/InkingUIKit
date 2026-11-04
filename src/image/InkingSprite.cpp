@@ -181,6 +181,36 @@ void InkingSpriteLike::syncSheetBytes() {
 }
 
 void InkingSpriteLike::SetSpriteData(const InkingSpriteData& data, bool keepPhase) {
+    // 派发期间换配置：**只登记，不执行**（0.9.0 T-01）。
+    //
+    // 为什么不能立即换：此刻 `fireEventsBetween` 正拿着"这一帧算出来的"事件表在
+    // 派发，`_sprite` 一换，剩下的 `three@3` 就没了；而且外层还会拿旧动画的帧号
+    // 再发一次 `frameChanged`。延后到本帧落帧结束，两件事都自然成立。
+    if (_dispatchingEvents) {
+        // 后设覆盖先设：同一帧里切两次，前一次**静默丢弃**（不是排队）。
+        // UI 语义是"这一帧算一句台词"，排队会让"切了没反应"变成常态。
+        _pendingData = data;
+        _pendingKeepPhase = keepPhase;
+        _switchedDuringDispatch = true;
+        return;
+    }
+    SetSpriteDataNow(data, keepPhase);
+}
+
+void InkingSpriteLike::applyPendingSpriteData() {
+    if (!_pendingData.has_value()) {
+        return;
+    }
+    // 先取走再执行：`SetSpriteDataNow` 内部会落一次帧，那一段里若又产生 pending
+    // （本轮不该发生，但别赌），落进的是干净的空槽位，不会被这一份覆盖。
+    InkingSpriteData data = std::move(*_pendingData);
+    const bool keepPhase = _pendingKeepPhase;
+    _pendingData.reset();
+    _pendingKeepPhase = false;
+    SetSpriteDataNow(data, keepPhase);
+}
+
+void InkingSpriteLike::SetSpriteDataNow(const InkingSpriteData& data, bool keepPhase) {
     const std::size_t previousFrame = _frameIndex;
     const bool wasPlaying = _playing;
 
@@ -553,19 +583,39 @@ void InkingSpriteLike::advanceFrame(float deltaSeconds) {
         // "已经播完了"，不是"正在播最后一下"。
         _hooks.finished();
     }
+
+    // 本帧的派发段到此结束（0.9.0 T-01）：复位判据，再执行派发期间登记的换配置。
+    //
+    // ⚠️ **两步顺序不能反**。先执行 pending 再复位的话，`SetSpriteDataNow` 内部
+    //    （`rebuildFromData` → `applyFrame`）若又触发某个回调，新的换配置请求会被
+    //    同一个判据二次吞进 pending，而这一帧已经没有第二个"末尾"——它永远不执行。
+    _dispatchingEvents = false;
+    applyPendingSpriteData();
 }
 
 void InkingSpriteLike::fireEventsBetween(std::size_t previous,
                                    std::size_t current) {
-    // 没配事件就是**零开销**（每个换帧都会走到这里）。
+    // 没配事件就是**零开销**（每个换帧都会走到这里）。这一行必须在最前面：
+    // "不配事件的精灵行为零变化"是 0.9.0 T-01 的边界之一。
     if (_sprite.events.empty() || _frames.empty()) {
         return;
     }
+
+    // **快照派发**（0.9.0 T-01；与 `InkingEvent::Emit` 同一条规矩，见 `AGENTS.md`
+    // §6 第 63 条）：回调里调 `SetSpriteData` 会把 `_sprite` 整个换掉，边遍历
+    // `_sprite.events` 边回调就是拿悬垂引用在用。拷一份"名字 + 帧号"出来，
+    // 循环只读这份拷贝——代价是配了事件时一次小 vector 分配，只在本函数里发生。
+    std::vector<std::pair<std::string, std::size_t>> snapshot;
+    snapshot.reserve(_sprite.events.size());
+    for (const InkingSpriteData::SpriteEvent& event : _sprite.events) {
+        snapshot.emplace_back(event.name, event.frame);
+    }
+
     const std::size_t count = _frames.size();
-    const auto fire = [this](std::size_t frame) {
-        for (const InkingSpriteData::SpriteEvent& event : _sprite.events) {
-            if (event.frame == frame) {
-                _hooks.frameEvent(event.name, event.frame);
+    const auto fire = [this, &snapshot](std::size_t frame) {
+        for (const std::pair<std::string, std::size_t>& event : snapshot) {
+            if (event.second == frame) {
+                _hooks.frameEvent(event.first, event.second);
             }
         }
     };
@@ -591,6 +641,9 @@ void InkingSpriteLike::applyFrame(std::size_t index, bool fromPlayback) {
         return;
     }
 
+    // ⚠️ 这条引用只在**派发之前**有效。派发段（`fireEventsBetween` 起）里回调可能
+    //    登记换配置，本帧落完就重建 `_frames`；现在的用法（下面 `setBytes` /
+    //    `setSourceRect` 两处）全在派发段之前，加东西时**别往下挪**。
     const LoadedFrame& frame = _frames[index];
     const bool hadFrame = _applied;
     const std::size_t previous = _frameIndex;
@@ -630,7 +683,19 @@ void InkingSpriteLike::applyFrame(std::size_t index, bool fromPlayback) {
         }
         // 帧事件先发、`frameChanged` 后发：订阅者收到"换帧"时，这一帧的关键点
         // 已经处理完了（顺序反过来，回调里读到的状态就和事件对不上）。
+        //
+        // 派发段**从这里开始、到 `advanceFrame` 末尾结束**（0.9.0 T-01）：期间
+        // `SetSpriteData` 只登记、不执行。`frameChanged` 也算派发段的一部分——
+        // 它同样可能触发换配置，而在 `applyFrame` 中途把 `_frames` 换掉之后，
+        // 回到 `advanceFrame` 还要拿按旧配置算出来的 `resolution` 收尾。
+        _switchedDuringDispatch = false;
+        _dispatchingEvents = true;
         fireEventsBetween(previous, index);
+        if (_switchedDuringDispatch) {
+            // 这一帧已经决定换配置了：旧动画的"帧变了"**不发**。发出去订阅者会
+            // 在下一帧发现动画换了、帧号却退回去，两件事对不上。
+            return;
+        }
     }
     _hooks.frameChanged(index, previous);
 }

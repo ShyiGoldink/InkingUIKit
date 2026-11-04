@@ -152,6 +152,11 @@ public:
      *
      * 校验不过时**照常换**（`IsValid()` 变 false、记 ERROR、帧数可能为 0）：和构造
      * 那条路一个口径——"一个动画坏了"不该让整个界面停摆。
+     *
+     * **在帧事件回调里调用是安全的，但不立即生效**（0.9.0 T-01）：本帧的落帧与事件
+     * 派发会完整走完，切换在本帧末执行。于是同一批事件照发、`frameChanged` 这一帧
+     * 不发；同一帧里切两次是"后设覆盖先设"（前一次静默丢弃，不排队）——UI 语义是
+     * "这一帧算一句台词"。详见 `docs/zh/api/InkingComponents.md`。
      */
     void SetSpriteData(const InkingSpriteData& data, bool keepPhase = false);
 

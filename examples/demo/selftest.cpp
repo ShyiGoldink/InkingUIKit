@@ -8322,6 +8322,72 @@ void CheckSpriteEvents(SDL_Renderer* renderer) {
         Check(InkLog::CountOf(InkingLogLevel::Error) >= 1,
               "T-09：越界事件同时有一条 ERROR");
     }
+
+    // ⑥ 帧事件回调里换配置（0.9.0 T-01：快照派发 + 切换延后到本帧末）
+    //
+    // 改之前这是 UB：`fireEventsBetween` 边遍历 `_sprite.events` 边调回调，回调里
+    // `SetSpriteData` 把整个 `_sprite` 换掉，剩下的 `three@3` 从悬垂容器里读；
+    // 外层还会拿旧动画的帧号再发一次 `frameChanged`。
+    {
+        InkingScene scene("sprite_events_swap");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        auto* sprite = static_cast<InkingSprite*>(
+            scene.AddChild(std::make_unique<InkingSprite>(
+                &scene, makeData("spr_evt_swapA", true))));
+        std::vector<std::string> log;
+        subscribe(sprite, &log);
+
+        int frameChangedCount = 0;
+        sprite->frameChanged.Subscribe(
+            [&frameChangedCount](std::size_t, std::size_t) {
+                ++frameChangedCount;
+            });
+
+        // 第二份配置：帧数同样是 4（于是"到底换没换"只能看名字），事件换成另一族。
+        InkingSpriteData second =
+            InkingMakeSpriteData("spr_evt_swapB", 4, 12.0, true);
+        second.events.push_back(InkingSpriteData::SpriteEvent{2, "swapTwo"});
+
+        int swapCalls = 0;
+        sprite->frameEvent.Subscribe(
+            [&swapCalls, sprite, &second](const std::string& name,
+                                          std::size_t /*frame*/) {
+                if (name != "one") {
+                    return;
+                }
+                ++swapCalls;
+                sprite->SetSpriteData(second);
+            });
+
+        const std::uint64_t advanceBefore = sprite->GetFrameAdvanceCount();
+        scene.TickFrame(0.25);  // 0.25s × 12fps = 3 帧：0 → 3（跨过 1 与 3）
+        const std::string afterSwap = names(log);
+        std::printf("         0.25s 跨 3 帧、回调里换配置 → 事件 %s 帧号=%zu 名称=%s\n",
+                    afterSwap.c_str(), sprite->GetFrameIndex(),
+                    sprite->GetSpriteData().name.c_str());
+        Check(afterSwap == "one@1,three@3",
+              "T-01：回调里换配置后，本批剩下的事件照发（快照派发，不是边遍历边换）");
+        Check(swapCalls == 1 && sprite->GetSpriteData().name == "spr_evt_swapB",
+              "T-01：切换真的执行了（在本帧末），不是被静默丢掉");
+        Check(frameChangedCount == 0,
+              "T-01：这一帧换过配置 ⇒ 旧动画的 frameChanged 不发");
+        Check(sprite->GetFrameAdvanceCount() - advanceBefore == 1,
+              "T-01：计数只记播放推进的那一次落帧，切换本身不计（边界：与改前一致）");
+        Check(sprite->GetFrameCount() == 4 && sprite->GetFrameIndex() == 0
+                  && sprite->GetConfigError().empty(),
+              "T-01：切换落在第 0 帧、新配置帧数对上、没有配置错误");
+
+        // 稳定性：换完之后照常播（第二份配置的 `swapTwo@2` 该在第 2 帧出现）。
+        for (int i = 0; i < 3; ++i) {
+            scene.TickFrame(1.0 / 12.0);
+        }
+        const std::string afterPlay = names(log);
+        std::printf("         换完再跑 3 次 1/12 → 事件 %s 帧号=%zu\n",
+                    afterPlay.c_str(), sprite->GetFrameIndex());
+        Check(afterPlay == "one@1,three@3,swapTwo@2"
+                  && sprite->GetFrameIndex() == 3,
+              "T-01：换完之后从第 0 帧照常推进，新配置的事件生效、不崩");
+    }
 }
 
 // ---------------------------------------------------------------------------

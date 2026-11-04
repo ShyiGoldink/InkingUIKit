@@ -70,6 +70,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -157,6 +158,10 @@ public:
      *
      * 校验不过时**照常换**（`IsValid()` 变 false、记 ERROR、帧数可能为 0）：和构造
      * 那条路一个口径——"一个动画坏了"不该让整个界面停摆。
+     *
+     * @note **在帧事件回调里调用是安全的（0.9.0 T-01）**，但不会立即生效：本帧的
+     *       落帧与派发会完整走完，之后才执行切换。于是"这一帧算一句台词"这个语义
+     *       成立——同一帧里多次调用，**后设覆盖先设**，前一次静默丢弃（不排队）。
      */
     void SetSpriteData(const InkingSpriteData& data, bool keepPhase = false);
 
@@ -295,6 +300,23 @@ private:
         InkingShapeBounds sourceRect{};
     };
 
+    /**
+     * @brief `SetSpriteData` 的真身：**不判** `_dispatchingEvents`，直接换。
+     *
+     * 拆两半的理由只有一条（0.9.0 T-01）：公开的那个要知道"现在能不能立即换"，
+     * 而延后执行那条路（`applyPendingSpriteData`）必须能绕过这个判据——否则
+     * pending 执行时又被同一个判据吞回去，永远没有执行点。
+     */
+    void SetSpriteDataNow(const InkingSpriteData& data, bool keepPhase);
+
+    /**
+     * @brief 执行 `_pendingData` 里那一份（没有就什么也不做）。
+     *
+     * 调用点只有一个：`advanceFrame` 的末尾、且**已复位** `_dispatchingEvents`
+     * 之后。顺序反了见 `advanceFrame` 里那段注释。
+     */
+    void applyPendingSpriteData();
+
     InkingWidget* _host;    // 非拥有：只读场景时钟
     InkingImageLike* _image;      // 非拥有：只问"绘制层现在哪份字节"
     Hooks _hooks{};
@@ -336,5 +358,30 @@ private:
 
     std::uint64_t _frameAdvanceCount = 0;
     std::uint64_t _skippedFrameCount = 0;
+
+    // ---------------- 帧事件派发期的换配置（0.9.0 T-01） ----------------
+    //
+    // 改之前：`fireEventsBetween` 边遍历 `_sprite.events` 边调回调，而回调里
+    // `SetSpriteData` 会把整个 `_sprite` 换掉 —— 正在遍历的容器当场悬垂（UB），
+    // 外层还会拿旧动画的帧号再发一次 `frameChanged`。
+    //
+    // 改之后两条：**快照派发**（拷一份名字+帧号，循环只读拷贝）+ **切换延后**
+    // （派发期间只登记，本帧落完之后执行）。这与 `InkingEvent::Emit` 是同一条
+    // 规矩（`AGENTS.md` §6 第 63 条）。
+
+    /// 正在派发（`fireEventsBetween` 与紧随其后的 `frameChanged` 之间）。
+    /// 期间 `SetSpriteData` 只登记 pending。
+    bool _dispatchingEvents = false;
+
+    /// 等待执行的换配置请求。**只保留一个**：同一帧里两次切换，前一次静默丢弃。
+    /// 这是有意的（UI 语义是"这一帧算一句台词"），别改成队列。
+    std::optional<InkingSpriteData> _pendingData;
+
+    /// `_pendingData` 的相位选项（与 `SetSpriteData` 的第二个参数同义）。
+    bool _pendingKeepPhase = false;
+
+    /// 本次派发里有人换过配置 —— `applyFrame` 据此**不发** `frameChanged`
+    /// （旧动画的帧号在"已经决定换掉它"之后再说一遍就是假事件）。
+    bool _switchedDuringDispatch = false;
 };
 

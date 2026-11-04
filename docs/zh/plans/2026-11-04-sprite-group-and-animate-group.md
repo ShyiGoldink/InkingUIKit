@@ -81,7 +81,7 @@
 | 图像面**没有**顶点缓存槽（`VertexCacheSlot` 只服务形状填充） | 成立 | `AppendTexturedGeometry` 不碰 `CurrentNode()`，`src/render/InkingBatch.cpp:174-191` |
 | 帧事件在**渲染之前**发，回调里切配置视觉零延迟 | 成立 | `advanceFrame` 由 `onAnimationTick` 调、`TickFrame` 在 `Render` 前（`src/scene/InkingScene.cpp:279-326`） |
 | `SetSpriteData` 会把相位重对到落点帧，不会在下一帧跳走 | 成立 | `src/image/InkingSprite.cpp:197-209`（`_offsetReady = false` → `ensureTimeBase()`） |
-| 帧事件回调里切配置是 UB（遍历 `_sprite.events` 中被替换） | 成立 | `src/image/InkingSprite.cpp:558-587` 边遍历边回调；`:183-205` 整个替换 `_sprite` |
+| 帧事件回调里切配置是 UB（遍历 `_sprite.events` 中被替换） | 成立（**T-01 已修**：快照派发 + 切换延后） | `src/image/InkingSprite.cpp:558-587` 边遍历边回调；`:183-205` 整个替换 `_sprite` |
 | `resolveFrame` 是文件内纯函数，外部不可用 | 成立 | `src/image/InkingSprite.cpp:36-80`（匿名命名空间） |
 | 当前版本号 | 成立 | `include/inking.h:20` = `"0.8.5"`；`docs/zh/CHANGELOG.md:1` = 0.9.0 未发布 |
 | `InkingSpriteGroup` 的引用面 | 成立 | **15 个文件**命中（排除 `dist/`、`build*/`）；其中 **13 个要改**：`include/image/InkingSpriteGroup.h`、`src/image/InkingSpriteGroup.cpp`、`include/widget/InkingWidget.h`、`include/image/InkingDynamicSprite.h`、`examples/demo/{main,selftest}.cpp`、`docs/zh/{CHANGELOG,TaskGuide-Dynamic,TaskGuide-G,api/InkingComponents}.md`、`docs/zh/plans/` 两份、`README.md`。另 2 份 `.workbuddy/memory/` 是历史记录，不动 |
@@ -92,63 +92,7 @@
 
 ## 3. 第一批：0.9.0-a（帧事件地基）
 
-### T-01 让帧事件派发可在回调里换配置
-
-- **状态**：未开始
-- **落点**：`src/image/InkingSprite.cpp` 的 `InkingSpriteLike::fireEventsBetween`（:558）、`applyFrame`（:589）、`SetSpriteData`（:183）；`include/image/SpriteLike.h` 加私有成员与 include
-
-**准备怎么改**
-
-`fireEventsBetween` 现在是**边遍历 `_sprite.events` 边调回调**。回调里调 `SetSpriteData` 就把正在遍历的容器整个替换掉，`event.name` 悬垂、迭代器失效；外层 `applyFrame` 随后还会发一次 `frameChanged(index, previous)`，报的是旧动画的帧号。这不是「有点怪」，是 UB 加语义错乱。
-
-三个候选：
-
-| 方案 | 做法 | 代价 | 结论 |
-| - | - | - | - |
-| A 快照 + 切换延后 | 派发前把 `(name, frame)` 拷成局部数组；回调里 `SetSpriteData` 只登记 pending，本帧落帧结束后执行 | 每次派发一次小 vector 拷贝（只在配了事件时） | **推荐** |
-| B 只快照、不延后 | 快照保证安全，回调里立即换配置，外层检测「换过」就跳过 `frameChanged` | 切换发生在旧动画的落帧中途，`_frameIndex` 中途跳变，解释成本高 | 退路（A 受阻时） |
-| C 禁止回调里切 | 回调里 `SetSpriteData` 直接拒绝并记 ERROR | 把「帧事件驱动过渡」这条路封死，而它是本轮的核心动机 | 不做 |
-
-选 A，两条理由：
-
-- 仓里已经有同一族做法——`InkingEvent::Emit` 用快照派发（`AGENTS.md` §6 第 63 条，「点一下就关掉这个场景」是安全的）。
-- 延后到本帧落帧结束，旧动画的落帧能完整走完，`frameChanged` 报的仍是旧动画的帧号，语义自洽。
-
-硬约束：**pending 只保留一个，后设覆盖先设**。同一帧里两次切换，前一次静默丢弃——这是有意的（UI 语义是「这一帧算一句台词」），必须写进注释与文档，不然下一个人以为能排队。
-
-**大致改动逻辑**
-
-1. `SpriteLike.h`：加 `#include <optional>`；私有成员 `bool _dispatchingEvents = false;`、`std::optional<InkingSpriteData> _pendingData;`、`bool _pendingKeepPhase = false;`、`bool _switchedDuringDispatch = false;`。
-2. `SetSpriteData` 拆两半：公开的只做判据 —— `if (_dispatchingEvents) { 登记 pending; return; }`，其余转调新的 private `SetSpriteDataNow(data, keepPhase)`。
-3. `fireEventsBetween`：进入时 `_dispatchingEvents = true`；派发前拷一份 `std::vector<std::pair<std::string, std::size_t>>`，循环只读拷贝；退出时复位。
-4. `applyFrame`：调 `fireEventsBetween` **之前**清 `_switchedDuringDispatch`；之后 `if (!_switchedDuringDispatch) _hooks.frameChanged(index, previous);`。
-5. `advanceFrame` 末尾（`_hooks.finished()` 之后）：`_dispatchingEvents = false;` 再执行 pending。**这一步不能反**——先复位再执行，否则 `SetSpriteDataNow` 内部若再触发回调，会被同一个判据二次吞掉，pending 永远不执行。
-6. `applyFrame` 里 `const LoadedFrame& frame = _frames[index]` 那条引用必须在 `fireEventsBetween` 之前用完。现在就是这样，但要在注释里钉死（顺序反了就悬垂）。
-
-**与改动前对比**
-
-| 场景 | 改动前 | 改动后 |
-| - | - | - |
-| 4 帧、一次 tick 跨 3 帧、首个事件回调里换配置 | UB：容器遍历中被替换，`frameChanged` 报旧帧号 | 快照派发，同批事件照发；切换延后到本帧末，`frameChanged` 不发 |
-| 不配事件的精灵 | 直接 `return` | **不变**（判据在函数第一行） |
-| 配了事件但回调里不换配置 | 正常 | **不变**（快照只多一次小拷贝，语义零差异） |
-| 外部直接调 `SetSpriteData`（不在回调里） | 立即生效 | **不变**（`_dispatchingEvents` 为假，走原路） |
-
-**验收**
-
-`examples/demo/selftest.cpp` 的 `CheckSpriteEvents` 补第 ⑥ 段（现有 5 段见 :8170-8325）：
-
-1. 日志断言：4 帧配置、事件挂 0/1/3，`TickFrame(0.25)` 跨 0→3，在 `one@1` 回调里换第二份配置 → 日志仍是 `"one@1,three@3"`（快照派发，剩下的事件照发）。
-2. 状态断言：结束后 `GetFrameCount() == 4`、`GetFrameIndex() == 0`、`GetConfigError().empty()`。
-3. 计数断言：该帧 `frameChanged` 订阅者计数**不增加**；`GetFrameAdvanceCount()` 增量 = 2（0→1→3 之外不含切换本身）。
-4. 稳定性：再 `TickFrame` 三次不崩、帧号从 0 起正常推进。
-
-**风险与回退**
-
-- **风险一**：pending 只有一个，同帧两次切换会丢前一次。写进 §9 与注释，不做队列。
-- **风险二**：回调里把组件本身析构掉（`scene.RemoveChild`）之后 `_dispatchingEvents` 写在已释放对象上。**这是既有问题，T-01 不引入也不修复**（`_hooks.frameEvent` 之后继续用 `this` 的现状不变）。要修它得另开一条任务，靠结构代次或延迟销毁。
-- **风险三**：`_pendingData` 是 `std::optional<InkingSpriteData>`，`InkingSpriteData` 里含 `vector` 与 `string`，每帧判一次 `has_value()` 是常数开销。
-- **回退**：T-01 是一个独立提交，`git revert` 即回到现状；回退后 T-07 的「帧事件驱动过渡」不能做。
+- T-01 让帧事件派发可在回调里换配置-已完成（2026-11-04，快照派发 + 切换延后。**改前实测**：在 `one@1` 回调里换配置后事件流变成 `one@1,swapTwo@2`——`three@3` 丢了、新配置的 `swapTwo@2` 被提前扫进来，且照发一次报旧帧号 3 的 `frameChanged`；**改后**：`one@1,three@3`、`frameChanged` 不发、切换落在第 0 帧、换完照常推进。`CheckSpriteEvents` 原五段断言不动 + 新增 ⑥ 段六条全绿，`selftest` 末行失败项 0；`nm` 差分只多 `InkingSpriteLike::SetSpriteDataNow` / `applyPendingSpriteData` 两个符号。**一处与本节原验收不同**：`GetFrameAdvanceCount()` 增量实测是 **1** 不是 2——一次 `TickFrame(0.25)` 只落一次帧（0→3 是一跳），切换本身不计，原写的"= 2"与它自己括号里的语义对不上）
 
 ---
 
@@ -551,7 +495,7 @@ void setTiming(double fps, bool loop, std::size_t startFrame,
 
 | 编号 | 任务 | 批次 | 状态 |
 | - | - | - | - |
-| T-01 | 让帧事件派发可在回调里换配置 | 0.9.0-a | 未开始 |
+| T-01 | 让帧事件派发可在回调里换配置 | 0.9.0-a | 已完成 |
 | T-02 | 把 `InkingSpriteGroup` 改名为 `InkingAnimateGroup` | 0.9.0-b | 未开始 |
 | T-03 | 让帧机支持「每帧一组矩形」 | 0.9.0-c | 未开始 |
 | T-04 | 新增块叠加组的数据面 | 0.9.0-d | 未开始 |
