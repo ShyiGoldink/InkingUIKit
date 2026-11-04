@@ -52,6 +52,7 @@
 #include <image/SpriteData.h>
 #include <image/SpriteGroupData.h>
 #include <image/InkingSpriteGroup.h>
+#include <image/InkingDynamicSpriteGroup.h>
 #include <panel/InkingDynamicPanel.h>
 #include <panel/InkingStaticPanel.h>
 #include <panel/PanelData.h>
@@ -7785,6 +7786,131 @@ void CheckAnimateGroup() {
 }
 
 // ---------------------------------------------------------------------------
+// 0.9.0 T-06：块叠加组的动态档
+// ---------------------------------------------------------------------------
+//
+// 验三件事：几何改了命中跟着变、两档帧机同源、节点数恒 1。
+//
+// 第 ② 条是这一节存在的**主要理由**：它是「复制期没有分家」的探测器（G-04 的那条
+// 判据复用）。两档同场景、同 fps、同配置，跑 100 帧之后帧号与换帧计数必须逐一相等。
+void CheckDynamicSpriteGroup(SDL_Renderer* renderer) {
+    std::printf("\n-- 块叠加组的动态档：几何可改、帧机同源（0.9.0 T-06） --\n");
+    (void)renderer;
+
+    const std::vector<std::uint8_t> atlas = MakeSheetBmp(240, 40, 40, 0);
+    const auto makeGroup = [&atlas] {
+        InkingSpriteGroupData group;
+        group.source = "dsgroup_atlas";
+        group.imageBytes = atlas.data();
+        group.imageSize = atlas.size();
+        group.frameWidth = 40;
+        group.frameHeight = 40;
+        group.columns = 6;
+        group.rows = 1;
+
+        InkingSpriteGroupAnimation idle;
+        idle.name = "idle";
+        idle.fps = 12.0;
+        idle.loop = true;
+        idle.frames = {{0, 1}, {2, 3}, {4, 5}};
+
+        InkingSpriteGroupAnimation run;
+        run.name = "run";
+        run.fps = 12.0;
+        run.loop = true;
+        run.frames = {{1, 2}, {3, 4}, {5, 0}};
+
+        group.animations.push_back(std::move(idle));
+        group.animations.push_back(std::move(run));
+        return group;
+    };
+
+    // ① Resize 之后命中跟着变（几何真的改了、不是只改了账）
+    {
+        InkingScene scene("dynamic_sprite_group_resize");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        auto* group = static_cast<InkingDynamicSpriteGroup*>(scene.AddChild(
+            std::make_unique<InkingDynamicSpriteGroup>(&scene, makeGroup())));
+
+        std::printf("         初始 %d×%d：命中(10,10)=%d 命中(100,80)=%d\n",
+                    group->GetWidth(), group->GetHeight(),
+                    group->HitTest(10.0f, 10.0f) ? 1 : 0,
+                    group->HitTest(100.0f, 80.0f) ? 1 : 0);
+        Check(group->HitTest(10.0f, 10.0f) && !group->HitTest(100.0f, 80.0f),
+              "T-06：初始 40×40 时 (10,10) 命中、(100,80) 不命中");
+
+        Check(group->Resize(120, 90), "T-06：Resize(120,90) 返回 true");
+        std::printf("         Resize 之后 %d×%d：命中(100,80)=%d 帧数=%zu\n",
+                    group->GetWidth(), group->GetHeight(),
+                    group->HitTest(100.0f, 80.0f) ? 1 : 0, group->GetFrameCount());
+        Check(group->GetWidth() == 120 && group->GetHeight() == 90,
+              "T-06：尺寸真的改了（120×90）");
+        Check(!group->HitTest(10.0f, 10.0f) == false
+                  && group->HitTest(100.0f, 80.0f),
+              "T-06：Resize 之后 (100,80) 变成命中（命中跟着几何走）");
+        Check(group->GetFrameCount() == 3 && group->GetLoadedFrameCount() == 3,
+              "T-06：Resize 不重算格矩形（等格与组件框无关，帧数一个都不变）");
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ② 两档帧机同源：同场景跑 100 帧，帧号与换帧计数逐一相等
+    {
+        InkingScene scene("sprite_group_twins");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        auto* stat = static_cast<InkingSpriteGroup*>(scene.AddChild(
+            std::make_unique<InkingSpriteGroup>(&scene, makeGroup())));
+        auto* dyn = static_cast<InkingDynamicSpriteGroup*>(scene.AddChild(
+            std::make_unique<InkingDynamicSpriteGroup>(&scene, makeGroup())));
+
+        for (int i = 0; i < 100; ++i) {
+            scene.TickFrame(1.0f / 12.0f);
+        }
+        std::printf("         100 帧后：静态 帧号=%zu 换帧=%llu 跳过=%llu；"
+                    "动态 帧号=%zu 换帧=%llu 跳过=%llu\n",
+                    stat->GetFrameIndex(),
+                    static_cast<unsigned long long>(stat->GetFrameAdvanceCount()),
+                    static_cast<unsigned long long>(stat->GetSkippedFrameCount()),
+                    dyn->GetFrameIndex(),
+                    static_cast<unsigned long long>(dyn->GetFrameAdvanceCount()),
+                    static_cast<unsigned long long>(dyn->GetSkippedFrameCount()));
+        Check(stat->GetFrameIndex() == dyn->GetFrameIndex(),
+              "T-06：同场景 100 帧后两档帧号恒等（帧机同源）");
+        Check(stat->GetFrameAdvanceCount() == dyn->GetFrameAdvanceCount()
+                  && stat->GetSkippedFrameCount() == dyn->GetSkippedFrameCount(),
+              "T-06：换帧 / 跳过计数也相等（不是碰巧停在同一个帧号）");
+        Check(dyn->GetOwnedChildCount() == 0 && stat->GetOwnedChildCount() == 0,
+              "T-06：两档都只有一个节点（没有隐藏子节点参与遍历）");
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ③ 切动作 / 非法配置：与静态档同一个出口
+    {
+        InkingScene scene("dynamic_sprite_group_switch");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        auto* group = static_cast<InkingDynamicSpriteGroup*>(scene.AddChild(
+            std::make_unique<InkingDynamicSpriteGroup>(&scene, makeGroup())));
+        int changed = 0;
+        group->animationChanged.Subscribe(
+            [&changed](const std::string&, const std::string&) { ++changed; });
+        Check(group->SwitchTo("run") && group->GetCurrentAnimation() == "run"
+                  && changed == 1,
+              "T-06：动态档的 SwitchTo 与静态档同一条路（动作变了、事件发一次）");
+
+        InkingSpriteGroupData bad = makeGroup();
+        bad.source.clear();
+        InkLog::ResetStats();
+        auto* broken = static_cast<InkingDynamicSpriteGroup*>(scene.AddChild(
+            std::make_unique<InkingDynamicSpriteGroup>(&scene, bad)));
+        Check(!broken->IsValid()
+                  && broken->GetGroupError().find("source") != std::string::npos,
+              "T-06：非法配置在构造期拦下（GetGroupError 与静态档同一个来源）");
+        Check(broken->GetFrameCount() == 0 && InkLog::CountOf(InkingLogLevel::Error) == 1,
+              "T-06：非法配置不装帧表、恰好一条 ERROR");
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 0.9.0 T-05：块叠加组的静态档
 // ---------------------------------------------------------------------------
 //
@@ -10274,6 +10400,9 @@ int main() {
 
     // ---- 块叠加组的静态档：一帧 K 块、一次提交（0.9.0 T-05）----
     CheckSpriteGroup(rnd);
+
+    // ---- 块叠加组的动态档：几何可改、帧机同源（0.9.0 T-06）----
+    CheckDynamicSpriteGroup(rnd);
 
     // ---- 0.9.0 批次 a+b：视频出画 / 滑块 / 进度条（T-01 ~ T-03）----
     //

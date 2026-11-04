@@ -171,6 +171,21 @@
   `applyPendingSpriteData`）；三个既有精灵自检（图集 / 事件 / 换配置）**一条断言
   不改**就过。
 
+### 新增（块叠加组的动态档 `InkingDynamicSpriteGroup`，0.9.0 T-06）
+
+- **`include/image/InkingDynamicSpriteGroup.h`**：`InkingDynamicWidget` +
+  `InkingImageLike` + `InkingSpriteLike`。与静态档的差别只有"几何能不能改"与
+  "进不进命中表"——帧机、绘制、动作切换**逐字相同**。
+- **先复制、不抽 Like**（任务书 T-06 方案 A）：第二档刚出现就抽，抽出什么全凭猜。
+  判据不是"看起来像"，而是自检里那条「两档同场景跑 100 帧，帧号 / 换帧 / 跳过
+  计数逐一相等」——真分家了它先红。**唯一的重复点是 `onRender` 那十几行**（按
+  `_frameRects` 逐块 `PaintImage`），先接受。
+- `Resize` 之后**不需要**重算格矩形：等格是结构保证，矩形只与图集有关、与组件框
+  无关。自检钉住"Resize 之后帧数一个都不变"。
+- 自检 `CheckDynamicSpriteGroup()`：`Resize(120,90)` 后 `HitTest` 新旧点一假一真、
+  尺寸真的变了、帧数不变；两档 100 帧后 `帧号=1 换帧=100 跳过=0` **逐一相等**、
+  `GetOwnedChildCount()` 都为 0；`SwitchTo` 与非法配置与静态档同一个出口。
+
 ### 新增（块叠加组的静态档 `InkingSpriteGroup`，0.9.0 T-05）
 
 - **`include/image/InkingSpriteGroup.h`**：`InkingStaticImage` + `InkingSpriteLike`，

@@ -1093,6 +1093,41 @@ public:
 > **命中不变**：一个矩形。K 块等格同原点，分开命中没有语义（点眼睛那种需求不在
 > 本轮）。
 
+### 动态块叠加组 `InkingDynamicSpriteGroup`（0.9.0 T-06）
+
+与静态档**逐字同源**，差别只有两处：
+
+| 场景 | `InkingSpriteGroup`（静态） | `InkingDynamicSpriteGroup`（动态） |
+| --- | --- | --- |
+| 几何写入口 | 无（编译期 `static_assert` 钉死） | 四个都有：`Resize` / `ChangeSelfAnchor` / `ChangeTraceAnchor` / `ChangeOffset` |
+| 命中 | 进命中表 | **不进表**，占地记「洞」；`Resize` 后洞跟着刷 |
+| 每帧推进 | `onAnimationTick` | `onAnimationTick`（**同一条路**） |
+| 一帧 K 块一次提交 | 1 次 | **不变**（同一份绘制逻辑） |
+| 数据面 / `SwitchTo` / 事件槽 | 见上一节 | **完全一样** |
+
+`Resize` 之后**不需要**重算格矩形：等格是结构保证，矩形只与图集有关、与组件框无关
+（自检钉住"Resize 之后帧数一个都不变"）。
+
+**为什么先复制、不抽 `InkingSpriteGroupLike`**：第二档刚出现就抽，抽出什么全凭猜。
+判据不是"看起来像"，而是自检里那条「两档同场景跑 100 帧，帧号 / 换帧 / 跳过计数
+逐一相等」——同一个场景、同一个动画时钟，`frame = floor(t × fps) % count` 是结构
+保证，两边真分家了它就红。**唯一重复的是 `onRender` 那十几行**，先接受；第三档出现
+（或它俩真分家）再抽。
+
+````C++
+class InkingDynamicSpriteGroup : public InkingDynamicWidget,
+                                 public InkingImageLike,
+                                 public InkingSpriteLike {
+public:
+    InkingDynamicSpriteGroup(InkingWidget* parent, const InkingSpriteGroupData& data,
+                             const std::string& initialAnimation = {});
+
+    // 继承来的四个几何写入口：Resize / ChangeSelfAnchor / ChangeTraceAnchor / ChangeOffset
+
+    // 事件槽、SwitchTo、观测口、图片面——与静态档同名同义
+};
+````
+
 ## 六、画布
 
 ```C++

@@ -120,50 +120,7 @@
 
 ## 7. 第五批：0.9.0-e（双档与收口）
 
-### T-06 动态档 `InkingDynamicSpriteGroup`
-
-- **状态**：未开始
-- **落点**：新文件 `include/image/InkingDynamicSpriteGroup.h` + `src/image/InkingDynamicSpriteGroup.cpp`
-
-**准备怎么改**
-
-双档的理由与 Button / Image / Sprite 一致：静态档几何定死、进命中表；动态档几何可改、不进表（记「洞」）。形状照 `InkingDynamicSprite`（`InkingDynamicWidget` + `InkingImageLike` + `InkingSpriteLike`）。
-
-| 方案 | 做法 | 代价 | 结论 |
-| - | - | - | - |
-| A 复制静态档、换基类 | 与 `InkingDynamicSprite` 对 `InkingSprite` 的同一套差 | ~200 行重复 | **推荐**（本轮） |
-| B 抽 `InkingSpriteGroupLike` | 两档共用一个骨架 | 第二档还不存在就先抽，抽出什么全凭猜 | 退路（第三档出现时） |
-| C 只做静态档 | 动态需求用父节点走位 | 精灵自己走位做不到 | 不做（已定双档都要） |
-
-选 A。**先复制、再抽取**是 `AGENTS.md` 里 G-03 → G-04 走过的路，判据是「两档逐字相同 + 计数相等」，不是「看起来像」。
-
-**大致改动逻辑**
-
-1. 复制 T-05 的类，基类换成 `InkingDynamicWidget`（+ `InkingImageLike` + `InkingSpriteLike`）。
-2. 四个几何写入口（`Resize` / `ChangeSelfAnchor` / `ChangeTraceAnchor` / `ChangeOffset`）与 `InkingDynamicSprite` 同形；其中 `Resize` 之后**不需要**重算格矩形（等格，矩形与组件尺寸无关）。
-3. `HitTest` 自己判（与 `InkingDynamicSprite` 同一条路），`OwnsSubtreeHit()` 保持 false。
-4. 绘制复用 T-05 的 `onRender` 逻辑——**这是唯一的重复点，先接受**。
-
-**与改动前对比**
-
-| 场景 | 静态档 | 动态档 |
-| - | - | - |
-| 几何写入口 | 无（编译期 `static_assert` 钉死） | 四个都有 |
-| 命中 | 进命中表 | **不进表**，记洞；`Resize` 后洞跟着刷 |
-| 每帧推进 | `onAnimationTick` | `onAnimationTick`（**同一条路**） |
-| 一帧 K 块一次提交 | 1 次 | **不变**（同一份绘制逻辑） |
-
-**验收**
-
-`CheckDynamicSpriteGroup()`：
-1. `Resize(120, 90)` 后命中跟着变（`HitTest` 新旧点一真一假）。
-2. 两个组（静态 / 动态）同配置同场景，`TickFrame(1.0/12.0)` × 100 之后 `GetFrameIndex()` 恒等、`GetFrameAdvanceCount()` 相等——**这是「两档帧机同源」的判据**（G-04 的判据复用）。
-3. `GetOwnedChildCount() == 0`（节点数恒 1）。
-
-**风险与回退**
-
-- **风险**：复制期两端会分家（G-03 的教训）。缓解：第 2 条验收就是分家的探测器；真分家了再抽 Like。
-- **回退**：新文件，删掉即回退；静态档不受影响。
+- T-06 动态档 `InkingDynamicSpriteGroup`-已完成（2026-11-04，方案 A 先复制：`InkingDynamicWidget` + `InkingImageLike` + `InkingSpriteLike`，与静态档**逐字同源**，差别只有"几何能不能改"与"进不进命中表"。不抽 `InkingSpriteGroupLike`——第二档刚出现就抽、抽出什么全凭猜；判据是自检那条「两档同场景跑 100 帧，帧号 / 换帧 / 跳过逐一相等」。`Resize` 后**不重算格矩形**（等格与组件框无关）。自检 `CheckDynamicSpriteGroup()` 全绿：`Resize(120,90)` 后 `HitTest` 新旧点一假一真、尺寸真改、帧数不变（4 条）；两档 100 帧后 `帧号=1 换帧=100 跳过=0` 逐一相等 + `GetOwnedChildCount()` 都为 0（3 条）；`SwitchTo` 与非法配置与静态档同一个出口（3 条）。**唯一重复点是 `onRender` 那十几行**，先接受。构建 0 warning、`selftest` 末行失败项 0、`ctest` 8 条全绿）
 
 ---
 
@@ -261,7 +218,7 @@
 | T-03 | 让帧机支持「每帧一组矩形」 | 0.9.0-c | 已完成 |
 | T-04 | 新增块叠加组的数据面 | 0.9.0-d | 已完成 |
 | T-05 | 静态档 `InkingSpriteGroup` | 0.9.0-d | 已完成 |
-| T-06 | 动态档 `InkingDynamicSpriteGroup` | 0.9.0-e | 未开始 |
+| T-06 | 动态档 `InkingDynamicSpriteGroup` | 0.9.0-e | 已完成 |
 | T-07 | 合批断言与 demo | 0.9.0-e | 未开始 |
 | T-08 | 文档、CHANGELOG、版本号收口 | 0.9.0-e | 未开始 |
 
