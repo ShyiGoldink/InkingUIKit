@@ -100,7 +100,8 @@ mkdir -p "$OUT/bin"
 cp "${BUILD_DIR}/bin/inking_demo.exe" \
    "${BUILD_DIR}/bin/inking_demo_selftest.exe" "$OUT/bin/"
 
-# 示例素材：**只拷 demo 自己那两份**（design.svg 1.3 KB / walk.png 894 B）。
+# 示例素材：**只拷 demo 自己那三份**（design.svg 1.3 KB / walk.png 894 B /
+# probe.mp4 8.4 KB）。
 #
 # 不带素材的代价实测过：包里的 demo 照样能起窗、退出码 0，但设计稿背景是黑的、
 # 图集那块是空的——"双击看效果"这条路径等于没走通，而且不报任何错。
@@ -108,7 +109,12 @@ cp "${BUILD_DIR}/bin/inking_demo.exe" \
 # **验收用例素材**，不是运行期依赖，带它会让 zip 从 8.5 MB 涨到 14 MB。
 mkdir -p "$OUT/bin/assets"
 cp examples/demo/assets/design.svg examples/demo/assets/walk.png \
-   "$OUT/bin/assets/"
+   examples/demo/assets/probe.mp4 "$OUT/bin/assets/"
+
+# `probe.mp4`（8.4 KB，320×240/30fps/1 秒）是 0.9.0 加的**视频自检素材**，
+# 必须跟着走：`inking_demo_selftest.exe` 的 `video_decode_probe` 三条断言都从
+# `assets/` 里读它。漏拷的表现与上面那条同型——包能起、退出码也是 0，只有
+# 自检末行变成「失败项：3」（实测 1.0.0-preview 首轮就是这样）。
 
 # ---------------------------------------------------------------------------
 # 运行期 DLL 闭包

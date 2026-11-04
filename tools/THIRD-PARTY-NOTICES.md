@@ -36,6 +36,26 @@
 | FFmpeg（libavcodec / avformat / avutil / swresample / swscale） | 视频解码 | 0.9.0 起**默认开启**：CMake 探测到开发包就定义 `INK_HAS_FFMPEG` 并私有链接，`bin/` 内带齐 `av*.dll`（含 `dav1d` / `x264` 等传递依赖，以 `ldd` 实得为准）。**动态链接**：符合 LGPL-2.1+ 的要求，替换 DLL 即可换构建。探测不到时不链接、`bin/` 内无 FFmpeg DLL、二进制不引用其符号。 |
 | CMake / Ninja / GCC | 构建 | 不随包分发。 |
 
+### FFmpeg 的传递闭包（1.0.0-preview 起共 101 个 DLL）
+
+上表只列**直接依赖**。`bin/` 里实际是 `ldd` 的传递闭包——FFmpeg 又链了
+x264 / x265 / dav1d / gnutls / pango / cairo / librsvg …，少一个的表现是
+**静默退出**（0xC0000135），所以整包收齐。逐条清单见包根 `BUILD.txt`，
+`licenses/` 下按 MSYS2 包名分目录。
+
+**口径提醒**：MSYS2 的 FFmpeg 是 **GPL 构建**，闭包里因此含 GPL 组件
+（`libx264-165` / `libx265-217` 等）。那些 DLL **不适用本仓库的 MIT**：
+
+- LGPL 组件（GLib / libiconv / gettext / Graphite2 / FFmpeg 本体按 LGPL 口径使用）
+  均为动态链接，替换 DLL 即可换构建 —— 满足 LGPL 2.1 §6 的"可替换"要求。
+- GPL 组件按 GPL 分发：再分发时需提供**对应源码**的获取方式。源码与构建脚本见
+  MSYS2 包仓库 <https://packages.msys2.org/>，或上游
+  <https://ffmpeg.org/legal.html> / <https://www.videolan.org/developers/x264.html>。
+- **本次（1.0.0-preview）的已知缺口**：这台机器的 MSYS2 没有把 ffmpeg / x264 /
+  x265 的许可正文装进 `share/licenses`，所以 `licenses/` 下**缺这三份 GPL 文本**，
+  只有上表 16 个包的正本。内部评估无碍，**对外分发前要补齐或改发 LGPL 构建的
+  FFmpeg**。
+
 ## 本仓库自身
 
 `libinking.dll`、`inkgen.exe`、`include/`、`docs/`、示例代码：**MIT**，

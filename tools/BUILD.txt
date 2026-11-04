@@ -1,34 +1,67 @@
-inking 0.8.5（发布版）—— Windows x64 构建信息
+inking 1.0.0-preview（预览版）—— Windows x64 构建信息
 ================================================================
 
-版本号      0.8.5
-版本阶段    release          ← 0.x 发布版：可用、可集成，但 1.0 前不承诺跨版本 ABI 兼容
-构建日期    2026-10-30 21:00（GMT+8）
+版本号      1.0.0
+版本阶段    preview          ← 1.0 的功能面已收齐，可以整包交付评估；
+                               但「公开面盘点」没做完 ⇒ **不承诺** ABI 冻结
+构建日期    2026-11-04 15:34（GMT+8）
 构建类型    Release（CMake + Ninja）
 许可        MIT（本仓库代码，见包根 LICENSE；第三方见 licenses/）
 
-!! 升级提示：0.7.1 → 0.8.5 有两处**行为**变化与三处**签名**变化
-   行为（都是"以前静默，现在按文档说的做"）：
-     1. **标签的 `height` 现在是文字上限**。`TextOverflow::Clip` 是默认值，
-        但此前从没实现过——长文案会画出组件框（实测 300×40 的标签把 7 行全画出去）。
-        现在装不下的行整行不画，`TextLayoutResult::truncated` 为 true。
-        **要恢复旧行为**：把该标签的 `height` 设 0（不限高），不需要改库。
-     2. **字形图集满了会发一条 WARN**（以前完全静默），并且不再每帧重烘一遍。
-        现象上没有变化（文字仍然正常显示，只是走"整段一张纹理"那条路），
-        只是日志里会多一条，且文字量极大时首帧耗时涨。
-   签名（0.x 不承诺 ABI，但会让旧代码编译不过）：
-     3. `detail::fillShapeTextured` 去掉 `bool hasAlpha`（0.6.2 起它已没人读）。
-     4. `inking::HitsThumb` 去掉 `bool vertical`（`ScrollBarMetrics` 已含轴信息）。
-     5. `detail::AudioLoadFromMemory` 去掉 `AudioLoadMode`（从内存加载只有一种模式）。
-   新增能力（不改既有代码）：
-     6. `detail::SetTextureBudget(bytes)` / `GetTextureBudget()` / `BeginTextFrame()`：
-        文字纹理的字节预算与 LRU 淘汰。**默认 0 = 不淘汰**，不调与 0.7.1 逐字节相同。
-     7. `GlyphAtlasStats::full`、`TextCacheStats::textureEvictions` 两个观测口。
-   历史（从 0.5.0 之前升级才需要处理）：指针钩子签名变化
-     旧  void onPointerPress(bool press) / void onPointerClick()
-     新  void onPointerPress(PointerButton, bool) /
-         void onPointerClick(PointerButton, float designX, float designY)
-   完整迁移样板见 docs/zh/CHANGELOG.md 的「0.5.0 / 变更」第 1 条。
+!! 先说清楚"预览"是什么意思
+
+   预览版**不是** 1.0 的发布版。1.0 的功能面（组件、动态档、输入、渲染、生成器）
+   已经收齐，所以这份包可以拿去集成、可以当验收基线；但「哪些公开符号是承诺、
+   哪些还能改」这次的盘点还没做（立项见
+   `docs/zh/plans/2026-10-29-evidence-and-delivery.md` 的「1.0.0 的 ABI 冻结」
+   一行，明确写着"不在本批"）。所以：**接口 / ABI 仍可能在正式版前变化，
+   升级请整包重编**。正式 `1.0.0` 发出时，被点到名的符号才进入冻结承诺。
+   功能面与 `0.9.2` 相同——本版只动版本常量与文档，另加两处打包脚本修复
+   （见「验证记录」第 4 条）。
+
+!! 升级提示：0.8.5 → 1.0.0-preview（中间跨了 0.9.0 / 0.9.1 / 0.9.2）
+
+   破坏性（0.9.0，**所有消费方必须整包重编**）：
+     1. **去掉 `namespace inking` 外壳**：公开符号全部改到全局命名空间 + `Inking`
+        前缀（类型 126 个、自由函数 119 个、常量 33 个）。`inking::ButtonData` →
+        `InkingButtonData`、`inking::SetDesignSize` → `InkingSetDesignSize`、
+        `inking::kVersion` → `InkingVersion`；子命名空间 `inking::detail` /
+        `inking::prefab` / `inking::json` → `inking_detail` / `inking_prefab` /
+        `inking_json`；生成代码默认命名空间 `inking::cxxcss` → `cxxcss`。
+        **头文件路径与 CMake 目标名没变**（`#include <button/ButtonData.h>`、
+        `inking::inking` 照旧）。
+     2. **`InkingSpriteGroup` 改名为 `InkingAnimateGroup`**（旧名让给"一个 sprite
+        由多块拼成"的新组件；纯重命名，`SwitchTo` / `animationChanged` / `keepPhase`
+        语义全不变）。连带 `…Data` / `…ModuleName`。
+     3. **`InkingSpriteLike::Hooks` 两个回调换签名**：
+        `setSourceRect(const InkingShapeBounds&)` →
+        `setSourceRects(const InkingShapeBounds*, std::size_t)`；
+        `LoadedFrame::sourceRect` → `sourceRects`（矩形表）。
+        自己派生过 `InkingSpriteLike` 并填 `Hooks` 的代码要重写（仓里没有这种代码）。
+   行为变化（都是"以前静默，现在按文档说的做"）：
+     4. **`Capture()` / `RenderToTexture()` 现在真的含 letterbox 留白**（0.9.2 修）：
+        以前逻辑呈现开着时 `SDL_RenderReadPixels` 只回逻辑画布那块，比例不一致的
+        窗口截出来的构图与眼睛看到的不同。**按旧行为写过分镜 / 比对脚本的要对一遍。**
+     5. **未选中的 Checkbox / Radio 不再画 mark**（0.9.1 修）：以前那个勾常驻。
+     6. **单选组互斥现在真的生效**（0.9.2 修 `RadioGroup::Add` 只建半边链接）：
+        `Add` 之后成员知道自己属于哪个组，三个圈不再能同时选中。
+        用 `SetGroup` 的既有代码一个字节都不变。
+   新增能力（不改既有代码，用得上才改）：
+     7. **动态面板能滚轮了**（0.9.1）：静态档与动态档共用一份换算
+        （`InkingApplyWheelToScroll`，步长 `wheelStep` 设计像素），一帧的滚轮只落
+        在一个接收者身上（不双滚）。配套 `InkingScene::GetPointerWheelTarget` /
+        `GetTopmostDynamicAt` 两个只读查询。
+     8. **背景板**（0.9.2）：`InkingWindow::SetBackdrop` / `SetBackdropImage`，
+        画在清屏之后、场景之前，覆盖整幅窗口像素（黑边填的就是它）；
+        配置是 `window.backdrop` / `window.backdropImage`。
+     9. **块叠加组**（0.9.0）：`InkingSpriteGroup`（静态）/
+        `InkingDynamicSpriteGroup`（动态）——一帧 K 块仍然只有一次
+        `SDL_RenderGeometry`（自检钉住 K=1/2/4 都是 1）。
+    10. **四个组件的动态档 + UIKit 齐全度 a~f 批**（0.9.0）：`DynamicImage` /
+        `DynamicSprite` / `DynamicLabel` / `DynamicPanel`、TabBar、勾选三件套、
+        浮层三件套、Slider / ProgressBar、光标形状 + 文件拖放。
+   完整迁移样板见 `docs/zh/CHANGELOG.md` 的「0.9.0 / 变更（破坏性）」与
+   「0.5.0 / 变更」（更老的指针钩子签名变更）。
 
 工具链
   GCC       16.2.0 (MSYS2 UCRT64, Rev4)
@@ -44,164 +77,130 @@ inking 0.8.5（发布版）—— Windows x64 构建信息
   FreeType          2.14.3（pkg-config 报的是 26.6.20，那是 libtool 版本号）
   HarfBuzz          14.5.0
   GLib              2.90.0
-  FFmpeg            libavcodec / libavformat 63.1.102——**构建期检查**；
-                    本包（0.8.5）的二进制**未引用**它（那时 `INK_HAS_FFMPEG`
-                    没有任何 CMake 文件定义）。0.9.0 起改为"探测到就默认开启"，
-                    见「已知限制」最后一条与 docs/zh/CHANGELOG.md
+  FFmpeg            libavcodec / libavformat 63.1.102——**本版真的链接了**
+                    （`INK_HAS_FFMPEG` 自 0.9.0 起由 CMake 探测决定：命中就定义宏
+                    并私有链接）。视频解码有画面，自检 `video_decode_probe` 三条
+                    断言钉住"解出帧数 > 0 / 画面 320×240 / 丢帧 0"。
 
 产物（包内路径 / 字节数 / SHA-256）
-  bin/libinking.dll               1,880,636  494FA7B5F4F75B5F43014F430D6EF91F4EE7A7070DB42CD2AC4E25C4067725E5
-  lib/libinking.dll.a             1,196,172  D93FB7BF1FC21A842C08DBF242B42E771045F9E90F6F4D78A9E04237A759F50A
-  bin/inking_demo.exe               191,860  7B61521172326705B045ED2AF5822A64FC79F5B07D8607A548F9B723F706D948
-  bin/inking_demo_selftest.exe      661,809  75F00D9C1BF8EE8A7319868D747634A29ACDB6DDF1E90DD1690A26AC442A54E7
-  bin/inkgen.exe                    712,334  DDBF7CFF1E14816C5A6E825D920767DB1B0AE37C55381CCBA1A4540817A82939
+  bin/libinking.dll               2,380,364  0553F645C6BB04C1C82C1411DE5C1000833F708B4353BB4835AFCBE0F93099C9
+  lib/libinking.dll.a             1,636,760  B7A597A36B3B1ECA29600037324DB904E34A34ACB4DC8FD934817734A3CA021B
+  bin/inking_demo.exe               199,231  765FA054B72939B7AD381E1E38AA412E6ADC9F1444AB7081A6819B982EC2BD9E
+  bin/inking_demo_selftest.exe      882,641  328C46D3745CF8D3612656AB44B2FE7AB49C5CA1CAAF80FCA280B1855B9EF627
+  bin/inkgen.exe                    716,426  1128B89CA8D64B5A08C33356A5E61E787B72F422E3E6D4BCE536EC9E748C0A24
   lib/cmake/inking/                 5 个文件  find_package 配置 + CXXCSS 生成模块
 
-  导出符号 1,674 个（口径：`nm -g --defined-only bin/libinking.dll | grep ' T '`；
-  0.7.1 是 1,671 个，差值是 0.8.5 的三个新入口
-  `SetTextureBudget` / `GetTextureBudget` / `BeginTextFrame`，以及删掉的那几个
-  死参数带来的签名变化）。
+  导出符号 **2,247** 个（口径：`nm -g --defined-only bin/libinking.dll | grep ' T '`）。
+  0.8.5 是 1,674 个，差值是 0.9.x 的净增量（块叠加组、四个动态档、UIKit 齐全度
+  a~f 批、滚轮与背景板入口）**加上命名空间收口带来的全量改名**——所以这个数
+  别当"新增了多少 API"读。
 
-运行期 DLL（本包**已含**，共 19 个，约 15 MiB）
-  SDL3.dll · SDL3_image.dll · SDL3_ttf.dll · SDL3_mixer.dll
-  libfreetype-6.dll · libharfbuzz-0.dll · libglib-2.0-0.dll · libgraphite2.dll
-  libpcre2-8-0.dll · libbrotlidec.dll · libbrotlicommon.dll · libbz2-1.dll
-  libpng16-16.dll · zlib1.dll · libiconv-2.dll · libintl-8.dll
-  libstdc++-6.dll · libgcc_s_seh-1.dll · libwinpthread-1.dll
+运行期 DLL（本包**已含**，共 101 个，解包后约 140 MiB）
+  直接依赖：SDL3 四件（SDL3 / SDL3_image / SDL3_ttf / SDL3_mixer）+
+  FFmpeg 五件（avcodec-63 / avformat-63 / avutil-61 / swresample-7 / swscale-10）。
+  其余是**传递闭包**（`ldd` 实得，按字母序节选）：
+  libfreetype-6 · libharfbuzz-0 · libglib-2.0-0 · libgio-2.0-0 · libgobject-2.0-0 ·
+  libgmodule-2.0-0 · libgraphite2 · libpcre2-8-0 · libffi-8 · libiconv-2 ·
+  libintl-8 · libpng16-16 · zlib1 · libbz2-1 · libbrotli*（3）· libjpeg-8 ·
+  libtiff-6 · libwebp-7 · libwebpmux-3 · libjxl*（3）· libopenjp2-7 · libLerc ·
+  libdeflate · libsharpyuv · liblzma-5 · libzstd · libxml2-16 · libexpat-1 ·
+  libcairo-2 · libcairo-gobject-2 · libpango*（7）· libpixman-1-0 · librsvg-2-2 ·
+  libgdk_pixbuf-2.0-0 · libfontconfig-1 · libfribidi-0 · libdatrie-1 · libthai-0 ·
+  libgnutls-30 · libnettle-9 · libhogweed-7 · libgmp-10 · libidn2-0 ·
+  libunistring-5 · libtasn1-6 · libp11-kit-0 · libcrypto-3-x64 · libssh · libsrt ·
+  librtmp-1 · libaom · libdav1d-7 · librav1e · libSvtAv1Enc-4 · libvpx-1 ·
+  libx264-165 · libx265-217 · libvorbis-0 · libvorbisenc-2 · libtheoradec-2 ·
+  libtheoraenc-2 · libopus-0 · libspeex-1 · libgsm · libmp3lame-0 ·
+  libopencore-amrnb-0 · libopencore-amrwb-0 · liblc3-1 · libgme · libmodplug-1 ·
+  libsoxr · libzvbi-0 · xvidcore · libhwy · libgomp-1 · libstdc++-6 ·
+  libgcc_s_seh-1 · libwinpthread-1
 
   来源与许可见 licenses/THIRD-PARTY-NOTICES.md。
-  **为什么带**：解压即可运行示例，不需要装 MSYS2、不需要把 ucrt64\bin 加进 PATH；
-  漏拷 DLL 的表现是静默退出（0xC0000135），没有报错窗口。
-  **FFmpeg 不在本包（0.8.5）之中**：那时 `INK_HAS_FFMPEG` 没有 CMake 文件定义，
-  链接器未引入其符号，故无需分发；自己重建 SDK 时仍需其开发包（pkg-config）。
-  0.9.0 起默认开启 ⇒ 包内带 `avcodec-63` / `avformat-63` / `avutil-61` /
-  `swresample-7` / `swscale-10` 及 `libdav1d` / `libx264` 等传递依赖
-  （以 `ldd libinking.dll` 实得为准），按 LGPL-2.1+ **动态链接**分发。
+  **为什么带 101 个**：闭包按 `ldd` 的**传递**结果收——`libinking.dll` 链了
+  FFmpeg，FFmpeg 又链了 x264 / x265 / dav1d / gnutls…，少一个的表现是**静默退出**
+  （0xC0000135），没有报错窗口。0.8.5 那份只有 19 个（那时 FFmpeg 未启用）。
+  **代价**：zip 从 8.6 MB 涨到 57 MB、解包 152 MiB。要瘦身只能重编 SDK 并关掉
+  `INK_HAS_FFMPEG`（视频解码回到"兜底色"那条实现），删几个 DLL 是删不动的。
+  **许可提醒**：MSYS2 的 FFmpeg 是 GPL 构建，闭包里含 `libx264-165` /
+  `libx265-217` 等 GPL 组件——这些 DLL 不适用本仓库的 MIT，分发它们要按各自的
+  许可提供源码获取方式（见 THIRD-PARTY-NOTICES 末节）。内部评估无碍，
+  **对外发布前请过一次法务口径**。
 
-文档（docs/ 下，38 个文件，**整份带进包里**）
+文档（包内 `docs/` 50 个文件，**整份带进包里**）
   zh/UsageGuide.md                 手把手教程：设计大小 → 场景 → 组件 → CMake → 运行
   zh/API.md                        五分钟上手 + 模块地图 + 头文件全量索引 + §9 缩放规则
   zh/api/                          18 个专页（Widget / Scene / Window / Input / Render /
                                    Components / Prefab / CXXCSS 生成物 / Runtime /
                                    LayoutSolver / FixedPopup / Json + 6 个基础类型页）
-  zh/CHANGELOG.md                  变更记录（0.1.1 → 0.8.5 逐条，含破坏性改动迁移）
-  zh/SKILL.md · ComponentGuide.md · InputDesign.md · TaskGuide.md · UsageReport.md
-  zh/plans/                        11 份需求书与取舍记录（0.6.x 帧动画、0.7.x 缩放、
-                                   0.8.x 证据链 / 文字层上限）
-  AGENTS.md                        工程约定与踩坑记录（§6 经验条目 115 条 / §7 静默失效清单 13 条）
+  zh/CHANGELOG.md                  变更记录（0.1.1 → 1.0.0-preview 逐条，含破坏性迁移）
+  zh/SKILL.md · ComponentGuide.md · InputDesign.md · TaskGuide.md ·
+  zh/TaskGuide-G.md · TaskGuide-N.md · UsageReport.md
+  zh/plans/                        16 份需求书与取舍记录（0.6.x 帧动画、0.7.x 缩放、
+                                   0.8.x 证据链 / 文字层上限、0.9.x 块叠加组 /
+                                   UIKit 齐全度 / 动态滚轮）
+  AGENTS.md                        工程约定与踩坑记录（§6 经验条目 / §7 静默失效清单）
+  showcase*.png                    三张展示图
   CXXCSS.md                        配置格式：目录命名、形状层、层级、Button/Image/Atlas 字段全表
-  examples/CXXCSS/                 21 份配置样例（含 Atlas/Button/Panel/Label/Image/Text/Theme）
-                                   + CXXCSS.md + config.json
+  examples/CXXCSS/                 25 份配置样例 + CXXCSS.md + config.json
   examples/minimal/                最小可运行工程（三步构建，验证 find_package）
 
-本版内容（0.8.5 = 任务书 `docs/zh/plans/2026-10-30-text-layer-caps.md` 的 5 个任务，
-三个批次在同一次发版里交付）
-  - **按框高裁行**（T-01）：`LayoutText` 在 `maxLines` 之后按"累计行高 ≤
-    `maxHeight − 上下 padding`"丢尾行并置 `truncated`；`InkingStaticLabel` 把
-    `_height` 当 `maxHeight` 传进去（`MeasureLayout` 那条撑高的路传 0，否则
-    "框多高"永远等于"一行高"）。**至少留一行**、**不缩字号**。
-  - **图集满不再逐帧重烘**（T-02）：`TextLayer::glyphAtlasFull` 置起后整条逐字形
-    路短路（改动前 19 次/帧、60 帧多烘 1140 次），只在 `ReleaseGlyphAtlas()` 复位。
-  - **图集满发声**（T-03）：首次满一条 WARN（已用格数 / 上限 / 后果），
-    `GlyphAtlasStats::full` 是可断言的观测口；静默失效清单第 13 条。
-  - **纹理字节预算与 LRU 淘汰**（T-04）：`detail::SetTextureBudget(bytes)`，
-    **默认 0 = 不淘汰**；`SceneLibrary::RenderScene` 每帧开头推帧号并按预算淘汰
-    （丢之前先 `FlushGeometry()`，只丢本帧没用过的，字形图集不参与）。
-  - **严格告警门**（T-05）：`ctest` 从 6 条变 7 条（`strict_warnings`）。同一批源
-    （`src/` + `tools/inkgen/`）用 `-Wall -Wextra -Wshadow -Wcast-qual
-    -Wuseless-cast -Werror -O0` 重编，有告警即红；目标 `EXCLUDE_FROM_ALL`，
-    日常构建耗时不变。清掉 25 条真告警；`-Woverloaded-virtual`（`Activate` 被隐藏）
-    显式 `-Wno-` 并注明原因。
+本版内容（1.0.0-preview = 0.9.2 的功能面；下面按 0.9.x 的五组净增量列）
+  - **几何分档收口**：帧机泛化成"每帧一组矩形"，块叠加组一帧 K 块仍然只有一次
+    `SDL_RenderGeometry`（自检钉住 K=1/2/4 都是 1）。
+  - **命名收口**（0.9.0 N 系列）：去 `namespace inking`、统一 `Inking` 前缀；
+    并把 `project(VERSION)` 从 0.7.1 补到当前版本——旧包的
+    `inkingConfigVersion.cmake` 写的是 0.7.1，下游 `find_package(inking 0.8.5)`
+    会直接失败（这条 0.9.0 一并修掉）。
+  - **UIKit 齐全度 a~f 批**（0.9.0）：视频真出画、计量两件套（Slider /
+    ProgressBar）、勾选三件套、浮层三件套、TabBar、光标形状 + 文件拖放。
+  - **动态档滚轮**（0.9.1）：逻辑步读不可靠（实测喂 30.0 只读到 20.0、61 帧里
+    11 帧为 0），改成每渲染帧一次的回调读；推 / 拉两条入口共用一份算术，
+    四道门判归属防双滚。
+  - **背景板**（0.9.2）：`SetBackdrop` / `SetBackdropImage`，黑边可配色 / 铺图，
+    `$token` 每帧查主题表；顺带修掉"截图其实没含留白"。
 
-验证记录
+验证记录（**本版实测**，2026-11-04，构建树 `build-release`）
 
-  > 第 1~9 条是 **0.7.1 那份预编译包**的历史记录（保留不删，便于回看当时的口径）。
-  > 第 10 条起是本版（0.8.5）。
-
-  10. 构建与测试（2026-10-30，构建树 `build-release`，clean 重建）：
-      - `cmake --build build-release --clean-first` 全绿，**零 warning**（0.8.5 清掉了
-        25 条严格告警；`-Woverloaded-virtual` 那一族在门里显式压掉）。
-      - `ctest --test-dir build-release` ⇒ **7/7 passed**（新增第 7 条 `strict_warnings`；
-        它自己用 `--build` 触发，`-O0` 下干净构建约 17 s，之后每次"no work to do"）。
-      - **告警门的红/绿是人工对拍过的**：在 `src/render/InkingText.cpp` 里临时加
-        `static int unused_shadow_probe = 0;` ⇒ 报 `-Werror=unused-variable` 并失败；
-        删掉后恢复绿。不做这一步的话，"门是绿的"分不清"代码干净"和"门根本没跑"。
-      - 两套构建都跑过：`build`（Release）、`build-dbg`（`INKING_DEBUG_LOG=ON`），
-        各 7/7。
-  11. 行为自检（`build-release`）：`bin/inking_demo_selftest.exe` ⇒
-      **599 项 [ok] / 0 项 [skip] / 失败项 0**，退出码 0；真后端
-      （`INKING_SELFTEST_DRIVER=windows`）同数 599 / 0 / 0。0.7.1 是 575 项 + 2 skip
-      ——多出来的 24 项是 0.8.5 新增的三组断言，那 2 项 skip 现在真的跑了（见第 14 条）。
-  12. 新自检确实抓得住（不是空跑）：
-      - `text_clip_by_height`：300×40 标签 + 100 汉字 ⇒ `1 行 / 排出来高 34 /
-        框内亮像素 1770 / 框下方 0 / 框右侧 0`（改动前 7 行 / 框外 10,030）。
-      - `glyph_atlas_full`：48 px 灌 301 次填满 300 格 ⇒ 首次满 **恰好 1 条 WARN**、
-        再灌 2000 个新字仍 1 条、连画 60 帧 `rasterized` 增量 **0**
-        （**对照组**：临时关掉短路后是 +7，证明断言不是恒真）、`ReleaseGlyphAtlas`
-        之后 `full` 复位。
-      - `T-04`：预算 0 ⇒ 402 张长串 **12,795,408 字节 / 淘汰 0 次**；预算 8 MB ⇒
-        **8,432,208 字节（≤ 8 MB + 单张 61,776）/ 淘汰 271 次**，被丢的第一串重画
-        能重建（`texturesCreated` +1）。
-  13. 探针复核：`build/bin/probe_text_overflow.exe` ⇒ 300×40 + 100 汉字：
-      **1 行 / 框内 1770 / 框下方 0 / 框右侧 0**（改动前 7 行 / 框外 10,030）。
-      **注意**：`build/` 里那 7 个文字探针是手工编的，本版改了 `TextCacheStats` /
-      `GlyphAtlasStats` 的字段（按值返回）⇒ 旧 exe 与新 DLL 一起跑会崩（退出码 127、
-      输出第一行就断），必须按当前头重编：
-        g++ -std=c++20 -O1 -I../include probe_text_xxx.cpp -o bin/probe_text_xxx.exe \
-            -Lbin -linking -L/c/msys64/ucrt64/lib -lSDL3
-  14. 手工跑自检要带 msys64 的 `ucrt64/bin` 进 PATH（`ctest` 与 `tools/package.sh`
-      本来如此）。不带时 `SDL_IOFromFile` 对绝对路径也报"系统找不到指定的文件"
-      ——本机 `PATH` 上有第二份 `C:/SDL3/lib/x64/SDL3.dll`（比 msys64 那份旧一年多），
-      选错那份就编不出可用的字体路径。症状是自检打印"没有可读字体"并跳过像素断言，
-      那是环境不是缺陷（`docs/zh/API.md` §7 有这条注）。
-  15. **包内验收（本版）**：`env -i`，PATH 只留 `C:\Windows\system32` 与 `C:\Windows`
-      ——不含 MSYS2 / 工具链 / Python，模拟只拿到 zip 的机器：
-      - `bin/inking_demo_selftest.exe` ⇒ **599 项 ok / 0 项 skip / 失败项 0**，退出码 0
-        （字体在包内**真的能打开**：这台机器上 PATH 里没有第二份 SDL3.dll 可抢）。
-      - `bin/inking_demo.exe`（`INK_CAPTURE` + `INK_AUTOQUIT`）⇒ 1280×720 PNG，
-        100,346 字节，退出码 0；**设计稿背景 + 全部控件 + 中文文字同屏**，且与构建树
-        那份截图**逐字节相同**（`bin/assets/` 与 DLL 闭包都对）。
-      - `examples/minimal` 拷到包外构建 ⇒ configure（11.7 s）/ build / link 全通过；
-        用包装出来的 `hello.exe` 在 `env -i` 下运行 5 秒仍在（窗口已起、DLL 闭包解析
-        成功；它是主循环程序，退出靠用户关窗，所以判据是"活着"而不是"退出码 0"）。
-      - 完整性：**222 个文件**、zip 8.6 MB；`SHA256SUMS.txt` **221 条全 OK**
-        （`BUILD.txt` 自己不计入）；解压后再跑一次自检 ⇒ 失败项 0。
-
-  1. 构建：`cmake --build build-release -j` 全部目标通过，无 error（只有一条已知的
-     NOMINMAX 重定义警告）。
-  2. ctest：**6/6 passed**（inkgen 配置校验 / 字段表对账 / 生成链路编译 /
-     静默失效清单对账 / 行为自检 software / 行为自检真后端）。
-     最后两条是 0.8.0 的 T-01 / T-02 加进来的：565 项行为断言现在真的在 ctest 里。
-  3. 自检（构建树）：`bin/inking_demo_selftest.exe` ⇒ **575 项 [ok] / 2 项 [skip] /
-     失败项 0**，退出码 0。2 条 [skip] 是字体相关用例（构建树里读不到字体时
-     退化画法无从验，可用 `INK_TEST_FONT` 指定；包内运行这两条会 [ok]）。
-  4. 自检（真后端）：`INKING_SELFTEST_DRIVER=windows bin/inking_demo_selftest.exe`
-     ⇒ **575 项 [ok] / 失败项 0**，退出码 0（本机 direct3d11）。这条是 0.8.0 T-02：
-     全部像素证据原本只在 software 后端，两档都跑才抓得到"GPU 与 software 行为不同"
-     那类缺陷（0.6.4 的采样模式就是这种）。
-  5. 截图冒烟：`INK_CAPTURE=... INK_AUTOQUIT=1 bin/inking_demo.exe` ⇒ 1280×720 PNG，
-     59,643 字节，退出码 0。文字在**构建树**里退化为占位方块（本机沙箱让
-     `SDL_GetPathInfo` 打不开 `C:/Windows/Fonts/msyh.ttc`，日志里有对应 WARN），
-     设计稿背景与全部控件正常；同一份 exe 在包内跑就是真字（见第 8 条）。
-  6. 二进制判据：libinking.dll 的导入表含 SDL3 / SDL3_image / SDL3_mixer / SDL3_ttf 四件；
-     完整运行期闭包 19 个 DLL，全部在 bin/ 内。
-  7. `cmake --install` 产物齐全：lib/cmake/inking/ 5 个文件，find_package(inking CONFIG) 可用。
-  8. 包内验收（`env -i`，PATH 只留 `C:\Windows\system32` 与 `C:\Windows`；
-     不含 MSYS2 / 工具链 / Python，模拟只拿到 zip 的机器）：
-     - bin/inking_demo_selftest.exe ⇒ **578 项 ok / 0 skip / 失败项 0**，退出码 0
-     - bin/inking_demo.exe（dummy 视频 + INK_CAPTURE）⇒ 1280×720 PNG，93,990 字节，
-       退出码 0；**设计稿背景 + 全部控件 + 中文文字同屏**
-     - examples/minimal 拷到包外构建 ⇒ configure / build 全通过，`hello.exe`
-       运行退出码 0（MinGW 工具链下，`-DCMAKE_PREFIX_PATH="<包根>;C:/msys64/ucrt64"`）
-  9. 包完整性：**221 个文件**，zip 约 8.5 MB，SHA256SUMS 逐条可校验
-     （BUILD.txt 不计入）；zip 条目 221 个、顶层目录 `inking-0.7.1-win64/`；
-     解压后再跑一次自检 ⇒ 失败项 0。
+  1. 构建：`cmake --build build-release --clean-first -j` 全绿；`strict_warnings`
+     门（同一批源 + `-Wall -Wextra -Wshadow -Wcast-qual -Wuseless-cast -Werror`）
+     通过 ⇒ 库与生成器那批源零告警。
+     （过程中有一次 cc1plus 卡在 `TextEditState.cpp` 上 20 分钟、CPU 只用了
+     0.015 s，强杀后原样重跑 8 秒完成——本机偶发，与本版代码无关，记在这里
+     免得下次误判成"编译器挂了"。）
+  2. `ctest --test-dir build-release` ⇒ **8/8 passed**：配置校验 / 字段表对账 /
+     生成链路编译 / 静默清单对账 / `strict_warnings`（14.2 s）/ 行为自检
+     （software）/ 行为自检（真后端）/ `probe_template`。
+  3. 行为自检（构建树）⇒ **925 项 ok / 1 项 skip / 0 项失败**，退出码 0；
+     `INKING_SELFTEST_DRIVER=windows` 同数 925 / 1 / 0。那条 skip 是
+     「窗口没拿到输入焦点（后台 / CI）」的悬停类断言——环境不是缺陷。
+  4. **包内验收首轮抓到一个真缺陷（已修）**：`env -i` 跑包里的自检 ⇒
+     **失败项 3**，三条全是 `video_decode_probe`——`probe.mp4`（8.4 KB，
+     0.9.0 加的视频自检素材）**没被 `tools/package.sh` 拷进包**（脚本只拷了
+     `design.svg` / `walk.png` 两份）。症状与"素材漏带"同型：包能起、退出码也是 0，
+     只有自检末行变成「失败项：3」。修法是把 `probe.mp4` 加进那条 `cp` 并把原因
+     写进脚本注释；重打后归零。**下一次加自检素材时，先想这一条。**
+  5. **包内验收（本版最终包）**：`env -i`，PATH 只留 `C:\Windows\system32` 与
+     `C:\Windows`——不含 MSYS2 / 工具链 / Python，模拟只拿到 zip 的机器：
+     - `bin/inking_demo_selftest.exe` ⇒ **925 项 ok / 1 项 skip / 失败项 0**，
+       退出码 0（字体在包内真的能打开）。
+     - `INKING_SELFTEST_DRIVER=windows` 同数 925 / 1 / 0，退出码 0，日志确认
+       `后端 direct3d11`（GPU 与 software 两档都过）。
+     - `examples/minimal` 拷到包外构建 ⇒ configure 6.4 s / build / link 全通过，
+       `find_package(inking)` 命中本包，运行期 DLL 由 POST_BUILD 自动拷到 exe 旁。
+  6. 完整性：**339 个文件**（338 条校验和 + `BUILD.txt` 自己不计入）、
+     `SHA256SUMS.txt` **338 条逐条 OK**、zip 339 条目、顶层目录
+     `inking-1.0.0-preview-win64/`、解包 152 MiB、zip 56.3 MiB。
+  7. 包内 `bin/` 的 DLL 数 **102 个** = 101 个第三方闭包 + `libinking.dll`；
+     导入库与 `lib/cmake/inking/`（5 个文件）齐全——那是 `cmake --install` 产出的，
+     不是手抄（0.4.0 手抄漏过 `lib/cmake/inking/`，于是"能链但 find_package 找不到"）。
+  8. **没验的项**（写清楚，别当成验过）：`bin/inking_demo.exe` 的双击观感与截图
+     没在包内跑（视觉判定交给人工）；`inking_showcase.exe` 不在包里，是仓库内的
+     验收用例；Linux / macOS 从未构建。
 
   注：`examples/pet`（73 帧 / 321×900 素材）与 `examples/sharp`（5.97 MB 真实素材）
   **没有打进包**——它们是仓库内的验收用例，不是运行期依赖，源码在仓库里。
   包内只带 `examples/minimal`（验 find_package 的那一个）、`examples/CXXCSS` 与
-  `bin/assets/` 那两份 demo 素材（1.3 KB + 894 B）。不带素材的代价实测过：demo
-  照样起窗、退出码 0，但背景是黑的、图集那块是空的——"双击看效果"等于没走通。
+  `bin/assets/` 那三份 demo 素材（1.3 KB + 894 B + 8.4 KB）。
 
 怎么用
   1. 只想看效果：双击 bin/inking_demo.exe（ESC 退出，F11 全屏，右键有上下文事件）；
@@ -216,14 +215,18 @@ inking 0.8.5（发布版）—— Windows x64 构建信息
      把 <本包>/bin/*.dll 拷到 exe 旁（minimal 的 CMakeLists 已自动做）。
   3. 前提：编译需要 MSYS2 UCRT64 的 cmake / ninja / gcc / sdl3 四件 / ffmpeg。
      **不能用 MSVC 链接本包**（MinGW 的 .dll.a 与 MSVC 的 .lib 不兼容）。
-  4. 升级旧代码先看本文件顶部的「升级提示」与 CHANGELOG：0.5.0 的指针钩子签名是
-     **破坏性**的；0.7.1 → 0.8.5 有三处签名与两处行为变化（标签按框高裁行、
-     图集满会发 WARN）。
+  4. 升级旧代码先看本文件顶部的「升级提示」与 CHANGELOG：0.9.0 的命名空间收口
+     与两处改名是**破坏性**的（整包重编）；0.5.0 的指针钩子签名同样。
   5. 排错先截图：设 `INK_CAPTURE=<路径>` 跑一次，比加日志快。
   6. 跑自检会在 exe 旁生成 LOG/ 目录（日志），不属于包内容，可删。
 
 已知限制（详见 README「已知限制」）
+  - **预览版不冻结**：接口 / ABI 仍可能在正式 1.0.0 前变（见文件头第一节）。
   - 只在 Windows + MSYS2 UCRT64 + Ninja 构建过；Linux / macOS 未验证。
+  - **包体积 57 MB**：FFmpeg 的传递闭包占绝大部分（101 个 DLL）；要小包得关掉
+    视频支持重编，而不是删 DLL。
+  - **许可证口径**：闭包里的 GPL 组件（x264 / x265 等）不适用本仓库的 MIT，
+    对外发布前需确认源码提供方式。
   - 中键只记状态、不派发；右键不产生 onPointerDrag；触摸只认第一根手指。
   - 长按阈值 0.5s / slop 8 设计像素是通用值，真机手感未调。
   - 单行输入框：多行、撤销 / 重做、Tab 焦点遍历、IME 候选窗定位未做。
@@ -233,34 +236,30 @@ inking 0.8.5（发布版）—— Windows x64 构建信息
     导出时请把文字转曲、use 展开。整张稿也**不做元素级拆解**。
   - 没有 portal：子的 z 盖不过父级的兄弟，要压就抬容器自己。
   - 运行期换肤只覆盖颜色（按钮三态 / 面板两态 / 标签文字色）；字号 token 是编译期的。
+  - 背景板底图只做 cover（stretch / tile / 九宫格没做），且**不进主题表**——
+    切主题换底图要改配置。
   - 透明窗口只在部分后端成立（D3D11 实测可用；D3D12 / Vulkan 多数不行）。
   - **抗锯齿（羽化）带仍按设计像素**（`kFeatherPixels = 1.0f`）：R≠1 时边缘那圈会失真。
     它与素材分辨率**无关**，按设备像素改造推迟到 1.x.x。
+  - **比例锁没有**：`SDL_WINDOW_RESIZABLE` 恒开且未调 `SDL_SetWindowAspectRatio`，
+    用户自由拖拽时 letterbox 留白必然出现——这是"UI 永不变形"的代价。
   - **素材偏小只在 DEBUG 构建里提示**：发布包没有任何日志。
   - **采样模式是进程级的**：像素素材与高清图平滑缩放同一进程只能二选一；
     且 software 后端的几何批不认采样模式（`SDL_RenderGeometry` 恒最近邻）。
   - **图集描述不能热更**：结构（帧矩形）进 exe，只有图片字节在 assets/ 里。
-  - **帧表不支持帧内偏移**（`spriteSourceSize`）：帧被裁过四周透明边时会抖，不做。
+  - **嵌套两层滚动容器只有外层生效**：`FindSubtreeWheelOwner` 给的是"最近的声明者"，
+    要内层优先得按指针路径逐层仲裁。一层是对的。
   - **文字纹理预算的瞬时上界是"预算 + 本帧新增"**：淘汰只发生在帧首，本帧刚烘出来的
-    纹理不能丢（丢了当场缺字）；字形图集不参与淘汰，预算比图集（≈4 MB）还小时
-    会**放弃淘汰**（否则每帧清空重烘，比不设预算更糟）。
-  - ~~视频解码这条路是空的~~（**0.9.0 T-01 已解决**，本条保留的是 0.8.5 的状态）：
-    `src/video` 的 FFmpeg 分支（`#if defined(INK_HAS_FFMPEG)`）**那时没有任何
-    CMake 文件定义过**，所以 `InkingStaticVideo` 编进去的一直是"没有画面 → 退回
-    兜底色"那条实现——能编、能链、功能是空的（与 0.6.x 的 `INK_HAS_SDL3_MIXER`
-    漏定义同型）。0.9.0 起 `CMakeLists.txt` 探测到 FFmpeg 就定义该宏并私有链接；
-    配套素材 `examples/demo/assets/probe.mp4`（320×240 / 30fps / 1 秒，
-    由 `ffmpeg -f lavfi -i testsrc=size=320x240:rate=30 -t 1` 生成）与自检
-    `video_decode_probe` 一起落地：断言"解出帧数 > 0、画面 320×240、丢帧 0、
-    画面内部不止一种颜色（且看不到兜底色）"。
+    纹理不能丢（丢了当场缺字）；字形图集不参与淘汰。
 
 重新打包（维护者，三条命令）
   1. cmake --build build-release -j        ← 先构建。**不构建就打包会被第 3 步拦下**
   2. 改本文件（tools/BUILD.txt 是**手写母本**，脚本只拷贝、不会生成）：
      版本行 / 构建日期 / 产物哈希 / 本版内容 / 验证记录
-  3. bash tools/package.sh                 ← 产出 dist/inking-<版本>-win64/ + .zip + SHA256SUMS
+  3. bash tools/package.sh                 ← 产出 dist/inking-<版本>[-<阶段>]-win64/
+                                             + .zip + .SHA256SUMS.txt
 
-  第 3 步开头有一道**一致性护栏**：`include/inking.h`（版本号的唯一真相）比
+  第 3 步开头有两道**护栏**：`include/inking.h`（版本号的唯一真相）比
   `build-release/bin/libinking.dll` 新时**直接失败**，并提示先重建；缺
   `inking_demo_selftest.exe` 也失败。理由：版本号与二进制原本互不比对，忘了重建
   会静默打出"标着新版本、装着旧代码"的包（文件名、BUILD.txt、校验和全都自洽，
@@ -269,5 +268,6 @@ inking 0.8.5（发布版）—— Windows x64 构建信息
 许可
   本仓库自身代码：MIT，全文见包根 LICENSE。
   第三方（随包 DLL）：许可见 licenses/<组件>/，清单与源码获取方式见
-  licenses/THIRD-PARTY-NOTICES.md。LGPL 组件均为动态链接，替换 DLL 即可。
-  若启用 FFmpeg 分支：LGPL-2.1+ 要求动态链接，并随分发提供其许可与源码获取方式。
+  licenses/THIRD-PARTY-NOTICES.md。LGPL 组件（GLib / libiconv / gettext /
+  Graphite2 / FFmpeg 本体）均为**动态链接**，替换 DLL 即可换构建；
+  闭包里的 GPL 组件（x264 / x265）另按 GPL 分发，见该文件末节。

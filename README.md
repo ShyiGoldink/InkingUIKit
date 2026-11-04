@@ -166,24 +166,27 @@ cmake --build build -j
 ```
 
 **看这一行，也看退出码——它们是同一个数**（`main` 直接 `return g_fail`）。
-当前实测 **928 项 ok / 0 项失败 / 0 项 skip**（0.9.2 起：背景板 17 条；
-0.9.1 起：动态面板滚轮那 9 条；
-0.9.0 时是 891 项；0.8.3~0.8.5 时是 599 项）。项数会随环境浮动——**没有可读字体时**文字
-高清与裁行那几条会打成 `[skip]`，那是环境不是缺陷，见
-[`API.md` §7 的注](docs/zh/API.md)。
+本机实测 **925 项 ok / 1 项 skip / 0 项失败**（0.9.2 起：背景板 17 条；
+0.9.1 起：动态面板滚轮那 9 条；0.9.0 时是 891 项；0.8.3~0.8.5 时是 599 项）。
+项数会随环境浮动——**没有可读字体时**文字高清与裁行那几条会打成 `[skip]`，
+本机这条 skip 是「窗口没拿到输入焦点（后台 / CI）」的悬停类断言，都是环境不是缺陷，
+见 [`API.md` §7 的注](docs/zh/API.md)。
 
 自检不需要显示器：`0.4.0` 起可以直接 `InkingWindow::Open()` + `RunFrames(n)` 手动跑帧，
 或者用 `RenderToTexture()` 完全不开窗口出图（详见 `docs/zh/api/InkingWindow.md`）。
 
 ```bash
-ctest --test-dir build --output-on-failure   # 7 条：配置校验 / 字段表 / 生成链路编译 /
-                                             # 严格告警门 / 静默清单对账 /
-                                             # 行为自检（software）/ 行为自检（真后端）
+ctest --test-dir build --output-on-failure   # 8 条：配置校验 / 字段表 / 生成链路编译 /
+                                             # 静默清单对账 / 严格告警门 /
+                                             # 行为自检（software）/ 行为自检（真后端）/
+                                             # 探针模板编译
 ```
 
-行为自检**已经在 ctest 里**（0.8.0 T-01）：`ctest` 全绿现在真的意味着 599 项产品行为
-断言都过了。第 7 条 `strict_warnings` 是 0.8.5 加的：同一批源用严格 flags + `-Werror`
-再编一遍（`ctest -R strict_warnings`，约 30 s，目标不进 `all`，日常构建不变慢）。
+行为自检**已经在 ctest 里**（0.8.0 T-01）：`ctest` 全绿现在真的意味着那九百多项产品
+行为断言都过了。第 7 条 `strict_warnings` 是 0.8.5 加的：同一批源用严格 flags +
+`-Werror` 再编一遍（`ctest -R strict_warnings`，约 30 s，目标不进 `all`，日常构建
+不变慢）。第 8 条 `probe_template` 是 0.9.0 加的：`tools/` 里的离线探针模板能被当前
+头文件编过（模板本身是给新功能定位用的，不进 `bin/`）。
 想只跑某一种后端：
 
 ```bash
@@ -240,13 +243,13 @@ inking-1.0.0-preview-win64/
 ├─ BUILD.txt            版本阶段、工具链、依赖版本、SHA-256、验证记录、已知限制、许可
 ├─ README.md            本文件
 ├─ bin/                 libinking.dll · inking_demo.exe · inking_demo_selftest.exe
-│                       inkgen.exe · 19 个运行期 DLL（SDL3 及其传递依赖）
+│                       inkgen.exe · 100 个运行期 DLL（SDL3 四件 + FFmpeg，见 BUILD.txt）
 │                       assets/（demo 用的 design.svg 与 walk.png，1 个文件才几 KB）
 ├─ lib/                 libinking.dll.a（导入库）· cmake/inking/（find_package 配置）
-├─ include/             97 个公开头（`#include <widget/InkingWidget.h>` 的搜索根）
+├─ include/             116 个公开头（`#include <widget/InkingWidget.h>` 的搜索根）
 ├─ docs/                **完整文档**：`API.md` + `api/`（18 个专页）+ `CHANGELOG.md`
 │                       + `TaskGuide` / `SKILL` / `AGENTS`（工程约定与踩坑）
-│                       + `plans/`（11 份设计记录）+ `CXXCSS.md`（配置格式）
+│                       + `plans/`（16 份设计记录）+ `CXXCSS.md`（配置格式）
 ├─ examples/CXXCSS/     配置样例（喂给 `inkgen.exe`）
 ├─ examples/minimal/    最小可运行工程（只依赖本包，验证 find_package）
 └─ licenses/            第三方许可原文 + THIRD-PARTY-NOTICES.md
@@ -278,11 +281,11 @@ target_link_libraries(my_app PRIVATE inking)
 
 ```
 <SDK>/
-├─ bin/                 libinking.dll · inkgen.exe · 19 个运行期 DLL
-├─ include/             97 个公开头（#include <widget/InkingWidget.h> 的搜索根）
+├─ bin/                 libinking.dll · inkgen.exe · 100 个运行期 DLL
+├─ include/             116 个公开头（#include <widget/InkingWidget.h> 的搜索根）
 ├─ lib/                 libinking.dll.a · cmake/inking/（find_package 用）
 ├─ docs/                API 文档
-├─ examples/CXXCSS/     配置样例（21 个 json + CXXCSS.md）
+├─ examples/CXXCSS/     配置样例（25 个 json + CXXCSS.md）
 ├─ examples/minimal/    最小工程（CMakeLists.txt + main.cpp）
 ├─ licenses/            第三方许可
 └─ BUILD.txt · README.md · LICENSE
@@ -520,7 +523,7 @@ add_custom_command(TARGET my_app POST_BUILD
 ## 目录结构
 
 ```
-include/            97 个公开头（按子系统分目录，与 src/ 一一对称）
+include/            116 个公开头（按子系统分目录，与 src/ 一一对称）
 src/                61 个 .cpp + 3 个内部头
 examples/demo/      演示 + 无头自检（两个目标）
 examples/pet/       桌宠（无边框 + 透明 + 序列帧；素材运行时给路径）
