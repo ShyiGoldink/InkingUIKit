@@ -593,7 +593,7 @@ mode.Add(&radioA); mode.Add(&radioB);      // 用 radio.SetGroup(&mode) 也一�
 radioA.SetGroup(&mode); radioB.SetGroup(&mode);
 ```
 
-五条会咬人的：
+六条会咬人的：
 
 1. **事件只有一对槽**（`clicked` / `cancelled`），没有 `SetOnClicked`。三个控件差别只在
    **谁触发**：Checkbox / Switch 是用户点它；**Radio 是"同组另一个被选中"**。
@@ -604,6 +604,9 @@ radioA.SetGroup(&mode); radioB.SetGroup(&mode);
 4. **`SetChecked` 只标重绘脏**：几何没变，所以命中表不重烘、父容器不重排。
 5. **Switch 的状态只由滑块位置表达**：轨道颜色不随状态变。要变色就自己订阅两个槽换
    `base` 的外观（这一版没有 `SetData`，所以那意味着重建组件）——写在这里免得当成 bug。
+6. **mark 只在选中时画**（Checkbox 的勾、Radio 的圆点）：`checked` 为假时那一片是空的，
+   "状态"就是这一笔的有无。`Switch` 是唯一例外——滑块关着也在（滑到左端才是"关"），
+   由 `protected` 钩子 `PaintsMarkWhenUnchecked()` 表达。
 
 `markShape` 默认 `Rect()` 是一个**哨兵**：表示"用内置的那个 mark"（Checkbox 画勾、
 其余画圆）。给它别的形状（`Circle` / `PolygonPath`）就按那个画——"换勾的样式"于是只是

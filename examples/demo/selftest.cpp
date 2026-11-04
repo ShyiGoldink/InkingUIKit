@@ -9545,17 +9545,22 @@ void CheckToggleLike(SDL_Renderer* renderer) {
     const std::vector<std::uint32_t> marks =
         ReadPixelRegion(renderer, SDL_Rect{markX, markY, markW, markH});
 
-    const std::uint32_t tickColor = cbData.mark.color;
-    const auto isTick = [tickColor](std::uint32_t pixel) {
+    // "接近实心色"的判据：任一通道只差 24 以内才算（边缘那圈是羽化混出来的，
+    // 只数接近实心的）。⑧ 里数圆点也要用它，所以拆成带颜色的通用那份。
+    const auto isNear = [](std::uint32_t pixel, std::uint32_t color) {
         for (int shift = 0; shift <= 16; shift += 8) {
             const int a = static_cast<int>((pixel >> shift) & 0xFFu);
-            const int b = static_cast<int>((tickColor >> shift) & 0xFFu);
+            const int b = static_cast<int>((color >> shift) & 0xFFu);
             const int delta = a > b ? a - b : b - a;
-            if (delta > 24) {  // 边缘那圈是羽化混出来的，只数接近实心的
+            if (delta > 24) {
                 return false;
             }
         }
         return true;
+    };
+    const std::uint32_t tickColor = cbData.mark.color;
+    const auto isTick = [&isNear, tickColor](std::uint32_t pixel) {
+        return isNear(pixel, tickColor);
     };
 
     int total = 0;
@@ -9586,6 +9591,56 @@ void CheckToggleLike(SDL_Renderer* renderer) {
     Check(total > 0, "T-04：⑦ 选中时勾真的画出来了（不是空白框）");
     Check(bottomLeft > 0 && topRight > 0 && topLeftCorner == 0,
           "T-04：⑦ 勾的方向对：左下 → 右上，左上角是空的（反过来就是画倒了）");
+
+    // ---- ⑧ 未选中 ⇒ mark 一笔都不画 ----
+    //
+    // ⑦ 只验了"选中时有勾"，**验不到反方向**。`onRender` 若不看 `_checked`，
+    // 勾会一直挂在那儿：事件照发、`IsChecked()` 照翻，只有画面不动——现象就是
+    // "点一下状态没变，但操作记了账"。所以反着再数一次，而且拿选中态做反证
+    // （否则"这块区域永远不画"也能把前两条糊过去）。
+    const auto countMarkPixels = [&](inking_prefab::ToggleLike* node,
+                                     std::uint32_t color) {
+        const inking_prefab::ToggleParts parts = node->GetParts();
+        const SDL_Rect rect{
+            static_cast<int>(std::lround(node->GetAbsX() + parts.mark.x)),
+            static_cast<int>(std::lround(node->GetAbsY() + parts.mark.y)),
+            std::max(1, static_cast<int>(std::lround(parts.mark.width))),
+            std::max(1, static_cast<int>(std::lround(parts.mark.height)))};
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+        int count = 0;
+        for (const std::uint32_t pixel : ReadPixelRegion(renderer, rect)) {
+            if (isNear(pixel, color)) {
+                ++count;
+            }
+        }
+        return count;
+    };
+
+    box->SetChecked(false);
+    const int offTick = countMarkPixels(box, tickColor);
+    std::printf("         未选中时勾的像素：%d（选中的是 %d）\n", offTick, total);
+    Check(offTick == 0,
+          "T-04：⑧ 未选中的 Checkbox 不画勾（状态变了画面就得跟着变）");
+
+    radio2->SetChecked(false);
+    const int offDot = countMarkPixels(radio2, r2Data.mark.color);
+    Check(offDot == 0, "T-04：⑧ 未选中的 Radio 不画圆点");
+
+    radio2->SetChecked(true);
+    const int onDot = countMarkPixels(radio2, r2Data.mark.color);
+    std::printf("         圆点的像素：未选中 %d / 选中 %d\n", offDot, onDot);
+    Check(onDot > 0,
+          "T-04：⑧ 同一块区域选中时有圆点（未选中为 0 不是因为永远不画）");
+
+    // Switch 是这条规则的**例外**：关着（滑到左端）时滑块照样得看得见。
+    // 没人验它的话，"mark 只在选中时画"一刀切下去就把滑块也删了，而画面
+    // 只是"少一个圆"——不点开根本看不出是 bug。
+    Check(!toggle->IsChecked(), "T-04：⑧ 开关此刻是关的（承接 ⑥ 的收尾状态）");
+    const int offKnob = countMarkPixels(toggle, swData.mark.color);
+    std::printf("         关着的开关滑块像素：%d\n", offKnob);
+    Check(offKnob > 0, "T-04：⑧ 关着的 Switch 仍然画滑块（唯一例外）");
 
     SDL_SetRenderLogicalPresentation(renderer, 0, 0,
                                      SDL_LOGICAL_PRESENTATION_DISABLED);

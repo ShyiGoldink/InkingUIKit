@@ -214,8 +214,13 @@ void ToggleLike::onRender(float pixelX, float pixelY) const {
     StrokePart(renderer, _data.baseShape, parts.base, magnification, pixelX,
                pixelY, _data.baseStroke);
 
-    // ② mark（勾 / 圆点 / 滑块）：子类决定长什么样。
-    paintMark(renderer, parts, magnification, pixelX, pixelY);
+    // ② mark（勾 / 圆点 / 滑块）：子类决定长什么样。**画不画由选中态决定**——
+    // Checkbox / Radio 的"状态"就是勾 / 点在不在，不看 `_checked` 的话点一下
+    // 只有事件记账、画面不动（0.9.0 修的就是这一条）。Switch 的滑块关着也在，
+    // 靠 `PaintsMarkWhenUnchecked()` 覆写成真。
+    if (_checked || PaintsMarkWhenUnchecked()) {
+        paintMark(renderer, parts, magnification, pixelX, pixelY);
+    }
 }
 
 void ToggleLike::paintMark(SDL_Renderer* renderer, const ToggleParts& parts,

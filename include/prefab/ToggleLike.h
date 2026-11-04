@@ -31,7 +31,10 @@
 //      业务上一个 bool 表达不了"从谁换到谁"；
 //   3. **点已选中的 Radio 不翻转、不发事件**（单选不可反选）——`AllowsCheckedChange()`
 //      唯一一处返回假的场合；
-//   4. **`SetChecked` 只标重绘脏**：几何（组件框）没变，所以命中表不重烘、父容器不重排。
+//   4. **`SetChecked` 只标重绘脏**：几何（组件框）没变，所以命中表不重烘、父容器不重排；
+//   5. **mark 只在选中时画**（Checkbox 的勾、Radio 的圆点）——"状态"就在这一笔的有无上，
+//      所以 `onRender` 必须读 `_checked`。`Switch` 是唯一例外：滑块关着也在
+//      （由 `PaintsMarkWhenUnchecked()` 表达），位置本身就是状态。
 //
 // 第一版**不做**（与 Slider / ProgressBar 同一条边界）：`SetPainter` 第三档
 // （`InkingCanvasContext` 构造是 private）、三态 Checkbox（半勾）、键盘空格切换、
@@ -178,6 +181,15 @@ protected:
     virtual void paintMark(SDL_Renderer* renderer, const ToggleParts& parts,
                            float magnification, float pixelX, float pixelY) const;
 
+    /**
+     * @brief 未选中时**画不画 mark**。默认不画（Checkbox / Radio 的"状态"就是
+     *        mark 在不在）；`Switch` 覆写成画——它的滑块关着也得看得见。
+     *
+     * 单拎成一个钩子而不是让子类各自覆盖 `onRender`：`onRender` 里还有底 + 描边
+     * 两笔，覆盖它等于把这两笔抄三遍（`AGENTS.md` §6 第 94 条）。
+     */
+    virtual bool PaintsMarkWhenUnchecked() const noexcept { return false; }
+
     /// 把 `_parts` 按当前组件框与选中态重算一遍。
     void layoutParts() const noexcept;
 
@@ -294,6 +306,9 @@ protected:
     void layoutMark(const InkingShapeBounds& base, ToggleParts& parts) const override;
     void onCheckedChanged(bool checked) override;
     void onAnimationTick(float deltaSeconds) override;
+
+    /// 轨道上的圆滑块**关着也在**（它不是"勾"那种"有 = 选中"的记号）。
+    bool PaintsMarkWhenUnchecked() const noexcept override { return true; }
 
 private:
     /// 过渡时长（秒）。0.15 是"能看见、但不拖沓"的那一档。
