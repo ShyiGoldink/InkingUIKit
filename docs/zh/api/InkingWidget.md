@@ -692,4 +692,4 @@ virtual InkingCursorShape GetCursorShape() const noexcept;   // 默认 Default�
 
 ---
 
-> 本文档对应版本：**0.9.0（未发布）**。
+> 本文档对应版本：**0.9.0（0.x 发布版）**。

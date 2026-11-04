@@ -214,7 +214,7 @@ int main() {
 | [ComponentGuide.md](ComponentGuide.md) | 组件该怎么写（以 `InkingStaticPanel` 为样板）+ 新增组件 checklist |
 | [UsageReport.md](UsageReport.md) | 成本与量级、实测成立 / 不成立清单、预制件与文本框的现状 |
 | [../../CXXCSS/CXXCSS.md](../../CXXCSS/CXXCSS.md) | 配置格式（目录与命名、公共骨架、形状层词汇表、Button 字段全表） |
-| [plans/](plans/) | 已落地方案的设计记录（窗口 / 菜单栏 / 缩放 / 文字高清） |
+| [plans/](plans/) | 已落地方案的设计记录（窗口 / 菜单栏 / 缩放 / 文字高清 / 帧动画 / **块叠加组**） |
 
 > 标注 `†` 的章节是**重建内容**：原始设计稿 / 实测数据没有随搬家带入，结论按代码行为与
 > 引用上下文复原。引用具体数值时以自己实测为准。
@@ -336,7 +336,7 @@ INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 本机走 dire
 | dataStruct | `InkingAffine.h` `InkingTransform.h` `InkingAnchorData.h` `InkingColor.h` `InkingDecoration.h` `InkingEasing.h` `InkingImageFit.h` `InkingImageScale.h` `InkingLayout.h` `InkingScroll.h` `InkingShapeSpec.h` `InkingTextLayout.h` `InkingTextRequest.h` `MessageStruct.h` `TaskStruct.h` | Anchor / InkingShapeSpec / Transform / Layout / Render / Runtime / [§9](#9-素材该多大缩放规则) |
 | detail | `InkLog.h` `InkingGeometry.h` `InkingHit.h` `InkingMessageQueue.h` | Runtime / Widget |
 | event | `InkingEvent.h` | Runtime |
-| image | `InkingImageData.h` `InkingSpriteData.h` `InkingStaticImage.h` `InkingSprite.h` | Components |
+| image | `InkingImageData.h` `InkingSpriteData.h` `InkingSpriteGroupData.h` `InkingStaticImage.h` `InkingSprite.h` `InkingSpriteGroup.h` `InkingDynamicSpriteGroup.h` `InkingAnimateGroup.h` | Components |
 | input | `CursorShape.h` `InkingKeyboardTarget.h` `InkingPointerHandler.h` `InkingPointerButton.h` `InkingKeyboardInput.h` `InkingMouseInput.h` `InkingShortcut.h` `InkingShortcutRegistry.h` `InkingTextEditState.h` | KeyboardTarget / PointerHandler / Input |
 | layout | `InkingLayoutSolver.h` | LayoutSolver |
 | panel | `InkingStaticPanel.h` `InkingPanelData.h` `InkingPanelLook.h` | Components |
@@ -434,5 +434,5 @@ const bool clean  = InkingImageScaleSpec::IsCleanRatio(sigma);
 
 ---
 
-> 本文档对应版本：**0.8.5（0.x 发布版）**。发现文档与代码不一致时，
+> 本文档对应版本：**0.9.0（0.x 发布版）**。发现文档与代码不一致时，
 > **以头文件注释为准**，并请把差异记到 `docs/zh/CHANGELOG.md`。

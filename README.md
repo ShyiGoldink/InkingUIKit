@@ -2,10 +2,22 @@
 
 **一个用 SDF 形状 + 锚点定位写 UI 的 C++20 前端框架（动态链接库）。**
 
-> ## ✅ 当前版本：**0.8.5 发布版**（`0.8.5-release`）
+> ## ✅ 当前版本：**0.9.0 发布版**（`0.9.0-release`）
 >
 > - 0.x 期间接口 / ABI / 行为仍可能在次版本变化，升级请对照
 >   [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)；`1.0.0` 起才冻结。
+> - **0.9.0 新增：块叠加组 `InkingSpriteGroup` / `InkingDynamicSpriteGroup`**
+>   ——「一个 sprite 由多块拼成」：一张图集、多个动画、**每帧一组格号**（同框叠图）。
+>   一帧 K 块**仍然只有一次 `SDL_RenderGeometry`**（自检钉住 K=1/2/4 都是 1）。
+>   配套：帧机泛化成「每帧一组矩形」、帧事件派发可以在回调里换配置
+>   （快照派发 + 切换延后，改前是 UB）。
+> - **0.9.0 破坏性**：`InkingSpriteGroup` 改名为 `InkingAnimateGroup`（旧名让给上面
+>   那个新组件，纯重命名）；全部符号去掉 `namespace inking` 外壳、改 `Inking` 前缀
+>   （`inking::ButtonData` → `InkingButtonData`，详见 CHANGELOG）。**所有消费方必须
+>   整包重编。**
+> - **0.9.0 修复**：UIKit 齐全度 a~f 批（视频接线 / 计量两件套 / 勾选三件套 /
+>   浮层三件套 / 导航 / 光标形状 + 文件拖放）；运行期换主题"有的地方不跟着变"
+>   三处接线；通知条文字被裁；`CMakeLists.txt` 的 `project(VERSION)` 从 0.7.1 补上。
 > - **0.8.5 变更：文字层三条"没有上限且静默"的路子收口**（0.8.3 / 0.8.4 未单独发版）。
 >   ① 标签的 `height` **现在真的是文字上限**——装不下的行整行不画（`InkingTextOverflow::Clip`
 >   的默认语义此前一直没实现，300×40 的标签会把 7 行全画到框外）；要恢复旧行为把
@@ -52,7 +64,8 @@
 > - **0.5.0 有破坏性接口改动**：指针钩子改为
 >   `onPointerPress(InkingPointerButton, bool)` / `onPointerClick(InkingPointerButton, float, float)`，
 >   迁移样板见 CHANGELOG「0.5.0 / 变更」。
-> - **预编译包已更新到 0.8.5**（[`dist/inking-0.8.5-win64.zip`](dist/)）：0.7.1 / 0.5.3 那两份
+> - **预编译包目前是 0.8.5**（[`dist/inking-0.8.5-win64.zip`](dist/)）——0.9.0 的包待出，
+>   从源码构建就是 0.9.0。0.7.1 / 0.5.3 那两份
 >   保留不删（有人可能钉着它）。也可以用源码构建（`cmake -B build -G Ninja` +
 >   `cmake --build build`），DLL 即 `build/bin/libinking.dll`。两种方式都需要
 >   MSYS2 UCRT64（MinGW ABI）——**运行**示例不需要，**编译**才需要。
@@ -138,9 +151,10 @@ cmake --build build -j
 ```
 
 **看这一行，也看退出码——它们是同一个数**（`main` 直接 `return g_fail`）。
-当前实测 **599 项 ok / 0 项失败 / 0 项 skip**，两档后端同数（0.8.3~0.8.5 之前是
-575 项 + 2 项 skip；项数会随环境浮动——**没有可读字体时**文字高清与裁行那几条会打成
-`[skip]`，那是环境不是缺陷，见 [`API.md` §7 的注](docs/zh/API.md)）。
+当前实测 **889 项 ok / 0 项失败 / 0 项 skip**（0.9.0 起：块叠加组与帧事件那几节
+又加了一批；0.8.3~0.8.5 时是 599 项）。项数会随环境浮动——**没有可读字体时**文字
+高清与裁行那几条会打成 `[skip]`，那是环境不是缺陷，见
+[`API.md` §7 的注](docs/zh/API.md)。
 
 自检不需要显示器：`0.4.0` 起可以直接 `InkingWindow::Open()` + `RunFrames(n)` 手动跑帧，
 或者用 `RenderToTexture()` 完全不开窗口出图（详见 `docs/zh/api/InkingWindow.md`）。
@@ -522,7 +536,7 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 | [`docs/zh/API.md`](docs/zh/API.md) | **从这里读起**：五分钟上手 + 模块地图 + 头文件全量索引 |
 | [`docs/zh/api/`](docs/zh/api/) | 18 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver / FixedPopup / Json + Anchor / InkingShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
 | [`CXXCSS/CXXCSS.md`](CXXCSS/CXXCSS.md) | 配置格式：目录与命名、公共骨架、形状层词汇表、Button 字段全表 |
-| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.8.5 的逐条变化） |
+| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.9.0 的逐条变化） |
 | [`examples/minimal/README.md`](examples/minimal/README.md) | 最小工程：三步构建 + 运行期 DLL 拷贝 |
 
 ---
@@ -599,4 +613,4 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 
 ---
 
-> 版本 `0.8.5`（发布版） · 最后更新 2026-10-30
+> 版本 `0.9.0`（发布版） · 最后更新 2026-11-04

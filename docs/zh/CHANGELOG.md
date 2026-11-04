@@ -5,10 +5,13 @@
 
 ---
 
-## 0.9.0（未发布：几何分档收口 + 命名空间收口 + UIKit 齐全度 a/b 批）
+## 0.9.0 —— 2026-11-04（发布版：几何分档收口 + 命名空间收口 + UIKit 齐全度 a/b 批 + 块叠加组）
 
-> 本节在发版时随 `InkingVersion` 一起定稿；明细见 `docs/zh/TaskGuide-G.md`（G-00…G-08）
-> 与 `docs/zh/TaskGuide-N.md`（N-01…N-04）。
+> 本节已随 `InkingVersion` 一起定稿（`0.9.0` / `release`）。明细见
+> `docs/zh/TaskGuide-G.md`（G-00…G-08）、`docs/zh/TaskGuide-N.md`（N-01…N-04）、
+> `docs/zh/plans/2026-11-03-uikit-completeness-tasks.md`（UIKit 齐全度 a~f），
+> 以及 `docs/zh/plans/2026-11-04-sprite-group-and-animate-group.md`（T-01…T-08，
+> 块叠加组与帧事件地基）。
 
 ### 新增
 
@@ -29,6 +32,20 @@
   **头文件路径与 CMake 目标名不变**（`#include <button/ButtonData.h>`、
   `inking::inking` 照旧）。升级方法：把 `inking::X` 换成 `X`，再按编译报错把
   没带前缀的类型 / 函数 / 常量补上 `Inking`。
+- **`InkingSpriteGroup` 改名为 `InkingAnimateGroup`**（0.9.0 T-02）：旧名让给了
+  "一个 sprite 由多块拼成"的新组件。"一个角色的多个动作"这个类本身**一行逻辑都没改**
+  ——纯重命名，`SwitchTo` / `animationChanged` / `keepPhase` / `resize` / 组内尺寸
+  跟着动作改，语义全不变。连带 `InkingSpriteGroupData` → `InkingAnimateGroupData`、
+  `InkingSpriteGroupModuleName` → `InkingAnimateGroupModuleName`、自检
+  `CheckSpriteGroup` → `CheckAnimateGroup`。**动态库导出符号全换**（0.x 阶段允许）。
+- **`InkingSpriteLike::Hooks` 的两个回调换了签名**（0.9.0 T-03）：
+  `setSourceRect(const InkingShapeBounds&)` → `setSourceRects(const InkingShapeBounds*,
+  std::size_t)`；`LoadedFrame::sourceRect` → `sourceRects`（矩形表）。任何自己派生
+  `InkingSpriteLike` 并填 `Hooks` 的代码要整包重编——仓里没有这样的代码。
+- **`CMakeLists.txt` 的 `project(VERSION)` 从 `0.7.1` 升到 `0.9.0`**：它从来没跟上
+  `kVersion`（`TaskGuide-Dynamic.md` §已知限制里登记过），于是已发布包的
+  `inkingConfigVersion.cmake` 写的是 `PACKAGE_VERSION "0.7.1"`，下游
+  `find_package(inking 0.8.5)` 会直接失败。这次一并修掉。
 
 ### 新增（UIKit 齐全度 · a/b 批：视频接线 + 计量两件套）
 
@@ -498,7 +515,7 @@
 
 ---
 
-## 0.7.1 —— 2026-10-29（**当前：发布版**：缩放护栏 / 素材分辨率提示）
+## 0.7.1 —— 2026-10-29（发布版：缩放护栏 / 素材分辨率提示）
 
 > 来源：关于「设计像素 / 素材像素 / 纵深缩放 / 边缘模糊」的四轮讨论。任务书
 > [`plans/2026-10-29-scaling-and-device-pixels.md`](plans/2026-10-29-scaling-and-device-pixels.md)

@@ -413,4 +413,4 @@ void MyButton::onPointerClick()           { TriggerClick();  }
 
 ---
 
-> 本文档对应版本：**0.8.5（0.x 发布版）**。
+> 本文档对应版本：**0.9.0（0.x 发布版）**。

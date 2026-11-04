@@ -1,9 +1,9 @@
 # 任务书（TaskGuide）
 
-> ## ⚠ 本文对应版本 0.9.x（开发中）
+> ## ✅ 本文对应版本 0.9.0（发布版）
 >
-> 版本号口径见 `inking::kVersion` / `inking::kVersionStage`；**代码里仍是 `0.8.5`**，
-> 发布 0.9.0 时与 `CMakeLists.txt` 的 `project(VERSION ...)` 一并改（两处不同步会让
+> 版本号口径见 `InkingVersion` / `InkingVersionStage`；**代码里是 `0.9.0`**，
+> 与 `CMakeLists.txt` 的 `project(VERSION ...)` 已同步（两处不同步会让
 > `inkingConfigVersion.cmake` 报旧版本，下游 `find_package(inking 0.9.0)` 直接失败）。
 >
 > - **本文是重建稿**：原任务书未随仓库搬入，正文按代码注释里的引用反推，逐节标了证据。
@@ -629,4 +629,4 @@ T 系列在注释里用到 `T-5`–`T-18`（含 0.6.x 的帧动画 / 图集 / �
 
 ---
 
-> 本文档对应版本：**0.9.x（开发中；代码 `kVersion` 待同步）**。
+> 本文档对应版本：**0.9.0（0.x 发布版）**。

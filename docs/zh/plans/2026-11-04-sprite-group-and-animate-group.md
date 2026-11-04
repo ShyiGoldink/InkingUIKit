@@ -1,9 +1,9 @@
 # 任务书：SpriteGroup 与 AnimateGroup 分家（自身规划）
 
-> 状态：**待执行**（本文件按任务逐条跟踪，完成规则见 §1）
+> 状态：**已完成**（T-01~T-08 全部落地；本文件按任务逐条跟踪，完成规则见 §1）
 > 日期：2026-11-04
 > 来源：2026-11-04 设计讨论（帧事件地基 / 命名对调 / 多块叠加动画组）。核实结论见 §2
-> 目标版本：`0.9.0`（全部五批；`docs/zh/CHANGELOG.md:1` 那一节仍是「未发布」）
+> 目标版本：`0.9.0`（已随 T-08 发布：`InkingVersion` = `0.9.0`、`CHANGELOG` 的 0.9.0 节已定稿）
 > 涉及层：`image/`（帧机与两档精灵）· `render/`（合批，只读）· `docs/zh/` · `examples/demo/`
 
 ---
@@ -126,42 +126,7 @@
 
 - T-07 合批断言与 demo-已完成（2026-11-04，`CheckSpriteBatching` 末尾加一段：块叠加组 **K=1 / 2 / 4** 三档各渲一帧，`textureDraws` 与 `geometrySubmissions` 增量**都是 1**（实测 `几何 1/1/1，纹理批 1/1/1`）——`CheckSpriteGroup` 已比过 K=2 vs K=1，这里把 K 拉到 4，「每块各提一次」的实现会在 K=4 上露头而 K=1 看不出来。开关不需要动（`imageBatching()` 默认就是开的，上面两块各自还原过）。demo 加「叠块」F3 菜单项：同一张 `walk.png` 的两个动作——`idle` 每帧 1 块、`ghost` 每帧 2 块（相邻两格叠一起 ⇒ 重影），**没引入第三方素材**。**顺带补了 T-05 的一个缺口**：`InkingSpriteGroupData` 加四个摆放字段（`selfAnchor`/`traceAnchor`/`offsetX`/`offsetY`）——静态档几何构造即定型、没有公开写入口，没有这几个字段组只能躺在父容器左上角。构建 0 warning、`selftest` 末行失败项 0、`ctest` 8 条全绿。**demo 的 F3 视觉效果需要人看一眼**（窗口行为，按 `AGENTS.md` §4 第 5 条不自己宣布通过））
 
-### T-08 文档、CHANGELOG、版本号收口
-
-- **状态**：未开始
-- **落点**：`docs/zh/CHANGELOG.md`、`docs/zh/api/InkingComponents.md`、`docs/zh/API.md`（§3 文档地图加一行指向本任务书）、`README.md`、全部文档页脚、`include/inking.h:20`
-
-**准备怎么改**
-
-版本号现状是 `0.8.5`，而 `CHANGELOG.md:1` 已经有「0.9.0（未发布）」一节。本轮全部进 0.9.0 那节，**不另开 0.9.4**——0.9.1～0.9.3 没有记录，版本跳过去就是空账（`AGENTS.md` §4 第 3 条）。
-
-| 方案 | 做法 | 代价 | 结论 |
-| - | - | - | - |
-| A 并入 0.9.0 | 在既有「未发布」节里加四个批次小节 | 一节变长 | **推荐** |
-| B 另开 0.9.4 | 版本号直接跳 | 0.9.1～0.9.3 无记录 | 不做 |
-
-**大致改动逻辑**
-
-1. `CHANGELOG.md` 的 0.9.0 节内加四小节（帧事件 / 命名 / 帧机 / 新组件），每节写「变更 / 破坏性 / 已知限制」三类里命中的。
-2. 破坏性单列：`InkingSpriteGroup` 改名与符号全换、`InkingSpriteLike` 的 `Hooks` 签名变。
-3. `InkingComponents.md`：旧节标题改 `InkingAnimateGroup`，新增 `InkingSpriteGroup` / `InkingDynamicSpriteGroup` 两节（照 T-05/T-06 的公开面写）。
-4. `API.md` 的头文件索引加两个新文件。
-5. `include/inking.h:20` 改 `"0.9.0"`；全部文档页脚一起升（`AGENTS.md` §2 的版本五处一致）。
-6. 哪一步不能反：**先等 T-01～T-07 全绿再动版本号**，否则中途变红的构建会被记进「已发布」的历史。
-
-**与改动前对比**
-
-| 场景 | 改动前 | 改动后 |
-| - | - | - |
-| `InkingVersion` | `"0.8.5"` | `"0.9.0"` |
-| 自检启动行 | 打印 `版本 0.8.5-release` | `版本 0.9.0-release` |
-| 库的公开面 | 无块叠加组 | 多两个组件、多一个数据面 |
-| 既有三档行为 | — | **不变**（T-01～T-03 的验收已逐条钉住） |
-
-**验收**：构建 0 warning；`selftest` 末行「失败项：0」；`ctest` 全绿；`grep -rn "0.8.5"` 只命中 `dist/` 与历史 CHANGELOG。
-
-**风险与回退**：风险是「改了版本号但文档没同步」——`ctest` 里的元自检（`silent_failure_list_in_sync` 一类）能抓一部分。回退：版本号单独一个提交，revert 不影响代码。
-
+- T-08 文档、CHANGELOG、版本号收口-已完成（2026-11-04，版本升 **0.9.0**、五处一致：`include/inking.h` 的 `InkingVersion`、`CMakeLists.txt` 的 `project(VERSION)`（**从 0.7.1 补上**——`TaskGuide-Dynamic.md` §已知限制登记过的历史坑，`inkingConfigVersion.cmake` 一直写 `0.7.1`）、**23 份文档页脚**（16 份标准页脚 + 5 份写法不同的：`InkingPrefab` / `InkingScene` / `InkingWidget` / `InkingWindow` 的「未发布」与 `TaskGuide` 的「开发中」）、`README.md` 横幅与页脚、`CHANGELOG` 标题；自检启动行实测打印 `版本 0.9.0-release`。`CHANGELOG` 的 0.9.0 节改「已定稿」并补三条破坏性（`InkingSpriteGroup` 改名、`InkingSpriteLike::Hooks` 签名、`CMakeLists` 版本号）；`API.md` 的 image 头文件索引补齐三个新文件、文档地图指向本任务书；`TaskGuide` / `-G` / `-N` 头部的「代码仍是 0.8.5，发布时一并改」改成已发布；0.7.1 节上的「当前：发布版」标记摘掉（0.8.5 发版时漏摘的）；README 横幅换成 0.9.0 的变更摘要、实测断言数从 599 更新到 **889**。构建 0 warning、`selftest` 末行失败项 0、`ctest` 8 条全绿。**两处不动**：`tools/BUILD.txt` 是 0.8.5 那份发布包的构建说明（历史产物，0.9.0 若发包另写一份）；`0.8.5` 仍散落在 CHANGELOG 历史节 / plans 历史 / 源码注释 / README 的功能说明里——那都不是「当前版本声明」，按 §4 硬约束不改写）
 ---
 
 ## 8. 批次门槛与进度
@@ -187,7 +152,7 @@
 | T-05 | 静态档 `InkingSpriteGroup` | 0.9.0-d | 已完成 |
 | T-06 | 动态档 `InkingDynamicSpriteGroup` | 0.9.0-e | 已完成 |
 | T-07 | 合批断言与 demo | 0.9.0-e | 已完成 |
-| T-08 | 文档、CHANGELOG、版本号收口 | 0.9.0-e | 未开始 |
+| T-08 | 文档、CHANGELOG、版本号收口 | 0.9.0-e | 已完成 |
 
 完成任务后，本节状态改 `已完成`，§3～§7 对应段落按 **§1.2** 压缩成一行——两处必须同时改。
 
