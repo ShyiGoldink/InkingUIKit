@@ -171,6 +171,30 @@
   `applyPendingSpriteData`）；三个既有精灵自检（图集 / 事件 / 换配置）**一条断言
   不改**就过。
 
+### 新增（块叠加组的数据面，0.9.0 T-04）
+
+- **`InkingSpriteGroupData` + `InkingSpriteGroupAnimation`**
+  （`include/image/SpriteGroupData.h`）：**一张图集 + 多个动画 + 每帧一组格号**。
+  `frames[i]` 是第 `i` 帧要画的格号列表，顺序即叠加顺序。
+- **等大是结构保证，不是运行期校验**：只给网格（`frameWidth/Height` +
+  `columns/rows` + `margin/spacing`），不给矩形表——"同一帧里两块大小不同"这种事
+  根本配不出来。这跟 `InkingAtlasData`（帧是矩形表、宽高可不等）**正好相反**，
+  两个概念并存，分工写在文件头注释里。
+- 三条定死的语义：**格号允许重复**（同一帧同一格出现两次合法，故意叠两层做发光，
+  不查重）；**每帧块数允许不同**（不强制槽位固定）；**格号越界归 `Validate()`**，
+  不夹取（"改到哪一格"猜不出来）。
+- `Validate()` 九条：`source` 空 / 网格字段非法 / 动画表空 / 动作名为空 / 重名 /
+  `fps <= 0` / 动画没有帧（或某帧没有格号）/ 格号越界（报"哪个动画的第几帧第几块"）/
+  事件帧越界。
+- `CellRect(cell)` 是"格号 → 像素矩形"的**唯一**算术点（行优先），`SheetWidth()` /
+  `SheetHeight()` 与 `SpriteSheet` 同公式，供构造期与真实图尺寸比对。
+- `Normalize()` 是**幂等的空操作**：这个类型没有"能修正"的字段（等格是结构保证、
+  越界只能报错、`fps` 猜 12 就是静默兜底）。留着是为了与 `InkingSpriteData` 的
+  构造流程对称。
+- 自检 `CheckSpriteGroupDataValidate()`：合法配置 + 幂等 + 格号重复合法 + 九条
+  非法各断关键子串 + `FindIndex` 的 `kNotFound` + `CellRect` 的 margin / spacing /
+  行优先 / 越界四组坐标断言。
+
 ### 变更（帧机泛化：每帧一组矩形，0.9.0 T-03）
 
 - `InkingSpriteLike::LoadedFrame` 的 `sourceRect`（一个矩形）→ `sourceRects`

@@ -110,84 +110,7 @@
 
 ## 6. 第四批：0.9.0-d（块叠加组：数据面与静态档）
 
-### T-04 新增块叠加组的数据面
-
-- **状态**：未开始
-- **落点**：新文件 `include/image/SpriteGroupData.h` + `src/image/SpriteGroupData.cpp`
-
-**准备怎么改**
-
-数据面要表达的是「一张图集 + 多个动画 + 每帧一组格号」。三条路：
-
-| 方案 | 做法 | 代价 | 结论 |
-| - | - | - | - |
-| A 自己声明网格字段 | `source` + `frameWidth/Height/columns/rows/margin/spacing` | 六个字段与 `SpriteSheet` 重复 | **推荐** |
-| B 复用 `SpriteSheet` | 组里嵌一个 `SpriteSheet` | 它带 `frameRects` / `count` / `firstFrame`，全是「按帧」的概念，语义半对 | 退路 |
-| C 复用 `InkingAtlasData` | 现有图集描述 | 它的帧是矩形表（**宽高可以不等**），跟「等格」正好相反 | 不做 |
-
-选 A。**等大做成结构保证**，不做运行期校验：只给网格，不给矩形表，于是「不等大」根本配不出来。这条要写进文件头注释——它跟 `InkingAtlasData` 的取舍相反，两个概念并存时必须靠注释分清。
-
-结构（字段名即接口）：
-
-```cpp
-struct InkingSpriteGroupAnimation {
-    std::string name;
-    std::vector<std::vector<int>> frames;   // 每帧 = 格号列表；顺序 = 叠加顺序
-    double fps = 12.0;
-    bool loop = true;
-    std::vector<InkingSpriteData::SpriteEvent> events;
-};
-
-struct InkingSpriteGroupData {
-    std::string source;                     // 图集路径（纹理缓存键）
-    int frameWidth = 0, frameHeight = 0;
-    int columns = 0, rows = 0;
-    int margin = 0, spacing = 0;
-    std::vector<InkingSpriteGroupAnimation> animations;
-    static constexpr std::size_t kNotFound = static_cast<std::size_t>(-1);
-    std::size_t FindIndex(const std::string&) const noexcept;
-    int ResolveCount() const noexcept;      // columns × rows
-    InkingShapeBounds CellRect(int cell) const noexcept;
-    int SheetWidth() const noexcept;
-    int SheetHeight() const noexcept;
-    void Normalize();
-    std::string Validate() const;
-};
-```
-
-几条已经定死的语义：
-
-- **格号允许重复**（同一格可以在同一帧出现两次，业务自己负责）。不查重——查重会把「故意叠两层做发光」这种用法挡掉。
-- **每帧块数允许不同**（不强制槽位固定）。配置省一半；代价是顶点数每帧可变，而反正每帧都要 `BuildShapeMesh` K 次。
-- **格号越界归 `Validate()`**，不夹取。「改到哪一格」猜不出来。
-- **`Normalize()` 只补 `count`-类默认值，不做夹取**——这个类型没有可夹的字段。
-
-**大致改动逻辑**
-
-1. 建 `include/image/SpriteGroupData.h`：四个类型（上面的两个结构 + 模块名常量）。
-2. `CellRect(cell)`：`column = cell % columns`、`row = cell / columns`，返回 `{margin + column*(frameWidth+spacing), margin + row*(frameHeight+spacing), frameWidth, frameHeight}`。越界返回全零矩形（与 `SpriteSheet::CellRect` 同一套判据）。
-3. `Validate()` 九条，顺序即报告顺序：`source` 空 / 网格字段 `<= 0` / 动画表空 / 动作名为空 / 重名 / `fps <= 0` / `frames` 空 / 格号越界（要报「哪个动画的第几帧第几块」）/ 事件帧越界。
-4. `SheetWidth()` / `SheetHeight()`：与 `SpriteSheet` 同公式，供构造期与真实图尺寸比对。
-5. `FindIndex` 线性查，找不到返回 `kNotFound`（**不是 0**）。
-
-**与改动前对比**
-
-| 场景 | 用 `InkingSpriteData` | 用 `InkingSpriteGroupData` |
-| - | - | - |
-| 一张图一个动作、帧宽高不等 | 行（`frameRects`） | **不行**（等格是硬约束） |
-| 一张图多个动作、每帧一块 | 行 | 行（每帧一个格号） |
-| 一张图多个动作、每帧多块叠加 | 不行 | 行 |
-| 序列帧（多张图） | 行 | **不行**（只支持一张图集） |
-| 现有三档的配置与校验 | `InkingSpriteData::Validate()` 九条 | **不变**（新类型独立，不碰它们） |
-
-**验收**
-
-`examples/demo/selftest.cpp` 新增 `CheckSpriteGroupDataValidate()`：九条判据各造一份非法配置，断言 `Validate()` 返回的说明里含关键子串（与现有 `CheckSpriteDataValidate` :4658 同一套写法）；合法配置断言返回空串；`CellRect(0)` / `CellRect(最后格)` / `CellRect(越界)` 三组坐标断言 `margin` / `spacing` 生效与越界返回全零。
-
-**风险与回退**
-
-- **风险**：与 `InkingAtlasData` 语义相反（一个要求等格，一个允许不等），配置层可能混用。缓解：文件头注释写明分工，且 `Validate()` 在 `source` 指向的图尺寸不符时报错（T-05 做）。
-- **回退**：新文件、无既有调用者，删掉即可。
+- T-04 新增块叠加组的数据面-已完成（2026-11-04，新文件 `include/image/SpriteGroupData.h` + `src/image/SpriteGroupData.cpp`：`InkingSpriteGroupData` + `InkingSpriteGroupAnimation` + `InkingSpriteGroupModuleName`（**等格是结构保证**——只给网格不给矩形表，"同帧两块大小不同"配不出来；与 `InkingAtlasData` 的取舍相反、分工写进文件头）。`CellRect` 是"格号 → 像素矩形"的唯一算术点（行优先、越界给全零），`SheetWidth/Height` 与 `SpriteSheet` 同公式；`Validate()` 九条按序报（格号越界会报"哪个动画的第几帧第几块"）；`Normalize()` 是**幂等空操作**（这个类型没有能修正的字段，猜 `fps=12` 就是静默兜底）。自检 `CheckSpriteGroupDataValidate()`：合法基线（含幂等、格号重复合法、`249×167` 的 margin/spacing 验算）+ 九条非法各断关键子串 + `FindIndex` 的 `kNotFound` + `CellRect` 的 0/5/6/23/越界/负号六组坐标，全绿。构建 0 warning、`selftest` 末行失败项 0、`ctest` 8 条全绿；`CHANGELOG` 与 `api/InkingComponents.md` 各加一节数据面）
 
 ---
 
@@ -403,7 +326,7 @@ void setTiming(double fps, bool loop, std::size_t startFrame,
 | T-01 | 让帧事件派发可在回调里换配置 | 0.9.0-a | 已完成 |
 | T-02 | 把 `InkingSpriteGroup` 改名为 `InkingAnimateGroup` | 0.9.0-b | 已完成 |
 | T-03 | 让帧机支持「每帧一组矩形」 | 0.9.0-c | 已完成 |
-| T-04 | 新增块叠加组的数据面 | 0.9.0-d | 未开始 |
+| T-04 | 新增块叠加组的数据面 | 0.9.0-d | 已完成 |
 | T-05 | 静态档 `InkingSpriteGroup` | 0.9.0-d | 未开始 |
 | T-06 | 动态档 `InkingDynamicSpriteGroup` | 0.9.0-e | 未开始 |
 | T-07 | 合批断言与 demo | 0.9.0-e | 未开始 |

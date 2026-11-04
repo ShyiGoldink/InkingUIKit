@@ -50,6 +50,7 @@
 #include <util/InkingJson.h>
 #include <image/InkingStaticImage.h>
 #include <image/SpriteData.h>
+#include <image/SpriteGroupData.h>
 #include <panel/InkingDynamicPanel.h>
 #include <panel/InkingStaticPanel.h>
 #include <panel/PanelData.h>
@@ -7783,6 +7784,178 @@ void CheckAnimateGroup() {
 }
 
 // ---------------------------------------------------------------------------
+// 0.9.0 T-04：块叠加组的数据面
+// ---------------------------------------------------------------------------
+//
+// 这一节只验**数据层**（不建场景、不画）：九条校验各造一份非法配置，断言报错里
+// 含关键子串；再验 `CellRect` 的几何——`margin` / `spacing` 生效、越界给全零。
+//
+// 为什么几何要在数据层断言：`CellRect` 是"格号 → 像素矩形"的**唯一**算术点，
+// 组件每帧直接拿它设源矩形。在这里断言就不用为了验 margin 真去造一张图。
+void CheckSpriteGroupDataValidate() {
+    std::printf("\n-- InkingSpriteGroupData：等格 / 格号表 / 九条校验（0.9.0 T-04） --\n");
+
+    // 合法基线：6×4 网格、40×40 一格、margin=2 / spacing=1、两个动画。
+    const auto makeGroup = [] {
+        InkingSpriteGroupData group;
+        group.source = "atlas.png";
+        group.frameWidth = 40;
+        group.frameHeight = 40;
+        group.columns = 6;
+        group.rows = 4;
+        group.margin = 2;
+        group.spacing = 1;
+        group.animations.resize(2);
+        group.animations[0].name = "idle";
+        group.animations[0].frames = {{0, 1}, {2, 3}};
+        group.animations[1].name = "run";
+        group.animations[1].frames = {{4}, {5, 6, 7}};
+        return group;
+    };
+
+    // ① 合法配置：通过，且幂等（Normalize 跑两次和一次结果一样）。
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.Normalize();
+        const InkingSpriteGroupData once = group;
+        group.Normalize();
+        std::printf("         合法：动画数=%zu 格总数=%d 整张=%d×%d\n",
+                    group.animations.size(), group.ResolveCount(),
+                    group.SheetWidth(), group.SheetHeight());
+        Check(group.Validate().empty(),
+              "T-04：合法的块叠加组通过 Validate");
+        Check(group.animations[0].frames.size() == 2
+                  && group.animations[1].frames[1].size() == 3,
+              "T-04：每帧块数允许不同（2 块与 3 块并存）");
+        Check(group.animations[0].frames[0][0] == 0
+                  && group.animations[0].frames[0][1] == 1,
+              "T-04：同一帧里的格号按声明顺序排列（顺序 = 叠加顺序）");
+        Check(group.ResolveCount() == 24,
+              "T-04：ResolveCount = columns × rows = 24");
+        // 整张尺寸：6×40 + 5×1 + 2×2 = 249；4×40 + 3×1 + 2×2 = 167
+        Check(group.SheetWidth() == 249 && group.SheetHeight() == 167,
+              "T-04：SheetWidth / SheetHeight 把 margin 与 spacing 算进去（249×167）");
+        Check(once.animations[0].frames == group.animations[0].frames,
+              "T-04：Normalize 幂等（跑两次与跑一次一样）");
+    }
+
+    // ② 格号允许重复（故意叠两层做发光）：**不查重**。
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.animations[0].frames[0] = {3, 3};
+        Check(group.Validate().empty(),
+              "T-04：同一帧里同一格号出现两次是合法的（不查重）");
+    }
+
+    // ③–⑪ 九条非法配置，各断言关键子串。
+    const auto expectError = [](InkingSpriteGroupData group, const char* needle,
+                                const char* label) {
+        const std::string error = group.Validate();
+        const bool hit =
+            !error.empty() && error.find(needle) != std::string::npos;
+        std::printf("         %-22s → %s\n", label,
+                    error.empty() ? "(空)" : error.c_str());
+        Check(hit, label);
+    };
+
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.source.clear();
+        expectError(group, "source 为空", "T-04：① source 空 → 报错");
+    }
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.frameWidth = 0;
+        expectError(group, "frameWidth", "T-04：② 网格字段非法 → 报错");
+    }
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.margin = -1;
+        expectError(group, "margin", "T-04：② margin 为负 → 报错");
+    }
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.animations.clear();
+        expectError(group, "没有任何动画", "T-04：③ 动画表空 → 报错");
+    }
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.animations[1].name.clear();
+        expectError(group, "名字为空", "T-04：④ 动作名为空 → 报错");
+    }
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.animations[1].name = "idle";
+        expectError(group, "重复", "T-04：⑤ 动作名重复 → 报错");
+    }
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.animations[0].fps = 0.0;
+        expectError(group, "fps 必须 > 0", "T-04：⑥ fps = 0 → 报错");
+    }
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.animations[0].frames.clear();
+        expectError(group, "没有任何帧", "T-04：⑦ 动画没有帧 → 报错");
+    }
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.animations[0].frames[1].clear();
+        expectError(group, "没有格号", "T-04：⑦ 某帧没有格号 → 报错");
+    }
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.animations[1].frames[1][2] = 24;  // 只有 0..23
+        expectError(group, "越界", "T-04：⑧ 格号越界 → 报错");
+    }
+    {
+        InkingSpriteGroupData group = makeGroup();
+        group.animations[0].events.push_back(
+            InkingSpriteData::SpriteEvent{9, "nowhere"});
+        expectError(group, "事件指向第 9 帧", "T-04：⑨ 事件帧越界 → 报错");
+    }
+
+    // ⑫ FindIndex：找得到给下标，找不到给 kNotFound（**不是 0**）。
+    {
+        const InkingSpriteGroupData group = makeGroup();
+        Check(group.FindIndex("run") == 1 && group.FindIndex("nope") == InkingSpriteGroupData::kNotFound,
+              "T-04：FindIndex 找得到给下标、找不到给 kNotFound（不是 0）");
+    }
+
+    // ⑬ CellRect：margin / spacing 生效，行优先，越界与负格号给全零。
+    {
+        const InkingSpriteGroupData group = makeGroup();
+        const InkingShapeBounds first = group.CellRect(0);
+        const InkingShapeBounds last = group.CellRect(23);
+        const InkingShapeBounds out = group.CellRect(24);
+        const InkingShapeBounds negative = group.CellRect(-1);
+        std::printf("         格 0 = (%.0f,%.0f,%.0f×%.0f)  格 23 = (%.0f,%.0f)\n",
+                    static_cast<double>(first.x), static_cast<double>(first.y),
+                    static_cast<double>(first.width),
+                    static_cast<double>(first.height),
+                    static_cast<double>(last.x), static_cast<double>(last.y));
+        // 格 0：x = margin + 0 = 2；y = 2
+        Check(first.x == 2.0f && first.y == 2.0f && first.width == 40.0f
+                  && first.height == 40.0f,
+              "T-04：CellRect(0) 落在 margin 起点、尺寸就是格宽高");
+        // 格 5：x = 2 + 5×(40+1) = 207；y = 2
+        const InkingShapeBounds fifth = group.CellRect(5);
+        Check(fifth.x == 207.0f && fifth.y == 2.0f,
+              "T-04：CellRect(5) 的 x 把 spacing 算进去（207）");
+        // 格 6：换行，x 回 2；y = 2 + (40+1) = 43
+        const InkingShapeBounds sixth = group.CellRect(6);
+        Check(sixth.x == 2.0f && sixth.y == 43.0f,
+              "T-04：CellRect(6) 行优先换行（x 回 margin、y 加一格+spacing）");
+        // 格 23 = 第 3 行第 5 列：x = 207；y = 2 + 3×41 = 125
+        Check(last.x == 207.0f && last.y == 125.0f,
+              "T-04：CellRect(最后格) 坐标对上（207,125）");
+        Check(out.width == 0.0f && out.height == 0.0f && negative.width == 0.0f
+                  && negative.height == 0.0f,
+              "T-04：CellRect 越界 / 负格号给全零矩形（调用方据此跳过）");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // T-08：矩形图片并进几何批
 // ---------------------------------------------------------------------------
 //
@@ -9867,6 +10040,9 @@ int main() {
 
     // ---- 动画组：一个节点承载多个动作（0.6.6 T-18）----
     CheckAnimateGroup();
+
+    // ---- 块叠加组的数据面：等格 / 格号表 / 九条校验（0.9.0 T-04）----
+    CheckSpriteGroupDataValidate();
 
     // ---- 0.9.0 批次 a+b：视频出画 / 滑块 / 进度条（T-01 ~ T-03）----
     //

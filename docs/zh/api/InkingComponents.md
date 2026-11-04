@@ -992,6 +992,61 @@ public:
 > 攻击 56 宽）是它的职责；而 `InkingSprite::SetSpriteData()` 换配置时"要不要动布局"
 > 只有调用方知道，所以它**不动**尺寸。两处都在文档里写明了，别当成矛盾。
 
+### 块叠加组的数据面 `InkingSpriteGroupData`（0.9.0 T-04）
+
+「**一个 sprite 由多块拼成**」——一张图集、多个动画、**每帧一组格号**。跟上面
+`InkingAnimateGroup`（一个角色的多个动作，一帧一块）是两件事，跟 `InkingAtlasData`
+（帧是矩形表、宽高可不等）**正好相反**。
+
+```C++
+struct InkingSpriteGroupAnimation {
+    std::string name;
+    std::vector<std::vector<int>> frames;   // 每帧 = 格号列表；顺序 = 叠加顺序
+    double fps = 12.0;
+    bool loop = true;
+    std::vector<InkingSpriteData::SpriteEvent> events;
+};
+
+struct InkingSpriteGroupData {
+    std::string source;                     // 图集路径（纹理缓存键，必填）
+    int frameWidth = 0, frameHeight = 0;    // 一格多大（所有格等大）
+    int columns = 0, rows = 0;              // 网格（行优先）
+    int margin = 0, spacing = 0;
+    std::vector<InkingSpriteGroupAnimation> animations;
+
+    std::size_t FindIndex(const std::string&) const noexcept;   // 找不到给 kNotFound
+    int ResolveCount() const noexcept;                          // columns × rows
+    InkingShapeBounds CellRect(int cell) const noexcept;        // 越界给全零
+    int SheetWidth() const noexcept;
+    int SheetHeight() const noexcept;
+    void Normalize();
+    std::string Validate();
+};
+```
+
+**等大是结构保证，不是运行期校验**：只给网格、不给矩形表，于是"同一帧里两块大小
+不同"根本配不出来。这是刻意的取舍——这个类型代表的"多块拼成一个 sprite"在业务上
+就是等格叠图（身体 + 头 + 武器都在同一套网格里）。
+
+三条定死的语义：
+
+| 语义 | 为什么 |
+| --- | --- |
+| **格号允许重复** | 同一帧同一格出现两次是合法的（故意叠两层做发光）。查重会把这种用法挡掉 |
+| **每帧块数允许不同** | 不强制槽位固定；代价是顶点数每帧可变（反正每块各自 `BuildShapeMesh`） |
+| **格号越界归 `Validate()`，不夹取** | "改到哪一格"猜不出来 |
+
+`Validate()` 九条，顺序即报告顺序：`source` 空 / 网格字段非法 / 动画表空 /
+动作名为空 / 重名 / `fps <= 0` / 动画没有帧（或某帧没有格号）/ 格号越界（报
+"哪个动画的第几帧第几块"）/ 事件帧越界。
+
+`Normalize()` 是**幂等的空操作**：这个类型没有"能修正"的字段（等格是结构保证、
+越界只能报错、`fps` 猜 12 就是静默兜底）。留着是为了与 `InkingSpriteData` 的构造
+流程对称。
+
+> 组件的构造与绘制在 T-05 / T-06 落地；这一节只描述数据面（先写清"能配什么"，
+> 再谈"怎么画"）。
+
 ## 六、画布
 
 ```C++
