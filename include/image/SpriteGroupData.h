@@ -38,6 +38,7 @@
 #include <image/SpriteData.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -76,6 +77,20 @@ struct InkingSpriteGroupAnimation {
 struct InkingSpriteGroupData {
     /// 图集路径（纹理缓存键）。**必填**——本类型不认"整张纹理"。
     std::string source;
+
+    /**
+     * 生成期烘进来的图集字节（0.9.0 T-05 补）。
+     *
+     * 与 `InkingButtonAppearance::imageBytes` 同一条约定：**非空就用它**、不读盘；
+     * 为空则组件按 `runtimeAsset` 那条路从资源根读 `source`。
+     *
+     * 为什么 T-04 时没写、T-05 补上：组的构造要吃一份 `InkingImageData`，而
+     * `InkingSpriteData` 的同名字段就是靠这两个字段撑起"生成期烘图"那条路
+     * （`normal.imageBytes` / `normal.imageSize`）。少了它们，组只能读盘，
+     * 生成器烘出来的图集用不上——那是真正的能力缺口，不是文档没写。
+     */
+    const std::uint8_t* imageBytes = nullptr;
+    std::size_t imageSize = 0;
 
     /// 一格的像素宽 / 高（所有格等大，这是结构保证）。
     int frameWidth = 0;

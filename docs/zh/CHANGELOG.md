@@ -171,6 +171,34 @@
   `applyPendingSpriteData`）；三个既有精灵自检（图集 / 事件 / 换配置）**一条断言
   不改**就过。
 
+### 新增（块叠加组的静态档 `InkingSpriteGroup`，0.9.0 T-05）
+
+- **`include/image/InkingSpriteGroup.h`**：`InkingStaticImage` + `InkingSpriteLike`，
+  与 `InkingSprite` **平级**（不派生它）。派生 `InkingSprite` 表面上白拿帧机，实际
+  要在构造期编一份**假配置**去骗过 `InkingSpriteData::Validate()`——那是"为了绕过
+  校验而编数据"，代价比复刻 30 行接线大得多。
+- `InkingSpriteLike` 补三个 protected 入口：`replaceFrameTable(每帧一组矩形, keepPhase)`
+  （语义与 `SetSpriteData` 的落帧那半逐条一致：第一次落帧不发 `frameChanged`、
+  清"播完了"、时间基准重对）、`setTiming(...)`（只装时间参数）、`setAutoplay(bool)`
+  （构造期设播放标志、**不动时间基准**——构造可能早于进场景）、`setConfigError(...)`
+  （让 `GetConfigError()` / `IsValid()` 对组也有意义）。
+- 组的数据面补两个字段（`InkingSpriteGroupData::imageBytes` / `imageSize`）：**生成期
+  烘进来的图集字节**优先、不读盘；为空才走"运行期从资源根读"。少了它们，生成器烘的
+  图集用不上——那是能力缺口，不是文档没写。
+- `onRender` 对每块调一次 `PaintImage`（同纹理、不同格矩形），提交层按纹理分批 ⇒
+  **2 块一帧只有 1 次 `SDL_RenderGeometry`**。不调 `PaintButtonAppearance`：那会把
+  描边 / 阴影按 K 份各画一遍。
+- 组的错误走 `GetGroupError()`，同时镜像进 `GetConfigError()`（一个来源、两个名字，
+  不想让调用方记两个错误口）。`SetSpriteData` 被 `using` 降为 private——组的不变量是
+  "一张图集 + 格号表"，不接受"换整份 `InkingSpriteData`"。
+- 自检 `CheckSpriteGroup()`：结构（2 动作 / 3 帧 / 每帧 2 块）、`SwitchTo` 的三条
+  语义（成功 / 切到当前是空操作 / 不存在 false + 恰好 1 条 ERROR）、非法配置构造期
+  拦下且不装帧表、**合批断言**（2 块与 1 块 `textureDraws` / `geometrySubmissions`
+  增量都 = 1）、像素断言（2 块与 1 块的读回 400/400 点全不同、上层覆盖顺序对）。
+- 一处与任务书 T-05 验收 ④ 不同：任务是"2 块各自落在同一矩形内的预期像素上"，但
+  K 块画在**同一个框**里（叠图）、BMP 不透明，读回只能看到最上面那块。改成
+  「2 块 vs 1 块两次读回不同」——实现若忽略多块，两次会一模一样，判据照样红。
+
 ### 新增（块叠加组的数据面，0.9.0 T-04）
 
 - **`InkingSpriteGroupData` + `InkingSpriteGroupAnimation`**

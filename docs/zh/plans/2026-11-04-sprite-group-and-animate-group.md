@@ -114,74 +114,7 @@
 
 ---
 
-### T-05 静态档 `InkingSpriteGroup`
-
-- **状态**：未开始
-- **落点**：新文件 `include/image/InkingSpriteGroup.h` + `src/image/InkingSpriteGroup.cpp`；`include/image/SpriteLike.h` 与 `src/image/InkingSprite.cpp` 加两个 protected 入口
-
-**准备怎么改**
-
-三条路：
-
-| 方案 | 做法 | 代价 | 结论 |
-| - | - | - | - |
-| A 派生 `InkingSprite` | 白拿帧机/帧事件/状态机 | 它构造要一份 `InkingSpriteData`，得造一份「假配置」让基类校验过关再覆盖帧表；脏 | 退路 |
-| B 派生 `InkingStaticImage` + `InkingSpriteLike` | 与 `InkingSprite` 平级，自己走「注入帧表 + 时间参数」 | 复刻 `onAnimationTick` 转调与 `hooksFor`（约 30 行接线） | **推荐** |
-| C 组合一个 `InkingSprite` 成员 | 零继承 | `InkingSpriteLike` 构造是 protected，组合不合法 | 不做 |
-
-选 B。A 的「假配置」会在构造期多跑一次 `loadFrameBytes` + 一次会失败的 `validateSheetGeometry`，而且那份假配置必须刚好让 `Validate()` 通过——这是典型的「为了绕过校验而编数据」，`AGENTS.md` 第 30 条最忌。
-
-B 需要一个「不经过 `InkingSpriteData` 校验就能装帧表」的入口，这就是 T-03 之外要补的两个 protected 方法：
-
-```cpp
-/// 用「每帧一组矩形」整体替换帧表。现有三档从不调。
-void replaceFrameTable(std::vector<std::vector<InkingShapeBounds>> perFrame);
-
-/// 只装时间参数（fps / loop / startFrame / events），不校验素材、不建帧表。
-void setTiming(double fps, bool loop, std::size_t startFrame,
-               double startOffsetSeconds,
-               std::vector<InkingSpriteData::SpriteEvent> events);
-```
-
-`replaceFrameTable` 把每帧造成一个 `LoadedFrame{data=nullptr, size=0, name=图集名, sourceRects=perFrame[i]}`，`_mode = FrameMode::Sheet`；`setTiming` 只填 `_sprite` 的那几个字段，不动 `_frames`。
-
-**硬约束**：`onRender` 里 K 次 `fillShapeTextured`，同一帧**只产生一次** `SDL_RenderGeometry`。
-
-**大致改动逻辑**
-
-1. `SpriteLike.h` + `InkingSprite.cpp`：加 `replaceFrameTable` / `setTiming` 两个 protected 入口（T-03 的地基之上）。
-2. `SpriteGroupData.h` 已就绪（T-04）。`InkingSpriteGroup` 构造：`_group = data;` → `_group.Normalize()` → `_groupError = _group.Validate()` → 取 `initialAnimation`（空 = 第 0 个，名字不存在则退回第 0 个 + 1 条 ERROR）。
-3. 构造基类：`InkingStaticImage` 吃一份 `InkingImageData`（`normal.source = _group.source`、`runtimeAsset = true`、形状默认 `Rect`）；`InkingSpriteLike` 吃 host / `static_cast<InkingImageLike&>(*this)` / `hooksFor(*this)`。
-4. 构造体：`setTiming(...)` + `replaceFrameTable(把当前动画的格号表转成矩形表)` → 落第 0 帧。**顺序不能反**：`setTiming` 要在 `replaceFrameTable` 之前，因为后者末尾会 `applyFrame` 并读 `_sprite.fps`。
-5. `hooksFor` 里 `setSourceRects` 绑成「把这一组矩形存进 `_frameRects`（成员 `vector<InkingShapeBounds>`）并 `MarkRepaintDirty()`」——**不走** `InkingImageLike::SetRenderSourceRect`（那个只存一个）。
-6. `onAnimationTick(delta)` 转调 `InkingSpriteLike::advanceFrame(delta)`（与 `InkingSprite.h:197` 同一行）。
-7. `onRender(pixelX, pixelY)`：按 `GetShape()` / 真实图尺寸构造 `InkingImageFitSpec`，对 `_frameRects` 每块调一次 `inking_detail::fillShapeTextured`，`tintColor` 取 `GetAppearance().normal.color` 的 alpha。（不调 `PaintButtonAppearance`——那会把描边/阴影按 K 份画一遍。）
-8. `SwitchTo(name, keepPhase)`：`FindIndex` 失败 → 返回 false + 1 条 ERROR；成功 → `setTiming` + `replaceFrameTable` + `ensureTimeBase` 语义（复用 `SetSpriteData` 里那套「换配后不跳帧」的顺序，见 `InkingSprite.cpp:197-209`）。
-9. 图集几何校验：构造期用 `inking_detail::ProbeImageSize` 量一次图，与 `SheetWidth()/SheetHeight()` 比对，不符记 ERROR（与 `validateSheetGeometry` 同一条判据，不另写一份）。
-
-**与改动前对比**
-
-| 场景 | 改动前（`InkingSprite` 图集） | 改动后（`InkingSpriteGroup`） |
-| - | - | - |
-| 一帧一块 | 支持 | 支持（`frames[i]` 里一个格号） |
-| 一帧 K 块 | 不支持 | 支持，**一次** `SDL_RenderGeometry` |
-| 切动画 | 换 `SpriteData`（可换文件、换尺寸） | 换格号表（**同一张图集**，尺寸恒等） |
-| 命中 | 一个矩形 | **不变**（一个矩形；透明区照样算命中） |
-| 序列帧 | 支持 | **不支持**（只吃一张图集） |
-
-**验收**
-
-`CheckSpriteGroup()`（新）：
-1. 构造一份 2 动画 × 3 帧 × 2 块 的配置，断言 `GetAnimationNames().size() == 2`、`GetCurrentAnimation() == "idle"`、`GetFrameCount() == 3`。
-2. `SwitchTo("run")` 后 `GetFrameCount()` 变、`GetCurrentAnimation()` 变、`animationChanged` 发一次（新, 旧）；`SwitchTo("nope")` → false + `InkLog::CountOf(Error)` 恰好 +1。
-3. 合批断言：`BatchStatsSnapshot().textureDraws` 在一帧内增量 = **1**（同图集 2 块）；`geometrySubmissions` 增量 = 1。
-4. 几何断言：离屏读回，第 0 帧的 2 块各自落在同一矩形内的预期像素上（与 `CheckSpriteSheet` 的读回段同一写法）。
-
-**风险与回退**
-
-- **风险一**：`onRender` 里 K 次 `BuildShapeMesh`（图像面没有顶点缓存槽）。K 小（≤8）时可忽略；K 大时要另开任务做顶点缓存。
-- **风险二**：`hooksFor` 是第三份接线（`InkingSprite` / `InkingDynamicSprite` / 本类）。三份接线会分家——缓解：三者的 `hooksFor` 只绑自己的成员，逻辑全在 `InkingSpriteLike`，且 T-03 已把签名统一。
-- **回退**：新文件、无既有消费者；出问题就删掉本次新增的 `InkingSpriteGroup`，T-02 的改名可保留（它本身是纯重命名）。
+- T-05 静态档 `InkingSpriteGroup`-已完成（2026-11-04，按方案 B：`InkingStaticImage` + `InkingSpriteLike` **与 `InkingSprite` 平级**——派生 `InkingSprite` 要在构造期编一份假配置骗过 `InkingSpriteData::Validate`，那就是"为了绕过校验而编数据"。`InkingSpriteLike` 补四个 protected 入口：`replaceFrameTable(每帧一组矩形, keepPhase)`（落帧语义与 `SetSpriteData` 逐条一致）、`setTiming`、`setAutoplay`（构造期设播放标志**不动时间基准**，否则第一次 tick 甩飞）、`setConfigError`（让 `IsValid`/`GetConfigError` 对组有意义）。数据面补 `imageBytes`/`imageSize`（生成期烘图集那条路，缺了它生成器烘的图集用不上）。`onRender` 每块一次 `PaintImage`、同纹理分批 ⇒ **2 块一帧 1 次 `SDL_RenderGeometry`**（不调 `PaintButtonAppearance`，那会把描边按 K 份画）。自检 `CheckSpriteGroup()` 全绿：结构 5 条 / `SwitchTo` 7 条（成功、`(新,旧)`、切当前是空操作、不存在 false + 恰好 1 条 ERROR、切失败状态不变）/ 非法配置 3 条（构造期拦、不装帧表、1 条 ERROR）/ **合批 3 条**（2 块与 1 块 `textureDraws`+`geometrySubmissions` 增量都是 1）/ 像素 3 条（两次读回 400/400 点全不同、上层覆盖顺序对）。**一处与验收 ④ 不同**：任务是"2 块各自落在预期像素上"，但 K 块同框叠图、BMP 不透明，读回只看得到最上层——改判「2 块 vs 1 块两次读回不同」，实现若忽略多块则两次一致、判据照样红。构建 0 warning、`selftest` 末行失败项 0、`ctest` 8 条全绿）
 
 ---
 
@@ -327,7 +260,7 @@ void setTiming(double fps, bool loop, std::size_t startFrame,
 | T-02 | 把 `InkingSpriteGroup` 改名为 `InkingAnimateGroup` | 0.9.0-b | 已完成 |
 | T-03 | 让帧机支持「每帧一组矩形」 | 0.9.0-c | 已完成 |
 | T-04 | 新增块叠加组的数据面 | 0.9.0-d | 已完成 |
-| T-05 | 静态档 `InkingSpriteGroup` | 0.9.0-d | 未开始 |
+| T-05 | 静态档 `InkingSpriteGroup` | 0.9.0-d | 已完成 |
 | T-06 | 动态档 `InkingDynamicSpriteGroup` | 0.9.0-e | 未开始 |
 | T-07 | 合批断言与 demo | 0.9.0-e | 未开始 |
 | T-08 | 文档、CHANGELOG、版本号收口 | 0.9.0-e | 未开始 |

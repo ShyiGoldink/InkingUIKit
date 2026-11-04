@@ -267,6 +267,52 @@ protected:
     /// 图集模式的构造期几何校验（量图 vs `SheetWidth/SheetHeight`）。
     void validateSheetGeometry();
 
+    /**
+     * @brief 用「每帧一组矩形」整体替换帧表（0.9.0 T-05）。现有三档**从不调**。
+     *
+     * 块叠加组走这条路：它的配置是 `InkingSpriteGroupData`（格号表），不是
+     * `InkingSpriteData`，所以不能经过 `rebuildFromData`（那条要先过
+     * `InkingSpriteData::Validate`，编一份"假配置"去骗校验是错的）。
+     *
+     * 语义与 `SetSpriteData` 的落帧那半**逐条一致**：第一次落帧不发 `frameChanged`、
+     * 清掉"播完了"、时间基准重对（`_offsetReady = false`，下一次 tick / `ensureTimeBase`
+     * 重新对齐）。`keepPhase == true` 保留替换前的帧号（越界夹到末帧）——那是
+     * "同一个动作换方向"的用法。
+     *
+     * @param perFrame 每帧一组源矩形（`CellRect` 算出来的绝对像素矩形）。
+     */
+    void replaceFrameTable(std::vector<std::vector<InkingShapeBounds>> perFrame,
+                           bool keepPhase = false);
+
+    /**
+     * @brief 只装时间参数（0.9.0 T-05）：`fps` / `loop` / `startFrame` /
+     *        `startOffsetSeconds` / `events`。
+     *
+     * **不校验素材、不建帧表**——帧表由 `replaceFrameTable` 装。两条调用顺序
+     * 不能反：`replaceFrameTable` 末尾会落帧，而落帧读 `_sprite.fps`。
+     */
+    void setTiming(double fps, bool loop, std::size_t startFrame,
+                   double startOffsetSeconds,
+                   std::vector<InkingSpriteData::SpriteEvent> events);
+
+    /**
+     * @brief 构造期设"在播"标志，**不动时间基准**（0.9.0 T-05）。
+     *
+     * 为什么不是直接调 `Play()`：构造可能早于进场景（先 `new` 后 `AddChild`），
+     * 那时时钟还是兜底的 0，`Play()` 里那次 `ensureTimeBase()` 会对出一个会在
+     * 第一次 tick 甩飞的基准（见 `ensureTimeBase` 的注释）。第一次 tick 自己会对齐。
+     */
+    void setAutoplay(bool play) noexcept;
+
+    /**
+     * @brief 把"派生类自己那一层的配置错误"塞进来（0.9.0 T-05）。
+     *
+     * 块叠加组的错误在 `InkingSpriteGroupData::Validate()`，而 `GetConfigError()` /
+     * `IsValid()` 读的是 `_configError`。不给这条通道，组的 `IsValid()` 会恒真——
+     * 正是"配错了却看起来正常"的那类静默失效。
+     */
+    void setConfigError(std::string error);
+
     /// 落到某一帧：换字节视图（序列帧）/ 换源矩形（图集）、累加计数、发事件。
     /// @param fromPlayback true = 播放推进导致（要计 skipped），false = 定位 / 初始。
     void applyFrame(std::size_t index, bool fromPlayback);

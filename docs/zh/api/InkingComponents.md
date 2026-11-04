@@ -1047,6 +1047,52 @@ struct InkingSpriteGroupData {
 > 组件的构造与绘制在 T-05 / T-06 落地；这一节只描述数据面（先写清"能配什么"，
 > 再谈"怎么画"）。
 
+### 块叠加组 `InkingSpriteGroup`（0.9.0 T-05）
+
+````C++
+class InkingSpriteGroup : public InkingStaticImage, public InkingSpriteLike {
+public:
+    InkingSpriteGroup(InkingWidget* parent, const InkingSpriteGroupData& data,
+                      const std::string& initialAnimation = {});
+
+    InkingEvent<const std::string&, const std::string&> animationChanged;  // (新, 旧)
+    InkingEvent<std::size_t, std::size_t> frameChanged;                   // (新帧号, 旧帧号)
+    InkingEvent<const std::string&, std::size_t> frameEvent;              // (事件名, 帧号)
+    InkingEvent<> finished;
+
+    bool SwitchTo(const std::string& name, bool keepPhase = false);
+
+    const std::string& GetCurrentAnimation() const noexcept;
+    std::vector<std::string> GetAnimationNames() const;
+    const InkingSpriteGroupData& GetGroupData() const noexcept;
+    const std::string& GetGroupError() const noexcept;
+
+    // 帧机的观测口（与 InkingSprite 同名同义）：
+    // IsPlaying / IsFinished / GetFrameIndex / GetFrameCount / GetLoadedFrameCount /
+    // GetFrameAdvanceCount / GetSkippedFrameCount，外加 Play / Pause / Stop / SeekToFrame
+};
+````
+
+**一帧 K 块，一次提交**：`onRender` 对每块调一次 `inking_detail::PaintImage`
+（同一张纹理、不同的格矩形），提交层按**纹理**分批 ⇒ 2 块一帧只有 **1** 次
+`SDL_RenderGeometry`。自检用 `BatchStats` 的差值钉住（2 块与 1 块的
+`textureDraws` / `geometrySubmissions` 增量都 = 1）。
+
+| 语义 | 结果 |
+| --- | --- |
+| 组件框 | **一格**大小（K 块都画在同一个框里，叠图）；不是整张图集 |
+| `SwitchTo` 存在的动作 | 换格号表 → 帧数 / 当前动作都跟新动作走；`animationChanged(新, 旧)` 发一次 |
+| 切到**当前**动作 | 空操作（返回 true、不重建、不发事件） |
+| 名字不存在 | 返回 false + 一条 ERROR（不静默停在旧动作） |
+| 换动作与相位 | `keepPhase=false` 落第 0 帧；`true` 保留帧号（越界夹到末帧） |
+| 图集几何不符 | **构造期**一条 ERROR（`GetGroupError()` 非空、`IsValid()` 假），不装帧表 ⇒ 不画 |
+
+> **`SetSpriteData` 被降成 private**：组的不变量是"一张图集 + 格号表"，不接受
+> "换整份 `InkingSpriteData`"（那可能换文件、换尺寸）。要切动作走 `SwitchTo`。
+
+> **命中不变**：一个矩形。K 块等格同原点，分开命中没有语义（点眼睛那种需求不在
+> 本轮）。
+
 ## 六、画布
 
 ```C++

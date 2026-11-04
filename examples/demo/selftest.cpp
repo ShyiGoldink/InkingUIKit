@@ -51,6 +51,7 @@
 #include <image/InkingStaticImage.h>
 #include <image/SpriteData.h>
 #include <image/SpriteGroupData.h>
+#include <image/InkingSpriteGroup.h>
 #include <panel/InkingDynamicPanel.h>
 #include <panel/InkingStaticPanel.h>
 #include <panel/PanelData.h>
@@ -7784,6 +7785,233 @@ void CheckAnimateGroup() {
 }
 
 // ---------------------------------------------------------------------------
+// 0.9.0 T-05：块叠加组的静态档
+// ---------------------------------------------------------------------------
+//
+// 验四件事：结构（动作 / 帧 / 块数）、切动作、合批（K 块一次提交）、像素。
+//
+// **像素判据为什么是"两次不同"而不是逐块对拍**：K 块画在**同一个框**里（叠图），
+// 后画的盖住先画的（BMP 不透明），所以读回只能看到最上面那一块。于是判据取
+// 「2 块的读回 == 第 1 格图案」+「1 块的读回 == 第 0 格图案」+「两者不同」——
+// 如果实现把"多块"整个忽略掉，两次读回会一模一样，后两条当场红。
+void CheckSpriteGroup(SDL_Renderer* renderer) {
+    std::printf("\n-- 块叠加组 InkingSpriteGroup：一帧 K 块、一次提交（0.9.0 T-05） --\n");
+
+    // 6×1 图集（240×40、格 40）：`MakeSheetBmp` 的图案随**格号**变，
+    // 所以格 0 / 格 1 的像素不同——"上层盖住下层"才验得出来。
+    const std::vector<std::uint8_t> atlas = MakeSheetBmp(240, 40, 40, 0);
+
+    // `blocksPerFrame` 块一帧：idle 3 帧、run 2 帧（非循环，测 finished）。
+    const auto makeGroup = [&atlas](int blocksPerFrame) {
+        InkingSpriteGroupData group;
+        group.source = "sgroup_atlas";
+        group.imageBytes = atlas.data();
+        group.imageSize = atlas.size();
+        group.frameWidth = 40;
+        group.frameHeight = 40;
+        group.columns = 6;
+        group.rows = 1;
+
+        InkingSpriteGroupAnimation idle;
+        idle.name = "idle";
+        idle.fps = 12.0;
+        idle.loop = true;
+        for (int f = 0; f < 3; ++f) {
+            std::vector<int> cells;
+            for (int b = 0; b < blocksPerFrame; ++b) {
+                cells.push_back(f * blocksPerFrame + b);
+            }
+            idle.frames.push_back(std::move(cells));
+        }
+        idle.events.push_back(InkingSpriteData::SpriteEvent{1, "step"});
+
+        InkingSpriteGroupAnimation run;
+        run.name = "run";
+        run.fps = 20.0;
+        run.loop = false;
+        run.frames = {{1}, {3}};
+
+        group.animations.push_back(std::move(idle));
+        group.animations.push_back(std::move(run));
+        return group;
+    };
+
+    // ① 结构：2 个动作、3 帧、每帧 2 块
+    {
+        InkingScene scene("sprite_group_basic");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        auto* group = static_cast<InkingSpriteGroup*>(scene.AddChild(
+            std::make_unique<InkingSpriteGroup>(&scene, makeGroup(2))));
+        const std::vector<std::string> names = group->GetAnimationNames();
+        std::printf("         动作数=%zu 当前=%s 帧数=%zu 已加载=%zu 播放=%d\n",
+                    names.size(), group->GetCurrentAnimation().c_str(),
+                    group->GetFrameCount(), group->GetLoadedFrameCount(),
+                    group->IsPlaying() ? 1 : 0);
+        Check(names.size() == 2 && group->GetCurrentAnimation() == "idle",
+              "T-05：2 个动作、默认落在第 0 个（idle）");
+        Check(group->GetFrameCount() == 3 && group->GetLoadedFrameCount() == 3,
+              "T-05：3 帧、每帧 2 块都装上了");
+        Check(group->IsValid() && group->GetGroupError().empty(),
+              "T-05：合法配置没有错误（IsValid 与 GetGroupError 同源）");
+        Check(group->IsSheetMode() && group->GetWidth() == 40
+                  && group->GetHeight() == 40,
+              "T-05：走图集模式，组件框 = 一格大小（40×40，不是整张 240×40）");
+        Check(group->IsPlaying(), "T-05：构造后自动播（与 InkingSprite 的 autoplay 同义）");
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ② 切动作：帧数跟着变、事件发一次、不存在的动作不静默
+    {
+        InkingScene scene("sprite_group_switch");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        auto* group = static_cast<InkingSpriteGroup*>(scene.AddChild(
+            std::make_unique<InkingSpriteGroup>(&scene, makeGroup(2))));
+
+        int changed = 0;
+        std::string lastNew;
+        std::string lastOld;
+        group->animationChanged.Subscribe(
+            [&changed, &lastNew, &lastOld](const std::string& now,
+                                           const std::string& before) {
+                ++changed;
+                lastNew = now;
+                lastOld = before;
+            });
+
+        Check(group->SwitchTo("run"), "T-05：SwitchTo 存在的动作返回 true");
+        std::printf("         切到 run：帧数=%zu 当前=%s 事件=%d (%s←%s)\n",
+                    group->GetFrameCount(), group->GetCurrentAnimation().c_str(),
+                    changed, lastNew.c_str(), lastOld.c_str());
+        Check(group->GetFrameCount() == 2 && group->GetCurrentAnimation() == "run",
+              "T-05：切到 run 后帧数与当前动作都跟新动作走");
+        Check(changed == 1 && lastNew == "run" && lastOld == "idle",
+              "T-05：animationChanged 发一次，(新, 旧) 名字正确");
+        Check(group->SwitchTo("run") && changed == 1,
+              "T-05：切到当前动作是空操作（不重建、不发事件）");
+
+        InkLog::ResetStats();
+        Check(!group->SwitchTo("nope"),
+              "T-05：SwitchTo 不存在的动作返回 false（不静默停在旧动作）");
+        Check(InkLog::CountOf(InkingLogLevel::Error) == 1,
+              "T-05：不存在的动作恰好一条 ERROR");
+        Check(group->GetCurrentAnimation() == "run" && group->GetFrameCount() == 2,
+              "T-05：切失败时动作与帧数都不变");
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ③ 非法配置：格号越界在构造期拦下，且不装帧表（不画）
+    {
+        InkingScene scene("sprite_group_bad");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        InkingSpriteGroupData bad = makeGroup(2);
+        bad.animations[0].frames[0][0] = 99;  // 只有 6 格
+
+        InkLog::ResetStats();
+        auto* group = static_cast<InkingSpriteGroup*>(scene.AddChild(
+            std::make_unique<InkingSpriteGroup>(&scene, bad)));
+        std::printf("         格号 99（只有 6 格）→ IsValid=%d 帧数=%zu\n%s\n",
+                    group->IsValid() ? 1 : 0, group->GetFrameCount(),
+                    group->GetGroupError().c_str());
+        Check(!group->IsValid()
+                  && group->GetGroupError().find("越界") != std::string::npos,
+              "T-05：格号越界在构造期被拦（不是播到那一帧才发现）");
+        Check(group->GetFrameCount() == 0,
+              "T-05：非法配置不装帧表（不画，不是画半帧）");
+        Check(InkLog::CountOf(InkingLogLevel::Error) == 1,
+              "T-05：非法配置恰好一条 ERROR");
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    // ④⑤ 合批与像素
+    if (renderer == nullptr) {
+        Check(false, "T-05：像素与合批断言需要渲染器（拿不到就跳过）");
+        return;
+    }
+
+    int outputWidth = 0;
+    int outputHeight = 0;
+    SDL_GetRenderOutputSize(renderer, &outputWidth, &outputHeight);
+    const float pixelRatio =
+        outputWidth > 0
+            ? static_cast<float>(outputWidth) / static_cast<float>(InkingDesignWidth())
+            : 1.0f;
+    const SDL_Rect region{
+        0, 0, static_cast<int>(std::lround(40.0f * pixelRatio)),
+        static_cast<int>(std::lround(40.0f * pixelRatio))};
+
+    // 渲一帧、读回、取计数差值。**不 tick**：帧号停在 0，读回才是确定的。
+    const auto shoot = [&](int blocksPerFrame, std::uint64_t* textureDraws,
+                           std::uint64_t* submissions) {
+        InkingScene scene("sprite_group_px");
+        InkingSceneLibrary::SetActiveScene(&scene);
+        auto* group = static_cast<InkingSpriteGroup*>(scene.AddChild(
+            std::make_unique<InkingSpriteGroup>(&scene, makeGroup(blocksPerFrame))));
+        group->Pause();
+        group->SeekToFrame(0);
+
+        const inking_detail::BatchStats before = inking_detail::BatchStatsSnapshot();
+        RenderSvgFrame(renderer, scene);
+        const inking_detail::BatchStats after = inking_detail::BatchStatsSnapshot();
+        const std::vector<std::uint32_t> pixels = ReadPixelRegion(renderer, region);
+        EndSvgFrame(renderer);
+
+        if (textureDraws != nullptr) {
+            *textureDraws = after.textureDraws - before.textureDraws;
+        }
+        if (submissions != nullptr) {
+            *submissions = after.geometrySubmissions - before.geometrySubmissions;
+        }
+        InkingSceneLibrary::SetActiveScene(nullptr);
+        return pixels;
+    };
+
+    std::uint64_t drawsTwo = 0;
+    std::uint64_t subsTwo = 0;
+    std::uint64_t drawsOne = 0;
+    std::uint64_t subsOne = 0;
+    const std::vector<std::uint32_t> twoBlocks = shoot(2, &drawsTwo, &subsTwo);
+    const std::vector<std::uint32_t> oneBlock = shoot(1, &drawsOne, &subsOne);
+
+    std::printf("         2 块：textureDraws +%llu  geometrySubmissions +%llu\n",
+                static_cast<unsigned long long>(drawsTwo),
+                static_cast<unsigned long long>(subsTwo));
+    std::printf("         1 块：textureDraws +%llu  geometrySubmissions +%llu\n",
+                static_cast<unsigned long long>(drawsOne),
+                static_cast<unsigned long long>(subsOne));
+
+    Check(drawsTwo == 1,
+          "T-05：同图集 2 块一帧只有 **1** 次纹理提交（这是本组存在的理由）");
+    Check(subsTwo == 1,
+          "T-05：2 块合成一次 SDL_RenderGeometry（不是两块各提交一次）");
+    Check(drawsOne == 1,
+          "T-05：1 块的对照组也是 1（不是「块多所以提交多」）");
+
+    const std::size_t pixelCount =
+        static_cast<std::size_t>(region.w) * static_cast<std::size_t>(region.h);
+    const bool sameSize = twoBlocks.size() == oneBlock.size()
+                          && twoBlocks.size() == pixelCount;
+    Check(sameSize, "T-05：两次读回的像素数都等于区域大小（没读到空缓冲）");
+
+    std::size_t differing = 0;
+    if (sameSize) {
+        for (std::size_t i = 0; i < pixelCount; ++i) {
+            if (twoBlocks[i] != oneBlock[i]) {
+                ++differing;
+            }
+        }
+    }
+    std::printf("         2 块与 1 块的读回差异像素：%zu / %zu\n", differing, pixelCount);
+    Check(sameSize && differing > pixelCount / 4,
+          "T-05：2 块与 1 块画出来的像素**明显不同**（块数真的参与了绘制）");
+    // 2 块时最上面是格 1、1 块时是格 0：两者中心点必须不同。
+    const std::size_t center =
+        static_cast<std::size_t>(region.h / 2) * static_cast<std::size_t>(region.w)
+        + static_cast<std::size_t>(region.w / 2);
+    Check(sameSize && twoBlocks[center] != oneBlock[center],
+          "T-05：2 块的上层是格 1、1 块是格 0（上层覆盖下层，顺序对）");
+}
+
+// ---------------------------------------------------------------------------
 // 0.9.0 T-04：块叠加组的数据面
 // ---------------------------------------------------------------------------
 //
@@ -10043,6 +10271,9 @@ int main() {
 
     // ---- 块叠加组的数据面：等格 / 格号表 / 九条校验（0.9.0 T-04）----
     CheckSpriteGroupDataValidate();
+
+    // ---- 块叠加组的静态档：一帧 K 块、一次提交（0.9.0 T-05）----
+    CheckSpriteGroup(rnd);
 
     // ---- 0.9.0 批次 a+b：视频出画 / 滑块 / 进度条（T-01 ~ T-03）----
     //

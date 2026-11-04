@@ -180,6 +180,66 @@ void InkingSpriteLike::syncSheetBytes() {
                     _sprite.normal.source);
 }
 
+void InkingSpriteLike::setTiming(double fps, bool loop, std::size_t startFrame,
+                                 double startOffsetSeconds,
+                                 std::vector<InkingSpriteData::SpriteEvent> events) {
+    // 只碰这五个字段：`_sprite` 的素材面（`frames` / `sheet` / `normal`）保持默认
+    // 空值——组的素材在 `InkingStaticImage` 那一侧（一张图集），不经过本类的配置。
+    // 于是 `_sprite.Validate()` 对组**永远会说"没有可播的帧"**，这是预期的：
+    // 组不调 `rebuildFromData`，也不暴露 `GetSpriteData()`。
+    _sprite.fps = fps;
+    _sprite.loop = loop;
+    _sprite.startFrame = startFrame;
+    _sprite.startOffsetSeconds = startOffsetSeconds;
+    _sprite.events = std::move(events);
+}
+
+void InkingSpriteLike::setAutoplay(bool play) noexcept {
+    // 与 `resetSpriteData` 里那行 `_playing = _sprite.autoplay;` 同一个含义：
+    // 只设标志，不碰 `_offsetReady` / `_pauseOffset`。
+    _playing = play && !_frames.empty();
+}
+
+void InkingSpriteLike::setConfigError(std::string error) {
+    _configError = std::move(error);
+}
+
+void InkingSpriteLike::replaceFrameTable(
+    std::vector<std::vector<InkingShapeBounds>> perFrame, bool keepPhase) {
+    const std::size_t previousFrame = _frameIndex;
+
+    // 组没有"每帧一份字节"这回事：一张图集贯穿全部动作。`_frameBytes` 清掉避免
+    // 悬垂（它可能来自上一次序列帧配置），`_frames` 重建。
+    _frameBytes.clear();
+    _frames.clear();
+    _loadedFrameCount = 0;
+
+    _frames.resize(perFrame.size());
+    for (std::size_t i = 0; i < perFrame.size(); ++i) {
+        // `name` 留空：组的纹理键来自 `InkingStaticImage` 的 `appearance.source`，
+        // 而 `LoadedFrame::name` 只服务 `setBytes` 那条路（组不换字节）。
+        _frames[i].sourceRects = std::move(perFrame[i]);
+        if (!_frames[i].sourceRects.empty()) {
+            ++_loadedFrameCount;
+        }
+    }
+    _mode = FrameMode::Sheet;
+
+    // 与 `SetSpriteDataNow` 那半段逐条同义：换配后的第一次落帧没有"旧帧"这回事，
+    // 时间基准也必须重对（帧号与格号表都换了，旧相位没有意义）。
+    _applied = false;
+    _offsetReady = false;
+    _finished = false;
+    _frameIndex = 0;
+
+    if (_frames.empty()) {
+        return;
+    }
+    const std::size_t start =
+        keepPhase && previousFrame < _frames.size() ? previousFrame : 0u;
+    applyFrame(start, false);
+}
+
 void InkingSpriteLike::SetSpriteData(const InkingSpriteData& data, bool keepPhase) {
     // 派发期间换配置：**只登记，不执行**（0.9.0 T-01）。
     //
