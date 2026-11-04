@@ -179,6 +179,13 @@ void AppendTexturedGeometry(SDL_Texture* texture, const SDL_Vertex* vertices,
         || vertexCount == 0 || indexCount == 0) {
         return;
     }
+    // 计数（dev010 T-06）：这条路**没有顶点缓存**——每帧都要把网格重新算一遍
+    // 再交进来。原来 `vertexRebuilds` 只长在纯色那条（`AppendLocalGeometry`），
+    // 于是"1000 个图元每帧重建 1000 份网格"这件事在观察口上读出来是 0
+    // （探针实测），功能全对、只是白干活——正是 `AGENTS.md` §6 第 40 条那一类。
+    //
+    // **不记 `vertexReuses`**：这条路没有"复用"可言，记了等于撒谎。
+    ++counters().vertexRebuilds;
     FrameState& frame = state();
     // **批就是按纹理分的**：换了纹理就刷上一批（同一张纹理连续画才会合并）。
     if (frame.texture != texture) {

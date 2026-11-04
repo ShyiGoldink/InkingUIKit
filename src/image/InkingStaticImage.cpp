@@ -280,6 +280,19 @@ int InkingStaticImage::AssetLoadCount() const noexcept {
 // 运行期换图
 // ---------------------------------------------------------------------------
 
+void InkingImageLike::SetEdgeFeather(bool enabled) noexcept {
+    if (_edgeFeather == enabled) {
+        return;
+    }
+    _edgeFeather = enabled;
+    // 只标重绘脏：几何、命中包络都不动（那一圈带子在**绘制**里，不在布局里）。
+    _host->MarkRepaintDirty();
+}
+
+bool InkingImageLike::IsEdgeFeather() const noexcept {
+    return _edgeFeather;
+}
+
 bool InkingImageLike::LoadAsset(const std::string& relative) {
     ++_assetLoadCount;
     std::vector<std::uint8_t> bytes = InkingAssetLoad(relative);
@@ -477,6 +490,6 @@ void InkingStaticImage::onRender(float pixelX, float pixelY) const {
     inking_detail::PaintButtonAppearance(*this, GetShape(), GetAppearance(),
                                   GetData().stroke, GetData().shadow,
                                   GetDisplayColor(), GetDisplayTransform(),
-                                  pixelX, pixelY);
+                                  pixelX, pixelY, IsEdgeFeather());
 }
 

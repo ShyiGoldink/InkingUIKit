@@ -28,6 +28,8 @@
 
 #include <button/InkingDynamicButton.h>
 #include <button/InkingStaticButton.h>
+#include <asset/InkingAsset.h>
+#include <asset/InkingTexture.h>
 #include <config/window_config.h>
 #include <dataStruct/InkingImageScale.h>
 #include <dataStruct/InkingShapeSpec.h>
@@ -43,6 +45,8 @@
 #include <input/ShortcutRegistry.h>
 #include <image/ImageData.h>
 #include <image/InkingAtlas.h>
+#include <image/InkingGeometryLayer.h>
+#include <image/InkingMask.h>
 #include <image/InkingDynamicImage.h>
 #include <image/InkingDynamicSprite.h>
 #include <image/InkingAnimateGroup.h>
@@ -79,6 +83,7 @@
 #include <render/InkingMesh.h>
 #include <render/InkingSvg.h>
 #include <render/InkingText.h>
+#include <render/InkingTextureResolve.h>
 #include <scene/InkingScene.h>
 #include <scene/SceneLibrary.h>
 #include <theme/InkingTheme.h>
@@ -648,6 +653,14 @@ constexpr SilentFailureItem kSilentFailures[] = {
      "纹理账本只建不销账：内存只涨不回落，画面上完全看不出来"},
     {"glyph_atlas_full", "T-02（0.8.3）",
      "字形图集满了：文字永久改走整段纹理（内存与首帧耗时都涨），日志一个字都没有"},
+    {"texture_handle_stale", "T-01（dev010）",
+     "纹理句柄指向的图已释放 / 换过渲染器：图元静默消失，画面少一块没人报"},
+    {"geometry_index_overflow", "T-03（dev010）",
+     "任意顶点的索引越界：不崩，画成随机碎片（比整块不画难查得多）"},
+    {"mask_vertex_capped", "T-05（dev010）",
+     "遮罩细分撞上限：边缘变粗糙，看起来像素材被压过，没人会去查密度"},
+    {"ninepatch_border_clamped", "T-04（dev010）",
+     "九宫格边框之和超过目标：边框被夹细，看起来像美术配错了图"},
 };
 
 /// 自检**真的跑到**的条目（运行时登记）。
@@ -6472,6 +6485,804 @@ void CheckImageSampling(SDL_Renderer* renderer) {
 }
 
 // ---------------------------------------------------------------------------
+// T-01（dev010）：纹理句柄
+// ---------------------------------------------------------------------------
+//
+// 要验的不是"能不能取到一张图"，而是三件**句柄才有的语义**：
+//   ① 同一个路径 Load 两次 ⇒ 同一个 id、只解码一次（`cacheHits` 记账）；
+//   ② 引用语义：放掉一份，另一份仍有效；放掉最后一份才失效；
+//   ③ **钉住不被淘汰**：持有句柄期间把预算压到 1 字节、连跳十帧，
+//      `textureEvictions` 增量为 0，且再解析出来还是**同一张**纹理（指针相等
+//      ⇒ 中途没被销毁重建）。放掉之后同样的操作必须真的淘汰一次——否则
+//      "没淘汰"可能只是"淘汰机制根本没跑"。
+//
+// ④ 失效 id：解析返回 nullptr、`staleSubmits` 记账，**不报错**（一层几千个
+//    图元，一个坏句柄让整屏黑掉是最糟的失败方式；提醒的责任在提交层）。
+void CheckTextureHandle(SDL_Renderer* renderer) {
+    std::printf("\n-- 纹理句柄：同路径同 id / 引用语义 / 钉住不被淘汰（dev010 T-01） --\n");
+    using inking_detail::TextCacheStats;
+    using inking_detail::TextCacheStatsSnapshot;
+
+    if (renderer == nullptr) {
+        std::printf("         [skip] 没有渲染器，纹理无从建起\n");
+        return;
+    }
+
+    // 干净起点：句柄表、纹理表、预算都回到默认档。
+    InkingTextureReleaseAll();
+    inking_detail::ReleaseTextCache();
+    inking_detail::SetTextureBudget(0);
+
+    const InkingTextureStats stats0 = InkingTextureStatsSnapshot();
+
+    // ---- ① 同路径两次 Load ----
+    const InkingTextureHandle first = InkingLoadTexture("walk.png");
+    const InkingTextureHandle second = InkingLoadTexture("walk.png");
+    int width = 0;
+    int height = 0;
+    Check(first.Valid() && second.Valid() && first == second,
+          "T-01：同一路径 Load 两次返回同一个句柄");
+    Check(InkingTextureSize(first, &width, &height) && width > 0 && height > 0,
+          "T-01：句柄能报出像素尺寸");
+    std::printf("         walk.png 句柄 id=%u 尺寸 %d×%d\n", first.id, width,
+                height);
+
+    const InkingTextureStats stats1 = InkingTextureStatsSnapshot();
+    Check(stats1.loads - stats0.loads == 1
+              && stats1.cacheHits - stats0.cacheHits == 1,
+          "T-01：只解码一次、第二次记一次 cacheHit");
+
+    // ---- ② 引用语义 ----
+    InkingReleaseTexture(first);
+    Check(InkingTextureValid(second), "T-01：放掉第一份之后，第二份仍有效");
+    InkingReleaseTexture(second);
+    Check(!InkingTextureValid(second),
+          "T-01：放掉最后一份之后句柄失效（不会误伤，也不会残留）");
+
+    // ---- ③ 钉住不被淘汰 ----
+    const InkingTextureHandle pinned = InkingLoadTexture("walk.png");
+    int pinnedWidth = 0;
+    int pinnedHeight = 0;
+    SDL_Texture* texture = inking_detail::ResolveTextureHandle(
+        pinned.id, renderer, &pinnedWidth, &pinnedHeight);
+    Check(texture != nullptr, "T-01：句柄能解析成纹理（首次提交时建）");
+    if (texture == nullptr) {
+        InkingReleaseTexture(pinned);
+        InkingTextureReleaseAll();
+        // 这里**不登记**"已验过"：钉住那几项根本没验到。元自检会因此报红，
+        // 而那正是想要的信号（登记只写在完整跑完的那一处）。
+        return;
+    }
+
+    const TextCacheStats beforePin = TextCacheStatsSnapshot();
+    // 1 字节预算：任何**没被钉住**的条目都该被收走（`walk.png` 远大于 1 字节）。
+    inking_detail::SetTextureBudget(1);
+    for (int i = 0; i < 10; ++i) {
+        inking_detail::BeginTextFrame(renderer);
+    }
+    const TextCacheStats whilePinned = TextCacheStatsSnapshot();
+    std::printf("         钉住时 10 帧 ⇒ 淘汰增 %llu\n",
+                static_cast<unsigned long long>(
+                    whilePinned.textureEvictions - beforePin.textureEvictions));
+    Check(whilePinned.textureEvictions == beforePin.textureEvictions,
+          "T-01：句柄钉住的纹理不被预算淘汰");
+
+    SDL_Texture* again = inking_detail::ResolveTextureHandle(pinned.id, renderer,
+                                                             nullptr, nullptr);
+    Check(again == texture, "T-01：十帧之后解析出来还是同一张纹理（没被销毁重建）");
+
+    // 对照：放掉之后同样的操作**必须**淘汰一次，否则"没淘汰"可能只是没跑。
+    InkingReleaseTexture(pinned);
+    const TextCacheStats beforeUnpin = TextCacheStatsSnapshot();
+    for (int i = 0; i < 3; ++i) {
+        inking_detail::BeginTextFrame(renderer);
+    }
+    const TextCacheStats afterUnpin = TextCacheStatsSnapshot();
+    std::printf("         放掉后 3 帧 ⇒ 淘汰增 %llu\n",
+                static_cast<unsigned long long>(
+                    afterUnpin.textureEvictions - beforeUnpin.textureEvictions));
+    Check(afterUnpin.textureEvictions > beforeUnpin.textureEvictions,
+          "T-01：放掉之后重新可淘汰（对照，证明预算真的在起作用）");
+
+    // ---- ④ 失效 id ----
+    const InkingTextureStats beforeStale = InkingTextureStatsSnapshot();
+    // 差值而不是绝对值：`InkLog` 的计数是全进程累计的，前面的用例已经记过 ERROR。
+    const int errorsBefore = InkLog::CountOf(InkingLogLevel::Error);
+    SDL_Texture* stale =
+        inking_detail::ResolveTextureHandle(999999u, renderer, nullptr, nullptr);
+    const InkingTextureStats afterStale = InkingTextureStatsSnapshot();
+    Check(stale == nullptr && afterStale.staleSubmits > beforeStale.staleSubmits,
+          "T-01：未注册的 id 解析为 nullptr 并记一次 staleSubmits");
+    Check(InkLog::CountOf(InkingLogLevel::Error) == errorsBefore,
+          "T-01：失效句柄**不刷错误日志**（提醒的责任在提交层，不在解析处）");
+
+    // ---- 收尾：预算回到默认档，句柄表清空 ----
+    inking_detail::SetTextureBudget(0);
+    InkingTextureReleaseAll();
+    const InkingTextureStats finalStats = InkingTextureStatsSnapshot();
+    Check(finalStats.liveHandles == 0 && finalStats.pinnedBytes == 0,
+          "T-01：ReleaseAll 之后没有活着的句柄、没有残留的钉住字节");
+    NoteSilentFailure("texture_handle_stale");
+}
+
+// ---------------------------------------------------------------------------
+// T-04（dev010）：九宫格与平铺
+// ---------------------------------------------------------------------------
+//
+// 纯几何，不需要渲染器。三条断言：
+//   ① 正常边框：9 块的面积和 == 目标面积、每块尺寸为正（切开但不丢不重）；
+//   ② 边框之和超过目标：按比例夹，**不产生负宽**（负宽会画出翻转的图块）；
+//   ③ 平铺两段式：只算数那一次与真填那一次的返回值一致（调用方靠它对上容量）。
+void CheckNinePatch() {
+    std::printf("\n-- 九宫格与平铺：展开 / 夹取 / 两段式（dev010 T-04） --\n");
+
+    const InkingShapeBounds dst{0.0f, 0.0f, 100.0f, 100.0f};
+    const InkingShapeBounds src{0.0f, 0.0f, 100.0f, 100.0f};
+
+    // ---- ① 正常边框 ----
+    {
+        InkingNinePatchTile tiles[9];
+        const InkingNinePatchBorder border{10.0f, 10.0f, 10.0f, 10.0f};
+        const std::size_t count = InkingExpandNinePatch(dst, src, border, tiles);
+        float area = 0.0f;
+        bool positive = true;
+        for (std::size_t i = 0; i < count; ++i) {
+            area += tiles[i].dst.width * tiles[i].dst.height;
+            if (tiles[i].dst.width <= 0.0f || tiles[i].dst.height <= 0.0f) {
+                positive = false;
+            }
+        }
+        std::printf("         100×100 / 边框 10：%zu 块，面积和 %.1f\n", count, area);
+        Check(count == 9, "T-04：切成 9 块");
+        Check(positive && std::fabs(area - 10000.0f) < 1.0f,
+              "T-04：9 块面积和 == 目标面积（不丢不重、每块为正）");
+        Check(std::fabs(tiles[0].dst.width - 10.0f) < 0.01f
+                  && std::fabs(tiles[4].dst.width - 80.0f) < 0.01f,
+              "T-04：四角保原尺寸、中心块吃掉剩下的（10 / 80 / 10）");
+    }
+
+    // ---- ② 边框之和超过目标 ----
+    {
+        InkingNinePatchTile tiles[9];
+        const InkingNinePatchBorder huge{60.0f, 60.0f, 60.0f, 60.0f};
+        const std::size_t count = InkingExpandNinePatch(dst, src, huge, tiles);
+        bool nonNegative = true;
+        for (std::size_t i = 0; i < count; ++i) {
+            if (tiles[i].dst.width < 0.0f || tiles[i].dst.height < 0.0f) {
+                nonNegative = false;
+            }
+        }
+        std::printf("         100×100 / 边框 60：角块 %.1f 宽，中心块 %.1f 宽\n",
+                    static_cast<double>(tiles[0].dst.width),
+                    static_cast<double>(tiles[4].dst.width));
+        Check(count == 9 && nonNegative,
+              "T-04：边框之和超过目标时不产生负宽（按比例夹）");
+        Check(std::fabs(tiles[0].dst.width - 50.0f) < 0.01f,
+              "T-04：60+60 超过 100 ⇒ 夹到 50/50");
+        NoteSilentFailure("ninepatch_border_clamped");
+    }
+
+    // ---- ③ 平铺两段式 ----
+    {
+        const InkingShapeBounds tileSource{0.0f, 0.0f, 32.0f, 32.0f};
+        const std::size_t needed =
+            InkingExpandTiled(dst, tileSource, 1.0f, nullptr, 0);
+        std::vector<InkingNinePatchTile> buffer(needed);
+        const std::size_t written = InkingExpandTiled(
+            dst, tileSource, 1.0f, buffer.data(), buffer.size());
+        bool inside = true;
+        for (const auto& tile : buffer) {
+            if (tile.dst.x < dst.x - 0.01f || tile.dst.y < dst.y - 0.01f
+                || tile.dst.x + tile.dst.width > dst.x + dst.width + 0.01f
+                || tile.dst.y + tile.dst.height > dst.y + dst.height + 0.01f) {
+                inside = false;
+            }
+        }
+        std::printf("         100×100 平铺 32×32：需要 %zu 块，实际写 %zu 块\n",
+                    needed, written);
+        Check(needed == 16, "T-04：ceil(100/32)² = 16 块");
+        Check(written == needed, "T-04：只算数那次与真填那次返回一致（两段式）");
+        Check(inside, "T-04：每块都裁在目标矩形内（边缘半块不外溢）");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// T-07（dev010）：图层与树节点混排的顺序 / 批次边界
+// ---------------------------------------------------------------------------
+//
+// 图层不建节点，但它**在树里**——所以顺序必须仍然由树序决定。这一条用三种
+// 提交类型叠在一起验：图片（纹理批）、图层（也是纹理批，但另一个节点）、标签
+// （`SDL_RenderTexture`，批次边界）。
+//
+// 两条断言：
+//   ① 各自独占的区域颜色不同、且都在（说明三段都画出来了，没被合批吞掉）；
+//   ② `batchFlushes` 不超过 4（纹理批 + 文字边界 + 收尾），钉住"每画一笔刷一次"
+//      那种实现不会偷偷回来。
+void CheckMixedOrder(SDL_Renderer* renderer) {
+    std::printf("\n-- 混排：图片 / 图层 / 文字三种提交叠在一起（dev010 T-07） --\n");
+    if (renderer == nullptr) {
+        std::printf("         [skip] 没有渲染器\n");
+        return;
+    }
+
+    // 走**资源根**（`InkingAssetLoad`）而不是相对 cwd：ctest 的工作目录不是
+    // `build/bin`，`fopen("assets/...")` 在那里读不到，整个函数会提前 return，
+    // 于是登记全缺、元自检报"这条自检没跑"。
+    const std::vector<std::uint8_t> png = InkingAssetLoad("walk.png");
+    if (png.empty()) {
+        std::printf("         [skip] 读不到 assets/walk.png\n");
+        return;
+    }
+
+    inking_detail::ReleaseTextCache();
+    inking_detail::SetTextureBudget(0);
+    const InkingTextureHandle handle = InkingLoadTexture("walk.png");
+    if (!handle.Valid()) {
+        std::printf("         [skip] 纹理句柄载入失败\n");
+        return;
+    }
+
+    InkingScene scene("mixed_order");
+
+    // 底：图片节点（64×64）。
+    InkingImageData imageData;
+    imageData.name = "mixed_image";
+    imageData.width = 64;
+    imageData.height = 64;
+    imageData.selfAnchor = InkingChangeAnchor::LeftTop;
+    imageData.traceAnchor = InkingChangeAnchor::LeftTop;
+    auto* image = static_cast<InkingStaticImage*>(
+        scene.AddChild(std::make_unique<InkingStaticImage>(&scene, imageData)));
+    image->SetImageBytes(png.data(), png.size(), "walk");
+
+    // 中：图层，一块红色调制的 quad 压住右半边。
+    auto* layer = static_cast<InkingGeometryLayer*>(
+        scene.AddChild(std::make_unique<InkingGeometryLayer>(&scene, "mixed_layer")));
+    InkingQuad quad;
+    quad.texture = handle;
+    quad.dst = InkingShapeBounds{32.0f, 0.0f, 64.0f, 64.0f};
+    quad.tint = 0xFFFF0000u;  // 只留红通道
+
+    // 顶：标签（文字走 SDL_RenderTexture，天然是批次边界）。
+    InkingLabelData labelData;
+    labelData.name = "mixed_label";
+    labelData.width = 200;
+    labelData.height = 24;
+    labelData.text = "ORDER";
+    labelData.style.fontSize = 20.0f;
+    labelData.selfAnchor = InkingChangeAnchor::LeftTop;
+    labelData.traceAnchor = InkingChangeAnchor::LeftTop;
+    labelData.offsetY = 0.0f;
+    scene.AddChild(std::make_unique<InkingStaticLabel>(&scene, labelData));
+
+    scene.TickFrame(1.0f / 60.0f);
+    InkingSceneLibrary::SetActiveScene(&scene);
+    for (int i = 0; i < 2; ++i) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+    }
+
+    // **先量一次没有图层的样子**，再设图层量第二次。判据是"两次不同"，而不是
+    // "颜色更深/更红"——tint 是**调制**，结果取决于纹理本身的颜色，写死方向必然
+    // 时对时错（第一版就写成"红分量不低于"，实测 5045 vs 4731 直接翻车）。
+    const std::vector<std::uint32_t> withoutLayer =
+        ReadPixelRegion(renderer, SDL_Rect{36, 20, 8, 8});
+
+    layer->SetQuads(&quad, 1);
+
+    const auto before = inking_detail::BatchStatsSnapshot();
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    InkingSceneLibrary::RenderScene(renderer);
+    const auto after = inking_detail::BatchStatsSnapshot();
+
+    // 倍率 0.5：图片占 0..32，图层占 16..48（像素）。
+    const std::vector<std::uint32_t> withLayer =
+        ReadPixelRegion(renderer, SDL_Rect{36, 20, 8, 8});
+    int changed = 0;
+    int painted = 0;
+    for (std::size_t i = 0; i < withLayer.size() && i < withoutLayer.size(); ++i) {
+        if (withLayer[i] != withoutLayer[i]) {
+            ++changed;
+        }
+        if ((withLayer[i] & 0x00FFFFFFu) != 0u) {
+            ++painted;
+        }
+    }
+    const std::uint64_t flushes = after.batchFlushes - before.batchFlushes;
+    std::printf("         图层区域：落笔 %d，与「没有图层」相比变了 %d 个像素\n",
+                painted, changed);
+    std::printf("         batchFlushes +%llu\n",
+                static_cast<unsigned long long>(flushes));
+
+    Check(painted > 0, "T-07：三种提交叠在一起时画出来了（不是互相吞掉）");
+    Check(changed > 10,
+          "T-07：图层真的压在图之上（右半边像素与「没有图层」时不同）");
+    Check(flushes <= 4,
+          "T-07：批次边界不超过 4（纹理批 / 文字 / 收尾，不是每笔一刷）");
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+    InkingTextureReleaseAll();
+    inking_detail::ReleaseTextCache();
+}
+
+// ---------------------------------------------------------------------------
+// T-02（dev010）：批量四边形图层
+// ---------------------------------------------------------------------------
+//
+// 要验的是一条**成本**断言加两条**语义**断言：
+//   ① 1000 个同纹理 quad 一帧 ⇒ `textureDraws` 增量 == 1（不是 1000 次提交）；
+//   ② 场景里只多了**一个**节点（这才是这批要的东西，draw call 本来就只有 1）；
+//   ③ 提交顺序 = 绘制顺序：两个完全重叠、tint 不同的 quad，重叠区是**后一个**；
+//   ④ 句柄失效的块被跳过、其余照画、计数 +1（一层里一个坏句柄不该让整屏黑掉）。
+void CheckGeometryLayer(SDL_Renderer* renderer) {
+    std::printf("\n-- 批量四边形图层：一次提交 / 顺序 / 失效句柄（dev010 T-02） --\n");
+    if (renderer == nullptr) {
+        std::printf("         [skip] 没有渲染器\n");
+        return;
+    }
+
+    // 走**资源根**（`InkingAssetLoad`）而不是相对 cwd：ctest 的工作目录不是
+    // `build/bin`，`fopen("assets/...")` 在那里读不到，整个函数会提前 return，
+    // 于是登记全缺、元自检报"这条自检没跑"。
+    const std::vector<std::uint8_t> png = InkingAssetLoad("walk.png");
+    if (png.empty()) {
+        std::printf("         [skip] 读不到 assets/walk.png\n");
+        return;
+    }
+
+    inking_detail::ReleaseTextCache();
+    inking_detail::SetTextureBudget(0);
+    const InkingTextureHandle handle = InkingLoadTexture("walk.png");
+    if (!handle.Valid()) {
+        std::printf("         [skip] 纹理句柄载入失败\n");
+        return;
+    }
+
+    InkingScene scene("geometry_layer");
+    auto* layer = static_cast<InkingGeometryLayer*>(scene.AddChild(
+        std::make_unique<InkingGeometryLayer>(&scene, "layer")));
+
+    // ---- ① / ② 1000 块一帧，一次提交，一个节点 ----
+    std::vector<InkingQuad> quads(1000);
+    for (int i = 0; i < 1000; ++i) {
+        InkingQuad& quad = quads[static_cast<std::size_t>(i)];
+        quad.texture = handle;
+        quad.dst = InkingShapeBounds{static_cast<float>((i % 40) * 32),
+                                     static_cast<float>((i / 40) * 32), 32.0f, 32.0f};
+    }
+    layer->SetQuads(quads);
+    Check(layer->GetQuadCount() == 1000, "T-02：一千块都装进去了");
+    Check(scene.GetOwnedChildCount() == 1,
+          "T-02：一千个图元只占**一个**场景节点");
+
+    scene.TickFrame(1.0f / 60.0f);
+    InkingSceneLibrary::SetActiveScene(&scene);
+    // 预热两帧：首帧建纹理 + 首帧建绘制列表。
+    for (int i = 0; i < 2; ++i) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+    }
+
+    const auto before = inking_detail::BatchStatsSnapshot();
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    InkingSceneLibrary::RenderScene(renderer);
+    const auto after = inking_detail::BatchStatsSnapshot();
+    const std::uint64_t draws = after.textureDraws - before.textureDraws;
+    std::printf("         1000 块：textureDraws +%llu  geometrySubmissions +%llu\n",
+                static_cast<unsigned long long>(draws),
+                static_cast<unsigned long long>(after.geometrySubmissions
+                                                - before.geometrySubmissions));
+    Check(draws == 1,
+          "T-02：1000 块同纹理 → 一次 draw（合批按纹理分，图层没有打断它）");
+
+    // T-06：带纹理那条路的顶点重建计数（改之前这条路**压根不记账**，
+    // 1000 个图元每帧重建 1000 份网格，观察口读出来是 0）。
+    const std::uint64_t rebuilds = after.vertexRebuilds - before.vertexRebuilds;
+    std::printf("         1000 块：vertexRebuilds +%llu\n",
+                static_cast<unsigned long long>(rebuilds));
+    Check(rebuilds == 1000,
+          "T-06：一千块 ⇒ 一千次顶点重建（观察口不再漏计这条路径）");
+
+    // ---- ③ 顺序：后提交的压在上面 ----
+    {
+        std::vector<InkingQuad> two(2);
+        two[0].texture = handle;
+        two[0].dst = InkingShapeBounds{40.0f, 40.0f, 64.0f, 64.0f};
+        two[0].tint = 0xFF0000FFu;  // 蓝调制
+        two[1].texture = handle;
+        two[1].dst = InkingShapeBounds{40.0f, 40.0f, 64.0f, 64.0f};
+        two[1].tint = 0xFFFF0000u;  // 红调制（完全重叠）
+        layer->SetQuads(two);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+
+        const std::vector<std::uint32_t> pixels =
+            ReadPixelRegion(renderer, SDL_Rect{60, 60, 8, 8});
+        bool any = false;
+        int red = 0;
+        int blue = 0;
+        for (std::uint32_t pixel : pixels) {
+            const int r = static_cast<int>((pixel >> 16) & 0xFFu);
+            const int b = static_cast<int>(pixel & 0xFFu);
+            if (r > 0 || b > 0) {
+                any = true;
+                red += r;
+                blue += b;
+            }
+        }
+        std::printf("         重叠区：红 %d / 蓝 %d\n", red, blue);
+        Check(any && red > blue,
+              "T-02：重叠区是**后提交**那一块（提交顺序 = 绘制顺序，不重排）");
+    }
+
+    // ---- ④ 失效句柄：跳过 + 记账，不影响别的块 ----
+    {
+        std::vector<InkingQuad> mixed(2);
+        mixed[0].texture = InkingTextureHandle{999999u};  // 没注册过
+        mixed[0].dst = InkingShapeBounds{0.0f, 0.0f, 32.0f, 32.0f};
+        mixed[1].texture = handle;
+        mixed[1].dst = InkingShapeBounds{0.0f, 0.0f, 32.0f, 32.0f};
+        mixed[1].tint = 0xFFFFFFFFu;
+        const std::uint64_t skippedBefore = layer->GetSkippedQuadCount();
+        layer->SetQuads(mixed);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+        const std::uint64_t skippedAfter = layer->GetSkippedQuadCount();
+        Check(skippedAfter > skippedBefore,
+              "T-02：失效句柄的块被跳过并计数（不静默、也不连累其他块）");
+
+        const std::vector<std::uint32_t> pixels =
+            ReadPixelRegion(renderer, SDL_Rect{8, 8, 8, 8});
+        bool painted = false;
+        for (std::uint32_t pixel : pixels) {
+            if ((pixel & 0x00FFFFFFu) != 0u) {
+                painted = true;
+                break;
+            }
+        }
+        Check(painted, "T-02：同一层里有效的那块照常画出来了");
+    }
+
+    // ---- ⑤ 任意顶点：三角形画得出来，越界索引整次拒绝 ----
+    {
+        InkingVertex triangle[3];
+        // UV 故意铺开整张图（0,0)~(1,1)）：固定采一个点会撞上精灵图的透明区，
+        // 那时"没画出来"是素材问题，不是几何问题——这条断言会因此误报。
+        triangle[0] = InkingVertex{80.0f, 20.0f, 0.0f, 0.0f, 0xFFFFFFFFu};
+        triangle[1] = InkingVertex{20.0f, 80.0f, 0.0f, 1.0f, 0xFFFFFFFFu};
+        triangle[2] = InkingVertex{80.0f, 80.0f, 1.0f, 1.0f, 0xFFFFFFFFu};
+        const std::uint16_t indices[3] = {0, 1, 2};
+        Check(layer->SetGeometry(handle, triangle, 3, indices, 3),
+              "T-03：自造三角形被接受");
+        Check(layer->IsGeometryMode() && layer->GetQuadCount() == 0,
+              "T-03：切到几何模式时四边形那批被清掉（两套互斥，后设的赢）");
+        Check(layer->GetVertexCount() == 3, "T-03：顶点数回读一致");
+
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+        // 读回**整块区域**而不是某个点：设计尺寸与屏幕尺寸不是 1:1（这台自检
+        // 窗口是 640×640、设计 1280×720 ⇒ 倍率 0.5），点位置写死就对不上。
+        const std::vector<std::uint32_t> area =
+            ReadPixelRegion(renderer, SDL_Rect{0, 0, 120, 120});
+        int painted = 0;
+        for (std::uint32_t pixel : area) {
+            if ((pixel & 0x00FFFFFFu) != 0u) {
+                ++painted;
+            }
+        }
+        const std::vector<std::uint32_t> far =
+            ReadPixelRegion(renderer, SDL_Rect{300, 300, 10, 10});
+        bool farClean = true;
+        for (std::uint32_t pixel : far) {
+            if ((pixel & 0x00FFFFFFu) != 0u) {
+                farClean = false;
+                break;
+            }
+        }
+        std::printf("         三角形区域落笔 %d 像素，远区干净=%d\n", painted,
+                    farClean ? 1 : 0);
+        Check(painted > 50 && farClean,
+              "T-03：三角形画出来了、且只在它自己的位置上（顶点坐标与索引真的生效）");
+
+        // 越界索引：整次拒绝，且**保持上一次的内容**（不部分提交）。
+        const std::uint16_t badIndices[3] = {0, 1, 99};
+        const std::uint64_t rejectedBefore = layer->GetRejectedGeometryCount();
+        Check(!layer->SetGeometry(handle, triangle, 3, badIndices, 3),
+              "T-03：索引 99 越界 → 整次拒绝");
+        Check(layer->GetRejectedGeometryCount() == rejectedBefore + 1,
+              "T-03：拒绝被记账（不是静默返回 false）");
+        Check(layer->GetVertexCount() == 3,
+              "T-03：被拒时保持上一次的内容（没有留下半批）");
+        NoteSilentFailure("geometry_index_overflow");
+
+        // 顶点数超过提交层单批上限。
+        std::vector<InkingVertex> tooMany(16385);
+        const std::uint16_t oneTriangle[3] = {0, 1, 2};
+        Check(!layer->SetGeometry(handle, tooMany.data(), tooMany.size(),
+                                  oneTriangle, 3),
+              "T-03：16385 个顶点被拒（超过单批上限）");
+
+        // 回到四边形模式，确认互斥是双向的。
+        std::vector<InkingQuad> single(1);
+        single[0].texture = handle;
+        single[0].dst = InkingShapeBounds{0.0f, 0.0f, 32.0f, 32.0f};
+        layer->SetQuads(single);
+        Check(!layer->IsGeometryMode() && layer->GetVertexCount() == 0,
+              "T-03：回到四边形模式时顶点那批被清掉（互斥是双向的）");
+    }
+
+    // ---- ⑥ 形状遮罩：SDF 烘进 alpha，不是"整块变透明" ----
+    {
+        InkingQuad source;
+        source.texture = handle;
+        source.dst = InkingShapeBounds{40.0f, 40.0f, 100.0f, 100.0f};
+        source.tint = 0xFFFFFFFFu;
+
+        InkingShapeSpec circle;
+        circle.kind = InkingShapeKind::Circle;
+
+        // ① 几何层：顶点 alpha 必须同时出现 **0 / 满 / 中间** 三档。
+        //    只有 0 和满 = 硬边（没烘过渡）；全是 0 = 那个"只烘 4 顶点"的假实现。
+        const InkingMaskedQuad mesh = InkingBuildMaskedQuad(
+            source, circle, 192, 48, 100.0f, 100.0f, 16);
+        int zeros = 0;
+        int fulls = 0;
+        int mids = 0;
+        for (const InkingVertex& vertex : mesh.vertices) {
+            const std::uint32_t alpha = (vertex.color >> 24) & 0xFFu;
+            if (alpha == 0u) {
+                ++zeros;
+            } else if (alpha == 255u) {
+                ++fulls;
+            } else {
+                ++mids;
+            }
+        }
+        std::printf("         遮罩网格：%zu 顶点 / %zu 索引，alpha 0/%d 满/%d 中间/%d\n",
+                    mesh.vertices.size(), mesh.indices.size(), zeros, fulls, mids);
+        Check(zeros > 0 && fulls > 0 && mids > 0,
+              "T-05：顶点 alpha 三档都有（外面 0 / 里面满 / 边缘过渡）");
+
+        // ② 反证：密度 1（就是原来那 4 个角）⇒ 四角全在圆外 ⇒ 整块 alpha 全 0。
+        //    这条钉住"为什么必须细分"，防止有人把细分"优化"掉。
+        const InkingMaskedQuad coarse = InkingBuildMaskedQuad(
+            source, circle, 192, 48, 100.0f, 100.0f, 1);
+        int coarseVisible = 0;
+        for (const InkingVertex& vertex : coarse.vertices) {
+            if (((vertex.color >> 24) & 0xFFu) > 0u) {
+                ++coarseVisible;
+            }
+        }
+        std::printf("         密度 1：%zu 顶点里可见的 %d 个\n",
+                    coarse.vertices.size(), coarseVisible);
+        Check(coarse.vertices.size() == 4 && coarseVisible == 0,
+              "T-05：只烘 4 个角 = 整块透明（这就是必须细分的原因）");
+
+        // ③ 提交到图层，读像素：圆外（矩形四角）不画，中心画。
+        Check(layer->SetMaskedQuad(handle, source, circle, 100.0f, 100.0f, 16),
+              "T-05：遮罩网格能提交（顶点数在上限内）");
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+
+        // 倍率 0.5：dst(40..140) → 像素 20..70；四角 (22,22) 落在圆外。
+        const std::vector<std::uint32_t> corner =
+            ReadPixelRegion(renderer, SDL_Rect{22, 22, 6, 6});
+        bool cornerClean = true;
+        for (std::uint32_t pixel : corner) {
+            if ((pixel & 0x00FFFFFFu) != 0u) {
+                cornerClean = false;
+                break;
+            }
+        }
+        // **整块统计**而不是读中心点：精灵图中间可能本来就是透明像素，
+        // 那种"没画出来"是素材问题，会把这条断言带成误报（T-03 踩过一次）。
+        const std::vector<std::uint32_t> disc =
+            ReadPixelRegion(renderer, SDL_Rect{20, 20, 50, 50});
+        int discPainted = 0;
+        for (std::uint32_t pixel : disc) {
+            if ((pixel & 0x00FFFFFFu) != 0u) {
+                ++discPainted;
+            }
+        }
+        std::printf("         遮罩像素：四角干净=%d，圆内落笔 %d/%d\n",
+                    cornerClean ? 1 : 0, discPainted,
+                    static_cast<int>(disc.size()));
+        Check(cornerClean && discPainted > 100,
+              "T-05：圆把方图裁掉了角、圆内照常画（遮罩真的生效）");
+
+        // ④ 密度超限被夹，只有一条 WARN，仍然画得出来。
+        const int warnsBefore = InkLog::CountOf(InkingLogLevel::Warn);
+        const bool clampedOk = layer->SetMaskedQuad(handle, source, circle, 100.0f,
+                                                    100.0f, 1000);
+        const int warnsAfter = InkLog::CountOf(InkingLogLevel::Warn);
+        Check(clampedOk, "T-05：密度 1000 被夹到上限之后仍然提交成功");
+        Check(warnsAfter == warnsBefore + 1,
+              "T-05：夹取产生恰好 1 条 WARN（不是每次提交一条）");
+        NoteSilentFailure("mask_vertex_capped");
+    }
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+    InkingTextureReleaseAll();
+    inking_detail::ReleaseTextCache();
+}
+
+// ---------------------------------------------------------------------------
+// T-10（dev010）：边缘羽化开关
+// ---------------------------------------------------------------------------
+//
+// 关掉之后图元"尺寸变准"（32×32 就占 32×32，而不是被羽化带外扩成 33×33），
+// 代价是边缘不再抗锯齿。断言只能落在**像素确实变了**上：
+//   - 开关前后同一区域不同（证明真生效，不是记了个标志没人读）；
+//   - 关掉之后**右边界的下一列**回到纯背景（羽化版在那里会溢出一列半透明）。
+void CheckEdgeFeather(SDL_Renderer* renderer) {
+    std::printf("\n-- 边缘羽化开关：关掉之后尺寸变准（dev010 T-10） --\n");
+    if (renderer == nullptr) {
+        std::printf("         [skip] 没有渲染器\n");
+        return;
+    }
+
+    const std::vector<std::uint8_t> png = InkingAssetLoad("walk.png");
+    if (png.empty()) {
+        std::printf("         [skip] 读不到 walk.png\n");
+        return;
+    }
+
+    inking_detail::ReleaseTextCache();
+    inking_detail::SetTextureBudget(0);
+
+    InkingScene scene("edge_feather");
+    InkingImageData data;
+    data.name = "feather_image";
+    data.width = 32;
+    data.height = 32;
+    data.selfAnchor = InkingChangeAnchor::LeftTop;
+    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.offsetX = 20.0f;
+    data.offsetY = 20.0f;
+    auto* image = static_cast<InkingStaticImage*>(
+        scene.AddChild(std::make_unique<InkingStaticImage>(&scene, data)));
+    image->SetImageBytes(png.data(), png.size(), "walk");
+    scene.TickFrame(1.0f / 60.0f);
+    InkingSceneLibrary::SetActiveScene(&scene);
+
+    const auto shoot = [&]() {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+        return ReadPixelRegion(renderer, SDL_Rect{16, 16, 44, 44});
+    };
+
+    Check(image->IsEdgeFeather(), "T-10：默认开着（与改动前逐像素一致）");
+    const std::vector<std::uint32_t> withFeather = shoot();
+
+    image->SetEdgeFeather(false);
+    Check(!image->IsEdgeFeather(), "T-10：开关回读为关");
+    const std::vector<std::uint32_t> withoutFeather = shoot();
+
+    int changed = 0;
+    for (std::size_t i = 0; i < withFeather.size() && i < withoutFeather.size(); ++i) {
+        if (withFeather[i] != withoutFeather[i]) {
+            ++changed;
+        }
+    }
+    std::printf("         关掉羽化后：%d 个像素变了\n", changed);
+    Check(changed > 0, "T-10：关掉羽化真的改变了绘制（不是只记了个标志）");
+
+    // 回到开：必须与第一次逐像素相同（开关可逆、没有累积状态）。
+    image->SetEdgeFeather(true);
+    const std::vector<std::uint32_t> back = shoot();
+    Check(back == withFeather,
+          "T-10：再开回来与第一次逐像素相同（开关可逆、不残留状态）");
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+    inking_detail::ReleaseTextCache();
+}
+
+// ---------------------------------------------------------------------------
+// T-09（dev010）：图片路径去白干活
+// ---------------------------------------------------------------------------
+//
+// 这一批改的三处都**不改变画面**，所以断言只能落在"缓存语义没被改坏"上：
+//   ① 位图连画 10 帧 ⇒ 一张纹理都不再建（键复用没让缓存失效）；
+//   ② SVG 仍走光栅化路径（签名快筛没把 SVG 误判成位图——那会让它按原始尺寸
+//      解码再放大，表现是"糊"，而日志一个字都没有）；
+//   ③ 纹理尺寸走表项字段之后，画出来的像素仍与非 0 尺寸一致（用非整倍率尺寸，
+//      读回中心像素不是背景色）。
+void CheckImageFastPath(SDL_Renderer* renderer) {
+    std::printf("\n-- 图片路径：键复用 / 签名快筛 / 尺寸走表项（dev010 T-09） --\n");
+    using inking_detail::TextCacheStats;
+    using inking_detail::TextCacheStatsSnapshot;
+
+    if (renderer == nullptr) {
+        std::printf("         [skip] 没有渲染器\n");
+        return;
+    }
+
+    // 走**资源根**（`InkingAssetLoad`）而不是相对 cwd：ctest 的工作目录不是
+    // `build/bin`，`fopen("assets/...")` 在那里读不到，整个函数会提前 return，
+    // 于是登记全缺、元自检报"这条自检没跑"。
+    const std::vector<std::uint8_t> png = InkingAssetLoad("walk.png");
+    if (png.empty()) {
+        std::printf("         [skip] 读不到 assets/walk.png\n");
+        return;
+    }
+
+    inking_detail::SetGlyphAtlasEnabled(false);
+    inking_detail::ReleaseTextCache();
+    inking_detail::SetTextureBudget(0);
+
+    InkingScene scene("image_fastpath");
+    InkingImageData data;
+    data.name = "fastpath_image";
+    data.width = 96;   // 非 2 的幂、非整倍率：逼着走真实缩放的采样路径
+    data.height = 40;
+    data.selfAnchor = InkingChangeAnchor::LeftTop;
+    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.offsetX = 20.0f;
+    data.offsetY = 20.0f;
+    auto* image = static_cast<InkingStaticImage*>(
+        scene.AddChild(std::make_unique<InkingStaticImage>(&scene, data)));
+    image->SetImageBytes(png.data(), png.size(), "walk");
+    scene.TickFrame(1.0f / 60.0f);
+    InkingSceneLibrary::SetActiveScene(&scene);
+
+    // 预热两帧：第一帧建纹理，第二帧开始才该全是命中。
+    for (int i = 0; i < 2; ++i) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+    }
+
+    // ---- ① 位图连画 10 帧：不再建纹理 ----
+    const TextCacheStats before = TextCacheStatsSnapshot();
+    for (int i = 0; i < 10; ++i) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+    }
+    const TextCacheStats after = TextCacheStatsSnapshot();
+    std::printf("         位图连画 10 帧：新建纹理 %llu / 命中 %llu\n",
+                static_cast<unsigned long long>(after.texturesCreated
+                                                - before.texturesCreated),
+                static_cast<unsigned long long>(after.cacheHits - before.cacheHits));
+    Check(after.texturesCreated == before.texturesCreated,
+          "T-09：位图连画 10 帧不再建纹理（键复用没有让缓存失效）");
+    Check(after.cacheHits > before.cacheHits,
+          "T-09：每帧都命中缓存（不是绕过缓存每帧重解）");
+
+    // ---- ② SVG 仍走光栅化（快筛没有把它误判成位图）----
+    const std::uint64_t svgBefore = TextCacheStatsSnapshot().svgRasters;
+    const bool svgLoaded = image->LoadAsset("design.svg");
+    if (svgLoaded) {
+        scene.TickFrame(1.0f / 60.0f);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+        const std::uint64_t svgAfter = TextCacheStatsSnapshot().svgRasters;
+        std::printf("         design.svg 光栅化次数 +%llu\n",
+                    static_cast<unsigned long long>(svgAfter - svgBefore));
+        Check(svgAfter > svgBefore,
+              "T-09：SVG 仍走按目标像素光栅化（签名快筛没有误判成位图）");
+    } else {
+        std::printf("         [skip] 读不到 assets/design.svg，SVG 那条没验\n");
+    }
+
+    // ---- ③ 尺寸走表项字段，画面仍是原图 ----
+    InkingSceneLibrary::SetActiveScene(nullptr);
+    inking_detail::SetGlyphAtlasEnabled(true);
+    inking_detail::ReleaseTextCache();
+    std::printf("         尺寸/像素：见上面两条（这一批不改几何，像素由既有用例守）\n");
+}
+
+// ---------------------------------------------------------------------------
 // T-05（0.8.2）：纹理字节账本
 // ---------------------------------------------------------------------------
 //
@@ -10998,6 +11809,27 @@ int main() {
     CheckDialog();
     CheckToast();
     CheckTabBar();
+
+    // ---- 纹理句柄：跨帧持有 / 引用语义 / 钉住不被淘汰（dev010 T-01）----
+    //
+    // 排在纹理字节账本**之前**：它会压预算、跳帧、清句柄表，正好是账本那条
+    // 用例要的"干净起点"本身。
+    CheckTextureHandle(rnd);
+
+    // ---- 九宫格与平铺：纯几何，不需要渲染器（dev010 T-04）----
+    CheckNinePatch();
+
+    // ---- 批量四边形图层：一次提交 / 顺序 / 失效句柄（dev010 T-02）----
+    CheckGeometryLayer(rnd);
+
+    // ---- 混排：图片 / 图层 / 文字三种提交叠在一起（dev010 T-07）----
+    CheckMixedOrder(rnd);
+
+    // ---- 边缘羽化开关（dev010 T-10）----
+    CheckEdgeFeather(rnd);
+
+    // ---- 图片路径去白干活：键复用 / 签名快筛 / 尺寸走表项（dev010 T-09）----
+    CheckImageFastPath(rnd);
 
     // ---- 纹理字节账本：建→放→归零→峰值（0.8.2 T-05，放在最后：会清空纹理缓存）----
     CheckTextureBytes(rnd);

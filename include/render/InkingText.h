@@ -248,7 +248,8 @@ bool PaintImage(SDL_Renderer* renderer, const InkingImageBytes& image,
                 const InkingShapeSpec& shape, int width, int height,
                 float magnification, float pixelX, float pixelY,
                 const InkingTransformSpec& transform, InkingImageFit fit,
-                std::uint32_t tintColor, const InkingShapeBounds& srcRect = {});
+                std::uint32_t tintColor, const InkingShapeBounds& srcRect = {},
+                bool edgeFeather = true);
 
 /**
  * @brief 图片纹理的采样模式（0.6.4 T-12）。
@@ -367,6 +368,35 @@ bool ProbeImageSize(const InkingImageBytes& image, int* width, int* height);
  * 并且每帧用 `SDL_GetTextureSize` 复核一次句柄还有效。
  */
 void ReleaseTextCache() noexcept;
+
+// ---------------------------------------------------------------------------
+// 公开句柄的纹理入口（dev010 T-01）
+// ---------------------------------------------------------------------------
+//
+// 为什么这两个薄入口在**这一层**而不是 `src/asset/InkingTexture.cpp` 里自己做：
+// `TextureEntry` 与 `AcquireImageTexture` 都是本文件内部的实现细节（.cpp 内定义），
+// 而"pin 住哪一条表项"只有本层知道。句柄注册表（`asset/`）只管 id ↔ 路径 ↔ 字节，
+// 不碰纹理表；两层各管一半，接线处只有这两个函数。
+
+/**
+ * 取（必要时建）一张纹理并把它**钉住**，返回纹理句柄与像素尺寸。
+ *
+ * 钉住 = `TextureEntry::pins = 1`：字节预算淘汰会跳过它（`BeginTextFrame` 里那段）。
+ * 同一个 `image`（键 = 名字 + 字节数）连续调多次是幂等的，不会重复建纹理。
+ *
+ * @return 建不出来（没接 SDL3_image / 字节坏了）返回 nullptr，`width/height` 置 0。
+ */
+SDL_Texture* AcquirePinnedTexture(SDL_Renderer* renderer,
+                                  const InkingImageBytes& image, int* width,
+                                  int* height);
+
+/**
+ * 取消钉住（`InkingReleaseTexture` 调）。
+ *
+ * 不需要渲染器参数：只在**现存**的纹理表里找，换过渲染器之后表已经整表清掉，
+ * 找不到就是找不到（那不是错）。
+ */
+void UnpinTexture(const InkingImageBytes& image) noexcept;
 
 }  // namespace inking_detail
 

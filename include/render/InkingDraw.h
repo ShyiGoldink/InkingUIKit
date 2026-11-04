@@ -155,6 +155,14 @@ void strokeShape(SDL_Renderer* renderer, const InkingShapeSpec& shape, int width
  *                  `contain` 的留白。
  * @param tintColor 只取 alpha：过渡时做淡入淡出（图片本身不换色）。
  *
+ * @param edgeFeather **是否画形状羽化带**（dev010 T-10，默认 true = 既有行为）。
+ *                  传 false 时"矩形 + Fill"走一条 4 顶点快路：不画那一圈
+ *                  alpha 0→1 的带子，图元尺寸也**不再外扩 0.5 px**
+ *                  （32×32 就画成 32×32，而不是现在的 33×33）。
+ *                  游戏精灵自带 alpha 边缘，那条带子只是成本：
+ *                  每个图元 12 个三角形 → 2 个，5000 个实测省 2.4 ms。
+ *                  **非矩形 / 非 Fill 时这个参数被忽略**（没有带子就没有意义）。
+ *
  * **没有 `hasAlpha` 参数了**（0.8.5）：它原来只用来决定"带 alpha 的图要不要
  * 绕开几何批"，而 0.6.2 T-08 之后两条路逐位相同（SDL 3.4.16 实测），参数就
  * 再也没人读——一个没人读的参数比没有更容易骗人。历史上那个坑（透明区发黑）
@@ -164,6 +172,7 @@ void fillShapeTextured(SDL_Renderer* renderer, const InkingShapeSpec& shape, int
                        int height, float magnification, float pixelX,
                        float pixelY, const InkingTransformSpec& transform,
                        SDL_Texture* texture, const InkingImageFitSpec& fit,
-                       std::uint32_t tintColor);
+                       std::uint32_t tintColor,
+                       bool edgeFeather = true);
 
 }  // namespace inking_detail

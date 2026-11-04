@@ -10,6 +10,7 @@
 #include <render/InkingSvg.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -85,6 +86,20 @@ struct TextureEntry {
      * （`lastUsedFrame == frameSerial`），而时间戳只能猜一个窗口。
      */
     std::uint64_t lastUsedFrame = 0;
+    /**
+     * 被公开句柄**钉住**了吗（dev010 T-01）。
+     *
+     * 为什么需要它：`InkingLoadTexture` 的契约是"句柄跨帧持有、同路径返回同一份"，
+     * 而淘汰的判据是"本帧没用过"。二者直接冲突——业务持有一个句柄放着十帧不用，
+     * 第 2 帧就会被当垃圾收走，第 11 帧提交时拿到的是别人刚建的同名纹理，或者
+     * 干脆是一张已经 DestroyTexture 的野指针（SDL 在 software 后端未必立刻崩，
+     * 表现为"图少一块"，最难查的那一类）。
+     *
+     * 取值：0 = 没有句柄持有（默认，与 0.8.4 逐字节相同）；1 = 有一份句柄。
+     * 不做计数是因为同路径 Load 返回同一个 id（`InkingLoadTexture` 的键就是路径），
+     * 所以一个纹理最多只有一份钉住状态。
+     */
+    int pins = 0;
 };
 
 /// 这一层的全部状态：函数内静态量，避开静态初始化顺序问题；UI 线程使用，不加锁。
@@ -889,6 +904,18 @@ SDL_Surface* BleedTransparentEdges(SDL_Surface*) { return nullptr; }
 
 /// 取（或解码）一张图片的纹理。返回 nullptr 表示"这台机器解不出来"；
 /// SVG 那条路的失败原因写进 `error`（调用方要发 WARN）。
+/// 位图纹理键的复用缓冲（dev010 T-09）。
+///
+/// 键是 `"img|名字|字节数"`，每帧每个图元拼一次。原来是三个临时 `std::string`
+/// （+字面量、+名字、+`to_string`）⇒ 5000 图元一帧 15000 次小分配。改成往这
+/// 一个缓冲里 `append`：容量留着，稳态零分配。
+///
+/// **UI 线程专用**：纹理层整层都是这么约定的（`TextLayer` 上面那段注释）。
+std::string& imageKeyScratch() {
+    static std::string scratch;
+    return scratch;
+}
+
 TextureEntry* AcquireImageTexture(SDL_Renderer* renderer,
                                   const InkingImageBytes& image, int boxWidth,
                                   int boxHeight, bool svg, std::string* error) {
@@ -972,8 +999,16 @@ TextureEntry* AcquireImageTexture(SDL_Renderer* renderer,
 
     // 位图老路：键 / 解码 / 尺寸与 0.5.0 完全一致。
     // 键用（路径 + 字节数）：同一个文件被多个按钮引用时共用一张纹理。
-    const std::string key =
-        "img|" + image.name + "|" + std::to_string(image.size);
+    // 拼装走复用缓冲（dev010 T-09），稳态零分配；`emplace` 会拷一份进表，
+    // 所以缓冲可以立刻被下一个图元复用。
+    std::string& key = imageKeyScratch();
+    key.clear();
+    key.append("img|").append(image.name).append(1, '|');
+    {
+        char digits[24];
+        const auto written = std::to_chars(digits, digits + sizeof(digits), image.size);
+        key.append(digits, written.ptr);
+    }
     auto found = state.textures.find(key);
     if (found != state.textures.end()) {
         ++state.cacheHits;
@@ -1128,6 +1163,12 @@ void BeginTextFrame(SDL_Renderer* renderer) noexcept {
     std::vector<std::pair<std::uint64_t, const std::string*>> victims;
     victims.reserve(state.textures.size());
     for (const auto& item : state.textures) {
+        // 被公开句柄钉住的条目**不进候选**（dev010 T-01）：句柄的契约是"跨帧持有"，
+        // 而淘汰的判据是"本帧没用过"。不跳过的话，业务持有一个句柄放着十帧不用，
+        // 第 2 帧就会被收走。
+        if (item.second.pins > 0) {
+            continue;
+        }
         if (item.second.lastUsedFrame < state.frameSerial) {
             victims.emplace_back(item.second.lastUsedFrame, &item.first);
         }
@@ -1576,11 +1617,57 @@ void PaintText(SDL_Renderer* renderer, const InkingTextRequest& request, int wid
                            pixelY, transform);
 }
 
+namespace {
+
+/**
+ * 是不是**已知位图容器**的签名（dev010 T-09 的快筛）。
+ *
+ * 为什么要它：`LooksLikeSvg` 内部要 `OpenBytes` 开一个 `SDL_IOStream`、再问
+ * `IMG_isSVG`——每帧、每个图片图元一次分配。而在真实工程里 99% 的图元是 PNG/JPEG，
+ * 看前 4~8 个字节就能排掉，判定结果与原来**逐位相同**（这些格式不可能是 SVG）。
+ *
+ * 认的格式只列"`IMG_isSVG` 可能误判、而这里必须排除"的那几种：PNG / JPEG / BMP /
+ * GIF / WebP。其余格式（TIFF、TGA……）仍走原判定——快筛只允许**加速**，不允许
+ * **改变结论**，所以不确定的一律返回 false。
+ */
+bool HasKnownBitmapSignature(const std::uint8_t* data, std::size_t size) noexcept {
+    if (data == nullptr || size < 2) {
+        return false;
+    }
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (size >= 8 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E
+        && data[3] == 0x47) {
+        return true;
+    }
+    // JPEG: FF D8 FF
+    if (size >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF) {
+        return true;
+    }
+    // BMP: "BM"
+    if (data[0] == 0x42 && data[1] == 0x4D) {
+        return true;
+    }
+    // GIF: "GIF87a" / "GIF89a"
+    if (size >= 6 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46) {
+        return true;
+    }
+    // WebP: "RIFF" .... "WEBP"
+    if (size >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46
+        && data[3] == 0x46 && data[8] == 0x57 && data[9] == 0x45
+        && data[10] == 0x42 && data[11] == 0x50) {
+        return true;
+    }
+    return false;
+}
+
+}  // namespace
+
 bool PaintImage(SDL_Renderer* renderer, const InkingImageBytes& image,
                 const InkingShapeSpec& shape, int width, int height,
                 float magnification, float pixelX, float pixelY,
                 const InkingTransformSpec& transform, InkingImageFit fit,
-                std::uint32_t tintColor, const InkingShapeBounds& srcRect) {
+                std::uint32_t tintColor, const InkingShapeBounds& srcRect,
+                bool edgeFeather) {
     if (renderer == nullptr || image.Empty() || width <= 0 || height <= 0) {
         return false;
     }
@@ -1590,7 +1677,12 @@ bool PaintImage(SDL_Renderer* renderer, const InkingImageBytes& image,
     // SVG 是一种**图片格式**，不是新外观类型：在这里按字节嗅探一次，
     // 决定"按目标像素光栅化"还是"按原始尺寸解码"。顺序不能反——
     // 先按固有尺寸解码再放大，就是位图放大（糊）。
-    const bool svg = LooksLikeSvg(image.data, image.size);
+    //
+    // **先过一道签名快筛**（dev010 T-09）：`LooksLikeSvg` 会开一个 `SDL_IOStream`
+    // 再问 `IMG_isSVG`，每帧每图元一次分配。已知位图签名不可能走 SVG 分支，
+    // 几个字节就能排掉，结论与原来逐位相同。
+    const bool svg = !HasKnownBitmapSignature(image.data, image.size)
+                  && LooksLikeSvg(image.data, image.size);
     int boxWidth = 0;
     int boxHeight = 0;
     if (svg) {
@@ -1610,10 +1702,16 @@ bool PaintImage(SDL_Renderer* renderer, const InkingImageBytes& image,
     if (entry == nullptr) {
         return false;  // 没接 SDL3_image / 字节坏了：调用方退回按颜色填
     }
-    float textureWidth = 0.0f;
-    float textureHeight = 0.0f;
-    if (!SDL_GetTextureSize(entry->texture, &textureWidth, &textureHeight)) {
-        return false;
+    // 尺寸直接用建表时记下的那份（`InsertTexture` 填的就是 surface 尺寸，
+    // 与 `SDL_GetTextureSize` 同一个来源）。每帧每图元再问一次 SDL 是纯白干活；
+    // 只有字段没填（<= 0）时才回落——那是"表项是从别处塞进来的"这种情况，
+    // 现在没有这种路径，留作防御。
+    float textureWidth = entry->width;
+    float textureHeight = entry->height;
+    if (textureWidth <= 0.0f || textureHeight <= 0.0f) {
+        if (!SDL_GetTextureSize(entry->texture, &textureWidth, &textureHeight)) {
+            return false;
+        }
     }
 
     // 适配模式那点几何是**纯计算**（`InkingImageFitSpec`）：框、图、模式 → 绘制区域与 UV。
@@ -1631,7 +1729,7 @@ bool PaintImage(SDL_Renderer* renderer, const InkingImageBytes& image,
     // 真绘制交给形状层：**同一份形状网格**（轮廓 + 羽化）带上 UV 与纹理，
     // 于是"按形状裁剪"这件事不需要纹理层再实现一遍。
     fillShapeTextured(renderer, shape, width, height, mag, pixelX, pixelY,
-                      transform, entry->texture, spec, tintColor);
+                      transform, entry->texture, spec, tintColor, edgeFeather);
     return true;
 }
 
@@ -1830,6 +1928,63 @@ void ReleaseTextCache() noexcept {
         state.ttfInitialized = false;
     }
 #endif
+}
+
+// ---------------------------------------------------------------------------
+// 公开句柄的纹理入口（dev010 T-01）
+// ---------------------------------------------------------------------------
+
+SDL_Texture* AcquirePinnedTexture(SDL_Renderer* renderer,
+                                  const InkingImageBytes& image, int* width,
+                                  int* height) {
+    if (width != nullptr) {
+        *width = 0;
+    }
+    if (height != nullptr) {
+        *height = 0;
+    }
+    if (renderer == nullptr || image.Empty()) {
+        return nullptr;
+    }
+    // 渲染器换过人就先把整表丢掉：与 `PaintImage` 走同一道保险，否则这里会拿到
+    // 上一台渲染器的纹理（`SDL_GetTextureSize` 未必报错，只是画不出来）。
+    EnsureRenderer(renderer);
+
+    std::string decodeError;
+    TextureEntry* entry =
+        AcquireImageTexture(renderer, image, 0, 0, /*svg=*/false, &decodeError);
+    if (entry == nullptr) {
+        return nullptr;  // 没接 SDL3_image / 字节坏了：调用方按"句柄无效"处理
+    }
+    // 幂等：一个句柄 = 一份钉住状态（同路径 Load 返回同一个 id，见公开头）。
+    entry->pins = 1;
+
+    float textureWidth = 0.0f;
+    float textureHeight = 0.0f;
+    if (!SDL_GetTextureSize(entry->texture, &textureWidth, &textureHeight)) {
+        return nullptr;
+    }
+    if (width != nullptr) {
+        *width = static_cast<int>(textureWidth);
+    }
+    if (height != nullptr) {
+        *height = static_cast<int>(textureHeight);
+    }
+    return entry->texture;
+}
+
+void UnpinTexture(const InkingImageBytes& image) noexcept {
+    if (image.Empty()) {
+        return;
+    }
+    TextLayer& state = layer();
+    const std::string key =
+        "img|" + image.name + "|" + std::to_string(image.size);
+    const auto found = state.textures.find(key);
+    if (found == state.textures.end()) {
+        return;  // 还没建出来（或换过渲染器整表清了）：没有可解的钉子
+    }
+    found->second.pins = 0;
 }
 
 }  // namespace inking_detail

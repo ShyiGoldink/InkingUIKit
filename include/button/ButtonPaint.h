@@ -94,7 +94,7 @@ void PaintButtonAppearance(const InkingAnchor& node, const InkingShapeSpec& shap
                            const InkingStrokeSpec& stroke, const InkingShadowSpec& shadow,
                            std::uint32_t displayColor,
                            const InkingTransformSpec& transform, float pixelX,
-                           float pixelY);
+                           float pixelY, bool edgeFeather = true);
 
 /**
  * 组件的**保守命中包络**（本地坐标，相对左上角）。

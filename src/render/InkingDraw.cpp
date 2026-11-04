@@ -606,7 +606,7 @@ void fillShapeTextured(SDL_Renderer* renderer, const InkingShapeSpec& shape, int
                        int height, float magnification, float pixelX,
                        float pixelY, const InkingTransformSpec& transform,
                        SDL_Texture* texture, const InkingImageFitSpec& fit,
-                       std::uint32_t tintColor) {
+                       std::uint32_t tintColor, bool edgeFeather) {
     // 0.8.5 删掉了 `bool hasAlpha` 这个参数：它原来只决定"要不要绕开几何批"
     // （带 alpha 的图必须直接贴，否则透明区发黑），而 0.6.2 T-08 把矩形图片
     // 并进几何批之后，两条路逐位相同，这个参数就再也没人读过了。留着它会让
@@ -664,6 +664,38 @@ void fillShapeTextured(SDL_Renderer* renderer, const InkingShapeSpec& shape, int
         // 顺序：这一笔绕开批次（纹理绘制本来就是批次边界）。
         NoteImmediateDraw();
         SDL_RenderTexture(renderer, texture, sourceRect, &destination);
+        return;
+    }
+
+    // ---- 无羽化快路（dev010 T-10）----
+    //
+    // 只对"矩形 + Fill"生效。游戏精灵自带 alpha 边缘，形状层那圈羽化带除了把
+    // 图元**外扩 0.5 px**（32×32 实际画成 33×33）之外没有别的作用，而每个图元
+    // 要多 10 个三角形（实测 5000 个图元省 2.4 ms）。
+    //
+    // 不改变 UV 的算法（仍走 `fit.UvAt`），所以纹理取哪一块与羽化版完全一致；
+    // 变的只是"顶点在 0..w 还是 -0.5..w+0.5"——这就是图元尺寸变准的原因。
+    if (!edgeFeather && scaled.kind == InkingShapeKind::Rect
+        && fit.fit == InkingImageFit::Fill) {
+        InkingTransformSpec deviceTransform = transform;
+        deviceTransform.translateX *= mag;
+        deviceTransform.translateY *= mag;
+        const float centerX = w * 0.5f;
+        const float centerY = h * 0.5f;
+        const float solidAlpha =
+            static_cast<float>(InkingColorAlpha(tintColor)) / 255.0f;
+        SDL_Vertex verts[4];
+        const float xs[4] = {0.0f, w, 0.0f, w};
+        const float ys[4] = {0.0f, 0.0f, h, h};
+        for (int i = 0; i < 4; ++i) {
+            const InkingPoint2 point = InkingApplyTransform(
+                deviceTransform, xs[i], ys[i], centerX, centerY);
+            verts[i].position = SDL_FPoint{point.x, point.y};
+            verts[i].color = VertexColor(tintColor, solidAlpha);
+            fit.UvAt(xs[i], ys[i], verts[i].tex_coord.x, verts[i].tex_coord.y);
+        }
+        const int indices[6] = {0, 1, 2, 0, 2, 3};
+        AppendTexturedGeometry(texture, verts, 4, indices, 6, pixelX, pixelY);
         return;
     }
 

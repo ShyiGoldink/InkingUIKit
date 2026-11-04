@@ -104,7 +104,7 @@ void PaintButtonAppearance(const InkingAnchor& node, const InkingShapeSpec& shap
                            const InkingStrokeSpec& stroke, const InkingShadowSpec& shadow,
                            std::uint32_t displayColor,
                            const InkingTransformSpec& transform, float pixelX,
-                           float pixelY) {
+                           float pixelY, bool edgeFeather) {
     // 三态之间的差别体现在**颜色（含 alpha）+ 变换**上（T-4 之后还多了外观
     // 类型：img 画一张纹理），形状与尺寸完全不动——这正是静态按钮能一边有动画、
     // 一边继续待在"进命中表"那一档的原因（变换不改表，见 InputDesign.md §11）。
@@ -140,7 +140,7 @@ void PaintButtonAppearance(const InkingAnchor& node, const InkingShapeSpec& shap
         if (PaintImage(renderer, image, shape, node.GetWidth(),
                        node.GetHeight(), Magnify(node), pixelX, pixelY,
                        transform, appearance.imageFit, tint,
-                       appearance.srcRect)) {
+                       appearance.srcRect, edgeFeather)) {
             painted = true;  // 图片画上了，就走不到"按颜色填"
         }
         // 解不出来：落回"按颜色填"（按钮还是个按钮，不是个洞）。

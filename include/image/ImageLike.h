@@ -38,6 +38,25 @@ public:
     bool UsingAssetBytes() const noexcept;
     int AssetLoadCount() const noexcept;
 
+    /**
+     * @brief **要不要画形状边缘的羽化带**（dev010 T-10，默认 true）。
+     *
+     * 游戏精灵（`InkingSprite`）的素材自带 alpha 边缘，那圈 0→1 的过渡带除了
+     * 把图元**外扩 0.5 px**（32×32 画成 33×33）之外没有别的作用，而每个图元要多
+     * 10 个三角形。关掉之后：
+     *
+     *   - 图元尺寸**变准**（32×32 就占 32×32），相邻图元不再互相压 1 px；
+     *   - 5000 个图元实测省 **2.4 ms**（12 三角形/个 → 2 个）；
+     *   - 但边缘**不再抗锯齿**——只有素材自己带 alpha 边缘时才好看。
+     *
+     * **UI 图片不要关**：纯色块 / 圆角面板关掉会有肉眼可见的硬边。
+     * 只对"矩形 + `fit: fill`"生效，圆角 / contain / cover 一律照旧。
+     */
+    void SetEdgeFeather(bool enabled) noexcept;
+
+    /// 现在画不画羽化带（见 `SetEdgeFeather`）。
+    bool IsEdgeFeather() const noexcept;
+
     bool LoadAsset(const std::string& relative);
     void SetImageBytes(const std::uint8_t* data, std::size_t size,
                        const std::string& name);
@@ -75,5 +94,8 @@ private:
 
     std::string _imageName;
     int _assetLoadCount = 0;
+
+    /// 画不画形状羽化带（dev010 T-10）。默认 true = 与改动前逐像素一致。
+    bool _edgeFeather = true;
 };
 

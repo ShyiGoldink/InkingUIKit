@@ -398,6 +398,10 @@ Windows 下 exe 按"自身所在目录 → PATH"找 DLL，分开放会变成"程
 | 11 | 素材像素不够它占的屏幕像素：画面"有点软"，没人去查素材 | `σ = 素材像素 ÷ 屏幕像素 < 0.75`（`INK_ISDEBUG` 下才检查，Release 零成本） | T-04（0.7.1） | `image_undersampled` |
 | 12 | 纹理账本只建不销账：内存只涨不回落，画面上完全看不出来 | 某条释放路径（SVG 档位淘汰 / 换渲染器 / `ReleaseTextCache` / `ReleaseGlyphAtlas`）漏调销账，或顺序反了（先记账后建纹理） | T-05（0.8.2） | `texture_bytes_leak` |
 | 13 | 字形图集满了：文字永久改走"整段一张纹理"（内存与首帧耗时都涨），日志一个字都没有 | 同一进程里用到的字形超过 1024² 图集的容量（多字号 + 大字号 CJK 最容易撞上）；满了之后每帧还要把整段文字重烘一遍再失败 | T-02（0.8.3） | `glyph_atlas_full` |
+| 14 | 纹理句柄指向的图已释放 / 换过渲染器：图元静默消失，画面少一块没人报 | `InkingReleaseTexture` 放多了、没 `ReleaseAll` 就换了渲染器、或把 `id` 存过了进程生命周期 | T-01（dev010） | `texture_handle_stale` |
+| 15 | 任意顶点的索引越界：不崩，画成随机碎片（比整块不画难查得多） | 自算顶点的拓扑里索引写错 / 顶点数组被截断而索引没跟着改 | T-03（dev010） | `geometry_index_overflow` |
+| 16 | 遮罩细分撞上限：边缘变粗糙，看起来像素材被压过，没人会去查密度 | 遮罩密度配得比 `InkingMaskMaxDensity` 大（或图元本身极大） | T-05（dev010） | `mask_vertex_capped` |
+| 17 | 九宫格边框之和超过目标：边框被夹细，看起来像美术配错了图 | `border` 左右（或上下）之和 > 目标那一维 | T-04（dev010） | `ninepatch_border_clamped` |
 <!-- END SILENT FAILURE LIST -->
 
 两条纪律：
