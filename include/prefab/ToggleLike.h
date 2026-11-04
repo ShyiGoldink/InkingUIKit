@@ -22,7 +22,7 @@
 // 去遍历兄弟——那是 `RadioGroup` 的事。
 //
 // ---------------------------------------------------------------------------
-// 四条要记住的语义
+// 六条要记住的语义
 //
 //   1. **`SetChecked` 是程序入口，也会发事件**（不是"静默改值"）。订阅者因此可以
 //      只盯槽、不必区分"用户点的"还是"代码设的"；
@@ -34,7 +34,10 @@
 //   4. **`SetChecked` 只标重绘脏**：几何（组件框）没变，所以命中表不重烘、父容器不重排；
 //   5. **mark 只在选中时画**（Checkbox 的勾、Radio 的圆点）——"状态"就在这一笔的有无上，
 //      所以 `onRender` 必须读 `_checked`。`Switch` 是唯一例外：滑块关着也在
-//      （由 `PaintsMarkWhenUnchecked()` 表达），位置本身就是状态。
+//      （由 `PaintsMarkWhenUnchecked()` 表达），位置本身就是状态；
+//   6. **进组是双向的**：`RadioGroup::Add` 与 `Radio::SetGroup` 等价，`Remove` 也会把
+//      成员的组指针清回 `nullptr`。只建单向（组里有它、它不知道组）时，点击会走
+//      "没挂组"那条分支各自置真 —— 互斥静默失效，三个圈能同时选中。
 //
 // 第一版**不做**（与 Slider / ProgressBar 同一条边界）：`SetPainter` 第三档
 // （`InkingCanvasContext` 构造是 private）、三态 Checkbox（半勾）、键盘空格切换、
@@ -246,6 +249,9 @@ protected:
                         float designY) override;
 
 private:
+    /// 组要能反手清这个指针（`Remove` / `Add` 建立的是**双向**链接）。
+    friend class RadioGroup;
+
     RadioGroup* _group = nullptr;
 };
 
@@ -262,9 +268,23 @@ public:
     RadioGroup& operator=(const RadioGroup&) = delete;
     ~RadioGroup();
 
-    /// 加一个成员（幂等；已经在组里就什么都不做）。
+    /**
+     * @brief 加一个成员。**与 `radio.SetGroup(this)` 完全等价**（幂等）。
+     *
+     * 两条都会被建立：组里有它、**它的 `GetGroup()` 也指向本组**。只做前者
+     * 是不够的——`Radio::onPointerClick` 靠 `GetGroup()` 判断"要不要走组"，
+     * 指针没回写的话点击会走"没挂组"那条分支，各自置真、互斥形同不存在
+     * （`examples/showcase` 的"小 / 中 / 大"就是这么变成三个都能选的）。
+     *
+     * 成员原本挂在别的组上时，会先从那个组摘掉（不留"两边都在"）。
+     */
     void Add(Radio* radio);
-    /// 摘掉一个成员（幂等）。
+    /**
+     * @brief 摘掉一个成员（幂等）。
+     *
+     * 摘掉之后**它的 `GetGroup()` 变回 `nullptr`**——不清的话它会以为自己还在
+     * 组里，点击走 `Select`、而组里已经没有它 ⇒ 静默失效（不报错、不选中）。
+     */
     void Remove(Radio* radio);
 
     /**

@@ -91,4 +91,4 @@ std::string Escape(const std::string& text);        // 写 json 时转义
 
 ---
 
-> 本文档对应版本：**0.9.0（0.x 发布版）**。
+> 本文档对应版本：**0.9.2（0.x 发布版）**。

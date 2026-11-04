@@ -40,6 +40,8 @@
 #include <image/InkingStaticImage.h>
 #include <image/SpriteData.h>
 #include <input/Shortcut.h>
+#include <panel/InkingDynamicPanel.h>
+#include <panel/PanelData.h>
 #include <prefab/MenuBar.h>
 #include <prefab/MenuPopup.h>
 #include <prefab/MenuPopupData.h>
@@ -362,6 +364,64 @@ private:
         AddWalker();
         AddWalkerGroup();
         AddSpriteGroup();
+
+        // 8) 动态面板 + 滚轮（0.9.1）：少数几处"必须上手滚一下"才看得出来的东西
+        AddScrollCard();
+    }
+
+    /**
+     * **能滚的动态面板**（0.9.1 T-03）：一张 200×300 的卡片，里面 12 个按钮。
+     *
+     * 为什么示例里得有它：滚轮这件事**自检只能证明数值与归属**（一格 = 48、
+     * 不双滚、只有最上面那个动），证明不了"手感对不对"。而这一版最容易返工
+     * 的恰恰是手感——所以留一个能上手滚的入口。
+     *
+     * 三条要试的：
+     *   1. 指针在**卡片空白区**滚 ⇒ 整列跟着走（拉通道：`onAnimationTick` 里读）；
+     *   2. 指针停在**某个按钮上**滚 ⇒ 照样滚卡片，不是"滚到按钮就停"
+     *      （推通道：场景沿父链找到本面板，`HandlesSubtreeWheel`）；
+     *   3. 滚到底再滚 ⇒ 停在底（夹紧在 `[0, range]`，不累加）。
+     *
+     * 内容故意比视口高很多（772 > 300），否则滚动条不出现、也滚不动。
+     */
+    void AddScrollCard() {
+        AddLabel("scroll_hint",
+                 "滚轮试试：这张卡片是动态面板（指针在按钮上也照样滚）", 400, 34,
+                 18.0f, kTextDim, -190.0f, 430.0f);
+
+        InkingPanelData data;
+        data.name = "scroll_card";
+        data.width = 200;
+        data.height = 300;
+        data.offsetX = 430.0f;
+        data.offsetY = 40.0f;
+        data.closed.color = 0xFF26262Fu;
+        data.shape = InkingShapeSpec::RoundedRect(18.0f);
+        data.clipChildren = true;   // 滚出去的内容要剪掉，否则画到卡片外面
+        data.scroll.enabled = true;
+        data.scroll.vertical = true;
+        data.scroll.horizontal = false;
+        data.scroll.barBackgroundColor = 0xFF26262Fu;  // 条带不铺色时内容会从缝里透出来
+        auto* card = static_cast<InkingDynamicPanel*>(
+            AddChild(std::make_unique<InkingDynamicPanel>(this, data)));
+
+        for (int i = 0; i < 12; ++i) {
+            InkingButtonData item =
+                MakeButton("scroll_item_" + std::to_string(i), 160, 56,
+                           "第 " + std::to_string(i + 1) + " 项", kGhost,
+                           kGhostHi, kGhostPr, 10.0f);
+            item.text.fontSize = 20.0f;
+            // **LeftTop 锚点**：滚动量是按"子节点矩形相对容器左上角"量的
+            // （`UpdateScrollRange`），用 Center 锚点量出来的内容高度会随
+            // 容器高度漂——那正是"列表末尾永远滚不到"的经典成因。
+            item.selfAnchor = InkingChangeAnchor::LeftTop;
+            item.traceAnchor = InkingChangeAnchor::LeftTop;
+            item.offsetX = 12.0f;
+            item.offsetY = 12.0f + static_cast<float>(i) * 64.0f;
+            card->AddChild(std::make_unique<InkingStaticButton>(card, item));
+        }
+        // 显式量一次（框架不做隐式扫描）：不量的话可滚范围是 0，滚轮一格都不动。
+        card->UpdateScrollRange();
     }
 
     /**

@@ -3,12 +3,18 @@
 #include <audio/InkingAudio.h>
 #include <detail/InkLog.h>
 #include <render/InkingText.h>
+#include <theme/InkingTheme.h>
 #include <timeline/Timeline.h>
 #include <scene/InkingScene.h>
 #include <scene/SceneLibrary.h>
 
 #include <SDL3/SDL.h>
 
+#if defined(INK_HAS_SDL3_IMAGE)
+#include <SDL3_image/SDL_image.h>
+#endif
+
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstring>
@@ -310,6 +316,17 @@ struct WindowState {
     // 表现为光标闪烁）。建不出来（无头 / 后端不支持）就留空，下一帧不再重试。
     SDL_Cursor* cursors[InkingCursorShapeCount] = {};
     InkingCursorShape appliedCursor = InkingCursorShape::Default;
+
+    /**
+     * 背景板底图的纹理缓存（一张，按路径失效）。
+     *
+     * 为什么缓存在窗口状态里而不是每次绘制重建：`IMG_Load` + `CreateTexture`
+     * 是几毫秒级的活，每帧做一次等于把帧率钉在地板上。路径变了才重载；
+     * 失败**只报一次**（`backdropLoadFailed`），否则每帧一条 ERROR 会把日志刷爆。
+     */
+    SDL_Texture* backdropTexture = nullptr;
+    std::string  backdropTexturePath;   ///< 这份纹理对应哪条路径（空 = 没有）
+    bool         backdropLoadFailed = false;
     bool cursorApplied = false;
     /// **决定换光标**的次数（观测口）。无头下 `SDL_SetCursor` 是空操作，
     /// 所以计数记的是"判定"，不是"系统真的换了"。
@@ -341,6 +358,15 @@ void releaseWindow(WindowState& s) {
         // 反过来的话，那一层会拿着已经随渲染器死掉的句柄，下次再用就是野指针。
         // 下面这个是本文件里的**空实现占位**（文本层未接入，见文件顶上那段）。
         inking_detail::ReleaseTextCache();
+        // 背景板底图同一族：它是我们建的纹理，必须在渲染器之前放掉。
+        // （`SDL_DestroyRenderer` 不会替调用方销毁纹理——这个误解的代价是
+        //  重开窗口时句柄悬空。）
+        if (s.backdropTexture != nullptr) {
+            SDL_DestroyTexture(s.backdropTexture);
+            s.backdropTexture = nullptr;
+        }
+        s.backdropTexturePath.clear();
+        s.backdropLoadFailed = false;
         SDL_DestroyRenderer(s.renderer);
         s.renderer = nullptr;
     }
@@ -795,7 +821,18 @@ bool writeRendererImage(SDL_Renderer* renderer, const std::string& path) {
         return false;
     }
 
+    // **读之前必须临时关掉逻辑呈现**：开着的时候 `SDL_RenderReadPixels` 只回
+    // 逻辑画布那块（实测 640×640 目标配 1280×720 设计只回 640×360），而截图
+    // 要的是**整个帧缓冲**——含 letterbox 留白。这条以前只写在注释里（"截的是
+    // 整个窗口帧缓冲"），实际截出来没有留白：比例一致的窗口看不出来，一旦
+    // 窗口比例 ≠ 设计比例，截图的构图就和眼睛看到的不是一回事（0.9.2 修）。
+    // 关掉之后 viewport 就是整幅，读完立刻恢复——后面还有指针小方块和 Present。
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
     SDL_Surface* shot = SDL_RenderReadPixels(renderer, nullptr);
+    SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                     InkingDesignHeight(),
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
     if (shot == nullptr) {
         INK_LOG_ERROR(kModuleName,
                       "截图失败（读像素）：" + std::string(SDL_GetError()));
@@ -849,8 +886,169 @@ bool writeRendererImage(SDL_Renderer* renderer, const std::string& path) {
     return writeBytesToFile(sink.bytes, path);
 }
 
+// ---------------------------------------------------------------------------
+// 背景板（letterbox 留白填充 / 窗口底图）
+// ---------------------------------------------------------------------------
+
+#if defined(INK_HAS_SDL3_IMAGE)
+
 /**
- * 绘制这一帧：底色 → 当前场景的绘制列表 → 指针标记。
+ * 从文件路径解一张图并建成纹理。
+ *
+ * **读流走 SDL**（`SDL_IOFromFile` 在 Windows 上收 UTF-8，中文目录才打得开）；
+ * `fopen` 走的是 ANSI，那条路在中文路径上直接失败——这是本仓库吃过一次的坑
+ * （`PathUtil` 那条注释），所以这里不图省事。
+ */
+SDL_Texture* loadTextureFromFile(SDL_Renderer* renderer,
+                                 const std::string& path) {
+    SDL_IOStream* stream = SDL_IOFromFile(path.c_str(), "rb");
+    if (stream == nullptr) {
+        INK_LOG_ERROR(kModuleName,
+                      "背景板底图打不开：" + path + "："
+                          + std::string(SDL_GetError()));
+        return nullptr;
+    }
+    SDL_Surface* surface = IMG_Load_IO(stream, true);  // true = 读完顺手关流
+    if (surface == nullptr) {
+        INK_LOG_ERROR(kModuleName,
+                      "背景板底图解不出来：" + path + "："
+                          + std::string(SDL_GetError()));
+        return nullptr;
+    }
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    if (texture == nullptr) {
+        INK_LOG_ERROR(kModuleName,
+                      "背景板底图建纹理失败：" + path + "："
+                          + std::string(SDL_GetError()));
+    }
+    return texture;
+}
+
+#endif  // INK_HAS_SDL3_IMAGE
+
+/**
+ * 取背景板纹理（有缓存就用缓存；**失败也只报一次**）。
+ *
+ * 路径没变就永远不重试：解码失败的代价是每帧一条 ERROR + 每帧几毫秒的 IO，
+ * 而"图放错了"这件事改完路径自然就恢复了（路径变了才重载）。
+ */
+SDL_Texture* cachedBackdropTexture(WindowState& s, SDL_Renderer* renderer,
+                                   const std::string& path) {
+    if (s.backdropTexturePath == path) {
+        return s.backdropTexture;  // 命中（失败过就是 nullptr，不重试）
+    }
+    if (s.backdropTexture != nullptr) {
+        SDL_DestroyTexture(s.backdropTexture);
+        s.backdropTexture = nullptr;
+    }
+    s.backdropTexturePath = path;
+    s.backdropLoadFailed = false;
+
+#if defined(INK_HAS_SDL3_IMAGE)
+    s.backdropTexture = loadTextureFromFile(renderer, path);
+#else
+    // 没装 SDL_image 时**必须说出来**：否则症状是"设了底图但画面上什么都没有"，
+    // 和"路径写错了"长得一模一样（静默失效清单那一类）。
+    INK_LOG_ERROR(kModuleName,
+                  std::string("本构建没有 SDL3_image（INK_HAS_SDL3_IMAGE "
+                              "未定义），背景板底图不会出现：")
+                      + path);
+#endif
+    s.backdropLoadFailed = (s.backdropTexture == nullptr);
+    return s.backdropTexture;
+}
+
+/**
+ * 画背景板：**整幅窗口像素**的一层底（颜色 → 底图），画在清屏之后、场景之前。
+ *
+ * 为什么这一层要临时关掉逻辑呈现：`letterbox` 下渲染器坐标是**设计坐标**，
+ * 而留白在设计坐标之外——按设计坐标画永远够不到那四条。关掉之后坐标就是窗口
+ * 像素，一次铺满整幅即可，黑边自然被覆盖。
+ *
+ * 画完**必须恢复**（SDL 文档：留白是在 `SDL_RenderPresent` 那一刻才合成进帧缓冲
+ * 的，present 时逻辑呈现关着就会留着上一帧的残影）；而且后面画场景全靠这条
+ * 坐标系，漏恢复的症状是"整个 UI 变成左上角一小块"。
+ *
+ * @param cache 纹理缓存；`nullptr` = 一次性使用（离屏 / 截图那条路径，用完即毁）。
+ */
+void paintBackdrop(SDL_Renderer* renderer, std::uint32_t color,
+                   const std::string& imagePath, WindowState* cache) {
+    if (renderer == nullptr || (color == 0u && imagePath.empty())) {
+        return;  // 没配这一层：零开销，连 SDL 都不碰
+    }
+
+    SDL_Texture* texture = nullptr;
+    bool ownedHere = false;  // 本函数自己建的纹理（离屏路径），画完要销毁
+    if (!imagePath.empty()) {
+        if (cache != nullptr) {
+            texture = cachedBackdropTexture(*cache, renderer, imagePath);
+        } else {
+            texture = loadTextureFromFile(renderer, imagePath);
+            ownedHere = (texture != nullptr);
+        }
+    }
+
+    int outWidth = 0;
+    int outHeight = 0;
+    // **必须是 `SDL_GetRenderOutputSize`（目标/窗口像素），不是
+    // `SDL_GetCurrentRenderOutputSize`**：后者把逻辑呈现算进去，回的是
+    // **逻辑画布那块**（实测 640×640 目标配 1280×720 设计回 640×360）。
+    // 用它当整幅尺寸的后果是留白只被填掉上半截、另一半仍是清屏色——
+    // 一个只在"窗口比例 ≠ 设计比例"时才现形、而且看起来像"配色没生效"的坑。
+    if (!SDL_GetRenderOutputSize(renderer, &outWidth, &outHeight)
+        || outWidth <= 0 || outHeight <= 0) {
+        INK_LOG_ERROR(kModuleName, "背景板：读不到输出尺寸，这一帧跳过");
+        if (ownedHere) {
+            SDL_DestroyTexture(texture);
+        }
+        return;
+    }
+
+    SDL_SetRenderLogicalPresentation(renderer, 0, 0,
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    SDL_SetRenderViewport(renderer, nullptr);
+    SDL_SetRenderClipRect(renderer, nullptr);
+
+    if (color != 0u) {
+        SDL_SetRenderDrawColor(renderer, static_cast<Uint8>((color >> 16) & 0xFFu),
+                               static_cast<Uint8>((color >> 8) & 0xFFu),
+                               static_cast<Uint8>(color & 0xFFu),
+                               static_cast<Uint8>((color >> 24) & 0xFFu));
+        const SDL_FRect whole{0.0f, 0.0f, static_cast<float>(outWidth),
+                              static_cast<float>(outHeight)};
+        SDL_RenderFillRect(renderer, &whole);
+    }
+
+    if (texture != nullptr) {
+        float imageWidth = 0.0f;
+        float imageHeight = 0.0f;
+        if (SDL_GetTextureSize(texture, &imageWidth, &imageHeight)
+            && imageWidth > 0.0f && imageHeight > 0.0f) {
+            // cover：取两轴里大的那个倍率 ⇒ 铺满整幅、多出来的裁掉。**不拉伸**，
+            // 所以窗口比例怎么变图都不会变形（和 letterbox 同一条审美）。
+            const float scale =
+                std::max(static_cast<float>(outWidth) / imageWidth,
+                         static_cast<float>(outHeight) / imageHeight);
+            const SDL_FRect destination{
+                (static_cast<float>(outWidth) - imageWidth * scale) * 0.5f,
+                (static_cast<float>(outHeight) - imageHeight * scale) * 0.5f,
+                imageWidth * scale, imageHeight * scale};
+            SDL_RenderTexture(renderer, texture, nullptr, &destination);
+        }
+    }
+
+    SDL_SetRenderLogicalPresentation(renderer, InkingDesignWidth(),
+                                     InkingDesignHeight(),
+                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+
+    if (ownedHere) {
+        SDL_DestroyTexture(texture);
+    }
+}
+
+/**
+ * 绘制这一帧：底色 → 背景板 → 当前场景的绘制列表 → 指针标记。
  *
  * 场景那一笔是真正的渲染路径：`InkingScene::Render` 在内部把顺序重建到最新
  * （惰性、每帧最多一次），再按 z 序把每个节点提交给渲染器。
@@ -860,7 +1058,8 @@ bool writeRendererImage(SDL_Renderer* renderer, const std::string& path) {
  * SDF 形状层 / 样式层接手后，这一段连同 SDL_RenderFillRect 一起删掉。
  */
 void drawFrame(WindowState& s, const InkingMouseInput& mouse,
-               std::uint32_t background) {
+               std::uint32_t background, std::uint32_t backdrop,
+               const std::string& backdropImage) {
     SDL_Renderer* renderer = s.renderer;
 
     // 自检钩子：记录这一帧真的渲染了哪个场景。
@@ -880,6 +1079,10 @@ void drawFrame(WindowState& s, const InkingMouseInput& mouse,
                            static_cast<Uint8>(background & 0xFFu),
                            static_cast<Uint8>((background >> 24) & 0xFFu));
     SDL_RenderClear(renderer);
+
+    // 背景板：盖在清屏之上、场景之下，覆盖整幅窗口像素（含 letterbox 留白）。
+    // 所以"黑边填什么色 / 什么图"就落在这一层——清屏色不管这件事。
+    paintBackdrop(renderer, backdrop, backdropImage, &s);
 
     // 当前场景的整棵渲染树。经 InkingSceneLibrary 走一道，而不是直接调场景的
     // Render（那是 protected）：这样"只有活跃场景会被渲染"这条规矩只有
@@ -1159,13 +1362,20 @@ bool stepFrame(WindowState& s, InkingMouseInput& mouse, InkingKeyboardInput& key
     //     用同一个真实 delta：声音不该跟着帧率走。
     InkingAudioTick(static_cast<float>(deltaSeconds));
 
-    // 4. 绘制：底色 + 当前场景的整棵渲染树 + 指针标记。
+    // 4. 绘制：底色 + 背景板 + 当前场景的整棵渲染树 + 指针标记。
     //
     // 清屏之前先判一次"这个 alpha 有没有意义"：不透明窗口上半透明背景是
     // **一条看起来支持、其实无效的通道**（alpha 写进帧缓冲没人采信）。
     warnIfBackgroundAlphaIgnored(window.GetBackgroundColor(),
                                  window.IsTransparentRequested());
-    drawFrame(s, mouse, window.GetBackgroundColor());
+
+    // 背景板的语义色**每帧**解析（一次指针判空 + 一次表内查找）：换主题时窗口层
+    // 没有"版本号缓存"这套东西，而且它每帧只画一次，省这一步换来的是
+    // "切了主题黑边不跟着变"——正是这套机制最容易漏的那个角落。
+    const std::uint32_t backdrop = InkingResolveThemeColor(
+        window.GetBackdropToken(), window.GetBackdropColor());
+    drawFrame(s, mouse, window.GetBackgroundColor(), backdrop,
+              window.GetBackdropImage());
 
     // 5. 帧末收尾：瞬时状态一帧只清一次。放在这里而不是事件循环里，
     //    否则一帧里的多个移动事件会被后一个清掉。
@@ -1749,6 +1959,45 @@ std::uint32_t InkingWindow::GetBackgroundColor() const noexcept {
     return _backgroundColor;
 }
 
+// ---------------------------------------------------------------------------
+// 背景板（letterbox 留白填充 / 窗口底图）
+// ---------------------------------------------------------------------------
+
+void InkingWindow::SetBackdrop(std::uint32_t argb, const char* token) noexcept {
+    // 和 `SetBackgroundColor` 同一条纪律：noexcept 里不拼字符串、不打日志。
+    // （"配了半透明但没有透明窗口"那类判定发生在 `stepFrame`，那里才有上下文。）
+    _backdropColor = argb;
+    _backdropToken = token;
+}
+
+std::uint32_t InkingWindow::GetBackdropColor() const noexcept {
+    return _backdropColor;
+}
+
+const char* InkingWindow::GetBackdropToken() const noexcept {
+    return _backdropToken;
+}
+
+bool InkingWindow::SetBackdropImage(const std::string& path) {
+    if (_backdropImage == path) {
+        return false;  // 幂等：值没变
+    }
+    _backdropImage = path;
+    // 换路径立刻让缓存失效，**不等下一帧**：不然"改了路径却还是旧图"这种
+    // 现象只能靠多等一帧来解释，而多等一帧和"没生效"长得一模一样。
+    if (WindowState& s = state(); s.backdropTexture != nullptr) {
+        SDL_DestroyTexture(s.backdropTexture);
+        s.backdropTexture = nullptr;
+    }
+    state().backdropTexturePath.clear();
+    state().backdropLoadFailed = false;
+    return true;
+}
+
+const std::string& InkingWindow::GetBackdropImage() const noexcept {
+    return _backdropImage;
+}
+
 bool InkingWindow::SetRoundedCorners(bool rounded) {
     _roundedCorners = rounded;
     // 窗口已经起来就立刻应用一次；还没起来只记账，`Show()` 建完窗口会应用。
@@ -2194,6 +2443,14 @@ bool InkingWindow::RenderToTexture(const std::string& path, int width, int heigh
                            static_cast<Uint8>(bg & 0xFFu),
                            static_cast<Uint8>((bg >> 24) & 0xFFu));
     SDL_RenderClear(renderer);
+
+    // ③b. 背景板（和真窗口同一条规矩）：离屏也要带上，否则"截图和窗口对不上"
+    //      ——那正是这条路径存在的理由。缓存传 `nullptr`：离屏是一次性的，
+    //      没必要为一张图在窗口状态里留纹理。
+    paintBackdrop(renderer,
+                  InkingResolveThemeColor(Instance().GetBackdropToken(),
+                                          Instance().GetBackdropColor()),
+                  Instance().GetBackdropImage(), nullptr);
 
     // ④ 临时切场景（空 = 用当前活跃那个），画完还原——这条函数是**只读**
     //    语义，不该把宿主的活跃场景改掉。

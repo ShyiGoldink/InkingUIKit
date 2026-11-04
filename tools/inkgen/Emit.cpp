@@ -1122,6 +1122,8 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
                             || config.roundedCorners.has_value()
                             || config.transparent.has_value()
                             || config.background.has_value()
+                            || config.backdrop.has_value()
+                            || config.backdropImage.has_value()
                             || config.fullscreen.has_value()
                             || config.startScene.has_value();
         out << "#include <config/window_config.h>\n";
@@ -1139,6 +1141,8 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
                             || config.roundedCorners.has_value()
                             || config.transparent.has_value()
                             || config.background.has_value()
+                            || config.backdrop.has_value()
+                            || config.backdropImage.has_value()
                             || config.fullscreen.has_value()
                             || config.startScene.has_value();
         out << "\n// ---------------------------------------------------------------------------\n";
@@ -1177,6 +1181,24 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
             out << "\n/// 窗口清屏色（= json 的 window.background 字段）。\n";
             out << "inline constexpr std::uint32_t kBackground = "
                 << Color(*config.background) << ";\n";
+        }
+        if (config.backdrop.has_value()) {
+            out << "\n/// 背景板颜色（= json 的 window.backdrop 字段）：盖在清屏之上、\n";
+            out << "/// 场景之下，覆盖整幅窗口像素 ⇒ **letterbox 留白填的就是它**。\n";
+            out << "inline constexpr std::uint32_t kBackdrop = "
+                << Color(*config.backdrop) << ";\n";
+            if (!config.backdropToken.empty()) {
+                out << "\n/// 背景板颜色的语义名（`$token` 去掉 `$`）：运行期换肤靠它。\n";
+                out << "inline constexpr const char* kBackdropToken = "
+                    << Quote(config.backdropToken) << ";\n";
+            }
+        }
+        if (config.backdropImage.has_value()) {
+            out << "\n/// 背景板底图路径（= json 的 window.backdropImage 字段）。\n";
+            out << "///\n";
+            out << "/// cover：保持比例铺满整窗，多出来的裁掉。路径按 UTF-8 解释。\n";
+            out << "inline constexpr const char* kBackdropImage = "
+                << Quote(*config.backdropImage) << ";\n";
         }
         if (config.fullscreen.has_value()) {
             out << "\n/// 启动即全屏（= json 的 window.fullscreen 字段）。\n";
@@ -1218,6 +1240,15 @@ std::string MakeHeader(const LoadResult& loaded, const EmitOptions& options) {
             }
             if (config.background.has_value()) {
                 out << "    window.background = kBackground;\n";
+            }
+            if (config.backdrop.has_value()) {
+                out << "    window.backdrop = kBackdrop;\n";
+                if (!config.backdropToken.empty()) {
+                    out << "    window.backdropToken = kBackdropToken;\n";
+                }
+            }
+            if (config.backdropImage.has_value()) {
+                out << "    window.backdropImage = kBackdropImage;\n";
             }
             if (config.fullscreen.has_value()) {
                 out << "    window.fullscreen = kStartFullscreen;\n";

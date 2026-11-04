@@ -2,10 +2,21 @@
 
 **一个用 SDF 形状 + 锚点定位写 UI 的 C++20 前端框架（动态链接库）。**
 
-> ## ✅ 当前版本：**0.9.0 发布版**（`0.9.0-release`）
+> ## ✅ 当前版本：**0.9.2 发布版**（`0.9.2-release`）
 >
 > - 0.x 期间接口 / ABI / 行为仍可能在次版本变化，升级请对照
 >   [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md)；`1.0.0` 起才冻结。
+> - **0.9.2 新增：letterbox 留白（黑边）可以配色 / 铺底图**。`SetBackdrop` 画在
+>   清屏之后、场景之前、覆盖整幅窗口像素，所以黑边填的就是它；写 `$token` 就跟着
+>   运行期主题走，`SetBackdropImage` 再加一张 cover 底图。配置里是
+>   `window.backdrop` / `window.backdropImage`。配套修掉一处"文档说截含黑边、
+>   实际没截到"的缺陷（`Capture` / `RenderToTexture` 现在真含留白）。
+> - **0.9.1 新增：动态面板能滚轮了**。滚轮读数从「逻辑步」改到「每渲染帧一次」
+>   （探针实测：逻辑步会丢 1/3 的喂入量，帧回调一次不漏）。两条入口共用同一份
+>   换算 —— 静态档与动态档滚同一格滚**同一个数**（48 设计像素，`wheelStep`），
+>   且一帧的滚轮只落在一个接收者身上（不双滚）。配套新增两个只读查询
+>   （`InkingScene::GetPointerWheelTarget` / `GetTopmostDynamicAt`）与一个纯函数
+>   （`InkingApplyWheelToScroll`）。**已知限制**：嵌套两层滚动容器只有外层生效。
 > - **0.9.0 新增：块叠加组 `InkingSpriteGroup` / `InkingDynamicSpriteGroup`**
 >   ——「一个 sprite 由多块拼成」：一张图集、多个动画、**每帧一组格号**（同框叠图）。
 >   一帧 K 块**仍然只有一次 `SDL_RenderGeometry`**（自检钉住 K=1/2/4 都是 1）。
@@ -151,8 +162,9 @@ cmake --build build -j
 ```
 
 **看这一行，也看退出码——它们是同一个数**（`main` 直接 `return g_fail`）。
-当前实测 **889 项 ok / 0 项失败 / 0 项 skip**（0.9.0 起：块叠加组与帧事件那几节
-又加了一批；0.8.3~0.8.5 时是 599 项）。项数会随环境浮动——**没有可读字体时**文字
+当前实测 **928 项 ok / 0 项失败 / 0 项 skip**（0.9.2 起：背景板 17 条；
+0.9.1 起：动态面板滚轮那 9 条；
+0.9.0 时是 891 项；0.8.3~0.8.5 时是 599 项）。项数会随环境浮动——**没有可读字体时**文字
 高清与裁行那几条会打成 `[skip]`，那是环境不是缺陷，见
 [`API.md` §7 的注](docs/zh/API.md)。
 
@@ -536,7 +548,7 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 | [`docs/zh/API.md`](docs/zh/API.md) | **从这里读起**：五分钟上手 + 模块地图 + 头文件全量索引 |
 | [`docs/zh/api/`](docs/zh/api/) | 18 个专页：Widget / Scene / Window / Input / Render / Components / Prefab / CXXCSS 生成物 / Runtime / LayoutSolver / FixedPopup / Json + Anchor / InkingShapeSpec / Transform / Layout / KeyboardTarget / PointerHandler |
 | [`CXXCSS/CXXCSS.md`](CXXCSS/CXXCSS.md) | 配置格式：目录与命名、公共骨架、形状层词汇表、Button 字段全表 |
-| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.9.0 的逐条变化） |
+| [`docs/zh/CHANGELOG.md`](docs/zh/CHANGELOG.md) | 变更记录（0.1.1 → 0.9.2 的逐条变化） |
 | [`examples/minimal/README.md`](examples/minimal/README.md) | 最小工程：三步构建 + 运行期 DLL 拷贝 |
 
 ---
@@ -613,4 +625,4 @@ config / dataStruct  →  detail  →  anchor → widget  →  组件  →  scen
 
 ---
 
-> 版本 `0.9.0`（发布版） · 最后更新 2026-11-04
+> 版本 `0.9.2`（发布版） · 最后更新 2026-11-04

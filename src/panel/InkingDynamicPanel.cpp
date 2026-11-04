@@ -458,6 +458,19 @@ void InkingDynamicPanel::onPointerStateChanged() {
 // ---------------------------------------------------------------------------
 
 void InkingDynamicPanel::onAnimationTick(float deltaSeconds) {
+    // ---- 滚轮（拉通道，0.9.1 T-03）----
+    //
+    // **必须排在 `_look.Advance` 之前**：本帧的滚动条位置要用新的 `_scrollY`，
+    // 否则条永远慢一帧（拖动时不明显，滚轮一格一格滚时看得出来）。
+    //
+    // 通道选择有依据：`onTick`（逻辑步）读滚轮会丢（探针实测 3 次喂入只读到
+    // 2 次），而 `onAnimationTick` 60 帧调用 60 次、一次不漏。所以这里读，
+    // 那里**绝对不要**读——别"顺手优化"回逻辑步，见头文件"关键决定二"。
+    if (shouldConsumeSceneWheel()) {
+        InkingScene* scene = GetScene();
+        applyWheelDelta(scene->GetPointerWheelX(), scene->GetPointerWheelY());
+    }
+
     const InkingPanelLook::AdvanceResult advanced = _look.Advance(deltaSeconds);
     if (!advanced.repaint && !advanced.hit) {
         return;
@@ -472,6 +485,65 @@ void InkingDynamicPanel::onAnimationTick(float deltaSeconds) {
         // 那一条会按"有没有静态子孙"自己分流）。
         MarkGeometryMoved();
     }
+}
+
+// ---------------------------------------------------------------------------
+// 滚轮：两条入口 + 一份算术（0.9.1 T-03）
+// ---------------------------------------------------------------------------
+
+void InkingDynamicPanel::applyWheelDelta(float deltaX, float deltaY) {
+    if (!_data.scroll.enabled) {
+        return;
+    }
+    // 换算只有一份（`InkingApplyWheelToScroll`）：与静态面板滚同一格必须滚
+    // 同一个距离。夹紧只由 `SetScroll` 做（它同时负责幂等）。
+    float nextX = _scrollX;
+    float nextY = _scrollY;
+    InkingApplyWheelToScroll(_data.scroll, deltaX, deltaY, nextX, nextY);
+    SetScroll(nextX, nextY);
+}
+
+void InkingDynamicPanel::onPointerWheel(float deltaX, float deltaY) {
+    // 推通道：场景沿父链找到本面板（`HandlesSubtreeWheel`）之后把滚轮交给这里。
+    // 与拉通道共用 `applyWheelDelta`，所以两条入口的手感不会被写成两份。
+    applyWheelDelta(deltaX, deltaY);
+}
+
+bool InkingDynamicPanel::shouldConsumeSceneWheel() const {
+    // ① 不能滚就没有要判的东西（`_data` 构造后不变，这条最便宜）。
+    if (!_data.scroll.enabled) {
+        return false;
+    }
+    InkingScene* scene = GetScene();
+    if (scene == nullptr) {
+        return false;
+    }
+    // ② 指针不在窗口里：位置是上一次的残留值，拿它判归属会"窗口外的滚轮
+    //    滚了窗口里的内容"。
+    if (!scene->IsPointerInside()) {
+        return false;
+    }
+    // ③ 本帧没有滚轮增量（已派发 / 已消费 / 本来就没滚）。
+    if (scene->GetPointerWheelX() == 0.0f && scene->GetPointerWheelY() == 0.0f) {
+        return false;
+    }
+    // ④ **必须先于自判**：有人接了就不许再拉，否则同一帧两条通道都开火 ⇒ 双滚。
+    //    指针压在静态子孙上时，推通道交给的正是本面板（`HandlesSubtreeWheel`），
+    //    `onPointerWheel` 刚刚已经滚过一次了。
+    if (scene->GetPointerWheelTarget() != nullptr) {
+        return false;
+    }
+    // ⑤ 重叠的动态面板只有**最上面**那个滚。这里不直接比 `== this`：
+    //    指针可能压在本面板的**动态子控件**上（那时最上面的是子控件），
+    //    滚的仍该是本面板——所以沿父链看"我在不在它上面"。
+    InkingWidget* topmost =
+        scene->GetTopmostDynamicAt(scene->GetPointerX(), scene->GetPointerY());
+    for (InkingWidget* node = topmost; node != nullptr; node = node->GetParent()) {
+        if (node == this) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------

@@ -389,6 +389,13 @@ struct GlobalConfig {
     std::optional<bool> transparent;  ///< 透明窗口（建窗标志，Show() 之前才有效）
     std::optional<std::uint32_t> background;  ///< 已解析成 0xAARRGGBB（`$token` 也支持）
     std::optional<bool> fullscreen;
+
+    /// 背景板（letterbox 留白填充 / 窗口底图）：颜色 + 语义名 + 底图路径。
+    /// `backdropToken` 只在 `backdrop` 写成 `$token` 时有值（运行期换肤要它）。
+    std::optional<std::uint32_t> backdrop;
+    std::string backdropToken;
+    std::optional<std::string> backdropImage;
+
     std::optional<std::string> startScene;    ///< 只是常量：`Show()` 的参数值
 
     std::vector<std::string> warnings;

@@ -38,7 +38,7 @@
   2c.  Scene::DispatchKeyboard    ← 再把按键推给"新的"焦点
   3.   InkingTimeline::Advance(delta)   ← 逻辑步 0..N 次 + 每帧回调 1 次
   3b.  InkingAudioTick(delta)           ← 音频与场景无关，不能挂在场景通道上
-  4.   drawFrame（清屏色 + 场景 + 指针标记 + Present）
+  4.   drawFrame（清屏色 + 背景板 + 场景 + 指针标记 + Present）
   5.   Scene::ConsumeFrameDirty   ← 脏的统一消费（只对活跃场景）
   5b.  mouse/keyboard ResetFrameFlags（瞬时状态一帧清一次）
   5c.  runFrameTasks              ← 帧末任务（D3）：读到的都是这一帧定稿的值
@@ -339,6 +339,40 @@ std::uint32_t GetBackgroundColor() const noexcept;
 混合，帧缓冲的 alpha 又没人采信：写 0 也透不出桌面，画面仍是那个 RGB 的不透明底。这种
 情况 `stepFrame` 会打一条 WARN（静默失效清单第 9 条）。
 
+>**SetBackdrop(argb, token) / GetBackdropColor() / GetBackdropToken()**
+>**SetBackdropImage(path) / GetBackdropImage()**
+
+```C++
+void SetBackdrop(std::uint32_t argb, const char* token = nullptr) noexcept;
+std::uint32_t GetBackdropColor() const noexcept;
+const char* GetBackdropToken() const noexcept;
+bool SetBackdropImage(const std::string& path);
+const std::string& GetBackdropImage() const noexcept;
+```
+
+**背景板 = letterbox 留白填的那一层。** 画在**清屏之后、场景之前**，覆盖**整幅窗口像素**
+（含留白），所以 UI 覆盖不到的地方都是它：黑边、以及画布里的透明处。颜色是 `0xAARRGGBB`，
+**0 = 不画**（这一层完全不存在，零开销）。
+
+为什么需要第二层底而不是复用清屏色：清屏色同时是**画布底色**，而留白显示的就是"没人画过
+的地方"——两件事本该分开。想让黑边跟画布不同色、或者铺一张底图，只能再加一层。
+
+- **`token`**：生成期烘下的语义色名（例如 `"letterbox"`），窗口层**每帧**用它查主题表
+  （`InkingResolveThemeColor`），所以切主题黑边跟着换、不用重编。传 `nullptr` 表示这个
+  颜色不是语义色——查不到时用的就是 `argb` 本身。
+- **`SetBackdropImage`**：底图按 **cover** 铺满（保持比例、多出来的裁掉，不变形）。路径按
+  UTF-8 解释；解码**延迟到第一次绘制**（那时才有渲染器），失败打一条 ERROR 并退回颜色
+  （不会留一块黑），且同一路径只报一次。返回 `true` 只代表值变了，不代表解码成功。
+- 写.json 的路径是 `window.backdrop` / `window.backdropImage`（§3.11）。
+
+**两个实现细节值得记住**（都踩过）：
+
+1. 这一层要**临时关掉逻辑呈现**再画——留白在设计坐标之外，按设计坐标永远够不到那四条；
+   画完必须恢复，否则 `SDL_RenderPresent` 时留白会留着上一帧的残影、后面的场景也会错位。
+2. 整幅尺寸要用 **`SDL_GetRenderOutputSize`**，不是 `SDL_GetCurrentRenderOutputSize`：
+   后者把逻辑呈现算进去，回的是**逻辑画布那块**（实测 640×640 目标配 1280×720 设计只回
+   640×360）。用错的症状是"留白只填掉一半、另一半还是清屏色"，看起来像配色没生效。
+
 >**SetTransparent(transparent) / IsTransparentRequested() / IsTransparentApplied()**
 
 ```C++
@@ -411,6 +445,11 @@ bool HasPendingCapture() const noexcept;
 - 截的是**整个窗口帧缓冲**（含 letterbox 黑边），不是逻辑画布那一块；
 - **不含指针小方块**（那一笔调试脚手架画在截图之后）；
 - 没有渲染器时**当场返回 false 并报错**，不留一个永远不落盘的排队请求。
+
+「含黑边」这条 0.9.2 之前是**假的**：`SDL_RenderReadPixels` 在逻辑呈现开着时只回逻辑画布
+那块（实测 640×640 目标配 1280×720 设计只回 640×360），于是比例一致的窗口看不出来、
+比例一不同截图的构图就和眼睛看到的不一样。现在读取前会临时关掉逻辑呈现、读完恢复——
+所以**截图 / 离屏渲染里留白是真实存在的**，颜色就是背景板那一层。
 
 >**GetShortcuts()**
 
@@ -487,4 +526,4 @@ std::size_t GetDroppedWithoutSceneCount() const noexcept; // 没场景时丢弃�
 
 ---
 
-> 本文档对应版本：**0.9.0（0.x 发布版）**。
+> 本文档对应版本：**0.9.2（0.x 发布版）**。

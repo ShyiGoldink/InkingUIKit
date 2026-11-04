@@ -21,6 +21,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
 
 
 /**
@@ -45,6 +46,17 @@ struct InkingWindowConfig {
     /// 清屏色（`0xAARRGGBB`）。场景渲染之前那一笔窗底。
     /// alpha 只在 `transparent = true` 时有意义，否则会有一条 WARN。
     std::optional<std::uint32_t> background;
+
+    /// 背景板颜色（`0xAARRGGBB`）：盖在清屏之上、场景之下，覆盖整幅窗口像素，
+    /// **letterbox 留白填的就是它**。0 = 不画。`$token` 写法与 `background` 一致。
+    std::optional<std::uint32_t> backdrop;
+
+    /// 背景板颜色的**语义名**（`"$letterbox"` 去掉 `$` 之后那一串）。
+    /// 空 = 这个颜色不是语义色；**只有写了 `backdrop` 且是 `$token` 时才有值**。
+    std::string backdropToken;
+
+    /// 背景板底图路径（cover 铺满整窗）。空 = 不画底图。
+    std::optional<std::string> backdropImage;
 
     /// 启动即全屏。`Show()` 之前只记账，建完窗口补应用一次。
     std::optional<bool> fullscreen;

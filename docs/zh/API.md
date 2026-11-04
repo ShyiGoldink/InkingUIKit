@@ -116,6 +116,14 @@ int main() {
 `GetMagnification()`（letterbox 下 XY 同倍率）。**公开 API 的入参一律设计坐标**，
 只有 `onRender(pixelX, pixelY)` 那一层收设备像素。
 
+**| 留白（黑边）**
+窗口比例 ≠ 设计比例时，letterbox 把设计画布等比塞进窗口、多出来的空间是**留白**。
+留白不是"内容画出去了"：绘制被限制在设计画布那块 viewport 里，越界的坐标画不进去
+（实测：设计坐标 −50..150 的矩形铺满，留白一个像素都不变色），留白显示的是
+**没人画过的地方**。要让那块不是黑色，用 `InkingWindow::SetBackdrop`（颜色 / `$token`）
+或 `SetBackdropImage`（cover 底图）——它盖的就是这一层，配置里叫 `window.backdrop` /
+`window.backdropImage`。详见 [api/InkingWindow.md](api/InkingWindow.md)。
+
 ---
 
 ## 2. 0.x 发布版的边界（"能用"与"验收过"）
@@ -434,5 +442,5 @@ const bool clean  = InkingImageScaleSpec::IsCleanRatio(sigma);
 
 ---
 
-> 本文档对应版本：**0.9.0（0.x 发布版）**。发现文档与代码不一致时，
+> 本文档对应版本：**0.9.2（0.x 发布版）**。发现文档与代码不一致时，
 > **以头文件注释为准**，并请把差异记到 `docs/zh/CHANGELOG.md`。

@@ -448,17 +448,13 @@ void InkingStaticPanel::onPointerWheel(float deltaX, float deltaY) {
     if (!_data.scroll.enabled) {
         return;
     }
-    // 步长是**设计像素**（用户裁定）：一格 = wheelStep，与视口大小无关。
-    // 方向：滚轮向上（deltaY > 0）看更上面的内容 ⇒ 滚动量减小。
-    const float step = _data.scroll.wheelStep;
+    // 换算只有一份（`InkingApplyWheelToScroll`）：静态档与动态档滚同一格
+    // 必须滚同一个距离，抄第二份就是"两档手感悄悄分叉"。
+    // 步长是**设计像素**（用户裁定）：一格 = `wheelStep`，与视口大小无关。
     float nextX = _scrollX;
     float nextY = _scrollY;
-    if (_data.scroll.horizontal) {
-        nextX -= deltaX * step;
-    }
-    if (_data.scroll.vertical) {
-        nextY -= deltaY * step;
-    }
+    InkingApplyWheelToScroll(_data.scroll, deltaX, deltaY, nextX, nextY);
+    // 夹紧只由 `SetScroll` 做（它同时负责幂等）。
     SetScroll(nextX, nextY);
 }
 

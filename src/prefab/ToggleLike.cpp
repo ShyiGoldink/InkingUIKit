@@ -332,16 +332,32 @@ void RadioGroup::Add(Radio* radio) {
     if (radio == nullptr) {
         return;
     }
-    if (std::find(_radios.begin(), _radios.end(), radio) != _radios.end()) {
-        return;  // 幂等
+    if (radio->GetGroup() != this) {
+        // 从组这一侧加人，也要把**成员的指针**回写——否则它点击时走"没挂组"
+        // 那条分支（各置各的真），互斥形同不存在。链接怎么建只留一份实现：
+        // 转给 `SetGroup`（它退旧组 → 置指针 → 反手调回这里，第二次进来时
+        // 指针已经是 this，落到下面"只补列表"那一段）。
+        radio->SetGroup(this);
+        return;
     }
-    _radios.push_back(radio);
+    // 指针已经指向本组：只保证列表里也有它（幂等）。
+    if (std::find(_radios.begin(), _radios.end(), radio) == _radios.end()) {
+        _radios.push_back(radio);
+    }
 }
 
 void RadioGroup::Remove(Radio* radio) {
+    if (radio == nullptr) {
+        return;
+    }
     const auto it = std::find(_radios.begin(), _radios.end(), radio);
     if (it != _radios.end()) {
         _radios.erase(it);
+    }
+    // 反手清指针（只在"确实指着我"时清）：不清的话它会以为自己还在组里，
+    // 点击走 `Select`、组里却查不到它 ⇒ 静默失效（不报错、也不选中）。
+    if (radio->_group == this) {
+        radio->_group = nullptr;
     }
 }
 

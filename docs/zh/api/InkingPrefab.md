@@ -572,7 +572,8 @@ public:
 };
 
 class RadioGroup {                 // 只管互斥，不拥有成员
-    void Add(Radio*); void Remove(Radio*);
+    void Add(Radio*);              // 双向：组里有它 + 它的 GetGroup() 指向本组
+    void Remove(Radio*);           // 摘掉，并把它的 GetGroup() 清回 nullptr
     void Select(Radio*);           // 先清其它、再选它
     Radio* GetChecked() const noexcept;
 };
@@ -589,11 +590,10 @@ agree.clicked.Subscribe([]{ Enable(); });
 agree.cancelled.Subscribe([]{ Disable(); });
 
 inking_prefab::RadioGroup mode;            // 互斥由它负责
-mode.Add(&radioA); mode.Add(&radioB);      // 用 radio.SetGroup(&mode) 也一样
-radioA.SetGroup(&mode); radioB.SetGroup(&mode);
+mode.Add(&radioA); mode.Add(&radioB);      // 等价于 radioA.SetGroup(&mode)，二选一即可
 ```
 
-六条会咬人的：
+七条会咬人的：
 
 1. **事件只有一对槽**（`clicked` / `cancelled`），没有 `SetOnClicked`。三个控件差别只在
    **谁触发**：Checkbox / Switch 是用户点它；**Radio 是"同组另一个被选中"**。
@@ -607,6 +607,9 @@ radioA.SetGroup(&mode); radioB.SetGroup(&mode);
 6. **mark 只在选中时画**（Checkbox 的勾、Radio 的圆点）：`checked` 为假时那一片是空的，
    "状态"就是这一笔的有无。`Switch` 是唯一例外——滑块关着也在（滑到左端才是"关"），
    由 `protected` 钩子 `PaintsMarkWhenUnchecked()` 表达。
+7. **进组是双向的**：`RadioGroup::Add` 与 `Radio::SetGroup` 完全等价（组里记着成员 +
+   成员 `GetGroup()` 记着组），`Remove` 会把成员的指针清回 `nullptr`。只建一半的后果
+   很隐蔽——点击走 Radio 的"没挂组"分支各自置真，互斥静默失效：三个圈能同时选中。
 
 `markShape` 默认 `Rect()` 是一个**哨兵**：表示"用内置的那个 mark"（Checkbox 画勾、
 其余画圆）。给它别的形状（`Circle` / `PolygonPath`）就按那个画——"换勾的样式"于是只是
@@ -811,4 +814,4 @@ std::string DefaultFontPath();
 
 ---
 
-> 本文档对应版本：**0.9.0（0.x 发布版）**。
+> 本文档对应版本：**0.9.2（0.x 发布版）**。

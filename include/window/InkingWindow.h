@@ -439,6 +439,49 @@ public:
 
     std::uint32_t GetBackgroundColor() const noexcept;
 
+    // ---------------- 背景板（letterbox 留白填充 / 窗口底图） ----------------
+    //
+    // **为什么要有第二层底**：清屏色同时承担两件事——画布底色和 letterbox 留白
+    // （留白就是"没人画过的地方"，所以它天然是清屏色）。想让**黑边**和画布不同色、
+    // 或者干脆铺一张图，就必须在清屏之上再加一层，否则只能把两者绑在同一个值上。
+    //
+    // 语义（2026-11-04 定）：这一层画在**清屏之后、场景之前**，覆盖**整幅窗口像素**
+    // （含留白），所以 UI 覆盖不到的地方都是它——黑边、以及画布里的透明处。
+    // 为什么不做"只填黑边那四条"：一次整幅绘制就够，而且底图在留白处看到的是
+    // 图片的**边缘那块**（等比 cover 之后裁掉的中间部分），比按条拉伸好看，
+    // 也不用临时算 letterbox 矩形。
+
+    /**
+     * 背景板颜色（`0xAARRGGBB`）。**0 = 不画**（全透明，等于没有这一层）。
+     *
+     * `token` 传生成期烘下的语义色名（例如 `"letterbox"`），运行期就跟着主题走；
+     * 传 `nullptr` 表示"这个颜色不是语义色"（与组件外观同一条规矩）。
+     * 指针按**静态生命周期**对待——生成器发的是字面量。
+     *
+     * 注意它**不替换**清屏色：清屏照样按 `SetBackgroundColor` 走，这里只是往上盖。
+     * 透明窗口下半透明的背景板会真的和桌面合成。
+     */
+    void SetBackdrop(std::uint32_t argb, const char* token = nullptr) noexcept;
+
+    /// 背景板颜色（**未解析主题**的那一份：主题表里查不到时就是它）。
+    std::uint32_t GetBackdropColor() const noexcept;
+
+    /// 背景板的语义色名；`nullptr` = 不是语义色。
+    const char* GetBackdropToken() const noexcept;
+
+    /**
+     * 背景板底图：**cover**（保持比例铺满整窗，多出来的裁掉，不拉伸变形）。
+     *
+     * 空串 = 不要底图。路径按 **UTF-8** 解释（Windows 上中文目录由 SDL 的文件层处理）。
+     * 解码**延迟到第一次绘制**——那时才有渲染器；失败会打一条 ERROR 并退回背景板
+     * 颜色，不会静默留一块黑。底图存在时颜色仍先铺一层，图带 alpha 才有东西可透。
+     *
+     * @return 值真的变了才返回 true（幂等）；**不代表解码成功**。
+     */
+    bool SetBackdropImage(const std::string& path);
+
+    const std::string& GetBackdropImage() const noexcept;
+
     // ---------------- 窗口圆角（DWM） ----------------
 
     /**
@@ -561,6 +604,12 @@ private:
     /// 窗口清屏色（`0xAARRGGBB`）。默认是原来的深灰，亮色场景自己设。
     /// alpha 只在 `_transparent` 为真时才有意义（否则 `stepFrame` 会提一条 WARN）。
     std::uint32_t _backgroundColor = 0xFF121218u;
+
+    /// 背景板（letterbox 留白 / 窗口底图）：颜色 + 语义色名 + 底图路径。
+    /// 颜色 0 = 不画；底图空 = 不画——两者都空时这一层完全不存在（零开销）。
+    std::uint32_t _backdropColor = 0u;
+    const char* _backdropToken = nullptr;
+    std::string _backdropImage;
 
     /// 窗口圆角：请求值（默认开）+ 系统读回的那份答案。
     bool _roundedCorners = true;

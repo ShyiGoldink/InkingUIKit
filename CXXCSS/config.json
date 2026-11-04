@@ -12,11 +12,12 @@
     "height": 720
   },
   "window": {
-    "$comment": "颜色写法与主题一致：\"r|g|b|a\"（0..1 浮点）或 \"$token\"。清底色 #EBE6F2 与 PrefabTheme::kSceneBackground 是同一个值（两处一起改，否则窗口底和面板底会差一档灰）。",
+    "$comment": "颜色写法与主题一致：\"r|g|b|a\"（0..1 浮点）或 \"$token\"。清底色 #EBE6F2 与 PrefabTheme::kSceneBackground 是同一个值（两处一起改，否则窗口底和面板底会差一档灰）。backdrop 是**盖在清屏之上、场景之下**的一层，覆盖整幅窗口像素，所以 letterbox 留白（黑边）填的是它——要跟画布不同色就只改它。backdropImage 是同一层的底图（cover 铺满，不拉伸），路径按 UTF-8 解释；写了它就盖住颜色。",
     "borderless": true,
     "roundedCorners": true,
     "transparent": false,
     "background": "0.922|0.902|0.949|1",
+    "backdrop": "$letterbox",
     "fullscreen": false,
     "startScene": "main"
   }

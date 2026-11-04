@@ -653,6 +653,9 @@ void InkingScene::ConsumeFrameDirty() noexcept {
     _wheelX = 0.0f;
     _wheelY = 0.0f;
     _wheelDispatched = false;
+    // 归属跟着增量一起清（0.9.1 T-01）：留着它，下一帧的动态档就会读到
+    // "上一帧有人接过"而放弃自己拉——滚轮静默失灵，且只在特定时序下出现。
+    _wheelTarget = nullptr;
 }
 
 int InkingScene::GetRepaintingNodeCount() const noexcept {
@@ -717,6 +720,13 @@ void InkingScene::RemoveDrawNode(InkingWidget* node) noexcept {
     if (_keyboardFocus == node) {
         _keyboardFocus = nullptr;
     }
+    // 第五个槽：这一帧的滚轮归属（0.9.1 T-01）。它和上面那几个不同——只活一帧，
+    // 但"这一帧"里对象完全可能析构（回调里删节点），所以同样必须清。
+    // 漏了这一格就是野指针：动态档在 `onAnimationTick` 里调
+    // `GetPointerWheelTarget()` 只比指针、不解引用，但拿它做任何判等之外的事就炸。
+    if (_wheelTarget == node) {
+        _wheelTarget = nullptr;
+    }
 
     // 只比指针、不解引用：调用方（节点析构）可能已经在销毁中途了。
     const auto it = std::remove_if(_drawList.begin(), _drawList.end(),
@@ -743,6 +753,9 @@ void InkingScene::DetachSceneFromNodes() noexcept {
     // 键盘焦点这一侧也断开：节点自己那份 `_hasKeyboardFocus` 随它们各自析构时
     // 一起走，这里只要保证**场景**不再指着一个可能已经没了的对象。
     _keyboardFocus = nullptr;
+    // 滚轮归属同理（0.9.1 T-01）：列表都清了，再留一个指向列表元素的指针
+    // 就是记账不一致。
+    _wheelTarget = nullptr;
 }
 
 const std::vector<InkingScene::DrawItem>& InkingScene::BuildDrawList() noexcept {
@@ -955,6 +968,34 @@ float InkingScene::GetPointerWheelX() const noexcept {
 
 float InkingScene::GetPointerWheelY() const noexcept {
     return _wheelY;
+}
+
+InkingWidget* InkingScene::GetPointerWheelTarget() const noexcept {
+    // 与 `_wheelDispatched` 的差别就是这一条的全部价值：那个 bool 只说明
+    // "这一帧进过派发流程"，而这里说明"**有人收到了** `PushPointerWheel`"。
+    // 没人接（指针在空白处 / 在窗口外 / 派发还没跑）时它是 nullptr。
+    return _wheelTarget;
+}
+
+InkingWidget* InkingScene::GetTopmostDynamicAt(float designX, float designY) {
+    // 顺序不能反：不先排一次，列表还是"上一次构建的顺序"，拿旧 z 判新层级
+    // 就是错得安静——只在改过 zindex 之后现形（与 `hitTestTopmost` 同一条）。
+    sortDrawList();
+
+    // 从尾部往前（z 由高到低），和渲染提交顺序同源。
+    for (std::size_t i = _drawList.size(); i > 0; --i) {
+        InkingWidget* node = _drawList[i - 1].node;
+        if (node == nullptr || !node->IsDynamic()) {
+            continue;
+        }
+        if (!node->IsVisibleInTree()) {
+            continue;
+        }
+        if (node->HitTest(designX, designY)) {
+            return node;
+        }
+    }
+    return nullptr;
 }
 
 float InkingScene::GetPointerX() const noexcept {
@@ -1726,6 +1767,12 @@ void InkingScene::DispatchPointer() {
     // `_wheelDispatched` 挡住同一帧的重复派发——"每帧只判断一次"在这里也要成立。
     if (!_wheelDispatched && (_wheelX != 0.0f || _wheelY != 0.0f)) {
         _wheelDispatched = true;
+        // 归属查询的口（0.9.1 T-01）：记的是**真的收到 `PushPointerWheel` 的那一个**，
+        // 不是"指针底下最上面那个"。两条分支各有一种接收者，但都只有一个人收到——
+        // 这正是动态档判"要不要自己拉"的依据（有人接了就不许再拉，否则双滚）。
+        //
+        // 没找到 / 指针在外面 / 被 `dispatchTarget` 挡掉（动态档）时**保持 nullptr**：
+        // 那才是"这一帧的滚轮没人接"。
         if (_pointerInside) {
             InkingWidget* wheelTarget =
                 (primaryCapture != nullptr) ? primaryCapture : topmost;
@@ -1739,8 +1786,10 @@ void InkingScene::DispatchPointer() {
                 if (InkingWidget* scrollOwner =
                         target->FindSubtreeWheelOwner()) {
                     scrollOwner->PushPointerWheel(_wheelX, _wheelY);
+                    _wheelTarget = scrollOwner;
                 } else {
                     target->PushPointerWheel(_wheelX, _wheelY);
+                    _wheelTarget = target;
                 }
             }
         }

@@ -85,6 +85,52 @@ int InkingApplyWindowConfig(const InkingWindowConfig& config) {
         }
     }
 
+    // 背景板（letterbox 留白 / 窗口底图）：
+    //   ① 颜色回读比；② 语义名回读比（`$token` 拼错时"颜色还是对的"这件事
+    //   不会报错，只有名字对不上才说明主题这条路没接上）；③ 底图路径回读比。
+    //   底图能不能解码**在这里不判**——那时可能还没有渲染器，而且"文件不在"
+    //   属于运行期环境问题（打包漏了），绘制期会打 ERROR 并退回颜色。
+    if (config.backdrop.has_value()) {
+        const std::uint32_t wanted = *config.backdrop;
+        const char* wantedToken =
+            config.backdropToken.empty() ? nullptr : config.backdropToken.c_str();
+        window.SetBackdrop(wanted, wantedToken);
+        const char* readBack = window.GetBackdropToken();
+        const bool tokenMatches =
+            (wantedToken == nullptr && readBack == nullptr)
+            || (wantedToken != nullptr && readBack != nullptr
+                && config.backdropToken == readBack);
+        if (window.GetBackdropColor() != wanted || !tokenMatches) {
+            INK_LOG_ERROR(kModuleName,
+                          "window.backdrop 没有生效（回读颜色 "
+                              + std::to_string(window.GetBackdropColor())
+                              + "，语义名 \""
+                              + (readBack != nullptr ? readBack : "")
+                              + "\"）");
+            ++failed;
+        }
+    }
+
+    if (config.backdropImage.has_value()) {
+        const std::string& wanted = *config.backdropImage;
+        if (wanted.empty()) {
+            INK_LOG_ERROR(kModuleName,
+                          "window.backdropImage 是空串：要关掉底图就别写这个字段"
+                          "（空串和不写看起来一样、语义不同）");
+            ++failed;
+        } else {
+            // setter 返回的是"值真的变了"，幂等调用为 false —— 所以判据只能是回读。
+            window.SetBackdropImage(wanted);
+            if (window.GetBackdropImage() != wanted) {
+                INK_LOG_ERROR(kModuleName,
+                              "window.backdropImage 没有生效：要 \"" + wanted
+                                  + "\"，窗口回读 \""
+                                  + window.GetBackdropImage() + "\"");
+                ++failed;
+            }
+        }
+    }
+
     if (config.fullscreen.has_value()) {
         const bool wanted = *config.fullscreen;
         window.SetFullscreen(wanted);

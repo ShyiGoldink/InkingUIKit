@@ -14,6 +14,20 @@ float InkingClampScroll(float offset, float range) noexcept {
     return std::clamp(offset, 0.0f, range);
 }
 
+void InkingApplyWheelToScroll(const InkingScrollSpec& spec, float deltaX,
+                              float deltaY, float& offsetX,
+                              float& offsetY) noexcept {
+    // 方向：滚轮向上（deltaY > 0）看更上面的内容 ⇒ 滚动量减小。
+    // **减号不能翻**：翻了两档一起反，而且"反着滚"看起来像系统设置问题。
+    if (spec.horizontal) {
+        offsetX -= deltaX * spec.wheelStep;
+    }
+    if (spec.vertical) {
+        offsetY -= deltaY * spec.wheelStep;
+    }
+    // 刻意**不夹紧**：夹紧只在 `SetScroll` 里做一次（见头文件）。
+}
+
 InkingScrollBarMetrics InkingComputeScrollBar(bool vertical, float viewportWidth,
                                   float viewportHeight, float contentSize,
                                   float offset, float range,

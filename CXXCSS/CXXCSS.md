@@ -802,9 +802,11 @@ array、`rotated`、`trimmed`），见任务书 §11——真要用得先写一�
 
 - **`design`**：设计画布尺寸 —— letterbox 的逻辑坐标系。所有锚点 / 尺寸 / 字号 /
   间距都写在这个坐标系里，窗口怎么拉都不改设计坐标，只改展示倍率（多余空间留黑边）；
-- **`window`**：窗口启动设置（无边框 / 圆角 / 清底色 / 全屏 / 起始场景）。
+- **`window`**：窗口启动设置（无边框 / 圆角 / 清底色 / **背景板** / 全屏 / 起始场景）。
 
-它**不是组件**：产物里没有类，只有一组常量 + 一个 `ApplyConfig()`。
+**留白（黑边）填什么色 / 什么图，是 `window.backdrop` 的事**，不是 `background`：清屏色
+同时是画布底色，而留白显示的就是"没人画过的地方"。想让黑边和画布不同色（或铺一张底图），
+只能单独加一层——`backdrop` 就是那一层。
 
 ```jsonc
 // CXXCSS/config.json（等价位置：CXXCSS/Config/config.json）
@@ -815,6 +817,8 @@ array、`rotated`、`trimmed`），见任务书 §11——真要用得先写一�
         "roundedCorners": true,                 // 请求系统圆角
         "transparent": false,                   // 透明窗口（清底色的 alpha 真的透出桌面）
         "background": "0.11|0.11|0.14|1",       // "r|g|b|a"（0..1）或 "$token"
+        "backdrop": "$letterbox",               // 背景板颜色：盖在清屏之上、场景之下
+        "backdropImage": "assets/backdrop.png", // 可选：cover 铺满整窗的底图
         "fullscreen": false,                    // 启动即全屏
         "startScene": "main"                    // 起始场景名
     }
@@ -822,6 +826,8 @@ array、`rotated`、`trimmed`），见任务书 §11——真要用得先写一�
 ```
 
 **没有这个文件**就用库的默认值：设计画布 1280×720，窗口设置保持库的默认。
+
+它**不是组件**：产物里没有类，只有一组常量 + 一个 `ApplyConfig()`。
 
 **为什么产物是"常量 + 一次调用"，而不是只生成 `constexpr`**：本库以**预编译 DLL**
 分发，消费方改配置改的是自己的构建产物，碰不到 DLL 里烘死的常量与窗口标志。只生成常量
@@ -843,7 +849,7 @@ int main() {
 
 **一个字段只有同时具备 ① 运行期 setter ② 回读 getter ③ 生成期校验，才有资格进来。**
 缺一条的后果是"写了不生效、还没人知道"，而这个仓库已经为这类静默失效付过代价
-（`INK_HAS_SDL3_TTF` / `INK_HAS_SDL3_MIXER` 两次）。所以 `window` 里只认这六项：
+（`INK_HAS_SDL3_TTF` / `INK_HAS_SDL3_MIXER` 两次）。所以 `window` 里只认这八项：
 
 | 字段 | 类型 | 落到 | 回读口 | 备注 |
 | --- | --- | --- | --- | --- |
@@ -851,6 +857,8 @@ int main() {
 | `roundedCorners` | bool | `SetRoundedCorners` | `IsRoundedCornersRequested` | 比的是**请求值**；系统画不画是另一件事（Win10 恒不画） |
 | `transparent` | bool | `SetTransparent` | `IsTransparentRequested` | **只能建窗前设**（SDL 的透明是建窗标志）；后端不保证，见下 |
 | `background` | 颜色串 | `SetBackgroundColor` | `GetBackgroundColor` | 与主题同一套写法：`"r\|g\|b\|a"` 或 `"$token"` |
+| `backdrop` | 颜色串 | `SetBackdrop` | `GetBackdropColor` / `GetBackdropToken` | **留白（黑边）填的就是它**；`$token` 会被留下来，运行期跟着主题走 |
+| `backdropImage` | string | `SetBackdropImage` | `GetBackdropImage` | 底图路径（UTF-8），**cover** 铺满整窗；解码失败退回 `backdrop` 颜色 + ERROR |
 | `fullscreen` | bool | `SetFullscreen` | `IsFullscreen` | `Show()` 之前只是记账，建完窗口补应用 |
 | `startScene` | string | —（纯常量） | — | 只是 `Show()` 的参数值：`Show(kStartScene)` |
 
@@ -1397,6 +1405,7 @@ InkingWindow::Instance().Show();
 这件事，所以"段"必须单独一层。
 
 <!-- BEGIN FIELD TABLE -->
+
 | 组件 | 段 | 字段 | 说明 |
 | --- | --- | --- | --- |
 | Button | （顶层） | `$comment` | 组件级：三态外观、文字段、锚点、布局、装饰 |
@@ -1576,6 +1585,8 @@ InkingWindow::Instance().Show();
 | Config | window | `transparent` |  |
 | Config | window | `background` |  |
 | Config | window | `fullscreen` |  |
+| Config | window | `backdrop` |  |
+| Config | window | `backdropImage` |  |
 | Config | window | `startScene` |  |
 | （所有组件） | shape | `type` | 形状参数（几何）；描边 / 阴影与它平级，别塞进来 |
 | （所有组件） | shape | `radius` |  |
@@ -1597,4 +1608,5 @@ InkingWindow::Instance().Show();
 | （所有组件） | shadow | `offsetX` | 阴影：形状的偏移实心副本（无模糊，所以不认 blur） |
 | （所有组件） | shadow | `offsetY` |  |
 | （所有组件） | shadow | `color` |  |
+
 <!-- END FIELD TABLE -->

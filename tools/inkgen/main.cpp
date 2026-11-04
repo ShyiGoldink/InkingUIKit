@@ -377,6 +377,17 @@ int main(int argc, char** argv) {
         if (config.background.has_value()) {
             std::printf("  清底色=0x%08X", *config.background);
         }
+        if (config.backdrop.has_value()) {
+            // 语义名和字面量一起打：只报颜色的话，"$token 拼错但恰好落在同色"
+            // 这种事在报告里看不出来。
+            std::printf("  背景板=0x%08X", *config.backdrop);
+            if (!config.backdropToken.empty()) {
+                std::printf("（$%s）", config.backdropToken.c_str());
+            }
+        }
+        if (config.backdropImage.has_value()) {
+            std::printf("  背景板底图=\"%s\"", config.backdropImage->c_str());
+        }
         if (config.startScene.has_value()) {
             std::printf("  起始场景=\"%s\"", config.startScene->c_str());
         }

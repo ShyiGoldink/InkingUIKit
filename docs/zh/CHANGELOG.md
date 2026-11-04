@@ -5,6 +5,116 @@
 
 ---
 
+## 0.9.2 —— 2026-11-04（背景板：letterbox 留白可配色 / 可铺底图）
+
+> 起因：确认"库会不会渲染到设计尺寸以外"时，把留白的成因查清了——留白是清屏色
+> （实测：非设计比例的窗口里，留白像素 = 清屏色），而清屏色同时是**画布底色**，
+> 于是"让黑边跟画布不同色"这件事在旧 API 里做不到。
+
+### 新增
+
+- **`InkingWindow::SetBackdrop(argb, token)` / `GetBackdropColor()` /
+  `GetBackdropToken()`**：背景板颜色。画在**清屏之后、场景之前**，覆盖整幅窗口像素
+  （含 letterbox 留白），所以**黑边填的就是它**。`0` = 不画（零开销）。
+  `token` 是生成期烘下的语义色名，窗口层**每帧**查一次主题表 ⇒ 切主题黑边跟着换。
+- **`InkingWindow::SetBackdropImage(path)` / `GetBackdropImage()`**：同一层的底图，
+  **cover** 铺满整窗（保持比例、多余裁掉）。解码延迟到第一次绘制，失败打 ERROR 并
+  退回背景板颜色（不留黑块），同一路径只报一次。UTF-8 路径走 SDL 文件层。
+- **`InkingWindowConfig` 新增 `backdrop` / `backdropToken` / `backdropImage`**：
+  对应 `CXXCSS/config.json` 的 `window.backdrop`（支持 `$token`）与
+  `window.backdropImage`，`InkingApplyWindowConfig` 逐项回读校验（颜色 / 语义名 /
+  路径三条都读回来比）。
+- **生成器**：`inkgen` 产出 `kBackdrop` / `kBackdropToken` / `kBackdropImage`，
+  `--validate` 的报告里也会打印背景板（颜色 + 语义名 + 底图），不再只有清底色。
+- **主题示例**：`CXXCSS/Theme/lavender.json` 加 `letterbox` token，
+  `CXXCSS/config.json` 写 `"backdrop": "$letterbox"`。
+- **自检 17 条**（离屏 + BMP 回读）：留白是背景板色、画布内不是；`$token` 走主题表
+  （烘的蓝被表里的红盖掉）；换一张表黑边跟着换（证明每帧查表、没缓存）；
+  底图盖住留白；底图读不到时退回颜色。
+
+### 修复
+
+- **截图 / 离屏渲染其实没有留白**：`Capture()` 与 `RenderToTexture()` 的文档写着
+  "截的是整个窗口帧缓冲（含 letterbox 黑边）"，实际 `SDL_RenderReadPixels` 在逻辑
+  呈现开着时只回逻辑画布那块（实测 640×640 目标配 1280×720 设计只回 640×360）。
+  比例一致的窗口看不出来，比例一不同截图的构图就和眼睛看到的不是一回事。
+  现在读取前临时关掉逻辑呈现、读完立即恢复。
+
+### 已知限制
+
+- **底图只做 cover**：`stretch` / `tile` / 九宫格没做（`window.backdropImage` 没有
+  "适配方式"字段，写别的会被生成器拒）。要平铺请用素材自己拼一张。
+- **底图不进主题表**：主题表仍然只做颜色（`colors` / `fontSizes`），切主题换底图
+  需要改配置。加 `images` 表会破掉"主题只做颜色"这条边界，评估后没做。
+- **比例锁仍没有**：`SDL_WINDOW_RESIZABLE` 恒开且未调 `SDL_SetWindowAspectRatio`，
+  用户自由拖拽窗口时留白必然出现——这是"UI 永不变形"的代价，不是缺陷。
+
+---
+
+## 0.9.1 —— 2026-11-04（发布版：动态面板的滚轮，拉通道接上消费方）
+
+> 明细见 [`plans/2026-11-04-dynamic-wheel.md`](plans/2026-11-04-dynamic-wheel.md)（T-01…T-05）。
+> 起因是 `TaskGuide-G.md` §7 登记的那条框架级待办（G-07「动态面板不做滚轮」）。
+> 探针把"动态档没有可靠的滚轮读取时机"拆成两半：**逻辑步**读不可靠
+> （喂 30.0 只读到 20.0，61 帧里 11 帧为 0），而**每渲染帧一次**的
+> `onAnimationTick` 完全可靠（60 帧调用 60 次、3 次喂入全读到、累计 30.0 一格不差）。
+
+### 新增
+
+- **`InkingDynamicPanel` 支持滚轮**（T-03）：此前只有拖动滚动条，滚轮一声不响地
+  被丢掉。现在有两条入口、**一份算术**——
+  `onPointerWheel`（指针压在面板里的静态子孙上，推通道 · 容器优先）与
+  `onAnimationTick`（指针压在面板的空白区，拉通道 · 每渲染帧读一次）。
+  归属判定四道门（不能滚 / 指针在窗口外 / 本帧没增量 / **已经有人接了** /
+  指针下最上面的动态节点不是本面板），所以同一帧只会滚一次。
+- **`InkingScene::GetPointerWheelTarget()`**（T-01）：这一帧的滚轮**实际交给了谁**
+  （没人接时为 `nullptr`）。与 `_wheelDispatched` 的差别就是它存在的理由——后者
+  只表示"进过派发流程"，指针在空白处时同样为真，判不出有没有人接。
+- **`InkingScene::GetTopmostDynamicAt(x, y)`**（T-01）：指针下最上面的动态节点
+  （先排序再从绘制列表尾部往前找；不排序就是拿旧 z 判新层级）。
+- **`InkingApplyWheelToScroll(spec, dx, dy, offsetX&, offsetY&)`**（T-02）：
+  滚轮增量 → 滚动量的**唯一**一份换算（`dataStruct/InkingScroll.h`，纯函数、
+  不夹紧——夹紧只在 `SetScroll` 里做一次）。
+- **`inking_demo` 右侧多了一张可滚的卡片**（12 项 / 内容 772 高 / 视口 300）：
+  滚轮这件事自检只能证明数值与归属，证明不了手感。三个要试的点写在
+  `examples/demo/main.cpp` 的 `AddScrollCard()` 注释里（空白区滚 / 按钮上滚 /
+  滚到底）。
+
+### 变更
+
+- **`InkingDynamicPanel::HandlesSubtreeWheel()` 现在返回 `scroll.enabled`**
+  （0.9.0 那份注释写着"对动态面板没有意义"，已经过时并重写）：它是"指针压在
+  静态子孙上"那一档的唯一入口，不重写就是"滚到有按钮的地方就停"。
+- `InkingStaticPanel::onPointerWheel` 改为调 `InkingApplyWheelToScroll`：
+  **数值逐字不变**（一格 48 设计像素、方向不变），只是把算术挪到两档共用的地方。
+
+### 修复（勾选件 0.9.0 遗留：单选组 `Add` 只建半边链接）
+
+- **三个单选能同时选中**（`examples/showcase` 的"小 / 中 / 大"）：
+  `RadioGroup::Add` 只把成员 `push_back` 进列表，**不回写 `radio->_group`**；而
+  `Radio::onPointerClick` 正是靠 `GetGroup()` 判断"要不要走组"，于是走的是
+  "没挂组"那条分支——各自 `SetChecked(true)`，互斥形同不存在。展示页用的就是
+  `_radios.Add(node)`，所以每点一个就多一个选中的。
+- 修法：`Add` 改为转调 `Radio::SetGroup(this)`（链接怎么建只留一份实现：退旧组 →
+  置指针 → 反手调回 `Add`，第二次进来只补列表）。**`Remove` 一并把成员的
+  `GetGroup()` 清回 `nullptr`**——同族隐患：直接 `Remove` 之后成员以为自己还在组里，
+  点击走 `Select`、组里却查不到它，静默失效（不报错、也不选中）。
+- 自检补 ③b 八条（`CheckToggleLike`）：`Add` 后 `GetGroup()` 指向新组、换组是搬走
+  不是复制、组侧加的两个成员照样互斥、`Add` 幂等、`Remove` 清指针、摘掉之后点击
+  回到"单用"语义。**③ 只用了 `SetGroup`（成员侧），这条缺口从没被覆盖**。
+  实测：把 `Add` 临时还原成旧实现，③b 红 5 条；修完 8 条全绿，`ctest` 8/8。
+- 行为影响面：只有"从组侧加人"那条路从单向变双向；用 `SetGroup` 的既有代码一个
+  字节都不变（`SetGroup` 原本已经是完整的）。
+
+### 已知限制
+
+- **嵌套两层滚动容器只有外层生效**：`FindSubtreeWheelOwner` 给的是"最近的声明者"，
+  要内层优先得按指针路径逐层仲裁（每层都要知道"子层消费了吗"）。本轮只有一层时
+  是对的，两层时外层生效。
+- 滚轮不做惯性 / 平滑滚动（那是一段动画，不是一次位移）。
+
+---
+
 ## 0.9.0 —— 2026-11-04（发布版：几何分档收口 + 命名空间收口 + UIKit 齐全度 a/b 批 + 块叠加组）
 
 > 本节已随 `InkingVersion` 一起定稿（`0.9.0` / `release`）。明细见

@@ -573,6 +573,51 @@ public:
     float GetPointerWheelX() const noexcept;
     float GetPointerWheelY() const noexcept;
 
+    // ---------------- 滚轮归属（0.9.1 T-01：动态档消费滚轮的两条判据） ----------------
+    //
+    // 背景：滚轮有**两条**通道——推（场景派发给静态目标）与拉（动态组件自己读
+    // `GetPointerWheelY()`）。动态档要用拉通道，就必须能回答两个问题，而两个答案
+    // 都只有场景知道：
+    //
+    //   1. 这一帧的滚轮**已经有人接走了吗**？（接走了就不许再拉——否则双滚，
+    //      现象是"滚得快一倍"，比不滚更难查）
+    //   2. 指针下**最上面的动态节点是不是我**？（两个动态面板重叠时只有上面那个滚）
+    //
+    // 两个都是**只读查询**：不标脏、不改状态、不派发。所以它们可以在任何时刻调。
+
+    /**
+     * 这一帧的滚轮**交给谁了**（没人接 / 还没派发时为 nullptr）。
+     *
+     * 与 `_wheelDispatched` 不是一回事，两者的差别就是它存在的理由：
+     *   - `_wheelDispatched` 表示"**进过派发流程**"——指针在空白处、在窗口外、
+     *     或者指针底下是动态节点（推通道对它不适用）时它照样为真；
+     *   - 本函数表示"**有人收到了** `PushPointerWheel`"——上面那些情况一律 nullptr。
+     *
+     * 记的是**实际接收者**：沿父链找到的滚动容器（`HandlesSubtreeWheel`）优先，
+     * 没人为它声明才记指针底下那个节点自己。
+     *
+     * 生命周期：只活一帧（`ConsumeFrameDirty` 与滚轮增量一起清），
+     * 目标节点析构时由 `RemoveDrawNode` 清成 nullptr。
+     */
+    InkingWidget* GetPointerWheelTarget() const noexcept;
+
+    /**
+     * 指针下**最上面的动态节点**（设计坐标；没有则 nullptr）。
+     *
+     * "最上面"用的是**排过序**的绘制列表：先 `sortDrawList()` 再从尾部往前找。
+     * 这一步不能省——不排序时列表是"上一次构建的顺序"，拿旧 z 判新层级错得安静，
+     * 只在改过 zindex 之后现形。
+     *
+     * 只回答"几何上谁在最上面"，**不做三态过滤**（`SetHitPassThrough` 不影响它）：
+     * 滚轮只在有消费方时问一次归属，不该被遮挡策略改写（`DispatchPointer` 的
+     * 滚轮段同一条：那里也不做三态合并）。
+     *
+     * 返回的是那个动态节点**自己**，不是它的静态子孙；调用方要判"这棵子树归不归我"
+     * 得自己沿父链走（`InkingDynamicPanel` 就是这么做的——面板里的动态子控件
+     * 指着的时候，滚的仍该是面板）。
+     */
+    InkingWidget* GetTopmostDynamicAt(float designX, float designY);
+
     /**
      * 按当前指针状态派发一次：悬停进出、按下、抬起触发点击。
      *
@@ -1155,6 +1200,15 @@ private:
     float _wheelX = 0.0f;
     float _wheelY = 0.0f;
     bool _wheelDispatched = false;  ///< 这一帧的滚轮已经推给静态目标了
+
+    /**
+     * 这一帧的滚轮**实际交给了谁**（0.9.1 T-01）。与 `_hoveredNode` / `_pressedNode`
+     * 同一族的瞬时指针：只在"真的有人收到 `PushPointerWheel`"时写，帧末与
+     * `_wheelX/_wheelY` 一起清，节点析构时由 `RemoveDrawNode` 清。
+     *
+     * 放在这里而不是从 `_wheelDispatched` 推：后者表示"进过流程"，推不出来。
+     */
+    InkingWidget* _wheelTarget = nullptr;
 
     /**
      * 上一次拖动事件时的指针位置，用来算 `onPointerDrag` 的增量。

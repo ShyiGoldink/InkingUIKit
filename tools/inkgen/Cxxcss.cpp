@@ -4978,6 +4978,25 @@ private:
                 // 与组件外观同一个解析器：`"r|g|b|a"`（0..1 浮点）或 `"$token"`。
                 _config.background = ReadColorSource(child, "window.background",
                                                     /*isSourceField=*/false);
+            } else if (key == "backdrop") {
+                // 背景板：盖在清屏之上、场景之下，覆盖整幅窗口像素 ⇒ **letterbox
+                // 留白填的就是它**。和 background 同一个解析器（颜色写法一致），
+                // 但**多收一个语义名**：这张表就是"黑边跟着主题走"的唯一来源。
+                const char* token = nullptr;
+                _config.backdrop = ReadColorSource(child, "window.backdrop",
+                                                   /*isSourceField=*/false,
+                                                   &token);
+                if (token != nullptr) {
+                    _config.backdropToken = token;
+                }
+            } else if (key == "backdropImage") {
+                if (!child.IsString() || child.text.empty()) {
+                    Error(child,
+                          "window.backdropImage 必须是非空字符串（底图路径；"
+                          "不想要底图就别写这个字段）");
+                } else {
+                    _config.backdropImage = child.text;
+                }
             } else if (key == "startScene") {
                 if (!child.IsString() || child.text.empty()) {
                     Error(child, "window.startScene 必须是非空字符串（场景名）");

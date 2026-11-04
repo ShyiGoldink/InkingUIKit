@@ -17,7 +17,7 @@
 #include <thread/TaskQueue.h>
 
 inline constexpr const char* InkingProjectName = "InkingFrontendDeveloper";
-inline constexpr const char* InkingVersion     = "0.9.0";
+inline constexpr const char* InkingVersion     = "0.9.1";
 
 /**
  * 版本阶段（**当前为发布版**）。

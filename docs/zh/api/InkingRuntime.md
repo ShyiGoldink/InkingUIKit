@@ -24,7 +24,7 @@
 ```C++
 // inking.h
 inline constexpr const char* InkingProjectName = "InkingFrontendDeveloper";
-inline constexpr const char* InkingVersion     = "0.9.0";
+inline constexpr const char* InkingVersion     = "0.9.1";
 inline constexpr const char* InkingVersionStage = "test";   // 0.x 发布版
 std::string InkingSdl3_version();                            // 例如 "3.4.16"
 ```
@@ -411,6 +411,10 @@ InkingSetActiveTheme("light");
 
 `CXXCSS.md` §3.9 讲配置侧（多份主题、`"default": true`、跨表 token 覆盖校验）。
 
+主题也管**窗口留白（黑边）**：`InkingWindow::SetBackdrop(argb, "letterbox")` 的第二个参数
+就是这里的 token，窗口层**每帧**查一次表（它没有组件的版本号缓存），所以切主题黑边跟着
+换。配置侧写 `window.backdrop: "$letterbox"`，生成器会把 token 名一起烘下来。
+
 ## 常见坑
 
 1. **在 `InkingTaskQueue` 回调里碰 UI 状态**：那是管家线程。交付回 UI 只有"帧首消费"那条路。
@@ -424,4 +428,4 @@ InkingSetActiveTheme("light");
 
 ---
 
-> 本文档对应版本：**0.9.0（0.x 发布版）**。
+> 本文档对应版本：**0.9.2（0.x 发布版）**。

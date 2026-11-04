@@ -347,7 +347,8 @@ float GetContentWidth() / GetContentHeight() const noexcept;
 ```
 
 滚动的**几何规则**全在 `dataStruct/InkingScroll.h` 的纯函数里（`InkingScrollRange` /
-`InkingClampScroll` / 轨道 / 滑块 / 点轨道跳过去），面板只负责把指针事件接上去。
+`InkingClampScroll` / `InkingApplyWheelToScroll` / 轨道 / 滑块 / 点轨道跳过去），面板只负责把指针事件接上去。
+`InkingApplyWheelToScroll` 是**两档共用**的一格换算（0.9.1 T-02）：写两份就是"两档手感悄悄分叉"。
 
 > **滚动容器必须重写 `HandlesSubtreeWheel()`**（面板已重写）：否则指针停在容器里的子按钮上
 > 时，滚轮派给了按钮、容器毫无反应。`MenuBar` 同理。
@@ -395,9 +396,14 @@ public:
 
 1. **滚动条拖动从 `onPointerStateChanged()` 自判**：动态档收不到 `PushPointer*`，这是唯一入口。
    `PointerProbe` 拿 `pressed` / `released` / 仍按着三态，等价静态版的 `onPointerPress` + `onPointerDrag`。
-2. **不做滚轮**：滚轮按渲染帧累加 / 清零，而动态组件只能在逻辑步读（一个渲染帧可能跑 0 次或 2 次
-   ⇒ 丢了 / 滚双倍）。这是**框架**少一条"每帧一次且必达"的通知，要修得单独立项；
-   `HandlesSubtreeWheel()` 对动态面板也就没有意义。
+2. **滚轮有两条入口、一份算术（0.9.1 T-03）**：指针压在**面板里的静态子孙**上时走**推通道**
+   （场景沿父链找到本面板 → `onPointerWheel`），压在面板**自己的空白区**时走**拉通道**
+   （`onAnimationTick` 里读 `InkingScene::GetPointerWheelY()` —— 每渲染帧一次，探针实测
+   60 帧调用 60 次、一次不漏）。拉通道先问归属，四道门顺序固定：不能滚 → 指针在窗口外 →
+   本帧没增量 → **已经有人接了**（`GetPointerWheelTarget()` 非空，这条必须先于自判，
+   否则双滚）→ 指针下最上面的动态节点不是本面板。
+   两条入口都调 `InkingApplyWheelToScroll`，所以与静态档滚同一格滚**同一个数**（48 设计像素）。
+   **已知限制**：嵌套两层滚动容器只有外层生效。
 3. **`SetScroll` 只标重绘脏**：本类的包络按滚动范围扩过（洞与滚动量无关），所以滚动**不该**
    触发包络重算——谁把那扩范围的代码删了，症状是"滚过去点不动"且不报错。
 4. **`HitTestNode()` 不用重写**：基类那份已经是"子树优先"的容器语义（静态版抄的那一份是
@@ -1337,4 +1343,4 @@ void InkingAudioTick(float deltaSeconds);   // 主循环每帧调（窗口层已
 
 ---
 
-> 本文档对应版本：**0.9.0（0.x 发布版）**。
+> 本文档对应版本：**0.9.2（0.x 发布版）**。

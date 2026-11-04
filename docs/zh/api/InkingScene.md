@@ -493,6 +493,8 @@ InkingMousePoint GetPressOrigin(InkingPointerButton button) const noexcept;
 bool IsPointerInside() const noexcept;
 float GetPointerWheelX() const noexcept;
 float GetPointerWheelY() const noexcept;
+InkingWidget* GetPointerWheelTarget() const noexcept;   // 0.9.1 T-01：这一帧的滚轮交给了谁
+InkingWidget* GetTopmostDynamicAt(float x, float y);    // 0.9.1 T-01：指针下最上面的动态节点
 InkingWidget* GetPressedNode() const noexcept;           // 主键捕获槽
 InkingWidget* GetSecondaryPressedNode() const noexcept;  // 次键捕获槽
 InkingWidget* GetDraggingNode() const noexcept;
@@ -507,6 +509,28 @@ InkingWidget* GetHoveredNode() const noexcept;
 `GetPressOrigin(button)` 是**按下点**（设计坐标）：`onPointerClick` 的坐标、
 长按 slop 的基准、拖动增量的基准都取自这一份。它不是"指针位置"（那是
 `GetPointerX/Y`），只在"正在按着 / 刚抬起"这两段时间里有意义。
+
+>**滚轮归属（0.9.1 T-01）**
+
+```C++
+InkingWidget* GetPointerWheelTarget() const noexcept;
+InkingWidget* GetTopmostDynamicAt(float designX, float designY);
+```
+
+滚轮有**两条**通道：推（场景派发给静态目标）与拉（动态组件自己读
+`GetPointerWheelY()`）。动态档要用拉通道，就必须能回答两个问题，而两个答案只有场景知道：
+
+- **`GetPointerWheelTarget()`**：这一帧的滚轮**实际交给了谁**（没人接时为 `nullptr`）。
+  它与内部那个 `_wheelDispatched` 的差别就是它存在的理由——后者只表示"**进过派发流程**"
+  （指针在空白处、在窗口外、指针底下是动态节点时同样为真），判不出有没有人接。
+  记的是实际接收者：沿父链找到的滚动容器（`HandlesSubtreeWheel`）优先，
+  没人为它声明才记指针底下那个节点自己。**只活一帧**（帧末与滚轮增量一起清）。
+- **`GetTopmostDynamicAt(x, y)`**：指针下**最上面**的动态节点。先 `sortDrawList()`
+  再从绘制列表尾部往前找（顺序不能反：不排序就是拿旧 z 判新层级）。不做三态过滤
+  （`SetHitPassThrough` 不影响它），返回的是那个动态节点**自己**，不是它的静态子孙。
+
+两个都是**只读查询**：不标脏、不改状态、不派发。用法见 `InkingDynamicPanel` 的
+"关键决定二"（四道门：已经有人接了就不许再拉，否则双滚）。
 
 #### 键盘
 
@@ -742,4 +766,4 @@ InkingEvent<const std::vector<std::string>&> filesDropped;   // 一次拖放一�
 
 ---
 
-> 本文档对应版本：**0.9.0（0.x 发布版）**。
+> 本文档对应版本：**0.9.2（0.x 发布版）**。

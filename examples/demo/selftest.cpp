@@ -3861,6 +3861,46 @@ void CheckDynamicImage() {
           "⑤：镜像断言成立（动态图片属于动态档，静态图片的反向断言在编译期）");
 }
 
+/**
+ * 读回一张 `RenderToTexture` 落盘的图（**BMP**），返回 ARGB8888 像素。
+ *
+ * 为什么走 BMP：`SDL_LoadBMP_IO` 就在 SDL 核心里，自检不必为了读回一张图再引
+ * 一个解码器；`RenderToTexture` 对非 `.png` 扩展名本来就写 BMP。
+ * 空 vector = 读失败（尺寸由 `width` / `height` 带出，失败时置 0）。
+ */
+std::vector<std::uint32_t> LoadBmpArgb(const std::string& path, int& width,
+                                       int& height) {
+    std::vector<std::uint32_t> out;
+    width = 0;
+    height = 0;
+    SDL_IOStream* stream = SDL_IOFromFile(path.c_str(), "rb");
+    if (stream == nullptr) {
+        return out;
+    }
+    SDL_Surface* raw = SDL_LoadBMP_IO(stream, true);  // true = 读完关流
+    if (raw == nullptr) {
+        return out;
+    }
+    SDL_Surface* argb = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_ARGB8888);
+    SDL_DestroySurface(raw);
+    if (argb == nullptr || !SDL_LockSurface(argb)) {
+        SDL_DestroySurface(argb);
+        return out;
+    }
+    width = argb->w;
+    height = argb->h;
+    out.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
+    for (int row = 0; row < height; ++row) {
+        std::memcpy(&out[static_cast<std::size_t>(row) * static_cast<std::size_t>(width)],
+                    static_cast<const std::uint8_t*>(argb->pixels)
+                        + static_cast<std::size_t>(row) * argb->pitch,
+                    sizeof(std::uint32_t) * static_cast<std::size_t>(width));
+    }
+    SDL_UnlockSurface(argb);
+    SDL_DestroySurface(argb);
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // 非阻塞跑帧 / 帧末任务 / 确定性时间 / 退出码 / 离屏渲染（D 组，0.3.0）
 // ---------------------------------------------------------------------------
@@ -3915,6 +3955,159 @@ void CheckHeadlessPump() {
         }
         Check(size > 100, "D2：写出的是真文件（不是空壳）");
         std::remove(offscreen.c_str());
+    }
+
+    // ---- 背景板：letterbox 留白填的是不是它（2026-11-04）----
+    //
+    // 为什么用离屏 + BMP 回读：留白**没有 SDL 的回读口**——`SDL_RenderReadPixels`
+    // 被限制在逻辑呈现那块（实测 300×200 窗口配 100×100 设计只回 200×200），
+    // 真窗口的留白只能靠肉眼。落盘再读回来是唯一能进 CI 的判据。
+    //
+    // 两个方向都要验：只验"黑边 == 背景板色"的话，"整幅刷成背景板色、把 UI 盖掉"
+    // 也会绿——所以同时要求"画布内不是背景板色"。
+    {
+        const std::uint32_t kSceneColor = 0xFF0000FFu;     // 清屏色（画布底）
+        const std::uint32_t kBackdropColor = 0xFF00FF00u;  // 背景板（黑边）
+        window.SetBackgroundColor(kSceneColor);
+        window.SetBackdrop(kBackdropColor);
+        Check(window.GetBackdropColor() == kBackdropColor,
+              "背景板：颜色回读一致");
+        Check(window.GetBackdropToken() == nullptr,
+              "背景板：没传语义名时 token 为空（不走主题表）");
+
+        // 1280×720 的设计装进 640×640 ⇒ 倍率 0.5、画面 640×360、上下各 140 留白。
+        const std::string shotA = "selftest_backdrop_color.bmp";
+        std::remove(shotA.c_str());
+        Check(InkingWindow::RenderToTexture(shotA, 640, 640, "selftest"),
+              "背景板：离屏出图");
+        int shotWidth = 0;
+        int shotHeight = 0;
+        const std::vector<std::uint32_t> a =
+            LoadBmpArgb(shotA, shotWidth, shotHeight);
+        std::remove(shotA.c_str());
+        Check(shotWidth == 640 && shotHeight == 640,
+              "背景板：BMP 读回是 640×640（读不回来后面的取样没有意义）");
+        const auto sample = [&a, shotWidth](int x, int y) {
+            return a[static_cast<std::size_t>(y) * static_cast<std::size_t>(shotWidth)
+                     + static_cast<std::size_t>(x)]
+                   & 0x00FFFFFFu;
+        };
+        if (shotWidth == 640 && shotHeight == 640) {
+            Check(sample(320, 20) == (kBackdropColor & 0x00FFFFFFu),
+                  "背景板：上留白是背景板色");
+            Check(sample(320, 620) == (kBackdropColor & 0x00FFFFFFu),
+                  "背景板：下留白是背景板色");
+            Check(sample(320, 320) != (kBackdropColor & 0x00FFFFFFu),
+                  "背景板：画布内不是背景板色（没把 UI 整幅盖掉）");
+        }
+
+        // 主题 token：烘进窗口的是**蓝**，主题表给**红** ⇒ 画出来必须是红。
+        // 这条是"主题里那个属性"的全部意义：颜色跟着运行期主题走，窗口层不缓存。
+        InkingThemeTable backdropTheme;
+        backdropTheme.name = "selftest_backdrop";
+        backdropTheme.colors = {{"letterbox", 0xFFFF0000u}};
+        Check(InkingInstallThemeTable(std::move(backdropTheme)),
+              "背景板：装主题表");
+        Check(InkingSetActiveTheme("selftest_backdrop"), "背景板：切到该主题");
+        window.SetBackdrop(0xFF0000FFu, "letterbox");
+        const std::string shotB = "selftest_backdrop_token.bmp";
+        std::remove(shotB.c_str());
+        Check(InkingWindow::RenderToTexture(shotB, 640, 640, "selftest"),
+              "背景板：带语义名再出图");
+        int tokenWidth = 0;
+        int tokenHeight = 0;
+        const std::vector<std::uint32_t> b =
+            LoadBmpArgb(shotB, tokenWidth, tokenHeight);
+        std::remove(shotB.c_str());
+        if (tokenWidth == 640 && tokenHeight == 640) {
+            const auto bar = b[static_cast<std::size_t>(20)
+                               * static_cast<std::size_t>(tokenWidth)
+                               + static_cast<std::size_t>(320)]
+                             & 0x00FFFFFFu;
+            Check(bar == 0x00FF0000u,
+                  "背景板：黑边用的是主题表里的颜色（烘的蓝被表里的红盖掉）");
+        }
+
+        // 换一张表：同一个 token 换色 ⇒ 黑边跟着换（证明是**每帧查表**，没缓存）。
+        InkingThemeTable backdropTheme2;
+        backdropTheme2.name = "selftest_backdrop_2";
+        backdropTheme2.colors = {{"letterbox", 0xFF00FFFFu}};
+        Check(InkingInstallThemeTable(std::move(backdropTheme2)),
+              "背景板：装第二张主题表");
+        Check(InkingSetActiveTheme("selftest_backdrop_2"), "背景板：切表");
+        const std::string shotC = "selftest_backdrop_token2.bmp";
+        std::remove(shotC.c_str());
+        InkingWindow::RenderToTexture(shotC, 640, 640, "selftest");
+        int token2Width = 0;
+        int token2Height = 0;
+        const std::vector<std::uint32_t> c =
+            LoadBmpArgb(shotC, token2Width, token2Height);
+        std::remove(shotC.c_str());
+        if (token2Width == 640 && token2Height == 640) {
+            const auto bar = c[static_cast<std::size_t>(20)
+                               * static_cast<std::size_t>(token2Width)
+                               + static_cast<std::size_t>(320)]
+                             & 0x00FFFFFFu;
+            Check(bar == 0x0000FFFFu, "背景板：换主题后黑边颜色跟着换");
+        }
+
+        // 底图（cover）：8×8 的纯洋红铺满整窗 ⇒ 连留白也变洋红（盖住了背景板色）。
+        const std::string imagePath = "selftest_backdrop_image.bmp";
+        {
+            SDL_Surface* image = SDL_CreateSurface(8, 8, SDL_PIXELFORMAT_RGBA8888);
+            if (image != nullptr) {
+                SDL_FillSurfaceRect(image, nullptr,
+                                    SDL_MapSurfaceRGBA(image, 255, 0, 255, 255));
+                SDL_SaveBMP(image, imagePath.c_str());
+                SDL_DestroySurface(image);
+            }
+        }
+        window.SetBackdropImage(imagePath);
+        Check(window.GetBackdropImage() == imagePath, "背景板：底图路径回读");
+        const std::string shotD = "selftest_backdrop_picture.bmp";
+        std::remove(shotD.c_str());
+        InkingWindow::RenderToTexture(shotD, 640, 640, "selftest");
+        int imageWidth = 0;
+        int imageHeight = 0;
+        const std::vector<std::uint32_t> d =
+            LoadBmpArgb(shotD, imageWidth, imageHeight);
+        std::remove(shotD.c_str());
+        if (imageWidth == 640 && imageHeight == 640) {
+            const auto bar = d[static_cast<std::size_t>(20)
+                               * static_cast<std::size_t>(imageWidth)
+                               + static_cast<std::size_t>(320)]
+                             & 0x00FFFFFFu;
+            Check(bar == 0x00FF00FFu,
+                  "背景板：底图盖住了留白（cover 铺满整窗）");
+        }
+
+        // 底图读不到 ⇒ **退回背景板色**，不留一块黑。失败路径必须有判据：
+        // "设了图但什么都没出现"和"图路径写错"在画面上长得一模一样。
+        window.SetBackdropImage("selftest_backdrop_不存在.bmp");
+        window.SetBackdrop(kBackdropColor, nullptr);
+        const std::string shotE = "selftest_backdrop_missing.bmp";
+        std::remove(shotE.c_str());
+        InkingWindow::RenderToTexture(shotE, 640, 640, "selftest");
+        int missWidth = 0;
+        int missHeight = 0;
+        const std::vector<std::uint32_t> e =
+            LoadBmpArgb(shotE, missWidth, missHeight);
+        std::remove(shotE.c_str());
+        if (missWidth == 640 && missHeight == 640) {
+            const auto bar = e[static_cast<std::size_t>(20)
+                               * static_cast<std::size_t>(missWidth)
+                               + static_cast<std::size_t>(320)]
+                             & 0x00FFFFFFu;
+            Check(bar == (kBackdropColor & 0x00FFFFFFu),
+                  "背景板：底图读不到时退回颜色（不是黑块）");
+        }
+        std::remove(imagePath.c_str());
+
+        // 收尾：把背景板撤掉、主题表清空，后面的检查回到默认世界。
+        window.SetBackdrop(0u, nullptr);
+        window.SetBackdropImage(std::string());
+        InkingClearThemeTables();
+        window.SetBackgroundColor(0xFF121218u);
     }
 
     // D5：带退出码关窗。
@@ -7446,9 +7639,11 @@ void CheckDynamicLabel() {
 //   ⑤ 包络调用计数（动态容器的包络是整棵子树并集，§2.1 第 3 条要求可观测）；
 //   ⑥ 编译期那条镜像断言在 `src/inking.cpp`，这里做运行期回声。
 //
-// **不做滚轮**：滚轮在动态档没有可靠的读取时机（见 `InkingDynamicPanel.h`
-// 顶上"关键决定二"），所以这一组里一条滚轮断言都不该有——顺手加回来会让
-// "丢了 / 滚双倍"这种偶发问题变成常态。
+// **滚轮不在这一组**（0.9.1 更正）：0.9.0 时这里写着"一条滚轮断言都不该有"，
+// 理由是"偶发丢失"——而那个理由**只对逻辑步成立**。每渲染帧一次的
+// `onAnimationTick` 是可靠的，消费方与七条断言于是在
+// `CheckDynamicPanelWheel()` 里（0.9.1 T-04）。别把滚轮断言搬回来：
+// 这个函数已经够长，红了要考古。
 void CheckDynamicPanel() {
     std::printf("\n-- 动态面板（G-07） --\n");
 
@@ -7626,6 +7821,221 @@ void CheckDynamicPanel() {
     Check(panel->IsOpen()
               && panel->GetAppearance().color == panel->GetData().open.color,
           "开合：目标态与外观取的是 `open` 那一份");
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// 0.9.1 T-04：动态面板的滚轮（拉通道 + 推通道）
+// ---------------------------------------------------------------------------
+//
+// 单独一个函数而不是塞进 `CheckDynamicPanel`：那个函数已经 180 行，再加滚轮会让
+// "红了跑哪一条"变成考古。本函数**自己建一份场景**，不与上面共享。
+//
+// 每条断言都走**真路径**（`SetPointerState` → `SetPointerWheel` →
+// `DispatchPointer` → `TickFrame` → `ConsumeFrameDirty`，顺序照抄主循环），
+// 不直接调 `SetScroll`——直接调只能证明算术、证明不了入口接上了（G-07 踩过一次）。
+//
+// 两条不变量在这里被钉住：
+//   1. 两档滚同一格滚**同一个数**（②）；
+//   2. 一帧的滚轮只落在一个接收者身上（③/⑥/⑦——双滚的现象是"滚得快一倍"）。
+void CheckDynamicPanelWheel() {
+    std::printf("\n-- 动态面板：滚轮（0.9.1 T-03/T-04） --\n");
+
+    InkingScene scene("g09_dynwheel");
+    InkingSceneLibrary::SetActiveScene(&scene);
+
+    // 一帧的定义照抄 `InkingWindow` 的主循环：派发 → 渲染帧回调 → 帧末清账。
+    // **少了 `ConsumeFrameDirty` 就等于滚轮不清零**：后面每条断言都会多滚一格，
+    // 而症状看起来像是夹紧失效（这正是任务书里"不能反的一步"）。
+    const auto stepFrame = [&scene]() {
+        scene.DispatchPointer();
+        scene.TickFrame(1.0f / 60.0f);
+        scene.ConsumeFrameDirty();
+    };
+
+    // ---- 换算：纯函数直测（T-02 的落点，两档共用一份算术） ----
+    {
+        InkingScrollSpec spec;
+        spec.wheelStep = 48.0f;
+        float x = 0.0f;
+        float y = 100.0f;
+        InkingApplyWheelToScroll(spec, 0.0f, 1.0f, x, y);
+        const float verticalDelta = 100.0f - y;
+        spec.horizontal = true;
+        InkingApplyWheelToScroll(spec, -1.0f, 0.0f, x, y);
+        std::printf("         换算：dy=+1 → 减 %.1f；dx=-1（horizontal）→ %.1f\n",
+                    verticalDelta, x);
+        Check(verticalDelta == 48.0f && x == 48.0f,
+              "②'：`InkingApplyWheelToScroll` 一格 = wheelStep，方向向上 ⇒ 减");
+    }
+
+    // ---- 静态对照：200×200 视口 / 800 内容 ⇒ 可滚 600 ----
+    InkingPanelData staticData;
+    staticData.name = "g09_static";
+    staticData.width = 200;
+    staticData.height = 200;
+    staticData.offsetX = 400.0f;
+    staticData.offsetY = 100.0f;
+    staticData.closed.color = 0xFF223344u;
+    staticData.scroll.enabled = true;
+    auto* staticPanel = static_cast<InkingStaticPanel*>(
+        scene.AddChild(std::make_unique<InkingStaticPanel>(&scene, staticData)));
+    InkingAnchorData staticContentData;
+    staticContentData.width = 160;
+    staticContentData.height = 800;
+    staticPanel->AddChild(std::make_unique<InkingStaticWidget>(staticPanel,
+                                                               staticContentData));
+    staticPanel->UpdateScrollRange();
+
+    // ---- 被测：200×200 视口 / 300 内容 ⇒ 可滚 100 ----
+    InkingPanelData data;
+    data.name = "g09_dyn";
+    data.width = 200;
+    data.height = 200;
+    data.offsetX = 100.0f;
+    data.offsetY = 100.0f;
+    data.closed.color = 0xFF445566u;
+    data.clipChildren = true;
+    data.scroll.enabled = true;
+    auto* panel = static_cast<InkingDynamicPanel*>(
+        scene.AddChild(std::make_unique<InkingDynamicPanel>(&scene, data)));
+
+    InkingButtonData contentData;
+    contentData.name = "g09_content";
+    contentData.width = 160;
+    contentData.height = 300;
+    contentData.normal =
+        InkingButtonAppearance(InkingAppearanceType::Color, 0xFF888888u);
+    auto* content = static_cast<InkingStaticButton*>(
+        panel->AddChild(std::make_unique<InkingStaticButton>(panel, contentData)));
+    panel->UpdateScrollRange();
+
+    const float step = panel->GetData().scroll.wheelStep;  // 默认 48
+    const float range = panel->GetScrollRangeY();          // 300 − 200 = 100
+    std::printf("         步长 %.1f，可滚范围 %.1f\n", step, range);
+
+    // ---- ① 拉通道：指针在面板的**空白区** ----
+    //
+    // 空白 = 面板本体里**避开**子按钮（160 宽）与竖直轨道（188~196）的那一块。
+    // 那里没有任何静态目标 ⇒ 推通道到不了 ⇒ 只有拉通道能接。
+    const float blankX = panel->GetAbsX() + 170.0f;
+    const float blankY = panel->GetAbsY() + 50.0f;
+
+    scene.SetPointerState(blankX, blankY, false, true);
+    panel->SetScroll(0.0f, range);  // 从底往上滚，才能看出"减"
+    stepFrame();
+
+    scene.SetPointerWheel(0.0f, 1.0f);
+    stepFrame();
+    const float afterOne = panel->GetScrollY();
+    std::printf("         空白区滚一格：%.1f → %.1f\n", range, afterOne);
+    Check(std::fabs(afterOne - (range - step)) < 0.01f,
+          "①：指针在面板空白区滚一格 ⇒ `GetScrollY()` 减一个 `wheelStep`");
+
+    // ---- ② 两档同一个数：静态对照上滚同一格 ----
+    const float staticStart = staticPanel->GetScrollRangeY();
+    staticPanel->SetScroll(0.0f, staticStart);
+    scene.SetPointerState(500.0f, 150.0f, false, true);  // 静态面板本体（400..600）
+    stepFrame();
+    scene.SetPointerWheel(0.0f, 1.0f);
+    stepFrame();
+    const float staticAfter = staticPanel->GetScrollY();
+    std::printf("         静态对照滚一格：%.1f → %.1f\n", staticStart, staticAfter);
+    Check(std::fabs((staticStart - staticAfter) - (range - afterOne)) < 0.01f,
+          "②：两档滚同一格滚**同一个数**（换算只有一份，不分成两个真相）");
+
+    // ---- ③ 只喂一次、连跑 3 帧 ⇒ 总量仍是一格 ----
+    scene.SetPointerState(blankX, blankY, false, true);
+    panel->SetScroll(0.0f, range);
+    stepFrame();
+    const float before3 = panel->GetScrollY();
+    scene.SetPointerWheel(0.0f, 1.0f);
+    stepFrame();
+    stepFrame();
+    stepFrame();
+    const float after3 = panel->GetScrollY();
+    std::printf("         喂一次跑三帧：%.1f → %.1f\n", before3, after3);
+    Check(std::fabs((before3 - after3) - step) < 0.01f,
+          "③：一次喂入只滚一格（帧末清账 ⇒ 不累加、不双滚）");
+
+    // ---- ④ 夹紧：喂 100 格也停在 range 上 ----
+    panel->SetScroll(0.0f, 0.0f);
+    stepFrame();
+    scene.SetPointerWheel(0.0f, -100.0f);
+    stepFrame();
+    std::printf("         喂 100 格 → %.1f（range %.1f）\n", panel->GetScrollY(),
+                panel->GetScrollRangeY());
+    Check(panel->GetScrollY() == panel->GetScrollRangeY()
+              && panel->GetScrollY() > 0.0f,
+          "④：越界滚夹在 `[0, range]`（`SetScroll` 的既有行为，函数不自己夹）");
+
+    // ---- ⑤ 指针移出面板再喂 ⇒ 不动 ----
+    const float beforeOut = panel->GetScrollY();
+    scene.SetPointerState(blankX + 400.0f, blankY + 400.0f, false, true);  // 面板外
+    stepFrame();
+    scene.SetPointerWheel(0.0f, 1.0f);
+    stepFrame();
+    Check(panel->GetScrollY() == beforeOut,
+          "⑤：指针移出面板再喂 ⇒ 一个字节都不动（归属按位置判）");
+
+    // ---- ⑥ 推通道：指针压在面板里的**静态按钮**上 ----
+    //
+    // 这一段是"滚到有按钮的地方就停"那个坑的反面：场景沿父链找到本面板
+    // （`HandlesSubtreeWheel`），把滚轮交给它；拉通道看到"有人接了"就不许再拉。
+    panel->SetScroll(0.0f, 0.0f);
+    const float onChildX = content->GetAbsX() - panel->GetScrollX() + 80.0f;
+    const float onChildY = content->GetAbsY() - panel->GetScrollY() + 40.0f;
+    scene.SetPointerState(onChildX, onChildY, false, true);
+    stepFrame();
+    panel->SetScroll(0.0f, 0.0f);
+    // 归属要在 `DispatchPointer` 之后、`ConsumeFrameDirty` 之前读（它只活一帧）。
+    scene.SetPointerWheel(0.0f, -1.0f);
+    scene.DispatchPointer();
+    const InkingWidget* wheelOwner = scene.GetPointerWheelTarget();
+    scene.TickFrame(1.0f / 60.0f);
+    scene.ConsumeFrameDirty();
+    std::printf("         子按钮上滚一格：归属=%s，滚动量=%.1f\n",
+                wheelOwner == panel ? "本面板" : "别人", panel->GetScrollY());
+    Check(wheelOwner == panel,
+          "⑥：指针压在面板的静态按钮上 ⇒ 推通道交给本面板（`HandlesSubtreeWheel`）");
+    Check(std::fabs(panel->GetScrollY() - step) < 0.01f,
+          "⑥'：两条通道不叠加 ⇒ 这一格只滚了一个 `wheelStep`");
+
+    // ---- ⑦ 重叠的动态面板：只有上面那个滚 ----
+    //
+    // 后建的盖在前面（同父同级 z ⇒ 注册序），所以 (200,200) 这一点上它最上面。
+    InkingPanelData coverData;
+    coverData.name = "g09_dyn_cover";
+    coverData.width = 200;
+    coverData.height = 200;
+    coverData.offsetX = 150.0f;
+    coverData.offsetY = 150.0f;
+    coverData.closed.color = 0xFF556677u;
+    coverData.clipChildren = true;
+    coverData.scroll.enabled = true;
+    auto* cover = static_cast<InkingDynamicPanel*>(
+        scene.AddChild(std::make_unique<InkingDynamicPanel>(&scene, coverData)));
+    InkingButtonData coverContentData;
+    coverContentData.name = "g09_cover_content";
+    coverContentData.width = 160;
+    coverContentData.height = 300;
+    coverContentData.normal =
+        InkingButtonAppearance(InkingAppearanceType::Color, 0xFF999999u);
+    cover->AddChild(std::make_unique<InkingStaticButton>(cover, coverContentData));
+    cover->UpdateScrollRange();
+
+    panel->SetScroll(0.0f, 0.0f);
+    cover->SetScroll(0.0f, 0.0f);
+    scene.SetPointerState(200.0f, 200.0f, false, true);  // 两块都盖住这一点
+    stepFrame();
+    scene.SetPointerWheel(0.0f, -1.0f);
+    stepFrame();
+    std::printf("         重叠处滚一格：上=%.1f 下=%.1f\n", cover->GetScrollY(),
+                panel->GetScrollY());
+    Check(std::fabs(cover->GetScrollY() - step) < 0.01f
+              && panel->GetScrollY() == 0.0f,
+          "⑦：重叠的动态面板只有**上面**那个滚（归属唯一）");
 
     InkingSceneLibrary::SetActiveScene(nullptr);
 }
@@ -9467,6 +9877,46 @@ void CheckToggleLike(SDL_Renderer* renderer) {
     Check(group.GetChecked() == radio2,
           "T-04：③ `RadioGroup::GetChecked()` 指向新的那个");
 
+    // ---- ③b `Add` / `Remove` 也是双向的（组侧入口不能只建半边链接）----
+    //
+    // ③ 走的是 `SetGroup`（成员侧）那一条，所以这条缺口从没被覆盖过：
+    // `Add` 早先只 `push_back`、**不回写成员的组指针**，于是点击走 Radio 的
+    // "没挂组"分支各自置真 —— 互斥静默失效，三个圈能同时选中
+    // （`examples/showcase` 的"小 / 中 / 大"就是这么坏的）。
+    inking_prefab::RadioGroup viaAdd;
+    viaAdd.Add(radio1);
+    Check(radio1->GetGroup() == &viaAdd,
+          "T-04：③b `Add` 回写了成员的组指针（双向链接）");
+    Check(viaAdd.GetCount() == 1 && group.GetCount() == 1,
+          "T-04：③b 换组是搬走不是复制（旧组只剩 radio2）");
+
+    viaAdd.Add(radio2);
+    Check(viaAdd.GetCount() == 2 && group.GetCount() == 0,
+          "T-04：③b 两个成员都从组侧加进去了");
+
+    // 指针也要跟着搬：只"列表里有"是不够的（旧实现就是这样，于是下面那一下
+    // 点击其实借的是**旧组**的互斥，看起来碰巧对）。
+    Check(radio1->GetGroup() == &viaAdd && radio2->GetGroup() == &viaAdd,
+          "T-04：③b 成员的组指针都指向新组（不是旧组、也不是空）");
+
+    // 真的点一下：互斥要由"组"生效。此刻 radio2 选中（③ 的收尾），
+    // 点 radio1 应该把它清掉——“各自置真”的话这里会是两个都选中。
+    clickAt(69.0f, 29.0f);
+    Check(radio1->IsChecked() && !radio2->IsChecked(),
+          "T-04：③b 走 `Add` 挂的组照样互斥（点一个，另一个被清掉）");
+
+    viaAdd.Add(radio1);  // 重复加：幂等，列表不重复计数
+    Check(viaAdd.GetCount() == 2, "T-04：③b `Add` 幂等（同一个成员不进两次）");
+
+    // `Remove` 要把指针清回去：否则它以为自己还在组里，点击走 `Select`、
+    // 组里却查不到它 —— 静默失效（不报错、也不选中）。
+    viaAdd.Remove(radio2);
+    Check(radio2->GetGroup() == nullptr && viaAdd.GetCount() == 1,
+          "T-04：③b `Remove` 清掉成员的组指针（不留悬空归属）");
+    clickAt(99.0f, 29.0f);
+    Check(radio2->IsChecked() && radio1->IsChecked(),
+          "T-04：③b 摘掉后再点它 = 单用（不再去清组里其它成员）");
+
     // ---- ④ 部件：mark 落在 base 之内（三件各验一次）----
     const auto markInsideBase = [](const inking_prefab::ToggleParts& parts) {
         return parts.mark.x >= parts.base.x - 0.01f &&
@@ -10493,6 +10943,9 @@ int main() {
 
     // ---- 动态面板：滚动条自判拖动 / 裁剪与命中同源 / 包络计数（G-07）----
     CheckDynamicPanel();
+
+    // ---- 动态面板：滚轮（0.9.1 T-03/T-04；拉通道 + 推通道，两档同一个步长）----
+    CheckDynamicPanelWheel();
 
     // ---- 图集源矩形：切格与单独小图逐像素一致（0.6.1 T-04）----
     CheckImageFitSrcRect(rnd);

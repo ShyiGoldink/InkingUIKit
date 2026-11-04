@@ -87,6 +87,30 @@ float InkingScrollRange(float contentSize, float viewportSize) noexcept;
 float InkingClampScroll(float offset, float range) noexcept;
 
 /**
+ * 滚轮增量 → 新的滚动量（**一次交互的换算**，两档滚动容器共用这一份）。**纯函数**。
+ *
+ * 为什么要有它：静态面板与动态面板滚**同一格必须滚同一个距离**。换算只写一份，
+ * 将来改步长 / 改方向只改这里；写两份就是第二个真相，而症状是"静态面板滚 48、
+ * 动态面板滚 60"，不写在任何文档里、也没人会在第一次猜到这里。
+ *
+ * 规则（与 B12 定稿逐字一致）：
+ *   - 步长是 `spec.wheelStep`**设计像素**，与视口大小无关；
+ *   - `deltaY > 0`（滚轮向上）看更上面的内容 ⇒ 滚动量**减小**；
+ *   - `spec.vertical` / `spec.horizontal` 为假的轴原样不动；
+ *   - **不夹紧**：夹紧只有一处（`SetScroll`），否则"夹到什么范围"会有两个答案
+ *     （内容视口要不要扣掉滚动条那条）。
+ *
+ * @param spec     容器的滚动配置（读 `wheelStep` / 两个开关）
+ * @param deltaX   本帧水平滚轮增量（格数，可为小数）
+ * @param deltaY   本帧竖直滚轮增量
+ * @param offsetX  进：当前水平滚动量；出：换算后的值（未夹紧）
+ * @param offsetY  同上，竖直
+ */
+void InkingApplyWheelToScroll(const InkingScrollSpec& spec, float deltaX,
+                              float deltaY, float& offsetX,
+                              float& offsetY) noexcept;
+
+/**
  * 算一条滚动条的轨道与滑块。**纯函数**（不碰渲染器、不碰组件）。
  *
  * @param vertical       true = 竖直那条（贴右边），false = 水平那条（贴底边）
