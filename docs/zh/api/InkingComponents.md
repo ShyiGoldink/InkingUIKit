@@ -580,6 +580,13 @@ public:
 
 ## 五、图片
 
+> **一个组件 = 一个图元。** 一帧要画成千上万个图元时不要走这里——每种图元一个
+> 节点，节点 / 命中 / 绘制列表的记账会压过渲染本身。用
+> [InkingGameContent.md](InkingGameContent.md) 的批量图层：5000 个图元
+> **0.94 ms**（本页这条路是 4.1 ms），节点数 1 而不是 5000。
+>
+> 单个图元、需要独立命中 / 布局 / 动画状态的，仍然用本页的组件。
+
 ```C++
 struct InkingImageData : public InkingButtonData {
     // 多出来的只有"图从哪来"：继承 InkingButtonData 是为了形状 / 描边 / 锚点 / 命中同构

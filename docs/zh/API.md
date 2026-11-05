@@ -156,6 +156,7 @@ int main() {
 | [api/InkingLayout.md](api/InkingLayout.md#布局数据层) | `dataStruct/InkingLayout.h` |
 | [api/InkingLayoutSolver.md](api/InkingLayoutSolver.md) | `layout/InkingLayoutSolver.h` |
 | [§9 素材该多大](#9-素材该多大缩放规则) | `dataStruct/InkingImageScale.h`（0.7.0：素材尺寸 / σ / 干净档位） |
+| [api/InkingGameContent.md](api/InkingGameContent.md#五九宫格与平铺-datastructinkingninepatchh) | `dataStruct/InkingNinePatch.h`（1.1.0：九宫格 / 平铺展开，零依赖） |
 
 ### 3.2 节点与树
 
@@ -185,6 +186,7 @@ int main() {
 | --- | --- |
 | [api/InkingComponents.md](api/InkingComponents.md) | `button/*`、`panel/*`、`image/*`、`text/*`、`canvas/*`、`video/*`、`audio/*` |
 | [api/InkingFixedPopup.md](api/InkingFixedPopup.md) | `panel/InkingFixedPopup.h`（定点浮窗，0.4.1） |
+| [api/InkingGameContent.md](api/InkingGameContent.md) | **游戏内容侧**（1.1.0）：`image/InkingGeometryLayer.h`（批量四边形 / 任意顶点）、`image/InkingMask.h`（形状遮罩）、`asset/InkingTexture.h`（纹理句柄）、`SetEdgeFeather`（无羽化开关） |
 | [api/InkingPrefab.md](api/InkingPrefab.md) | `prefab/*` |
 | [api/InkingCxxcss.md](api/InkingCxxcss.md) | **没有头文件**：`CXXCSS/*.json` 编译期生成的那些组件类（`cxxcss::OptionItem` 之类）、`RegisterAllButtons()`、语言表安装、`inkgen` 命令行 |
 
@@ -328,7 +330,8 @@ INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 本机走 dire
 
 ## 8. 头文件 → 专页 全量索引
 
-97 个公开头，全部落在上表的某一页里。
+**121 个**头文件（`find include -name '*.h'`，1.1.0 实测；含 `theme/` 与
+`util/`——前者在组件页、后者见 §3.6），全部落在上表的某一页里。
 **生成物不在 `include/` 里**（`CXXCSS/*.json` 烘出来的 `cxxcss::*` 类落在
 `build/inkgen/` 下），见 [api/InkingCxxcss.md](api/InkingCxxcss.md)。
 
@@ -336,20 +339,20 @@ INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 本机走 dire
 | --- | --- | --- |
 | 根 | `inking.h` | Runtime |
 | anchor | `InkingAnchor.h` | Anchor |
-| asset | `InkingAsset.h` | Runtime |
+| asset | `InkingAsset.h` `InkingTexture.h` | Runtime / GameContent |
 | audio | `InkingAudio.h` | Components |
 | button | `InkingButtonData.h` `InkingButtonLibrary.h` `InkingButtonLook.h` `ButtonPaint.h` `InkingButtonLike.h` `InkingStaticButton.h` `InkingDynamicButton.h` | Components |
 | canvas | `InkingCanvasContext.h` `InkingCanvasData.h` `InkingCanvasPainter.h` `InkingStaticCanvas.h` | Components |
 | config | `window_config.h` | Window |
-| dataStruct | `InkingAffine.h` `InkingTransform.h` `InkingAnchorData.h` `InkingColor.h` `InkingDecoration.h` `InkingEasing.h` `InkingImageFit.h` `InkingImageScale.h` `InkingLayout.h` `InkingScroll.h` `InkingShapeSpec.h` `InkingTextLayout.h` `InkingTextRequest.h` `MessageStruct.h` `TaskStruct.h` | Anchor / InkingShapeSpec / Transform / Layout / Render / Runtime / [§9](#9-素材该多大缩放规则) |
+| dataStruct | `InkingAffine.h` `InkingTransform.h` `InkingAnchorData.h` `InkingColor.h` `InkingDecoration.h` `InkingEasing.h` `InkingImageFit.h` `InkingImageScale.h` `InkingLayout.h` `InkingScroll.h` `InkingShapeSpec.h` `InkingTextLayout.h` `InkingTextRequest.h` `InkingNinePatch.h` `MessageStruct.h` `TaskStruct.h` | Anchor / InkingShapeSpec / Transform / Layout / Render / Runtime / GameContent / [§9](#9-素材该多大缩放规则) |
 | detail | `InkLog.h` `InkingGeometry.h` `InkingHit.h` `InkingMessageQueue.h` | Runtime / Widget |
 | event | `InkingEvent.h` | Runtime |
-| image | `InkingImageData.h` `InkingSpriteData.h` `InkingSpriteGroupData.h` `InkingStaticImage.h` `InkingSprite.h` `InkingSpriteGroup.h` `InkingDynamicSpriteGroup.h` `InkingAnimateGroup.h` | Components |
+| image | `InkingImageData.h` `InkingSpriteData.h` `InkingSpriteGroupData.h` `InkingStaticImage.h` `InkingSprite.h` `InkingSpriteGroup.h` `InkingDynamicSpriteGroup.h` `InkingAnimateGroup.h` `InkingGeometryLayer.h` `InkingMask.h` | Components / GameContent |
 | input | `CursorShape.h` `InkingKeyboardTarget.h` `InkingPointerHandler.h` `InkingPointerButton.h` `InkingKeyboardInput.h` `InkingMouseInput.h` `InkingShortcut.h` `InkingShortcutRegistry.h` `InkingTextEditState.h` | KeyboardTarget / PointerHandler / Input |
 | layout | `InkingLayoutSolver.h` | LayoutSolver |
 | panel | `InkingStaticPanel.h` `InkingPanelData.h` `InkingPanelLook.h` | Components |
 | prefab | `Dialog.h` `FilePicker.h` `FilePickerData.h` `ListRow.h` `ListView.h` `ListViewData.h` `MenuBar.h` `MenuBarData.h` `OptionBar.h` `OptionBarData.h` `PrefabParts.h` `PrefabTheme.h` `ProgressBar.h` `Select.h` `SelectData.h` `Slider.h` `TabBar.h` `ToastHost.h` `ToggleLike.h` `Tooltip.h` | Prefab |
-| render | `InkingBatch.h` `InkingDraw.h` `InkingGlyphAtlas.h` `InkingMesh.h` `InkingText.h` | Render |
+| render | `InkingBatch.h` `InkingDraw.h` `InkingGlyphAtlas.h` `InkingMesh.h` `InkingText.h` `InkingTextureResolve.h` | Render |
 | scene | `InkingHitTable.h` `InkingScene.h` `InkingSceneLibrary.h` `SceneRegisterToken.h` | Scene |
 | text | `InkingStaticLabel.h` `InkingTextInput.h` `InkingTextTable.h` `InkingLabelData.h` | Components |
 | thread | `InkingTaskQueue.h` `InkingThreadPool.h` | Runtime |
