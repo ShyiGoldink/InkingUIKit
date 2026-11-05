@@ -5,6 +5,69 @@
 
 ---
 
+## 1.1.0-preview —— 2026-11-05（游戏引擎能力：批量提交 / 遮罩 / 九宫格）
+
+> 需求来源：`D:/GoldingCore/probe-perspective/REQUIREMENTS-InkingUIKit.md`
+> （2.5D 场景系统）。任务书与逐条核实见
+> [`plans/2026-11-04-dev010-game-engine-tasks.md`](plans/2026-11-04-dev010-game-engine-tasks.md)。
+>
+> **本版不承诺 ABI 冻结**（与 1.0.0-preview 同一条：公开面盘点仍未做）。
+> 所有新能力都是**新增入口**，既有组件的绘制路径逐像素不变。
+
+### 新增
+
+- **批量四边形图层**（`image/InkingGeometryLayer.h`）：一个节点提交 N 个带纹理的
+  四边形。5000 个精灵每帧 **7.5 ms → 0.94 ms**（软件渲染器实测），节点数与命中表
+  记录都从 5000 降到 1。入口：`SetQuads`（整段替换）/ `AppendQuads` / `SetNinePatch`
+  / `SetMaskedQuad` / `SetGeometry`。图层**不进命中表**（`SetHitPassThrough(true)`），
+  要点击在业务侧用 `InkingShapeContains` 判。
+- **纹理句柄**（`asset/InkingTexture.h`）：`InkingLoadTexture` 返回
+  `InkingTextureHandle`，跨帧持有；同一路径重复 Load 返回同一个 id 且只解码一次。
+  句柄钉住的纹理**不参与字节预算淘汰**（`TextureEntry::pins`）。用完要
+  `InkingReleaseTexture`，否则一直占内存。
+- **任意顶点提交**（`InkingGeometryLayer::SetGeometry`）：自己算三角形直接交。
+  三条硬约束（顶点 ≤ 16384 / 索引不越界 / 索引数是 3 的倍数）**整次拒绝**，
+  不留半批。
+- **任意形状遮罩**（`image/InkingMask.h`）：把方图裁成任意 SDF 形状。按密度细分
+  四边形、逐顶点 `InkingSignedDistance` + `alpha = clamp(0.5-f, 0, 1)`，
+  与 `fillShape` 的羽化带同一条公式。默认 16 格（289 顶点），上限 64 格。
+- **九宫格与平铺**（`dataStruct/InkingNinePatch.h`）：纯 inline、零依赖。
+  边框先夹源再夹目标（顺序反了会出负宽）；平铺的边缘半块**等比缩小**源矩形，
+  不是裁切。
+- **矩形无羽化开关**（`InkingImageLike::SetEdgeFeather`，默认 true）：关掉形状
+  边缘那圈 0→1 过渡带。**图元尺寸会变准**（32×32 不再被外扩成 33×33），
+  5000 图元再省约 2.7 ms。只对「矩形 + `fit: fill`」生效。
+- 静默失效清单 **13 → 17 条**：`texture_handle_stale` / `geometry_index_overflow` /
+  `mask_vertex_capped` / `ninepatch_border_clamped`。
+
+### 变更
+
+- **版本号 `1.0.0` → `1.1.0`**（阶段仍 `preview`，包名
+  `inking-1.1.0-preview-win64.zip`）：新增公开 API 属 minor 增量。
+- 图片绘制路径三处去白干活（不影响画面）：位图签名快筛（PNG/JPEG/BMP/GIF/WebP
+  前 4~8 字节就排掉 `SDL_IOStream` + `IMG_isSVG`）、纹理键走复用缓冲 +
+  `to_chars`（稳态零分配）、尺寸读 `TextureEntry::width/height` 不再每帧问 SDL。
+  5000 图元 **7.5 → 4.8 ms**。
+
+### 修复
+
+- **带纹理的顶点重建没有计数**：`vertexRebuilds` 原来只长在纯色路径
+  （`AppendLocalGeometry`）上，而带纹理那条每帧重建、无缓存，观察口读出来是 0。
+  1000 个图元实测「每帧重建 1000 份网格」此前完全不可见。
+- **同路径两次 `InkingLoadTexture` 的引用语义**：初版只做路径映射，`Release` 一次
+  就把整条删掉，另一个调用方手上的 id 被提前废掉且不报错。改为引用计数，减到 0
+  才出表。
+
+### 已知限制
+
+- 无羽化只对「矩形 + `fill`」生效：圆角 / `contain` / `cover` 仍走羽化路径。
+- 遮罩细分上限 64 格（4225 顶点），超了夹取并打一条 WARN；每帧重建遮罩网格的
+  动态图元代价较高。
+- 九宫格与 `rotation` 同时给时以旋转为准，边框会被拧歪（没有做"先转再展开"）。
+- `InkingGeometryLayer` 一次 `SetGeometry` 最多 16384 顶点；要更多请拆成多个图层。
+
+---
+
 ## 1.0.0-preview —— 2026-11-04（首个 1.0 预览包：功能面 = 0.9.2）
 
 > **本版不承诺 ABI 冻结。** 1.0 的功能面已经收齐，可以整包交付评估；缺的是

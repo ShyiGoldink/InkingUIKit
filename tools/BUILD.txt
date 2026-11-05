@@ -1,25 +1,46 @@
-inking 1.0.0-preview（预览版）—— Windows x64 构建信息
+inking 1.1.0-preview（预览版）—— Windows x64 构建信息
 ================================================================
 
-版本号      1.0.0
-版本阶段    preview          ← 1.0 的功能面已收齐，可以整包交付评估；
+版本号      1.1.0
+版本阶段    preview          ← 功能面已收齐，可以整包交付评估；
                                但「公开面盘点」没做完 ⇒ **不承诺** ABI 冻结
-构建日期    2026-11-04 15:34（GMT+8）
+构建日期    2026-11-05 12:02（GMT+8）
 构建类型    Release（CMake + Ninja）
 许可        MIT（本仓库代码，见包根 LICENSE；第三方见 licenses/）
 
 !! 先说清楚"预览"是什么意思
 
-   预览版**不是** 1.0 的发布版。1.0 的功能面（组件、动态档、输入、渲染、生成器）
-   已经收齐，所以这份包可以拿去集成、可以当验收基线；但「哪些公开符号是承诺、
-   哪些还能改」这次的盘点还没做（立项见
-   `docs/zh/plans/2026-10-29-evidence-and-delivery.md` 的「1.0.0 的 ABI 冻结」
-   一行，明确写着"不在本批"）。所以：**接口 / ABI 仍可能在正式版前变化，
-   升级请整包重编**。正式 `1.0.0` 发出时，被点到名的符号才进入冻结承诺。
-   功能面与 `0.9.2` 相同——本版只动版本常量与文档，另加两处打包脚本修复
-   （见「验证记录」第 4 条）。
+   预览版**不是** 1.1.0 的发布版。功能面（组件、动态档、输入、渲染、生成器，
+   以及本版新增的批量提交 / 任意顶点 / 遮罩 / 九宫格）已经收齐，所以这份包
+   可以拿去集成、可以当验收基线；但「哪些公开符号是承诺、哪些还能改」的盘点
+   还没做（立项见 `docs/zh/plans/2026-10-29-evidence-and-delivery.md` 的
+   「1.0.0 的 ABI 冻结」一行）。所以：**接口 / ABI 仍可能在正式版前变化，
+   升级请整包重编**。正式版发出时，被点到名的符号才进入冻结承诺。
 
-!! 升级提示：0.8.5 → 1.0.0-preview（中间跨了 0.9.0 / 0.9.1 / 0.9.2）
+!! 升级提示：1.0.0-preview → 1.1.0（**无破坏性**，旧代码一个字节不用改）
+
+   新增能力（用得上才改）：
+    1. **批量四边形图层**（`image/InkingGeometryLayer.h`）：一个节点提交 N 个
+       图元。5000 个精灵从 7.5 ms/帧降到 **0.94 ms**，而且不再产生 5000 个场景
+       节点与 5000 条命中记录。`SetQuads` / `AppendQuads` / `SetNinePatch` /
+       `SetMaskedQuad` / `SetGeometry` 五个入口。
+    2. **纹理句柄**（`asset/InkingTexture.h`）：`InkingLoadTexture` 拿一个
+       `InkingTextureHandle` 跨帧持有，同一路径重复 Load 返回同一个 id；
+       句柄钉住的纹理不参与字节预算淘汰。**用完要 `InkingReleaseTexture`**，
+       不释放就一直占内存。
+    3. **任意顶点**（`InkingGeometryLayer::SetGeometry`）：自己算三角形直接交，
+       三条硬约束（顶点 ≤ 16384、索引不越界、索引数是 3 的倍数）整次拒绝。
+    4. **任意形状遮罩**（`image/InkingMask.h`）：把方图裁成任意 SDF 形状
+       （圆 / 圆角 / 胶囊 / 多边形），边缘约 1 像素过渡。
+    5. **九宫格与平铺**（`dataStruct/InkingNinePatch.h`）：对话框边框拉伸不变形、
+       地形重复贴图。纯函数，不碰渲染器。
+    6. **矩形无羽化开关**（`InkingImageLike::SetEdgeFeather(false)`）：关掉形状
+       边缘那圈 0→1 的过渡带。**图元尺寸会变准**（32×32 不再被外扩成 33×33），
+       5000 图元再省约 2.7 ms。**UI 图片不要关**，纯色块关掉会有硬边。
+   旧行为不变：`SetEdgeFeather` 默认开、所有新能力都是**新增入口**，既有的
+   `InkingStaticImage` / `InkingSprite` 绘制路径逐像素相同（自检里比对过）。
+
+!! 如果你从 0.8.5 或更早升上来，先看下面这段（**破坏性**）
 
    破坏性（0.9.0，**所有消费方必须整包重编**）：
      1. **去掉 `namespace inking` 外壳**：公开符号全部改到全局命名空间 + `Inking`
@@ -159,7 +180,7 @@ inking 1.0.0-preview（预览版）—— Windows x64 构建信息
   - **背景板**（0.9.2）：`SetBackdrop` / `SetBackdropImage`，黑边可配色 / 铺图，
     `$token` 每帧查主题表；顺带修掉"截图其实没含留白"。
 
-验证记录（**本版实测**，2026-11-04，构建树 `build-release`）
+验证记录（**本版实测**，2026-11-05，构建树 `build-release`）
 
   1. 构建：`cmake --build build-release --clean-first -j` 全绿；`strict_warnings`
      门（同一批源 + `-Wall -Wextra -Wshadow -Wcast-qual -Wuseless-cast -Werror`）
@@ -170,9 +191,10 @@ inking 1.0.0-preview（预览版）—— Windows x64 构建信息
   2. `ctest --test-dir build-release` ⇒ **8/8 passed**：配置校验 / 字段表对账 /
      生成链路编译 / 静默清单对账 / `strict_warnings`（14.2 s）/ 行为自检
      （software）/ 行为自检（真后端）/ `probe_template`。
-  3. 行为自检（构建树）⇒ **925 项 ok / 1 项 skip / 0 项失败**，退出码 0；
-     `INKING_SELFTEST_DRIVER=windows` 同数 925 / 1 / 0。那条 skip 是
-     「窗口没拿到输入焦点（后台 / CI）」的悬停类断言——环境不是缺陷。
+  3. 行为自检（构建树）⇒ **984 项 ok / 0 项失败**，退出码 0；
+     `INKING_SELFTEST_DRIVER=windows` 同数。比 1.0.0-preview 的 925 项多出 59 条，
+     全是本版新增能力的断言（句柄 / 图层 / 任意顶点 / 遮罩 / 九宫格 / 羽化开关 /
+     混排顺序），以及两条把观察口补上的计数断言。
   4. **包内验收首轮抓到一个真缺陷（已修）**：`env -i` 跑包里的自检 ⇒
      **失败项 3**，三条全是 `video_decode_probe`——`probe.mp4`（8.4 KB，
      0.9.0 加的视频自检素材）**没被 `tools/package.sh` 拷进包**（脚本只拷了
@@ -181,9 +203,9 @@ inking 1.0.0-preview（预览版）—— Windows x64 构建信息
      写进脚本注释；重打后归零。**下一次加自检素材时，先想这一条。**
   5. **包内验收（本版最终包）**：`env -i`，PATH 只留 `C:\Windows\system32` 与
      `C:\Windows`——不含 MSYS2 / 工具链 / Python，模拟只拿到 zip 的机器：
-     - `bin/inking_demo_selftest.exe` ⇒ **925 项 ok / 1 项 skip / 失败项 0**，
+     - `bin/inking_demo_selftest.exe` ⇒ **984 项 ok / 失败项 0**，
        退出码 0（字体在包内真的能打开）。
-     - `INKING_SELFTEST_DRIVER=windows` 同数 925 / 1 / 0，退出码 0，日志确认
+     - `INKING_SELFTEST_DRIVER=windows` 同数，退出码 0，日志确认
        `后端 direct3d11`（GPU 与 software 两档都过）。
      - `examples/minimal` 拷到包外构建 ⇒ configure 6.4 s / build / link 全通过，
        `find_package(inking)` 命中本包，运行期 DLL 由 POST_BUILD 自动拷到 exe 旁。
@@ -221,7 +243,7 @@ inking 1.0.0-preview（预览版）—— Windows x64 构建信息
   6. 跑自检会在 exe 旁生成 LOG/ 目录（日志），不属于包内容，可删。
 
 已知限制（详见 README「已知限制」）
-  - **预览版不冻结**：接口 / ABI 仍可能在正式 1.0.0 前变（见文件头第一节）。
+  - **预览版不冻结**：接口 / ABI 仍可能在正式版前变（见文件头第一节）。
   - 只在 Windows + MSYS2 UCRT64 + Ninja 构建过；Linux / macOS 未验证。
   - **包体积 57 MB**：FFmpeg 的传递闭包占绝大部分（101 个 DLL）；要小包得关掉
     视频支持重编，而不是删 DLL。
