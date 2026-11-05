@@ -209,7 +209,7 @@ inking 1.1.0-preview（预览版）—— Windows x64 构建信息
        `后端 direct3d11`（GPU 与 software 两档都过）。
      - `examples/minimal` 拷到包外构建 ⇒ configure 6.4 s / build / link 全通过，
        `find_package(inking)` 命中本包，运行期 DLL 由 POST_BUILD 自动拷到 exe 旁。
-  6. 完整性：**339 个文件**（338 条校验和 + `BUILD.txt` 自己不计入）、
+  6. 完整性：**346 个文件**（345 条校验和 + `BUILD.txt` 自己不计入）、
      `SHA256SUMS.txt` **338 条逐条 OK**、zip 339 条目、顶层目录
      `inking-1.0.0-preview-win64/`、解包 152 MiB、zip 56.3 MiB。
   7. 包内 `bin/` 的 DLL 数 **102 个** = 101 个第三方闭包 + `libinking.dll`；
