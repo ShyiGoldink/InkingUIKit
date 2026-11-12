@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <event/InkingEvent.h>
+#include <drag/InkingDragSession.h>
 #include <scene/HitTable.h>
 #include <scene/SceneLibrary.h>
 #include <scene/SceneRegisterToken.h>
@@ -25,6 +26,10 @@
 
 // 只做前向声明：公开头里不拖 SDL 进来（见 docs/AGENTS.md §6 第 8 条）。
 struct SDL_Renderer;
+
+// 场地层（1.2）：场景只存一个槽位指针，不想把 `field/` 拖进每个用到场景的 TU。
+// `field/` 那头也**不许**反过来 include `scene/`（任务书 §1 第 1 条）。
+class InkingField;
 
 
 /**
@@ -284,6 +289,38 @@ public:
 
     /** 标脏：骨架变了，绘制顺序需要重建。写入口内部已经调过。 */
     void NotifyStructureChanged() noexcept;
+
+    // ---------------- 场地槽位（1.2 / 场地层） ----------------
+
+    /**
+     * @brief 声明这个场景的**场地**（`field/InkingField.h`）。
+     *
+     * 场地是场景的**固定槽位**：一个场景最多一个，永远在 UI 之下。它不复用
+     * 通用子节点关系的理由就一条——**层序要由构造保证，不靠文档**。
+     *
+     * 两条硬要求，违反时 **WARN + 不生效**（`field == 现有那个` 时是幂等的，
+     * 返回 true）：
+     *
+     * | 要求 | 为什么 | 违反的症状 |
+     * | - | - | - |
+     * | 直接挂在场景下（`GetParent() == this`） | 场地提交的是**绝对设计坐标** | 只要祖先带平移/缩放就整块错位 |
+     * | 父链上没有任何变换 | 同上（提交层会再叠一次祖先仿射） | 同上；而且**不报错** |
+     *
+     * 这两条都在 `docs/AGENTS.md` §7 的 `field_parent_transform_drifts` 里记着。
+     * 场地自己还会**每帧**再查一次父链（有人事后把它挪走时也能发现），所以
+     * 这里的检查是"早失败"，不是唯一那道。
+     *
+     * 槽位是**裸指针**（不接管生命周期）：场地析构时场景会自己清掉它
+     * （挂在 `RemoveDrawNode` 上，与悬停 / 按下 / 焦点那几个槽同一条纪律）。
+     *
+     * @param field 场地；传 nullptr 清空槽位。
+     * @return 真的占住了槽位才 true。
+     */
+    bool SetField(InkingField* field);
+
+    /// 当前占着槽位的场地（没有则 nullptr；**非拥有**）。
+    InkingField* GetField() const noexcept;
+
 
     /**
      * @brief **显式重建收集表**（A5）：`_drawList` + 命中表，立刻按当前树重建一份。
@@ -680,7 +717,63 @@ public:
      */
     void DispatchFilesDropped(const std::vector<std::string>& paths);
 
+    // ---------------- 控件拖拽（1.4 / `drag/`） ----------------
+    //
+    // 和上面那节"文件拖放"**不是一回事**：那一节是**操作系统**把文件拖进窗口
+    // （没有坐标、没有按下抬起），这一节是**控件之间**的拖放（有指针、有幽灵）。
+    // 两件事只是中文里都叫"拖放"，别的什么都不共享。
+    //
+    // 五条交互规则（任务书 §3，写在 `drag/DragSpec.h` 与本类实现里）：
+    //   1. 起拖阈值 `InkingDragStartThreshold`（4 设计像素），没过阈值仍是点击；
+    //   2. 拖拽期间源收不到 click、hover 不传给别的控件（独占会话）；
+    //   3. 幽灵挂在**本场景**下、`zIndex = InkingDragGhostZIndex`（850），恒不命中；
+    //   4. 取消四条路（Esc / 松手无落点 / 源被移除 / `CancelDrag()`）共用一处收尾；
+    //   5. 一次只允许一个拖拽（不做多选批量拖）。
+
+    /// 现在有拖拽在跑吗（已逾阈值、幽灵在）。**按下还没动**的那一段不算。
+    ///
+    /// 与 `GetDraggingNode()`（指针捕获）不是同一件事：那两个问题分别是
+    /// "谁按着"与"谁在拖"，一个点击会先有前者、可能永远没有后者。
+    bool IsDragging() const noexcept;
+
+    /// 正在被拖的源控件（**非拥有**；没在拖时 nullptr）。
+    InkingWidget* GetDragSourceNode() const noexcept;
+
+    /// 当前高亮的落点（没落在任何落点上时 nullptr）。自检与"画沙盘提示"用。
+    InkingWidget* GetDragTargetNode() const noexcept;
+
+    /// 幽灵节点（**本场景拥有**，随会话生灭；没在拖时 nullptr）。
+    ///
+    /// 只给自检（断言"挂在场景下、z = 850、不参与命中"）与诊断用——它不是
+    /// 业务控件树的一部分，别拿它当节点去挂东西。
+    InkingWidget* GetDragGhostNode() const noexcept;
+
+    /// 会话本体（只读）。落靶 / 取消的计数在它上面，自检与诊断用。
+    const InkingDragSession& GetDragSession() const noexcept;
+
+    /**
+     * @brief **程序化起拖**：不经过指针，直接以 `source` 起一次拖拽。
+     *
+     * 用处有二：① 键盘 / 脚本发起的拖拽（无障碍、快捷操作）；② 自检验
+     * "一次只允许一个源"（A8）——真指针做不到"同时按两处"。
+     *
+     * 会被拒的四种情况（都返回 false）：已经在拖、源没声明 `payloadType`、
+     * 源不在本场景 / 不可见。
+     */
+    bool BeginDrag(InkingWidget* source);
+
+    /**
+     * @brief 显式取消当前拖拽（幽灵消失、高亮清空、**不**调 `onDrop`）。
+     *
+     * 顺带把主键捕获也放掉：拖拽是独占会话，取消之后这次按下**不再属于任何
+     * 控件**——源控件会收到 `press(false)` 回到常态，松手时也不会再派发 click。
+     *
+     * @return 真的取消了一场拖拽（或一个还没起拖的候选）才 true。
+     */
+    bool CancelDrag();
+
     // ---------------- 键盘（A3） ----------------
+
     //
     // 与指针的分工完全不同：指针事件**按位置**分发（谁被指着谁收），
     // 键盘事件**按焦点**分发（只有焦点节点收）。所以这里有两件事：
@@ -1120,6 +1213,26 @@ private:
     int _hitDirtyNodeCount = 0;
 
     InkingWidget* _hoveredNode = nullptr;  ///< 这一帧悬停在谁身上（**只跟主键**）
+
+    /**
+     * 拖拽会话（1.4）：一个场景一份，**只有本类驱动**。
+     *
+     * 位置在 `_hoveredNode` 之后、`_pressedNode` 之前：它和这两个槽是同一族
+     * 瞬时状态（都随交互生灭、都是非拥有指针那条纪律的成员）。
+     *
+     * **析构顺序上有一条要记住**：它比基类 `InkingWidget` 先析构，而节点析构
+     * 会回头调 `RemoveDrawNode`。所以场景析构体里先 `_drag.shutdown()` 掐掉会话
+     * （顺手摘幽灵），之后那一路才走不到这里。改 `~InkingScene` 前先读那段注释。
+     */
+    InkingDragSession _drag;
+
+    /**
+     * 场地槽位（1.2）：裸指针，**不接管生命周期**。
+     *
+     * 清点发生在 `RemoveDrawNode`——那里已经是"节点要走了，把指着它的槽都清掉"
+     * 的同一个落点（悬停 / 按下 / 焦点 / 滚轮归属都在那儿）。
+     */
+    InkingField* _field = nullptr;
 
     /**
      * 捕获槽：按按钮分开（0.5.0）。

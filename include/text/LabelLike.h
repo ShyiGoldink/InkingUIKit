@@ -134,6 +134,20 @@ protected:
     const InkingTextLayoutResult& LayoutForWidth(float available,
                                            float availableHeight) const;
 
+    /**
+     * @brief 横向要不要按框宽裁（1.3.0 T-03，默认要）。
+     *
+     * 只有**自己管滚动**的组件会关掉它：输入框的单行文字超宽时是"左移显示"，
+     * 排版必须保留**完整**的行区间（`InkingTextLine::end` 到串尾）——光标偏移
+     * 映射、`EnsureCaretVisible` 都按它算。裁掉之后行只覆盖可见那一段，
+     * "点在光标那一像素上却映射到别的偏移"就会稳定复现（自检
+     * `input_scroll_mapping` 就是钉这条的）。
+     *
+     * 关掉之后 `maxWidth` 不进排版请求（该方向不限），**换行 / 行数 / 纵向裁**
+     * 都不受影响——它只管横向。
+     */
+    void SetHorizontalClip(bool enabled) noexcept { _horizontalClip = enabled; }
+
     /// 缓存键是否还匹配（逐字段比，见 `LayoutCache` 的注释）。
     bool CacheMatches(float available, float availableHeight) const noexcept;
 
@@ -178,6 +192,9 @@ private:
     };
 
     InkingWidget* _host;  // 非拥有；与组件同生命周期，构造后永不为空。
+
+    /// 横向是否按框宽裁（见 `SetHorizontalClip`）。构造期定型，不进缓存键。
+    bool _horizontalClip = true;
 
     mutable LayoutCache _cache;
 

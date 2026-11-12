@@ -177,6 +177,31 @@ InkingTextLayoutResult InkingLayoutText(const InkingTextLayoutRequest& request,
                             const InkingTextMeasureFn& measure);
 
 /**
+ * @brief 把 `[begin, end)` 里"放得下的最长前缀"裁出来，返回**字节终点**（T-02）。
+ *
+ * 这是"能放下几个字节"的**唯一一份实现**：排版层自己的 `Clip` / `Ellipsis` 两条路、
+ * 按钮的单行截断都调它。想再加一个"按宽度裁字"的地方，也请调这里——第二份回退
+ * 循环是本仓库踩过最多次的那类分叉（两处单独看都对，合起来才错）。
+ *
+ * 四条约定：
+ *   1. **返回值是字节下标**，且落在一个码点边界上——UTF-8 多字节序列不会被切一半
+ *      （非法字节按单字节处理，不会死循环）；
+ *   2. 保证 `measure(begin..返回值)` **≤ `available`**（含等于）；
+ *   3. `available <= 0`、`begin >= end`、或**第一个码点就放不下** ⇒ 返回 `begin`
+ *      （"一个都放不下"就是空，不硬塞一个出去——硬塞是调用方的取舍，见
+ *      `InkingTextLayout.cpp` 里 `Anywhere` 那条"整词自己就超宽"的回退）；
+ *   4. `available` 是**纯文字宽**：padding / 边距由调用方先扣干净（排版层扣的是
+ *      `maxWidth - padding`，按钮扣的是左右内缩）。
+ *
+ * `style` 只用来把字号 / 字体喂给 `measure`（回退本身只看宽度），传进来是为了
+ * 让调用方不必自己拼闭包。
+ */
+std::size_t InkingCutTextToWidth(const std::string& text, std::size_t begin,
+                                 std::size_t end, float available,
+                                 const InkingTextStyle& style,
+                                 const InkingTextMeasureFn& measure);
+
+/**
  * @brief 一行的水平起点：把**对齐**单独拿出来，供"组件宽度和排版宽度不一样"时重算。
  *
  * 什么时候会不一样：排版按 `maxWidth` 断行，而组件被 A6 的 `fillMain` 拉得更宽

@@ -403,6 +403,52 @@ bool InkingWidget::IsHitPassThrough() const noexcept {
     return _hitPassThrough;
 }
 
+// ---------------------------------------------------------------------------
+// 拖拽原语（1.4）：只存数据，不判手势
+// ---------------------------------------------------------------------------
+//
+// 手势（阈值 / 独占 / 幽灵 / 四条取消路径）全在场景侧的会话里。这里连"我是不是
+// 在拖"都不记——那个问题的答案只有一处（`InkingDragSession`），多存一份就会出现
+// "控件以为在拖、会话已经取消了"这种只在特定时序下出现的分叉。
+
+void InkingWidget::SetDragSource(const InkingDragSourceSpec& spec) {
+    // 空 payloadType = 清除。整份覆盖（不是逐字段合并）：spec 是**声明**，
+    // 换一次就是换一份声明，逐字段合并会让"上次的 ghostText 还在"这类残留
+    // 变成看不见的默认值。
+    _dragSource = spec;
+}
+
+void InkingWidget::SetDropTarget(const InkingDropTargetSpec& spec) {
+    _dropTarget = spec;
+    // 不再是落点了，高亮必须一起清：否则一个"拖到一半被摘掉落点身份"的控件
+    // 会永远亮着，而拖拽结束后没有任何路径会再来清它。
+    if (spec.acceptType == nullptr || spec.acceptType[0] == '\0') {
+        MarkDragOver(false);
+    }
+}
+
+const InkingDragSourceSpec& InkingWidget::GetDragSource() const noexcept {
+    return _dragSource;
+}
+
+const InkingDropTargetSpec& InkingWidget::GetDropTarget() const noexcept {
+    return _dropTarget;
+}
+
+bool InkingWidget::IsDragOver() const noexcept {
+    return _dragOver;
+}
+
+void InkingWidget::MarkDragOver(bool over) noexcept {
+    if (_dragOver == over) {
+        return;
+    }
+    _dragOver = over;
+    // **重绘脏，不是命中脏**：高亮只改外观，命中与该节点在表里的位置一个字节都
+    // 不用动。标成命中脏的后果是拖过一串落点时每帧白重建一次绘制列表。
+    MarkRepaintDirty();
+}
+
 InkingScene* InkingWidget::GetSceneAncestor() noexcept {
     // 自己就是根（场景 / 窗口）→ 没有场景祖先可登记。
     if (IsSceneRoot()) {

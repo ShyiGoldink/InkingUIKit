@@ -66,12 +66,21 @@
 // 拉的（`JudgePointer`）。所以"输入与静态版不同"那句话，落到接口上就是
 // "一边有这三个推的入口、另一边只有一个拉的入口"。
 
+#include <button/ButtonPaint.h>
 #include <button/InkingButtonLike.h>
 #include <widget/InkingStaticWidget.h>
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
+
+// 提示框只在 .cpp 里造（本头不拖 `prefab/Tooltip.h` 进来：它是动态面板，
+// 带着面板 / 布局一整条链）。析构函数因此也得在 .cpp 里定义——`unique_ptr`
+// 的删除器要求完整类型。
+namespace inking_prefab {
+class Tooltip;
+}
 
 
 /// 点击回调（`InkingButtonClickCallback`）与三态（`InkingButtonState`）都在 InkingButtonLook.h 里：
@@ -88,6 +97,11 @@ public:
      * @param data   配置数据（构造时会 Normalize 一次，补齐省略的三态）。
      */
     InkingStaticButton(InkingWidget* parent, const InkingButtonData& data);
+
+    /**
+     * 析构必须在 .cpp 里（`_tooltip` 是 `unique_ptr<Tooltip>`，这里只有前向声明）。
+     */
+    ~InkingStaticButton() override;
 
     /**
      * 语义激活（D7）：等价于"用户点了一下"，不经过指针，也不改三态。
@@ -207,6 +221,30 @@ public:
      */
     void SetTextColor(std::uint32_t color);
 
+    /**
+     * 被截断时悬停是否弹提示显示**全文**（1.3.0 T-05，默认读取
+     * `text.tooltipWhenTruncated`）。
+     *
+     * 判据用的是**绘制那次**的截断结果（`ResolveButtonTextCut`），不另算一遍：
+     * "文字是否超宽"只允许有一份判断，否则"画上截了、悬停却没弹"会稳定复现。
+     * 文字放得下时不弹（没东西可看）。
+     *
+     * 提示框是**懒创建**的（第一次真的需要弹时才建，挂在按钮所在的场景上），
+     * 关掉这个开关不会创建任何东西。
+     */
+    void SetTooltipWhenTruncated(bool enabled);
+    bool GetTooltipWhenTruncated() const noexcept {
+        return _data.text.tooltipWhenTruncated;
+    }
+
+    /**
+     * 截断提示**真的画出来**了吗（不是"在计时"、也不是"建过对象"）。
+     *
+     * 留这个观测口是为了让"悬停 → 弹"这件事可断言：没有观测口的自动行为，
+     * 只能靠肉眼看，而肉眼看出来的"好像弹了"没法进 ctest。
+     */
+    bool IsTooltipShowing() const noexcept;
+
     // ---------------- 继承来的（`InkingButtonLike`） ----------------
     //
     // 这里**故意一个都不重写**，也不写"转发"：
@@ -308,5 +346,18 @@ private:
     /// 一份进 `InkingButtonLike` 的状态机，但它仍然要留着：形状、描边阴影、
     /// 文字、布局字段都从它取。
     InkingButtonData _data{};
+
+    /// 文字截断结果缓存（1.3.0 T-04）：`PaintButtonText` 每帧调，稳态 0 次测量。
+    /// `mutable` 是因为绘制路径是 `const`（缓存不是"状态"，只是"上次算过的答案"）。
+    mutable inking_detail::InkingButtonTextCutCache _textCut{};
+
+    /// 截断提示（1.3.0 T-05）。懒建：只有"真的被截 + 开了开关"时才有对象。
+    std::unique_ptr<inking_prefab::Tooltip> _tooltip;
+
+    /// 懒创建提示框并挂到场景上；建不出来（还没进场景）返回 nullptr。
+    inking_prefab::Tooltip* EnsureTooltip();
+
+    /// 按"这一帧的截断结果"决定弹还是不弹（幂等；`hover == false` 时收起）。
+    void SyncTruncationTooltip(bool hover);
 };
 

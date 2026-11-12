@@ -1,44 +1,55 @@
-inking 1.1.0-preview（预览版）—— Windows x64 构建信息
+inking 1.5.0-preview（预览版）—— Windows x64 构建信息
 ================================================================
 
-版本号      1.1.0
+版本号      1.5.0
 版本阶段    preview          ← 功能面已收齐，可以整包交付评估；
                                但「公开面盘点」没做完 ⇒ **不承诺** ABI 冻结
-构建日期    2026-11-05 12:02（GMT+8）
+构建日期    2026-11-10 14:00（GMT+8）
 构建类型    Release（CMake + Ninja）
 许可        MIT（本仓库代码，见包根 LICENSE；第三方见 licenses/）
 
 !! 先说清楚"预览"是什么意思
 
-   预览版**不是** 1.1.0 的发布版。功能面（组件、动态档、输入、渲染、生成器，
-   以及本版新增的批量提交 / 任意顶点 / 遮罩 / 九宫格）已经收齐，所以这份包
+   预览版**不是** 1.5.0 的发布版。功能面（组件、动态档、输入、渲染、生成器、
+   场地层、拖拽原语、本版新增的天空）已经收齐，所以这份包
    可以拿去集成、可以当验收基线；但「哪些公开符号是承诺、哪些还能改」的盘点
    还没做（立项见 `docs/zh/plans/2026-10-29-evidence-and-delivery.md` 的
    「1.0.0 的 ABI 冻结」一行）。所以：**接口 / ABI 仍可能在正式版前变化，
    升级请整包重编**。正式版发出时，被点到名的符号才进入冻结承诺。
 
-!! 升级提示：1.0.0-preview → 1.1.0（**无破坏性**，旧代码一个字节不用改）
+!! 升级提示：1.4.0-preview → 1.5.0（**有 ABI 变化，必须整包重编**）
+
+   先看这一条（唯一会崩的地方）：
+     **`InkingFieldProjection` 变大了**（尾部多两个字段：`horizonRatio` 与
+     `skyFit`）。它是**按值 / const 引用跨 DLL 传递**的参数结构，消费方在
+     自己的 TU 里构造它，所以头文件、`libinking.dll`、导入库必须是**同一次
+     构建**的三件。老代码不写新字段 ⇒ 缺省 `-1` / `Cover` ⇒ 行为与 1.4.0 一致
+     （逐位，自检里有回归门）。
+
+   **换 SDK 目录时消费方必须 clean 重编**（GoldingCore 那边实测过）：CMake / ninja
+   的依赖文件记的是**旧 SDK 的绝对路径**，把 `include` 指到新目录**不会**让旧
+   `.obj` 失效（`ninja -n` 报 "no work to do"），于是 exe 还是按旧头编的、却链上
+   了新 dll —— 正是上一段那句"新旧混跑必崩"。要么 `ninja -C build clean` 再编，
+   要么换一个干净的构建目录。
+
+   **没有可见行为变化**：不设 `horizonRatio` / `SetSkyTexture` 的场景，画面与 1.4.0
+   完全一样（`InkingWidget` 这一版没动，控件布局不变）。
 
    新增能力（用得上才改）：
-    1. **批量四边形图层**（`image/InkingGeometryLayer.h`）：一个节点提交 N 个
-       图元。5000 个精灵从 7.5 ms/帧降到 **0.94 ms**，而且不再产生 5000 个场景
-       节点与 5000 条命中记录。`SetQuads` / `AppendQuads` / `SetNinePatch` /
-       `SetMaskedQuad` / `SetGeometry` 五个入口。
-    2. **纹理句柄**（`asset/InkingTexture.h`）：`InkingLoadTexture` 拿一个
-       `InkingTextureHandle` 跨帧持有，同一路径重复 Load 返回同一个 id；
-       句柄钉住的纹理不参与字节预算淘汰。**用完要 `InkingReleaseTexture`**，
-       不释放就一直占内存。
-    3. **任意顶点**（`InkingGeometryLayer::SetGeometry`）：自己算三角形直接交，
-       三条硬约束（顶点 ≤ 16384、索引不越界、索引数是 3 的倍数）整次拒绝。
-    4. **任意形状遮罩**（`image/InkingMask.h`）：把方图裁成任意 SDF 形状
-       （圆 / 圆角 / 胶囊 / 多边形），边缘约 1 像素过渡。
-    5. **九宫格与平铺**（`dataStruct/InkingNinePatch.h`）：对话框边框拉伸不变形、
-       地形重复贴图。纯函数，不碰渲染器。
-    6. **矩形无羽化开关**（`InkingImageLike::SetEdgeFeather(false)`）：关掉形状
-       边缘那圈 0→1 的过渡带。**图元尺寸会变准**（32×32 不再被外扩成 33×33），
-       5000 图元再省约 2.7 ms。**UI 图片不要关**，纯色块关掉会有硬边。
-   旧行为不变：`SetEdgeFeather` 默认开、所有新能力都是**新增入口**，既有的
-   `InkingStaticImage` / `InkingSprite` 绘制路径逐像素相同（自检里比对过）。
+     1. `InkingFieldProjection::horizonRatio`：**地平线位置**（天空占画布高度的
+        比例，`[0, 1)`；`-1` = 不覆盖）。库内部反解 `farD` 保证几何自洽，**不改**
+        `skew` / `depthScaleFar` / `zoom` 的语义。反解值用
+        `InkingFieldEffectiveFarD()` 查，`Projection()` 里也是它。
+     2. `InkingSkyFit`（`Cover` / `Stretch` / `Tile`）+ 同名字段：天空贴图的铺法。
+     3. `InkingField::SetSkyTexture(handle)`：天空贴图（无效句柄 = 回到纯色）。
+        句柄所有权在调用方，库不加载 / 不释放 / 不缓存路径；每帧换句柄零成本。
+     4. `InkingField::GetSkyBand()`：当前天空带的设计坐标矩形（没有天空时高 0）。
+     5. `InkingField::Stats::skyQuads`：上一帧天空贴图提交了几个四边形。
+
+   这一版**没有**动：控件、拖拽、命中表、层序、地面瓦片、生成器。
+
+   从 1.3.x 或更早升上来，还要看 1.4.0 的 `InkingWidget` 变大那一条
+   （见 `docs/zh/CHANGELOG.md` 的 1.4.0-preview 一节）。
 
 !! 如果你从 0.8.5 或更早升上来，先看下面这段（**破坏性**）
 
@@ -104,17 +115,17 @@ inking 1.1.0-preview（预览版）—— Windows x64 构建信息
                     断言钉住"解出帧数 > 0 / 画面 320×240 / 丢帧 0"。
 
 产物（包内路径 / 字节数 / SHA-256）
-  bin/libinking.dll               2,380,364  0553F645C6BB04C1C82C1411DE5C1000833F708B4353BB4835AFCBE0F93099C9
-  lib/libinking.dll.a             1,636,760  B7A597A36B3B1ECA29600037324DB904E34A34ACB4DC8FD934817734A3CA021B
-  bin/inking_demo.exe               199,231  765FA054B72939B7AD381E1E38AA412E6ADC9F1444AB7081A6819B982EC2BD9E
-  bin/inking_demo_selftest.exe      882,641  328C46D3745CF8D3612656AB44B2FE7AB49C5CA1CAAF80FCA280B1855B9EF627
-  bin/inkgen.exe                    716,426  1128B89CA8D64B5A08C33356A5E61E787B72F422E3E6D4BCE536EC9E748C0A24
+  bin/libinking.dll               2,493,214  E17631258EA561136EE57762793F9676F99E14E8412D7907D0BD8FD1225086EC
+  lib/libinking.dll.a             1,721,976  76118424614EF69232DA1D9D9594D5E1BADC14409336EFB48C72D4DD1E1DDEEE
+  bin/inking_demo.exe               202,451  EF76D9E1B3B2BCC5A10E19107AC3AB2251528EC3F33D71E20B42BCE8AAD37206
+  bin/inking_demo_selftest.exe      982,234  F24DBF3DBD54D16B278BF8430A772A58954FBBE444EEDAB7BD87C0808394C42C
+  bin/inkgen.exe                    718,204  6C3FE0E3FE5683A3777FF9402732087B71F2245CF50923BBE81FD50B0DB2D03C
   lib/cmake/inking/                 5 个文件  find_package 配置 + CXXCSS 生成模块
 
-  导出符号 **2,247** 个（口径：`nm -g --defined-only bin/libinking.dll | grep ' T '`）。
-  0.8.5 是 1,674 个，差值是 0.9.x 的净增量（块叠加组、四个动态档、UIKit 齐全度
-  a~f 批、滚轮与背景板入口）**加上命名空间收口带来的全量改名**——所以这个数
-  别当"新增了多少 API"读。
+  导出符号 **2,343** 个（口径：`nm -g --defined-only bin/libinking.dll | grep ' T '`）。
+  1.2.1 是 2,335 个，差值 +8 是这一轮的新公开面（`InkingCutTextToWidth`、
+  `ResolveButtonTextCut`、`ButtonTextOffset` 的 4 参数重载、`SetTooltipWhenTruncated`
+  / `IsTooltipShowing` / `SetHorizontalClip` 等）减去收进去的内联与去重。
 
 运行期 DLL（本包**已含**，共 101 个，解包后约 140 MiB）
   直接依赖：SDL3 四件（SDL3 / SDL3_image / SDL3_ttf / SDL3_mixer）+
@@ -147,82 +158,91 @@ inking 1.1.0-preview（预览版）—— Windows x64 构建信息
   许可提供源码获取方式（见 THIRD-PARTY-NOTICES 末节）。内部评估无碍，
   **对外发布前请过一次法务口径**。
 
-文档（包内 `docs/` 50 个文件，**整份带进包里**）
+文档（包内 `docs/` 55 个文件，**整份带进包里**）
   zh/UsageGuide.md                 手把手教程：设计大小 → 场景 → 组件 → CMake → 运行
-  zh/API.md                        五分钟上手 + 模块地图 + 头文件全量索引 + §9 缩放规则
-  zh/api/                          18 个专页（Widget / Scene / Window / Input / Render /
+  zh/API.md                        五分钟上手 + 模块地图 + 头文件全量索引（125 个）+ §9 缩放规则
+  zh/api/                          21 个专页（Widget / Scene / Window / Input / Render /
                                    Components / Prefab / CXXCSS 生成物 / Runtime /
-                                   LayoutSolver / FixedPopup / Json + 6 个基础类型页）
-  zh/CHANGELOG.md                  变更记录（0.1.1 → 1.0.0-preview 逐条，含破坏性迁移）
+                                   LayoutSolver / FixedPopup / Json / GameContent /
+                                   **Field**（场地层）/ **Drag**（拖拽原语，1.4）
+                                   + 6 个基础类型页）
+  zh/CHANGELOG.md                  变更记录（0.1.1 → 1.5.0 逐条，含破坏性迁移）
   zh/SKILL.md · ComponentGuide.md · InputDesign.md · TaskGuide.md ·
   zh/TaskGuide-G.md · TaskGuide-N.md · UsageReport.md
-  zh/plans/                        16 份需求书与取舍记录（0.6.x 帧动画、0.7.x 缩放、
-                                   0.8.x 证据链 / 文字层上限、0.9.x 块叠加组 /
-                                   UIKit 齐全度 / 动态滚轮）
+  zh/plans/                        18 份需求书与取舍记录（含 1.2 场地层任务书）
   AGENTS.md                        工程约定与踩坑记录（§6 经验条目 / §7 静默失效清单）
   showcase*.png                    三张展示图
   CXXCSS.md                        配置格式：目录命名、形状层、层级、Button/Image/Atlas 字段全表
   examples/CXXCSS/                 25 份配置样例 + CXXCSS.md + config.json
   examples/minimal/                最小可运行工程（三步构建，验证 find_package）
 
-本版内容（1.0.0-preview = 0.9.2 的功能面；下面按 0.9.x 的五组净增量列）
-  - **几何分档收口**：帧机泛化成"每帧一组矩形"，块叠加组一帧 K 块仍然只有一次
-    `SDL_RenderGeometry`（自检钉住 K=1/2/4 都是 1）。
-  - **命名收口**（0.9.0 N 系列）：去 `namespace inking`、统一 `Inking` 前缀；
-    并把 `project(VERSION)` 从 0.7.1 补到当前版本——旧包的
-    `inkingConfigVersion.cmake` 写的是 0.7.1，下游 `find_package(inking 0.8.5)`
-    会直接失败（这条 0.9.0 一并修掉）。
-  - **UIKit 齐全度 a~f 批**（0.9.0）：视频真出画、计量两件套（Slider /
-    ProgressBar）、勾选三件套、浮层三件套、TabBar、光标形状 + 文件拖放。
-  - **动态档滚轮**（0.9.1）：逻辑步读不可靠（实测喂 30.0 只读到 20.0、61 帧里
-    11 帧为 0），改成每渲染帧一次的回调读；推 / 拉两条入口共用一份算术，
-    四道门判归属防双滚。
-  - **背景板**（0.9.2）：`SetBackdrop` / `SetBackdropImage`，黑边可配色 / 铺图，
-    `$token` 每帧查主题表；顺带修掉"截图其实没含留白"。
+本版内容（1.5.0 = 1.4.0 的功能面 + 天空：地平线位置可设 / 天空可贴图）
 
-验证记录（**本版实测**，2026-11-05，构建树 `build-release`）
+  - **地平线位置终于可设了**（本版主线，任务书 `TASK-SDK-SKY.md`）：以前地平线是
+    **导出量**（`horizonY = H − cos(skew)·zoom/h`），只能靠 `skew` / `zoom` /
+    `depthScaleFar` / `farD` 间接影响。现在 `horizonRatio` 直接指定"天空占画面
+    多少"，库内部**反解 `farD`** 让几何保持自洽。
+  - **为什么反解 `farD` 而不是只裁地面带**：`h` 变大以后**每一格都变矮**（唯一
+    不动的是 `ld = 0` 那条底边）。只裁地面带会让格子比例与灭点对不上，症状是
+    "地面从天空里穿出来"，看起来像美术画错了——自检里有一条专门钉"最近一格也
+    变矮了"，防的就是这种实现。
+  - **天空贴图**：`SetSkyTexture(handle)` + `InkingSkyFit` 三档
+    （`Cover` 等比铺满并居中裁切 / `Stretch` 拉伸 / `Tile` 原始像素 1:1 平铺）。
+    贴图只画在天空带内；有贴图就**不画纯色**（两者不混用，叠一层半透明底色会
+    让颜色偏掉）。
+  - **纯标量 / 纯句柄**：没有回调、没有动画抽象、库不读时钟——提出方的代码生成器
+    要把这两个参数逐个输出成 `constexpr`。动态天空 = 消费方每帧换句柄。
+  - **一个坑写进了代码**：`ensureCache()` 每帧用进程设计尺寸覆盖 `designWidth /
+    height`，但 `horizonRatio` 是**比例**、不跟着覆盖（否则"编辑器里对、跑起来
+    不对"）。
+  - **设了不生效不再沉默**：格子模式 / 平行投影下天空带高度为 0，贴图被忽略并
+    打一条 WARN（静默失效清单第 22 条 `field_sky_texture_inert`）。
+  - 自检新增 `CheckFieldSky`（28 条断言）：覆盖生效 / 换 `depthScaleFar` 地平线
+    不动 / `-1` 逐位回归门 / 逐格压缩 76.2→73.3 且越远压得越狠 / 五条拒绝规则 /
+    天空带 / `Cover` 与 `Tile` 的块数 / 一千次换句柄零加载 / Grid 模式一条 WARN。
 
-  1. 构建：`cmake --build build-release --clean-first -j` 全绿；`strict_warnings`
-     门（同一批源 + `-Wall -Wextra -Wshadow -Wcast-qual -Wuseless-cast -Werror`）
-     通过 ⇒ 库与生成器那批源零告警。
-     （过程中有一次 cc1plus 卡在 `TextEditState.cpp` 上 20 分钟、CPU 只用了
-     0.015 s，强杀后原样重跑 8 秒完成——本机偶发，与本版代码无关，记在这里
-     免得下次误判成"编译器挂了"。）
-  2. `ctest --test-dir build-release` ⇒ **8/8 passed**：配置校验 / 字段表对账 /
-     生成链路编译 / 静默清单对账 / `strict_warnings`（14.2 s）/ 行为自检
-     （software）/ 行为自检（真后端）/ `probe_template`。
-  3. 行为自检（构建树）⇒ **984 项 ok / 0 项失败**，退出码 0；
-     `INKING_SELFTEST_DRIVER=windows` 同数。比 1.0.0-preview 的 925 项多出 59 条，
-     全是本版新增能力的断言（句柄 / 图层 / 任意顶点 / 遮罩 / 九宫格 / 羽化开关 /
-     混排顺序），以及两条把观察口补上的计数断言。
-  4. **包内验收首轮抓到一个真缺陷（已修）**：`env -i` 跑包里的自检 ⇒
-     **失败项 3**，三条全是 `video_decode_probe`——`probe.mp4`（8.4 KB，
-     0.9.0 加的视频自检素材）**没被 `tools/package.sh` 拷进包**（脚本只拷了
-     `design.svg` / `walk.png` 两份）。症状与"素材漏带"同型：包能起、退出码也是 0，
-     只有自检末行变成「失败项：3」。修法是把 `probe.mp4` 加进那条 `cp` 并把原因
-     写进脚本注释；重打后归零。**下一次加自检素材时，先想这一条。**
-  5. **包内验收（本版最终包）**：`env -i`，PATH 只留 `C:\Windows\system32` 与
-     `C:\Windows`——不含 MSYS2 / 工具链 / Python，模拟只拿到 zip 的机器：
-     - `bin/inking_demo_selftest.exe` ⇒ **984 项 ok / 失败项 0**，
-       退出码 0（字体在包内真的能打开）。
-     - `INKING_SELFTEST_DRIVER=windows` 同数，退出码 0，日志确认
-       `后端 direct3d11`（GPU 与 software 两档都过）。
-     - `examples/minimal` 拷到包外构建 ⇒ configure 6.4 s / build / link 全通过，
-       `find_package(inking)` 命中本包，运行期 DLL 由 POST_BUILD 自动拷到 exe 旁。
-  6. 完整性：**346 个文件**（345 条校验和 + `BUILD.txt` 自己不计入）、
-     `SHA256SUMS.txt` **338 条逐条 OK**、zip 339 条目、顶层目录
-     `inking-1.0.0-preview-win64/`、解包 152 MiB、zip 56.3 MiB。
-  7. 包内 `bin/` 的 DLL 数 **102 个** = 101 个第三方闭包 + `libinking.dll`；
-     导入库与 `lib/cmake/inking/`（5 个文件）齐全——那是 `cmake --install` 产出的，
-     不是手抄（0.4.0 手抄漏过 `lib/cmake/inking/`，于是"能链但 find_package 找不到"）。
-  8. **没验的项**（写清楚，别当成验过）：`bin/inking_demo.exe` 的双击观感与截图
-     没在包内跑（视觉判定交给人工）；`inking_showcase.exe` 不在包里，是仓库内的
-     验收用例；Linux / macOS 从未构建。
+验证记录（**本版实测**，2026-11-10，构建树 `build-release`）
 
-  注：`examples/pet`（73 帧 / 321×900 素材）与 `examples/sharp`（5.97 MB 真实素材）
-  **没有打进包**——它们是仓库内的验收用例，不是运行期依赖，源码在仓库里。
-  包内只带 `examples/minimal`（验 find_package 的那一个）、`examples/CXXCSS` 与
-  `bin/assets/` 那三份 demo 素材（1.3 KB + 894 B + 8.4 KB）。
+  1. 构建：`cmake --build build-release -j` 全绿；`strict_warnings` 门（同一批源
+     + `-Wall -Wextra -Wshadow -Wcast-qual -Wuseless-cast -Werror`）通过 ⇒
+     改动的 `src/field/InkingField.cpp` / `InkingFieldProjection.cpp` 也在门内、
+     零告警。
+  2. `ctest --test-dir build-release` ⇒ **10/10 passed**：配置校验 / 字段表对账 /
+     生成链路编译 / 静默清单对账 / `field_pure_headers_have_no_sdl` /
+     `strict_warnings` / 行为自检（software）/ 行为自检（真后端）/
+     `probe_template` / `probe_drag`。
+  3. 行为自检 ⇒ **1095 项 ok / 0 项失败**，退出码 0（1.4.0 是 1069 项：本版
+     `CheckFieldSky` 新增 28 条，另有几条既有断言随版本号变化）。
+  4. **这一版的关键实测数字**（都是断言，不是"看起来对"）：
+     - `horizonRatio = 0.30`、`H = 1080` ⇒ `InkingFieldHorizonY = 324.00`；
+       同一比例把 `depthScaleFar` 从 0.9 改成 0.5，地平线仍是 324.00，而反解出的
+       `farD` 从 63.42 变成 570.82（说明变量确实是 `farD`）；
+     - 缺省 `-1` 时 `InkingFieldEffectiveFarD == projection.farD` **逐位相等**，
+       地平线与 1.4.0 算式 `-6548.6641` 一致（老配置零位移）；
+     - 逐格压缩：天空 30% ⇒ 76.22 / 62.26 / 51.81 px，50% ⇒ 73.26 / 55.76 /
+       43.86 px；第 1 格降 2.96 px（**最近一格也变矮**）、第 3 格降 7.95 px
+       （越远压得越狠）；
+     - 贴图：`Cover` 只提交 1 个四边形、换天空色逐像素不变（不混用）、地面带
+       像素不变；`Tile` 在 1280×216 的带上用 192×48 的图 ⇒ 7×5 = 35 块；
+       1000 次 `SetSkyTexture` ⇒ `loads` 零增长；
+     - `Grid` 模式：天空带高 0、`skyQuads = 0`、WARN 恰好 1 条（渲染两帧也不
+       重复）。
+  5. **包内验收**（`env -i`，PATH 只留 `C://Windows//system32` 与 `C://Windows`，
+     模拟只拿到 zip 的机器）：
+     - `bin/inking_demo_selftest.exe` ⇒ 自检全绿（末行「失败项：0」）；
+     - `bin/inking_demo.exe` 起窗正常。
+  6. 完整性：**356 个文件**（355 条校验和 + `BUILD.txt` 自己不计入）、`SHA256SUMS.txt` 逐条 OK、zip 356 条目、
+     顶层目录 `inking-1.5.0-preview-win64/`、解包 152 MiB、zip 57 MB。
+  7. **没验的项**（写清楚，别当成验过）：
+     - **天空贴图的观感没人眼确认**：自检只保证"贴图真的提交了、不盖地面、
+       不掺纯色、块数对得上"；`Cover` 裁在哪种画面上好看、`Tile` 的接缝是否明显，
+       只能拿 GoldingCore 那边看；
+     - **裁剪与地面带的重叠**在像素上观察不到（地面带后画，会盖住任何溢出），
+       所以 `ClipToSkyBand` 只由"块数 / UV 比例"这类间接判据撑着；
+     - 真后端下的天空（D3D11）只跑了 `selftest_windows` 的既有用例，没有专门的
+       天空像素基线；
+     - 触摸 / 多窗口 / 高分屏下的天空贴图**没验**；
+     - Linux / macOS 从未构建。
 
 怎么用
   1. 只想看效果：双击 bin/inking_demo.exe（ESC 退出，F11 全屏，右键有上下文事件）；
@@ -257,6 +277,14 @@ inking 1.1.0-preview（预览版）—— Windows x64 构建信息
   - SVG 里的 text / use / <image> / clipPath / mask / filter 不渲染，只打一条 WARN；
     导出时请把文字转曲、use 展开。整张稿也**不做元素级拆解**。
   - 没有 portal：子的 z 盖不过父级的兄弟，要压就抬容器自己。
+  - **拖拽的边界（1.4，任务书 §4 明确不做）**：列表边缘**不会自动滚动**；
+    不支持跨窗口 / 跨进程拖拽；不支持多选批量拖；没有排序 / 落位动画；
+    payload 生命周期归调用方（库不解引用、不释放）。
+  - **拖拽源没有"我被拖了"的逐控件查询**：要判就用
+    `scene->GetDragSourceNode() == this`（一份真相，不在控件里存第二份）。
+  - **幽灵的外观不可配**：配色 / 圆角 / 字号是库里的常量（`GhostLook`），
+    `ghostText` 只换文案。要别的样子得改库或自己画一层。
+  - **拖拽只跟主键**：右键不起拖，也不影响正在拖的那一场。
   - 运行期换肤只覆盖颜色（按钮三态 / 面板两态 / 标签文字色）；字号 token 是编译期的。
   - 背景板底图只做 cover（stretch / tile / 九宫格没做），且**不进主题表**——
     切主题换底图要改配置。
@@ -273,6 +301,16 @@ inking 1.1.0-preview（预览版）—— Windows x64 构建信息
     要内层优先得按指针路径逐层仲裁。一层是对的。
   - **文字纹理预算的瞬时上界是"预算 + 本帧新增"**：淘汰只发生在帧首，本帧刚烘出来的
     纹理不能丢（丢了当场缺字）；字形图集不参与淘汰。
+  - **场地层没有可视示例**：库侧能用，但 `examples/` 里没有用它的场景——投影好不好看、
+    斜得对不对，本版只有数字与像素采样背书，没有人眼确认过。
+  - **场地是场景的固定槽位**：一个场景最多一个，而且必须**直接挂在场景下**（它提交
+    绝对设计坐标，祖先带平移 / 缩放会整块错位——那里直接拒绝并 WARN 一次）。
+  - **场地没有"实体"**：`InkingFieldObject` 是 POD，实体 / 系统链 / 黑板都在业务侧
+    （派生用首成员 `base`，`SetObjects` 的模板重载自动传跨距）。
+  - **格子模式下 `followPerspective` / `SetSkyColor` 不生效**：正俯视没有"远处变小"，
+    地平线在屏幕外 ⇒ 没有天空区域。设了不报错，见 §7 `field_follow_perspective_inert`。
+  - **`depth` 不参与视觉**：只用于占位（影子 / 选中框 / 吸附）；贴地且要遮挡的东西
+    （草、石头、树根）必须当物体，不能当瓦片——地形面永远在物体面之下。
 
 重新打包（维护者，三条命令）
   1. cmake --build build-release -j        ← 先构建。**不构建就打包会被第 3 步拦下**

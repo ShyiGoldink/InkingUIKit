@@ -36,6 +36,7 @@
 #include <dataStruct/InkingShapeSpec.h>
 #include <dataStruct/InkingTransform.h>
 #include <dataStruct/InkingLayout.h>
+#include <drag/DragSpec.h>
 #include <input/CursorShape.h>
 #include <input/InkingKeyboardTarget.h>
 #include <input/InkingPointerHandler.h>
@@ -492,6 +493,51 @@ public:
      */
     void SetHitPassThrough(bool passThrough) noexcept;
     bool IsHitPassThrough() const noexcept;
+
+    // ---------------- 拖拽原语（1.4） ----------------
+    //
+    // 声明式的两句话：「我能被拖」「我收不收」。起拖阈值、幽灵、独占、取消
+    // 四条路都在场景侧（`drag/InkingDragSession.h`），这里只存数据。
+    //
+    // **不继承任何新基类**：拖拽不是"一种控件"，是任何控件都能挂上的两个标签。
+    // 挂上之后行为的变化只有一条——按着它移动超过 `InkingDragStartThreshold`
+    // 会起拖，而那一次松手**不再派发 click**（拖拽是独占会话）。
+    //
+    // 明确不做（理由见 `docs/zh/api/InkingDrag.md`）：边缘自动滚动、跨窗口 /
+    // 跨进程拖拽、多选批量拖、排序 / 落位动画、payload 生命周期管理。
+
+    /**
+     * @brief 声明"我能被拖，拖的是什么"。传 `payloadType = nullptr` 即清除。
+     *
+     * **payload 的生命周期归调用方**：库只原样转交，不解引用、不 clone、
+     * 不释放。源控件在拖拽途中被删时库只清指针（任务书 §6 风险表）。
+     *
+     * 不是写入口：不标脏、不改几何。挂上 / 摘掉只影响以后的手势，不影响这一帧。
+     */
+    void SetDragSource(const InkingDragSourceSpec& spec);
+
+    /// 声明"我收，收的时候给落点"。传 `acceptType = nullptr` 即清除。
+    ///
+    /// 落点按**最近祖先**解析（与 `HandlesSubtreeWheel` 同一条"组件说一句我要、
+    /// 框架负责找路"）：指针下命中的是行里的标签时，也会落到行上。
+    void SetDropTarget(const InkingDropTargetSpec& spec);
+
+    /// 我声明的拖拽源 / 落点（没声明时是默认构造的那份，字段全空）。
+    const InkingDragSourceSpec& GetDragSource() const noexcept;
+    const InkingDropTargetSpec& GetDropTarget() const noexcept;
+
+    /**
+     * @brief 我正在被当作落点高亮吗（拖拽中的指针底下，且类型匹配、`canDrop` 说行）。
+     *
+     * **状态不是外观**：库不认识"高亮边框 / 选中底色"长什么样，它只把这件事
+     * 告诉你，画由 `onRender` 自己画——和 `MouseHover()` 同一条分工。
+     *
+     * 它变化时会标**重绘脏**（画面变了，但命中表一点都不用重烘）。
+     */
+    bool IsDragOver() const noexcept;
+
+    /// 框架调：置 / 清高亮标记。别在业务代码里调（那是会话的账）。
+    void MarkDragOver(bool over) noexcept;
 
     // ---------------- 输入派发：在两个接口上 ----------------
     //
@@ -1031,6 +1077,15 @@ protected:
     /// 它是策略；而"在不在形状里"才是组件知识。两件事分开之后，
     /// 组件只管把形状判对，策略由写入口改、由场景合并。
     bool _hitPassThrough = false;
+
+    /// 拖拽源 / 落点声明（1.4）：纯数据，默认空 = 不可拖、不是落点。
+    /// 挂上摘掉都不标脏——它们不进几何、不进层级，只影响接下来的手势。
+    InkingDragSourceSpec _dragSource{};
+    InkingDropTargetSpec _dropTarget{};
+
+    /// 正在被当作落点高亮（会话置位，`IsDragOver()` 读）。缺省 false。
+    /// 变化时标**重绘脏**：这是外观，命中一点没变。
+    bool _dragOver = false;
 
     /// 键盘焦点在不在自己这儿（A3）。只由场景通过 `MarkKeyboardFocus` 改。
     /// 放基类而不是"每个组件自己存一个 bool"：焦点是**场景级**的唯一归属，

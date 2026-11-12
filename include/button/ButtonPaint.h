@@ -112,6 +112,57 @@ InkingShapeBounds ButtonHitEnvelope(const InkingButtonData& data, const InkingSh
                               int width, int height);
 
 /**
+ * @brief 按钮文字"这一帧画多少"的结果（1.3.0 T-04）。
+ *
+ * `painted` 是要交给 `PaintText` 的那串（截断后的前缀，`Ellipsis` 时末尾还有
+ * 一个 `…`）；`width` / `height` 是它量出来的尺寸——**已经有了，不要再量一次**
+ * （算对齐偏移要用它，而偏移必须是"截断后"的宽度）。
+ */
+struct InkingButtonTextCut {
+    std::string painted;   ///< 真正要画的串（空 = 什么都不画）
+    float width = 0.0f;    ///< `painted` 的宽度（设计坐标）
+    float height = 0.0f;   ///< `painted` 的高度（设计坐标）
+    bool truncated = false;  ///< 真的被截了吗（悬停提示的判据）
+};
+
+/**
+ * @brief 截断结果缓存：文字 / 可用宽 / 字体 / 策略任何一个变了才重算。
+ *
+ * 为什么必须有（不是优化）：改造前默认路径（`align = Left` / `Top`）**零测量**，
+ * 改造后至少要量一次才知道"超没超"。`PaintButtonText` 每帧调用，不缓存就是
+ * 每帧每个按钮一次 `TTF_SizeUTF8`。缓存之后稳态 0 次，只有 `SetText` / 尺寸变化
+ * / 换策略时才重算一次。
+ *
+ * 放在**按钮实例**里而不是 `InkingButtonData` 里：后者是配置，不该被运行期改写。
+ * 不用的调用方（动态按钮 / `ListRow`）传 `nullptr` 即可，行为完全一样。
+ */
+struct InkingButtonTextCutCache {
+    bool valid = false;
+    std::string label;      ///< 键：源串
+    std::string fontPath;   ///< 键：首选字体
+    std::vector<std::string> fontPaths;  ///< 键：回退链
+    float fontSize = 0.0f;               ///< 键：字号
+    float available = 0.0f;              ///< 键：可用宽（含右边距变化）
+    InkingTextOverflow overflow = InkingTextOverflow::Clip;  ///< 键：策略
+    InkingButtonTextCut cut;             ///< 值
+};
+
+/**
+ * @brief 按可用宽裁出"这一帧要画的字"（1.3.0 T-04）。**纯查询，不改配置**。
+ *
+ * 可用宽 = `GetWidth() - leftSpace - 右边距`，其中右边距 = `rightSpace > 0 ?
+ * rightSpace : leftSpace`（0 表示对称）。放得下就**原样返回**（不算截断，这条是
+ * 老行为的回归基线）；放不下才调 `InkingCutTextToWidth` 回退（`Ellipsis` 时预算里
+ * 先减掉 `…` 的宽，所以"加完省略号也不溢出"）。
+ *
+ * 同一个函数也给"要不要弹提示"用——**判据只有一份**：谁想再判一次"文字是否超宽"，
+ * 就是第二份真相。
+ */
+InkingButtonTextCut ResolveButtonTextCut(const InkingAnchor& node,
+                                         const InkingButtonData& data,
+                                         InkingButtonTextCutCache* cache = nullptr);
+
+/**
  * 画按钮上的文字——**真文字了**（`TaskGuide.md` T-3 的纹理层落地）。
  *
  * 这里只做"配置 → 一次 `InkingTextRequest`"的翻译，真正的栅格化 / 缓存 / 上色 /
@@ -122,10 +173,15 @@ InkingShapeBounds ButtonHitEnvelope(const InkingButtonData& data, const InkingSh
  *     所以按钮转了、字跟着转——这是之前用 `SDL_RenderFillRect` 画方块时
  *     做不到的那条已知限制。
  *
+ * 1.3.0 起先按可用宽把文字**截到放得下**（`ResolveButtonTextCut`），再量、再算
+ * 偏移、再画——顺序不能反，否则 `Center` / `Right` 会按原来更宽的尺寸算偏移，
+ * 文字整体挪位。`cache` 非空时复用上一次的截断结果（每帧 0 次测量）。
+ *
  * 静态图片（A11）不画文字——那是 `Label` 的事。
  */
 void PaintButtonText(const InkingAnchor& node, const InkingButtonData& data,
-                     const InkingTransformSpec& transform, float pixelX, float pixelY);
+                     const InkingTransformSpec& transform, float pixelX, float pixelY,
+                     InkingButtonTextCutCache* cache = nullptr);
 
 /**
  * @brief 文字块左上角在组件里的位置（**设计坐标，相对组件左上角**）。纯函数。
@@ -139,7 +195,13 @@ void PaintButtonText(const InkingAnchor& node, const InkingButtonData& data,
  * 抽成函数是因为**两处要用**：绘制（`PaintButtonText`）与"文字到底摆在哪"的
  * 数值自检。抄第二遍就会分叉——"自检算的居中"和"画出来的居中"不一致，是那种
  * 两边单独看都对、合起来才错的 bug。
+ *
+ * 四参数的那个重载收**已经量好的文字尺寸**：绘制路径必须先截断再算偏移，
+ * 用原始串的宽度去居中会让截断后的文字整体左移（T-04）。
  */
 InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data);
+
+InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data,
+                              float textWidth, float textHeight);
 
 }  // namespace inking_detail

@@ -550,6 +550,17 @@ std::string ButtonBody(const ButtonConfig& button, const std::string& indent,
                                                             : "Bottom")
             << ";\n";
     }
+    // 溢出三件（1.3.0 T-01）：同样只在非默认值时输出，老配置的产物不变。
+    if (data.text.overflow != InkingTextOverflow::Clip) {
+        out << indent << "data.text.overflow = InkingTextOverflow::Ellipsis;\n";
+    }
+    if (data.text.rightSpace != 0.0f) {
+        out << indent << "data.text.rightSpace = " << Float(data.text.rightSpace)
+            << ";\n";
+    }
+    if (data.text.tooltipWhenTruncated) {
+        out << indent << "data.text.tooltipWhenTruncated = true;\n";
+    }
     if (!data.text.path.empty()) {
         out << indent << "data.text.path = " << Quote(data.text.path) << ";\n";
     }

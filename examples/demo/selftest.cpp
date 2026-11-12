@@ -39,6 +39,8 @@
 #include <detail/InkLog.h>
 #include <detail/InkingPointerProbe.h>
 #include <detail/InkingPopupPlacement.h>
+#include <field/InkingField.h>
+#include <field/InkingFieldProjection.h>
 #include <input/CursorShape.h>
 #include <input/KeyboardInput.h>
 #include <input/Shortcut.h>
@@ -95,6 +97,7 @@
 
 #include <any>
 #include <algorithm>
+#include <cstddef>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -661,6 +664,17 @@ constexpr SilentFailureItem kSilentFailures[] = {
      "遮罩细分撞上限：边缘变粗糙，看起来像素材被压过，没人会去查密度"},
     {"ninepatch_border_clamped", "T-04（dev010）",
      "九宫格边框之和超过目标：边框被夹细，看起来像美术配错了图"},
+    {"field_follow_perspective_inert", "T-02（1.2）",
+     "格子模式里 followPerspective / SetSkyColor 设了没反应：那里 s ≡ 1，也没有天空"},
+    {"field_parent_transform_drifts", "T-02（1.2）",
+     "场地挂在带平移/缩放的容器下：整块错位，日志一个字都没有"},
+    {"field_terrain_batch_rejected", "T-02（1.2）",
+     "地形面单批超过 16384 顶点被整批拒绝：地面停在上一次内容"},
+    {"field_subpixel_culled", "T-03（1.2）",
+     "远处物体被 1px 规则主动剔除：画面少几块，没有任何提示"},
+    {"field_sky_texture_inert", "T-05（1.5）",
+     "设了天空贴图却没有天空带（格子模式 / 平行投影 / 地平线在屏幕外）："
+     "贴图一个像素都不画，只剩一条 WARN"},
 };
 
 /// 自检**真的跑到**的条目（运行时登记）。
@@ -1201,6 +1215,259 @@ void CheckTextClipByHeight() {
           "text_clip_by_height：框内真的有字（否则「框外 0 像素」是假通过）");
     Check(below == 0 && right == 0,
           "text_clip_by_height：框外亮像素 == 0（E3 的原始症状：改动前是 10,030）");
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+    SDL_DestroyRenderer(rnd);
+    SDL_DestroyWindow(win);
+}
+
+// ---------------------------------------------------------------------------
+// 1.3.0：按钮文字的横向溢出（截断 / 省略号 / 悬停看全）
+// ---------------------------------------------------------------------------
+//
+// 三层各钉一遍，因为它们会各自演化：
+//   - A1-A4 纯函数：边界（恰好放得下 / 差 1px / 不切半个汉字 / 宽 <= 0）；
+//   - A5-A7 排版层：`Clip` 真的裁、`Ellipsis` 把省略号算进预算、不超宽时不动；
+//   - A8-A10 按钮：落笔不越界、省略号真的在末尾、放得下时与老行为一致；
+//   - A11 悬停看全（换行那条 A12 在 `CheckTooltip` 里，跟提示框自己的用例放在一起）。
+//
+// 为什么先纯函数再组件：回退算法只有一份（`InkingCutTextToWidth`），组件那几条
+// 只是在验"有没有真的调它"。反过来先验组件的话，错了也说不清是哪一层错。
+void CheckButtonTextOverflow() {
+    std::printf("\n-- 按钮文字溢出：截断 / 省略号 / 悬停看全（1.3.0）--\n");
+
+    // 每个码点固定 10 宽的假测量：宽度完全可算，边界才谈得上"断言"。
+    const auto measure = [](const std::string& text, const InkingTextStyle& style) {
+        std::size_t codepoints = 0;
+        for (const unsigned char byte : text) {
+            if ((byte & 0xC0u) != 0x80u) {
+                ++codepoints;
+            }
+        }
+        return InkingTextExtent{10.0f * static_cast<float>(codepoints),
+                                style.fontSize > 0.0f ? style.fontSize : 16.0f};
+    };
+    InkingTextStyle style;
+    style.fontSize = 16.0f;
+
+    // ---- A1 / A2：恰好放得下 vs 差 1px ----
+    const std::string ascii = "abcdef";  // 6 码点 = 60
+    Check(InkingCutTextToWidth(ascii, 0, ascii.size(), 60.0f, style, measure)
+              == ascii.size(),
+          "A1：串宽恰好等于 available ⇒ 整串都放得下（返回串尾，不多不少）");
+    Check(InkingCutTextToWidth(ascii, 0, ascii.size(), 59.0f, style, measure) == 5u,
+          "A2：差 1px ⇒ 回退一个码点（不是硬塞一个出去）");
+
+    // ---- A3：CJK 不切半个汉字 ----
+    const std::string mixed = "\xE6\xB1\x89\xE5\xAD\x97\x61";  // 汉 + 字 + a
+    const std::size_t mixedCut =
+        InkingCutTextToWidth(mixed, 0, mixed.size(), 19.0f, style, measure);
+    std::printf("         「汉字a」available=19 ⇒ 截到第 %zu 字节\n", mixedCut);
+    Check(mixedCut == 3u
+              && (static_cast<unsigned char>(mixed[mixedCut]) & 0xC0u) != 0x80u,
+          "A3：截在码点边界上（20 > 19 ⇒ 只留「汉」，不切半个字）");
+
+    // ---- A4：available <= 0 / 空区间 ----
+    Check(InkingCutTextToWidth(ascii, 0, ascii.size(), 0.0f, style, measure) == 0u
+              && InkingCutTextToWidth(ascii, 2, ascii.size(), -5.0f, style, measure) == 2u
+              && InkingCutTextToWidth(ascii, 3, 3, 100.0f, style, measure) == 3u,
+          "A4：available <= 0 ⇒ 返回 begin（不崩、不死循环、不乱塞）");
+
+    // ---- A5 / A6 / A7：排版层 ----
+    InkingTextLayoutRequest request;
+    request.text = ascii;
+    request.style = style;
+    request.maxWidth = 30.0f;
+    request.wrap = InkingTextWrap::NoWrap;
+    request.maxLines = 1;
+    request.overflow = InkingTextOverflow::Clip;
+    const InkingTextLayoutResult clipped = InkingLayoutText(request, measure);
+    Check(clipped.truncated && clipped.lines.size() == 1u
+              && clipped.lines.back().end == 3u
+              && std::fabs(clipped.lines.back().width - 30.0f) < 0.01f,
+          "A5：排版层 `Clip` 超宽 ⇒ 真的截（end < size、宽度重算、truncated）");
+
+    request.overflow = InkingTextOverflow::Ellipsis;
+    const InkingTextLayoutResult ell = InkingLayoutText(request, measure);
+    const float ellHint = measure(std::string(InkingTextEllipsis), style).width;
+    Check(ell.lines.size() == 1u && ell.lines.back().hasEllipsis
+              && ell.lines.back().end == 2u
+              && measure(ascii.substr(0, 2), style).width + ellHint <= 30.0f,
+          "A6：`Ellipsis` ⇒ 前缀 + 省略号一起放得下（预算里先减省略号宽）");
+
+    request.maxWidth = 100.0f;
+    request.overflow = InkingTextOverflow::Clip;
+    const InkingTextLayoutResult fits = InkingLayoutText(request, measure);
+    request.overflow = InkingTextOverflow::Ellipsis;
+    const InkingTextLayoutResult fitsEll = InkingLayoutText(request, measure);
+    Check(!fits.truncated && fits.lines.back().end == ascii.size()
+              && !fitsEll.truncated && !fitsEll.lines.back().hasEllipsis,
+          "A7：放得下时两种模式都不动（truncated=false、end == size）");
+
+    // ---- A11：截断时悬停看全文（不需要字体：估算法也能判"超没超"）----
+    struct OverflowScene : public InkingScene {
+        OverflowScene() : InkingScene("probe_text_overflow") {}
+    };
+    OverflowScene scene;
+    if (!scene.IsRegistered()) {
+        Check(false, "A11：探针场景注册成功（名字不与他人冲突）");
+        return;
+    }
+    InkingSceneLibrary::SetActiveScene(&scene);
+
+    InkingButtonData narrow;
+    narrow.name = "overflow_button";
+    narrow.width = 120;
+    narrow.height = 32;
+    narrow.offsetX = 60.0f;
+    narrow.offsetY = 60.0f;
+    narrow.text.fontSize = 16.0f;
+    narrow.text.leftSpace = 6.0f;
+    narrow.text.tooltipWhenTruncated = true;
+    narrow.label = "项目名 · 父目录 · 一段很长很长的路径";
+    auto* button = static_cast<InkingStaticButton*>(
+        scene.AddChild(std::make_unique<InkingStaticButton>(&scene, narrow)));
+    scene.TickFrame(1.0f / 60.0f);
+
+    Check(button->GetTooltipWhenTruncated(),
+          "A11：开关从配置读进实例（构造期就定型，不需要额外调用）");
+    button->PushPointerHover(true);
+    for (int i = 0; i < 40; ++i) {  // 40 帧 ≈ 0.66s > delay 0.4s
+        scene.TickFrame(1.0f / 60.0f);
+    }
+    Check(button->IsTooltipShowing(),
+          "A11：悬停够 0.4s ⇒ 提示真的画出来了（全文，不是截断后那串）");
+    button->PushPointerHover(false);
+    scene.TickFrame(1.0f / 60.0f);
+    Check(!button->IsTooltipShowing(), "A11：移开 ⇒ 立刻收起");
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+
+    // ---- A8 / A9 / A10：按钮落笔（需要字体 + 渲染器）----
+    inking_detail::ReleaseTextCache();
+    const std::string font = FindUsableFont();
+    if (font.empty()) {
+        std::printf("         [skip] 没找到可用字体：像素那一段验不了"
+                    "（纯函数与排版那几条上面已经验过）\n");
+        return;
+    }
+    SDL_Window* win = SDL_CreateWindow("text-overflow", InkingDesignWidth(),
+                                       InkingDesignHeight(), 0);
+    SDL_Renderer* rnd =
+        win != nullptr ? SDL_CreateRenderer(win, nullptr) : nullptr;
+    if (rnd == nullptr) {
+        std::printf("         [skip] 建不出渲染器：像素那一段验不了\n");
+        if (win != nullptr) {
+            SDL_DestroyWindow(win);
+        }
+        return;
+    }
+
+    InkingScene pixelScene("text_overflow_pixels");
+    const std::string longText(40, 'W');  // 明显宽于 300px 的按钮
+
+    // 三个按钮：截断 / 省略号 / 放得下（最后一个是"老行为"的基线）。
+    const auto makeButton = [&](const char* name, float y, InkingTextOverflow mode,
+                                const std::string& text) {
+        InkingButtonData data;
+        data.name = name;
+        data.width = 300;
+        data.height = 40;
+        data.offsetX = 100.0f;
+        data.offsetY = y;
+        data.normal = InkingButtonAppearance(InkingAppearanceType::Color,
+                                             0xFF101010u);
+        data.text.fontSize = 20.0f;
+        data.text.path = font;
+        data.text.leftSpace = 8.0f;
+        // 右边留 16：既验了新字段 `rightSpace`（0 = 跟随 leftSpace 那条以外的
+        // 分支），也让"落笔不越界"不靠 1~2px 的采样光晕去讨价还价。
+        data.text.rightSpace = 16.0f;
+        data.text.overflow = mode;
+        data.label = text;
+        return static_cast<InkingStaticButton*>(
+            pixelScene.AddChild(std::make_unique<InkingStaticButton>(&pixelScene,
+                                                                     data)));
+    };
+    auto* clipButton = makeButton("overflow_clip", 100.0f,
+                                  InkingTextOverflow::Clip, longText);
+    auto* ellButton = makeButton("overflow_ellipsis", 200.0f,
+                                 InkingTextOverflow::Ellipsis, longText);
+    auto* fitButton = makeButton("overflow_fit", 300.0f,
+                                 InkingTextOverflow::Clip, "OK");
+    pixelScene.TickFrame(1.0f / 60.0f);
+
+    const float available = 300.0f - 8.0f - 16.0f;  // leftSpace 8 + rightSpace 16
+    const inking_detail::InkingButtonTextCut clipCut =
+        inking_detail::ResolveButtonTextCut(*clipButton, clipButton->GetData());
+    const inking_detail::InkingButtonTextCut ellCut =
+        inking_detail::ResolveButtonTextCut(*ellButton, ellButton->GetData());
+    const inking_detail::InkingButtonTextCut fitCut =
+        inking_detail::ResolveButtonTextCut(*fitButton, fitButton->GetData());
+    std::printf("         可用宽 %.0f ⇒ 截断串 %zu 字节 / 宽 %.1f；省略号串 %zu 字节 / 宽 %.1f\n",
+                static_cast<double>(available), clipCut.painted.size(),
+                static_cast<double>(clipCut.width), ellCut.painted.size(),
+                static_cast<double>(ellCut.width));
+    Check(clipCut.truncated && clipCut.painted.size() < longText.size()
+              && clipCut.width <= available + 0.5f,
+          "A8：`Clip` ⇒ 截断后的串不超可用宽（放不下的字真的不画）");
+    Check(ellCut.truncated && ellCut.painted.size() > 3u
+              && ellCut.painted.compare(ellCut.painted.size() - 3u, 3u,
+                                        InkingTextEllipsis) == 0
+              && ellCut.width <= available + 0.5f,
+          "A9：`Ellipsis` ⇒ 末尾是 `…`，且整串（含省略号）仍放得下");
+    Check(!fitCut.truncated && fitCut.painted == "OK",
+          "A10：放得下 ⇒ 原样画（老行为的回归基线：不算截断、不改串）");
+
+    // 落笔像素：读回整个按钮带 + 右侧溢出区，右边必须一个亮点都没有。
+    SDL_SetRenderLogicalPresentation(rnd, InkingDesignWidth(),
+                                     InkingDesignHeight(),
+                                     SDL_LOGICAL_PRESENTATION_DISABLED);
+    SDL_SetRenderDrawColor(rnd, 0, 0, 0, 255);
+    SDL_RenderClear(rnd);
+    InkingSceneLibrary::SetActiveScene(&pixelScene);
+    InkingSceneLibrary::RenderScene(rnd);
+
+    const int regionW = 460;  // 100..560：按钮右边留 160 的溢出观察区
+    const int regionH = 240;  // 100..340：三块按钮（间隔 100）
+    const std::vector<std::uint32_t> pixels =
+        ReadPixelRegion(rnd, SDL_Rect{100, 100, regionW, regionH});
+    int inside = 0;
+    int ellInside = 0;
+    int clipRight = 0;
+    int ellRight = 0;
+    if (pixels.size() == static_cast<std::size_t>(regionW * regionH)) {
+        for (int y = 0; y < regionH; ++y) {
+            for (int x = 0; x < regionW; ++x) {
+                const std::uint32_t pixel =
+                    pixels[static_cast<std::size_t>(y) * regionW
+                           + static_cast<std::size_t>(x)];
+                const int lum = static_cast<int>((pixel >> 16) & 0xFFu)
+                    + static_cast<int>((pixel >> 8) & 0xFFu)
+                    + static_cast<int>(pixel & 0xFFu);
+                if (lum < 90) {
+                    continue;  // 底色（0x101010 的亮度只有 48）
+                }
+                const bool inClipRow = y < 40;
+                const bool inEllRow = y >= 100 && y < 140;
+                if (inClipRow && x < 300) {
+                    ++inside;
+                } else if (inEllRow && x < 300) {
+                    ++ellInside;
+                } else if (inClipRow) {
+                    ++clipRight;
+                } else if (inEllRow) {
+                    ++ellRight;
+                }
+            }
+        }
+    }
+    std::printf("         `Clip` 框内 %d / 框右 %d；`Ellipsis` 框内 %d / 框右 %d\n",
+                inside, clipRight, ellInside, ellRight);
+    Check(inside > 0 && ellInside > 0,
+          "A8/A9：框内真的有字（否则「框右 0 像素」是假通过）");
+    Check(clipRight == 0 && ellRight == 0,
+          "A8/A9：框右侧亮像素 == 0（改动前这里是「画到卡片外面」）");
 
     InkingSceneLibrary::SetActiveScene(nullptr);
     SDL_DestroyRenderer(rnd);
@@ -6687,6 +6954,1160 @@ void CheckNinePatch() {
 }
 
 // ---------------------------------------------------------------------------
+// 场地层（1.2）：纯函数 / 提交 / 命中
+//
+// 这一组对应任务书 `plans/2026-11-05-field-layer-tasks.md` 的 T-01 ~ T-03。
+// 三条纪律贯穿全组：
+//   1. 期望值**不抄 C++**：投影那 12 个点是按 §4.1 公式另写一份 Python 算的；
+//   2. 只断言可观的量（像素、计数、指针相等），没有"看起来对"；
+//   3. 每条静默失效在断言旁边 `NoteSilentFailure`，元自检会盯着。
+// ---------------------------------------------------------------------------
+
+/// 场地回调探针：验"回调拿到的是调用方那份内存"（不是副本）。
+class FieldProbe : public InkingField {
+public:
+    using InkingField::InkingField;
+
+    const InkingFieldObject* lastObject = nullptr;
+    InkingFieldCell lastCell{};
+    int clicks = 0;
+
+protected:
+    void OnFieldClick(const InkingFieldObject& object, InkingFieldCell cell,
+                      InkingDesignPos /*at*/) override {
+        lastObject = &object;
+        lastCell = cell;
+        ++clicks;
+    }
+};
+
+/**
+ * 带子树变换的容器（自检专用）。
+ *
+ * 不拿真组件来造这个场景：这一条要验的是"场地发现祖先带变换"，而真组件的
+ * 变换是它们自己的业务（滚动位移、开合动画），哪天它们改了行为，这条自检
+ * 会跟着红——那不是场地坏了。
+ */
+class OffsetContainer : public InkingStaticWidget {
+public:
+    using InkingStaticWidget::InkingStaticWidget;
+
+    InkingTransformSpec GetSubtreeTransform() const noexcept override {
+        return InkingTransformSpec{12.0f, 8.0f, 0.0f, 1.0f};
+    }
+};
+
+/// 业务侧实体：库侧只承诺一段 POD，实体活在业务侧（首成员与整体地址可互转）。
+struct FieldEnemy {
+    InkingFieldObject base;
+    int hp = 0;
+};
+static_assert(offsetof(FieldEnemy, base) == 0, "FieldEnemy::base 必须是第一个成员");
+
+void CheckFieldProjection() {
+    std::printf("\n-- 场地纯函数层：投影 / 格子 / 反解（1.2-a T-01） --\n");
+
+    InkingFieldProjection projection;
+    projection.mode = InkingFieldMode::Oblique;
+    projection.grid = InkingFieldGrid{64.0f, 64.0f};
+    projection.camera = InkingFieldCamera{120.0f, 80.0f, 1.15f};
+    projection.skew = 35.0f;
+    projection.depthScaleFar = 0.55f;
+    projection.farD = 900.0f;
+    projection.designWidth = 1280.0f;
+    projection.designHeight = 720.0f;
+    projection.cols = 40;
+    projection.rows = 30;
+
+    // ---- ① 12 个固定世界坐标：期望值由**独立实现**（Python，按 §4.1 另写）算出 ----
+    struct Expect {
+        InkingFieldPos pos;
+        float x;
+        float y;
+    };
+    const Expect kExpected[] = {
+        {{0.0f, 0.0f, 0.0f}, 434.268691f, 801.272732f},
+        {{64.0f, 0.0f, 0.0f}, 513.641240f, 801.272732f},
+        {{0.0f, 64.0f, 0.0f}, 489.253517f, 735.294868f},
+        {{320.0f, 128.0f, 0.0f}, 890.720872f, 676.673421f},
+        {{-200.0f, 96.0f, 32.0f}, 287.678483f, 668.871293f},
+        {{500.0f, 400.0f, 0.0f}, 1142.030804f, 486.483981f},
+        {{500.0f, 400.0f, 100.0f}, 1142.030804f, 397.399474f},
+        {{-64.0f, -32.0f, 0.0f}, 322.161630f, 837.467066f},
+        {{96.5f, 250.25f, 12.0f}, 713.844917f, 569.165358f},
+        {{1000.0f, 600.0f, 0.0f}, 1560.060852f, 387.383818f},
+        {{-400.0f, 250.0f, 60.0f}, 219.171349f, 521.528624f},
+        {{128.0f, 512.0f, 0.0f}, 851.206300f, 427.800125f},
+    };
+    float worst = 0.0f;
+    for (const Expect& item : kExpected) {
+        const InkingDesignPos got = InkingFieldProject(projection, item.pos);
+        worst = std::max(worst, std::fabs(got.x - item.x));
+        worst = std::max(worst, std::fabs(got.y - item.y));
+    }
+    std::printf("         12 点最大偏差 %.6f px\n", static_cast<double>(worst));
+    Check(worst <= 0.5f, "T-01：12 个固定世界坐标与独立实现对得上（±0.5 px）");
+
+    // ---- ② 纵线直线性：`s = 1/(1+h·ld)` 是 Möbius 形式 ⇒ 严格共线 ----
+    {
+        std::vector<InkingDesignPos> line;
+        for (int k = 0; k <= 60; ++k) {
+            line.push_back(InkingFieldProject(projection, InkingFieldPos{100.0f, k * 10.0f, 0.0f}));
+        }
+        const InkingDesignPos first = line.front();
+        const InkingDesignPos last = line.back();
+        const float dx = last.x - first.x;
+        const float dy = last.y - first.y;
+        const float length = std::sqrt(dx * dx + dy * dy);
+        float deviation = 0.0f;
+        for (const InkingDesignPos& point : line) {
+            const float cross =
+                std::fabs((point.x - first.x) * dy - (point.y - first.y) * dx);
+            deviation = std::max(deviation, cross / length);
+        }
+        std::printf("         纵线最大偏离 %.6f px\n", static_cast<double>(deviation));
+        Check(deviation < 0.01f,
+              "T-01：skew > 0 + 透视时纵线严格共线（< 0.01 px；曲线缺陷的判据）");
+    }
+
+    // ---- ③ 格子等大：平行投影的判据 ----
+    {
+        InkingFieldProjection flat = projection;
+        flat.depthScaleFar = 1.0f;
+        InkingDesignPos near[4];
+        InkingDesignPos far_[4];
+        InkingFieldCellQuad(flat, InkingFieldCell{0, 0}, near);
+        InkingFieldCellQuad(flat, InkingFieldCell{5, 3}, far_);
+        const auto edge = [](const InkingDesignPos* quad) {
+            return std::hypot(quad[1].x - quad[0].x, quad[1].y - quad[0].y);
+        };
+        const float delta = std::fabs(edge(near) - edge(far_));
+        std::printf("         两格边长差 %.9f\n", static_cast<double>(delta));
+        Check(delta < 1e-4f, "T-01：depthScaleFar = 1 时任意两格等大（< 1e-4）");
+    }
+
+    // ---- ④ 反解往返：格子模式 < 1e-3 px、倾斜模式 < 0.5 px ----
+    {
+        InkingFieldProjection grid;
+        grid.grid = InkingFieldGrid{64.0f, 64.0f};
+        grid.camera = InkingFieldCamera{37.5f, -12.25f, 1.0f};
+        const auto roundTripWorst = [](const InkingFieldProjection& probe) {
+            float error = 0.0f;
+            for (int j = -3; j <= 5; ++j) {
+                for (int i = -3; i <= 5; ++i) {
+                    const InkingFieldPos world{(i + 0.3f) * 64.0f, (j + 0.7f) * 64.0f, 0.0f};
+                    const InkingDesignPos screen = InkingFieldProject(probe, world);
+                    InkingFieldPos back;
+                    if (!InkingFieldGroundHit(probe, screen, &back)) {
+                        return 1.0e9f;  // 有解才算通过，无解直接判死
+                    }
+                    error = std::max(error, std::fabs(back.x - world.x));
+                    error = std::max(error, std::fabs(back.d - world.d));
+                }
+            }
+            return error;
+        };
+        const float gridError = roundTripWorst(grid);
+        const float obliqueError = roundTripWorst(projection);
+        std::printf("         往返误差：格子 %.9f / 倾斜 %.9f\n",
+                    static_cast<double>(gridError), static_cast<double>(obliqueError));
+        Check(gridError < 1e-3f, "T-01：格子模式反解往返 < 1e-3 px");
+        Check(obliqueError < 0.5f, "T-01：倾斜模式反解往返 < 0.5 px");
+    }
+
+    // ---- ⑤ 地图尺寸不是投影参数 ----
+    {
+        InkingFieldProjection small = projection;
+        small.cols = 1;
+        small.rows = 1;
+        const InkingDesignPos a = InkingFieldProject(small, InkingFieldPos{200.0f, 150.0f, 10.0f});
+        const InkingDesignPos b = InkingFieldProject(projection, InkingFieldPos{200.0f, 150.0f, 10.0f});
+        Check(a == b, "T-01：改 cols / rows 不动已算出的坐标（地图尺寸不是投影参数）");
+    }
+
+    // ---- ⑥ 1px 界限：平行投影下是无穷 ----
+    {
+        InkingFieldProjection flat = projection;
+        flat.depthScaleFar = 1.0f;
+        const float flatLimit = InkingFieldDepthLimitForPixel(flat);
+        const float obliqueLimit = InkingFieldDepthLimitForPixel(projection);
+        std::printf("         1px 界限：平行 %g / 倾斜 %.3f\n",
+                    static_cast<double>(flatLimit), static_cast<double>(obliqueLimit));
+        Check(std::isinf(flatLimit),
+              "T-01：平行投影下 1px 界限是无穷（\"无限格子\"的数学依据）");
+        Check(std::isfinite(obliqueLimit) && obliqueLimit > 0.0f,
+              "T-01：透视下 1px 界限有限且为正（远端要裁）");
+    }
+
+    // ---- ⑦ 美术基准：1 世界单位 = 1 像素 ----
+    {
+        const InkingFieldProjection grid;
+        const InkingDesignPos point = InkingFieldProject(grid, InkingFieldPos{10.0f, 20.0f, 0.0f});
+        Check(std::fabs(point.x - 650.0f) < 1e-6f && std::fabs(point.y - 700.0f) < 1e-6f,
+              "T-01：skew = 0 且无透视 ⇒ 1 单位 = 1 像素（设计/美术基准）");
+    }
+
+    // ---- ⑧ floor 不是 trunc ----
+    {
+        const InkingFieldCell cell =
+            InkingFieldCellOf(InkingFieldProjection{}, InkingFieldPos{-0.5f, -64.5f, 0.0f});
+        Check(cell.i == -1 && cell.j == -2,
+              "T-01：格坐标用 floor（-0.5 → 第 -1 格；trunc 会把它算进第 0 格）");
+    }
+
+    // ---- ⑨ 可见格：非空、且不越出地图 ----
+    {
+        const InkingFieldCellRange range = InkingFieldVisibleCells(projection);
+        const bool bounded = range.valid && range.i0 >= 0 && range.i1 < projection.cols
+                          && range.j0 >= 0 && range.j1 < projection.rows;
+        std::printf("         可见格 i[%d..%d] j[%d..%d]\n", range.i0, range.i1, range.j0,
+                    range.j1);
+        Check(bounded, "T-01：可见格枚举非空且夹在地图内");
+    }
+
+    // ---- ⑩ 校验：违例要说人话 ----
+    {
+        const char* why = nullptr;
+        Check(InkingFieldValidate(projection, &why) && why == nullptr,
+              "T-01：定稿参数通过校验");
+        InkingFieldProjection bad = projection;
+        bad.grid.cellWidth = 0.0f;
+        Check(!InkingFieldValidate(bad, &why) && why != nullptr,
+              "T-01：cellWidth = 0 被拒（且给得出原因）");
+        InkingFieldProjection endless = projection;
+        endless.cols = 0;
+        Check(!InkingFieldValidate(endless, &why),
+              "T-01：倾斜模式没有地图边界被拒（无限格只在格子模式合法）");
+    }
+}
+
+void CheckFieldSubmit(SDL_Renderer* renderer) {
+    std::printf("\n-- 场地组件：地形面 / 物体面 / 批次（1.2-b T-02） --\n");
+    if (renderer == nullptr) {
+        std::printf("         [skip] 没有渲染器\n");
+        return;
+    }
+    // 走**资源根**而不是相对 cwd：ctest 的工作目录不是 `build/bin`。
+    if (InkingAssetLoad("walk.png").empty()) {
+        std::printf("         [skip] 读不到 assets/walk.png\n");
+        return;
+    }
+    inking_detail::ReleaseTextCache();
+    inking_detail::SetTextureBudget(0);
+    const InkingTextureHandle handle = InkingLoadTexture("walk.png");
+    if (!handle.Valid()) {
+        std::printf("         [skip] 纹理句柄载入失败\n");
+        return;
+    }
+
+    InkingScene scene("field_submit");
+    auto* field = static_cast<InkingField*>(
+        scene.AddChild(std::make_unique<InkingField>(&scene, "field")));
+    Check(scene.SetField(field), "SetField：直接子节点 + 无变换 ⇒ 占住槽位");
+    Check(scene.GetField() == field, "GetField 读回同一个场地");
+    Check(field->IsHitPassThrough(),
+          "场地不进命中表（否则铺满全屏会挡住所有 UI）");
+
+    InkingFieldProjection oblique;
+    oblique.mode = InkingFieldMode::Oblique;
+    oblique.grid = InkingFieldGrid{64.0f, 64.0f};
+    oblique.camera = InkingFieldCamera{0.0f, 0.0f, 1.0f};
+    oblique.skew = 30.0f;
+    oblique.depthScaleFar = 0.6f;
+    oblique.farD = 1200.0f;
+    oblique.designWidth = static_cast<float>(InkingDesignWidth());
+    oblique.designHeight = static_cast<float>(InkingDesignHeight());
+    oblique.cols = 100;
+    oblique.rows = 50;
+    field->SetProjection(oblique);
+    field->SetSkyColor(0xFF102030u);
+    field->SetGroundColor(0xFF204060u);
+
+    // ---- 地形面：5000 格（100 × 50）----
+    std::vector<InkingFieldTile> tiles(5000);
+    for (std::int32_t j = 0; j < 50; ++j) {
+        for (std::int32_t i = 0; i < 100; ++i) {
+            InkingFieldTile& tile = tiles[static_cast<std::size_t>(j) * 100u
+                                          + static_cast<std::size_t>(i)];
+            tile.cell = InkingFieldCell{i, j};
+            tile.texture = handle;
+        }
+    }
+    field->SetTiles(tiles.data(), tiles.size());
+
+    scene.TickFrame(1.0f / 60.0f);
+    InkingSceneLibrary::SetActiveScene(&scene);
+    for (int frame = 0; frame < 2; ++frame) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+    }
+    InkingField::Stats stats = field->GetStats();
+    std::printf("         地形：可见格 %u，批 %u，拒 %u，截 %u\n",
+                static_cast<unsigned>(stats.visibleCells),
+                static_cast<unsigned>(stats.terrainBatches),
+                static_cast<unsigned>(stats.rejectedBatchesTotal),
+                static_cast<unsigned>(stats.truncatedTiles));
+    Check(stats.visibleCells > 0, "T-02：可见格枚举非空（斜投影下也有地可画）");
+    Check(stats.rejectedBatchesTotal == 0,
+          "T-02：地形面 5000 格没有一批被拒（rejectedBatchesTotal == 0）");
+    NoteSilentFailure("field_terrain_batch_rejected");
+    Check(stats.truncatedTiles == 0,
+          "T-02：地形面 5000 格没有一块被截（truncatedTiles == 0）");
+    Check(stats.terrainBatches > 0 && stats.terrainBatches <= InkingField::kTerrainBatchPool,
+          "T-02：地形面分批落在层池之内（≤ 8 批）");
+
+    // ---- ④ 地形分批真的切过（层池被触发，不是平凡通过）----
+    //
+    // 上面那条 5000 块瓦片的用例只有 275 个可见格 ⇒ 永远 1 批 ⇒ `<= 8` 是平凡通过，
+    // 层池代码一次都没跑。这里把**可见格铺满**：1280×720 的 8×8 格 = 160×90 = 14400。
+    //
+    // 注意 `camera.x = 0` 时可见格是 **−80..79** 而不是 0..159（相机在 x = 0，
+    // 它落在画布中心 640）——所以瓦片必须按 `InkingFieldVisibleCells` 给的
+    // 范围去铺，写死 0..159 只能盖住右半屏，批数就永远上不去。
+    {
+        const auto makeTerrain = [&](float cellSize, InkingScene& scene,
+                                     std::vector<InkingFieldTile>& tiles) {
+            InkingFieldProjection grid;
+            grid.mode = InkingFieldMode::Grid;
+            grid.grid = InkingFieldGrid{cellSize, cellSize};
+            grid.designWidth = static_cast<float>(InkingDesignWidth());
+            grid.designHeight = static_cast<float>(InkingDesignHeight());
+            const InkingFieldCellRange range = InkingFieldVisibleCells(grid);
+            tiles.clear();
+            for (std::int32_t j = range.j0; j <= range.j1; ++j) {
+                for (std::int32_t i = range.i0; i <= range.i1; ++i) {
+                    InkingFieldTile tile;
+                    tile.cell = InkingFieldCell{i, j};
+                    tile.texture = handle;
+                    tiles.push_back(tile);
+                }
+            }
+            auto* probe = static_cast<InkingField*>(
+                scene.AddChild(std::make_unique<InkingField>(&scene, "field")));
+            probe->SetProjection(grid);
+            probe->SetTiles(tiles.data(), tiles.size());
+            scene.TickFrame(1.0f / 60.0f);
+            InkingSceneLibrary::SetActiveScene(&scene);
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderClear(renderer);
+            InkingSceneLibrary::RenderScene(renderer);
+            return probe->GetStats();
+        };
+
+        // 设置 A：8×8 格 ⇒ 14400 格，14400 ÷ 4096 = 3.5 ⇒ 4 批（层池够用）
+        {
+            InkingScene sceneA("field_terrain_a");
+            std::vector<InkingFieldTile> tilesA;
+            const InkingField::Stats a = makeTerrain(8.0f, sceneA, tilesA);
+            std::printf("         8×8 格：可见 %u 格 / 瓦片 %zu，批 %u，截 %u，拒 %u\n",
+                        static_cast<unsigned>(a.visibleCells), tilesA.size(),
+                        static_cast<unsigned>(a.terrainBatches),
+                        static_cast<unsigned>(a.truncatedTiles),
+                        static_cast<unsigned>(a.rejectedBatchesTotal));
+            Check(a.visibleCells == 14400,
+                  "④ 1280×720 ÷ 8×8 = 160×90 = 14400 格（可见格数目可预判）");
+            Check(a.terrainBatches == 4,
+                  "④ 14400 块瓦片切成 4 批（14400 ÷ 4096 向上取整），层池真的被切过");
+            Check(a.rejectedBatchesTotal == 0 && a.truncatedTiles == 0,
+                  "④ 4 批没被拒、也没被截（层池够用）");
+            InkingSceneLibrary::SetActiveScene(nullptr);
+        }
+
+        // 设置 B：5×5 格 ⇒ 36864 格 ⇒ 需要 9 批 > 层池 8 ⇒ 截断 4096 块
+        {
+            InkingScene sceneB("field_terrain_b");
+            std::vector<InkingFieldTile> tilesB;
+            const InkingField::Stats b = makeTerrain(5.0f, sceneB, tilesB);
+            std::printf("         5×5 格：可见 %u 格 / 瓦片 %zu，批 %u，截 %u\n",
+                        static_cast<unsigned>(b.visibleCells), tilesB.size(),
+                        static_cast<unsigned>(b.terrainBatches),
+                        static_cast<unsigned>(b.truncatedTiles));
+            Check(b.visibleCells == 36864, "④ 5×5 格 ⇒ 256×144 = 36864 格");
+            Check(b.terrainBatches == InkingField::kTerrainBatchPool,
+                  "④ 池满：恰好 8 批（不是无限切下去）");
+            Check(b.truncatedTiles == 4096,
+                  "④ 截断**记账**：36864 − 8×4096 = 4096 块（不是静默丢弃）");
+            InkingSceneLibrary::SetActiveScene(nullptr);
+        }
+
+        // ④ 用了两个临时场景，走之前必须把**本函数的主角**还回去：后面那些
+        // "渲染两帧比像素"的用例全靠活动场景，忘了还就会渲染一个空场景——
+        // 两帧当然逐像素相同，断言全部平凡通过（第一版就是这么假绿的）。
+        InkingSceneLibrary::SetActiveScene(&scene);
+    }
+
+    // ---- 物体面：5000 个，增量帧时间 ≤ 2.0 ms ----
+    std::vector<FieldEnemy> enemies(5000);
+    for (std::size_t k = 0; k < enemies.size(); ++k) {
+        InkingFieldObject& object = enemies[k].base;
+        object.x = static_cast<float>((k % 50) * 80);
+        object.d = static_cast<float>((k / 50) * 30);
+        object.width = 32.0f;
+        object.depth = 16.0f;
+        object.height = 32.0f;
+        object.texture = handle;
+        enemies[k].hp = static_cast<int>(k);
+    }
+    // 模板入口：跨距自动取 `sizeof(FieldEnemy)`（派生结构不能当成基类型数组索引）。
+    field->SetObjects(enemies.data(), enemies.size());
+
+    const auto timeFrame = [&]() {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        const auto begin = std::chrono::steady_clock::now();
+        InkingSceneLibrary::RenderScene(renderer);
+        const auto end = std::chrono::steady_clock::now();
+        return std::chrono::duration<float, std::milli>(end - begin).count();
+    };
+    // 取 12 次的最好值：这台机器上单次测量能抖出 ±1 ms（调度 + 软件光栅化的
+    // 缓存冷热），而门要挡的是**量级**（"每个物体一笔 draw"那一档），不是抖动量。
+    // 最好值逼近的是"没有被打断时这段代码要多少时间"，正是这里要回答的问题。
+    const auto bestOf = [&timeFrame](int samples) {
+        float best = 1.0e9f;
+        for (int i = 0; i < samples; ++i) {
+            best = std::min(best, timeFrame());
+        }
+        return best;
+    };
+
+    // 真实用法是**每帧都 SetObjects**（物体在动），所以这一条按"缓存每帧都脏"
+    // 来量：只量"缓存已热"的帧会把投影 + 排序那一半藏起来。
+    const auto timeDirtyFrame = [&]() {
+        field->SetObjects(enemies.data(), enemies.size());
+        return timeFrame();
+    };
+    float withObjects = 1.0e9f;
+    for (int i = 0; i < 12; ++i) {
+        withObjects = std::min(withObjects, timeDirtyFrame());
+    }
+    const InkingField::Stats objectStats = field->GetStats();
+    field->SetObjects(static_cast<const InkingFieldObject*>(nullptr), 0);
+    const float withoutObjects = bestOf(12);
+    const float increment = withObjects - withoutObjects;
+    std::printf("         5000 个物体：%.3f ms（空场景 %.3f ms，增量 %.3f ms），批 %u\n",
+                static_cast<double>(withObjects), static_cast<double>(withoutObjects),
+                static_cast<double>(increment),
+                static_cast<unsigned>(objectStats.objectBatches));
+    Check(increment <= 2.0f, "T-02：5000 个物体的增量帧时间 ≤ 2.0 ms（含每帧重投影）");
+    Check(objectStats.objectBatches <= 4,
+          "T-02：5000 个物体 ≤ 4 批（不为每个物体提交一笔）");
+    Check(objectStats.objectsDrawn == 5000,
+          "T-02：5000 个物体全画出来了（这个构图没有亚像素的）");
+
+    // ---- 格子模式里两个参数都不生效（§7 field_follow_perspective_inert）----
+    InkingFieldProjection grid;
+    grid.mode = InkingFieldMode::Grid;
+    grid.camera = InkingFieldCamera{0.0f, 0.0f, 1.0f};
+    grid.designWidth = static_cast<float>(InkingDesignWidth());
+    grid.designHeight = static_cast<float>(InkingDesignHeight());
+    field->SetProjection(grid);
+    field->SetTiles(static_cast<const InkingFieldTile*>(nullptr), 0);
+
+    FieldEnemy probe;
+    probe.base.x = 100.0f;
+    probe.base.d = 100.0f;
+    probe.base.width = 128.0f;
+    probe.base.height = 128.0f;
+    probe.base.texture = handle;
+    probe.base.followPerspective = true;
+    field->SetSkyColor(0xFFFF0000u);
+
+    const auto framePixels = [&]() {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+        return ReadPixelRegion(renderer, SDL_Rect{0, 0, 640, 360});
+    };
+
+    field->SetObjects(&probe, 1);
+    const std::vector<std::uint32_t> following = framePixels();
+    probe.base.followPerspective = false;
+    field->SetObjects(&probe, 1);
+    const std::vector<std::uint32_t> notFollowing = framePixels();
+    // 先证明这一帧**真的画了东西**：没有这条，"什么都没画"两帧也逐像素相同，
+    // 断言会变成一句废话（活动场景忘了设的那次就是这样混过去的）。
+    std::size_t painted = 0;
+    for (std::uint32_t pixel : following) {
+        if ((pixel & 0x00FFFFFFu) != 0u) {
+            ++painted;
+        }
+    }
+    Check(painted > 1000, "§7 前置：这一帧确实画了地面和物体（不是空画面）");
+    Check(!following.empty() && following == notFollowing,
+          "§7：格子模式里 followPerspective 设了没反应（逐像素相同）");
+    NoteSilentFailure("field_follow_perspective_inert");
+
+    field->SetSkyColor(0xFF00FF00u);
+    const std::vector<std::uint32_t> skyGreen = framePixels();
+    field->SetSkyColor(0xFFFF0000u);
+    const std::vector<std::uint32_t> skyRed = framePixels();
+    Check(!skyGreen.empty() && skyGreen == skyRed,
+          "§7：格子模式没有天空 ⇒ SetSkyColor 设了没反应（逐像素相同）");
+
+    // ---- 1px 规则：远端剔掉、记账、且不可命中（§7 field_subpixel_culled）----
+    field->SetProjection(oblique);
+    FieldEnemy distant;
+    distant.base.x = 0.0f;
+    distant.base.d = 100000.0f;  // 那里 s ≈ 0.018 ⇒ 32px 只剩 0.57px
+    distant.base.width = 32.0f;
+    distant.base.height = 32.0f;
+    distant.base.texture = handle;
+    field->SetObjects(&distant, 1);
+    (void)framePixels();
+    stats = field->GetStats();
+    std::printf("         1px 剔除：%u 个\n", static_cast<unsigned>(stats.culledSubPixel));
+    Check(stats.culledSubPixel > 0, "§7：亚像素物体被剔除并记账（culledSubPixel > 0）");
+    const InkingDesignPos farFoot =
+        InkingFieldProject(oblique, InkingFieldPos{distant.base.x, distant.base.d, 0.0f});
+    const InkingFieldObject* culledHit = nullptr;
+    Check(!field->HitObject(farFoot.x, farFoot.y - 0.5f, &culledHit),
+          "§7：被 1px 规则剔除的物体不可命中（看不见的不该能点）");
+    NoteSilentFailure("field_subpixel_culled");
+
+    // ---- 天空 / 地面的分界：地平线以上是天空色、以下是地面色 ----
+    {
+        // 这一条要**看得见地平线**：前景那份 `depthScaleFar = 0.6` 的透视太弱，
+        // 地平线在屏幕上方 -839 处（整屏都是地面）。0.3 才把它拉到屏幕里。
+        InkingFieldProjection skyProjection = oblique;
+        skyProjection.depthScaleFar = 0.3f;
+
+        InkingScene skyScene("field_sky");
+        auto* skyField = static_cast<InkingField*>(
+            skyScene.AddChild(std::make_unique<InkingField>(&skyScene, "field")));
+        skyField->SetProjection(skyProjection);
+        skyField->SetSkyColor(0xFFFF0000u);    // 红
+        skyField->SetGroundColor(0xFF0000FFu); // 蓝
+        skyScene.TickFrame(1.0f / 60.0f);
+        InkingSceneLibrary::SetActiveScene(&skyScene);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+
+        // 窗口 640×360、设计 1280×720 ⇒ 倍率 0.5：取顶部与底部各一个点。
+        const std::vector<std::uint32_t> top = ReadPixelRegion(renderer, SDL_Rect{320, 4, 1, 1});
+        const std::vector<std::uint32_t> bottom =
+            ReadPixelRegion(renderer, SDL_Rect{320, 350, 1, 1});
+        const float horizon = InkingFieldHorizonY(skyProjection);
+        std::printf("         地平线在设计坐标 y = %.1f（屏幕 %.1f）\n",
+                    static_cast<double>(horizon), static_cast<double>(horizon * 0.5f));
+        Check(!top.empty() && horizon > 0.0f && horizon < 720.0f
+                  && (top[0] >> 16 & 0xFFu) > 0xC0u && (top[0] & 0xFFu) < 0x40u,
+              "T-02：地平线以上是天空色（红）");
+        Check(!bottom.empty() && (bottom[0] & 0xFFu) > 0xC0u && (bottom[0] >> 16 & 0xFFu) < 0x40u,
+              "T-02：地平线以下是地面色（蓝）");
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// 场地：地平线位置与天空贴图（1.5）
+//
+// 这一组的期望值不是照抄实现：`324` 与 `76.2 / 62.2 / 51.8`（以及 50% 天空时的
+// `73.3 / 55.8 / 43.9`）来自任务书 `TASK-SDK-SKY.md` §4 的**独立计算**。所以它是
+// 双重验收——既验"接口接对了"，也验"反解出来的几何是任务书要的那一份"。
+// ---------------------------------------------------------------------------
+void CheckFieldSky(SDL_Renderer* renderer) {
+    std::printf("\n-- 场地：地平线位置与天空贴图（1.5） --\n");
+
+    // 任务书 §4 的基准参数：H = 1080、skew = 28°、zoom = 1.5、depthScaleFar = 0.9。
+    InkingFieldProjection base;
+    base.mode = InkingFieldMode::Oblique;
+    base.grid = InkingFieldGrid{64.0f, 64.0f};
+    base.camera = InkingFieldCamera{0.0f, 0.0f, 1.5f};
+    base.skew = 28.0f;
+    base.depthScaleFar = 0.9f;
+    base.farD = 640.0f;
+    base.designWidth = 1920.0f;
+    base.designHeight = 1080.0f;
+    base.cols = 40;
+    base.rows = 20;
+
+    // ---- ① 覆盖生效：ratio = 0.30、H = 1080 ⇒ 地平线在 324 ----
+    InkingFieldProjection sky = base;
+    sky.horizonRatio = 0.30f;
+    const float horizon30 = InkingFieldHorizonY(sky);
+    std::printf("         ratio 0.30：地平线 %.2f、反解 farD %.2f\n",
+                static_cast<double>(horizon30),
+                static_cast<double>(InkingFieldEffectiveFarD(sky)));
+    Check(std::fabs(horizon30 - 324.0f) <= 0.5f,
+          "T-01：horizonRatio = 0.30、designHeight = 1080 ⇒ 地平线 324（±0.5）");
+
+    // ---- ② 反解的是 farD，不是把透视强度当变量 ----
+    InkingFieldProjection stronger = sky;
+    stronger.depthScaleFar = 0.5f;
+    const float horizon50 = InkingFieldHorizonY(stronger);
+    std::printf("         depthScaleFar 0.9 → 0.5：地平线 %.2f（farD %.2f → %.2f）\n",
+                static_cast<double>(horizon50),
+                static_cast<double>(InkingFieldEffectiveFarD(sky)),
+                static_cast<double>(InkingFieldEffectiveFarD(stronger)));
+    Check(std::fabs(horizon50 - horizon30) <= 0.5f,
+          "T-01：换 depthScaleFar（0.9 → 0.5）地平线不动（说明反解的是 farD）");
+    Check(InkingFieldEffectiveFarD(stronger) > InkingFieldEffectiveFarD(sky) * 1.5f,
+          "T-01：同一地平线下 depthScaleFar 越小，反解出的 farD 越远（变量真的换成了它）");
+
+    // ---- ③ 缺省 -1：与 1.4.0 逐位一致（回归门）----
+    {
+        InkingFieldProjection legacy = base;  // horizonRatio 缺省 = -1
+        Check(InkingFieldEffectiveFarD(legacy) == legacy.farD,
+              "T-01：ratio = -1 时 EffectiveFarD **逐位**等于作者 farD（不覆盖）");
+        // 1.4.0 的算式照抄一遍（独立表达式，不是调实现）：h = (1/dsf − 1)/farD
+        const float radians = base.skew * 3.14159265358979323846f / 180.0f;
+        const float h = (1.0f / base.depthScaleFar - 1.0f) / base.farD;
+        const float expected =
+            base.designHeight - std::cos(radians) * base.camera.zoom / h;
+        std::printf("         缺省地平线 %.4f（1.4.0 算式 %.4f）\n",
+                    static_cast<double>(InkingFieldHorizonY(legacy)),
+                    static_cast<double>(expected));
+        Check(std::fabs(InkingFieldHorizonY(legacy) - expected) <= 1e-3f,
+              "T-01：ratio = -1 的地平线与 1.4.0 算式一致（老配置零位移）");
+    }
+
+    // ---- ④ 逐格压缩：每格都变矮，且越远压得越狠 ----
+    //
+    // 这条防的是"实现成只裁地面带"：只裁的话第一格（ld ∈ [0, cd]）一个像素都不会变，
+    // 而正确实现的 `h` 变大 ⇒ **包括最近一格在内**每格都变矮。
+    {
+        const auto rowHeight = [](const InkingFieldProjection& projection, int j) {
+            const float nearY = InkingFieldProject(
+                projection, InkingFieldPos{0.0f, static_cast<float>(j) * 64.0f, 0.0f}).y;
+            const float farY = InkingFieldProject(
+                projection, InkingFieldPos{0.0f, static_cast<float>(j + 1) * 64.0f, 0.0f}).y;
+            return nearY - farY;
+        };
+        InkingFieldProjection half = base;
+        half.horizonRatio = 0.50f;
+        float row30[3] = {0.0f, 0.0f, 0.0f};
+        float row50[3] = {0.0f, 0.0f, 0.0f};
+        for (int j = 0; j < 3; ++j) {
+            row30[j] = rowHeight(sky, j);
+            row50[j] = rowHeight(half, j);
+        }
+        std::printf("         天空 30%%：%.2f / %.2f / %.2f px\n",
+                    static_cast<double>(row30[0]), static_cast<double>(row30[1]),
+                    static_cast<double>(row30[2]));
+        std::printf("         天空 50%%：%.2f / %.2f / %.2f px\n",
+                    static_cast<double>(row50[0]), static_cast<double>(row50[1]),
+                    static_cast<double>(row50[2]));
+        // 任务书 §2.1 给的期望值（独立算的，不是照抄实现）
+        Check(std::fabs(row30[0] - 76.2f) <= 0.3f && std::fabs(row30[1] - 62.2f) <= 0.3f
+                  && std::fabs(row30[2] - 51.8f) <= 0.3f,
+              "T-01：30% 天空时前三格 76.2 / 62.2 / 51.8 px（与任务书独立算的一致）");
+        Check(std::fabs(row50[0] - 73.3f) <= 0.3f && std::fabs(row50[1] - 55.8f) <= 0.3f
+                  && std::fabs(row50[2] - 43.9f) <= 0.3f,
+              "T-01：50% 天空时前三格 73.3 / 55.8 / 43.9 px");
+        Check(row50[0] < row30[0] - 0.5f,
+              "T-01：最近一格也变矮了（76.2 → 73.3；只裁地面带的实现这里不会变）");
+        Check((row30[2] - row50[2]) > (row30[0] - row50[0]) + 1.0f,
+              "T-01：越远压得越狠（第 3 格降 7.9 px，第 1 格只降 2.9 px）");
+    }
+
+    // ---- ⑤ 拒绝规则：一条都不静默夹取，且说得出是哪一条 ----
+    {
+        const auto rejected = [](const InkingFieldProjection& probe, const char* needle) {
+            const char* why = nullptr;
+            if (InkingFieldValidate(probe, &why) || why == nullptr) {
+                return false;
+            }
+            // `needle` 不是装饰：任务书要求"说明是哪一条"，三条原因必须各自可辨。
+            return needle == nullptr || std::strstr(why, needle) != nullptr;
+        };
+        InkingFieldProjection bad = base;
+        bad.horizonRatio = 1.0f;
+        Check(rejected(bad, "horizonRatio"),
+              "T-02：horizonRatio = 1.0 被拒（地平线到底边、一格地面都不剩）");
+        bad.horizonRatio = 1.2f;
+        Check(rejected(bad, "horizonRatio"), "T-02：horizonRatio = 1.2 被拒");
+        bad.horizonRatio = -0.5f;
+        Check(rejected(bad, "horizonRatio"),
+              "T-02：horizonRatio = -0.5 被拒（只有 -1 是\"不覆盖\"）");
+        bad = base;
+        bad.horizonRatio = 0.3f;
+        bad.depthScaleFar = 1.0f;
+        Check(rejected(bad, "depthScaleFar"),
+              "T-02：depthScaleFar = 1.0 时 horizonRatio 被拒（无透视就没有天空带）");
+        bad = base;
+        bad.skyFit = static_cast<InkingSkyFit>(7);
+        Check(rejected(bad, "skyFit"), "T-02：skyFit 越界取值被拒（枚举不是随便填的）");
+        Check(!rejected(base, nullptr), "T-02：基准参数本身通过校验（上面几条不是假红）");
+    }
+
+    // ---- ⑥ GetSkyBand：跟着设计尺寸走，且反解的 farD 如实反映在 Projection() ----
+    {
+        InkingScene bandScene("field_sky_band");
+        auto* bandField = static_cast<InkingField*>(
+            bandScene.AddChild(std::make_unique<InkingField>(&bandScene, "field")));
+        bandScene.SetField(bandField);
+        InkingFieldProjection live = base;
+        live.horizonRatio = 0.30f;
+        live.designWidth = static_cast<float>(InkingDesignWidth());
+        live.designHeight = static_cast<float>(InkingDesignHeight());
+        bandField->SetProjection(live);
+
+        const InkingShapeBounds band = bandField->GetSkyBand();
+        std::printf("         天空带 (%.1f, %.1f, %.1f × %.1f)，设计 %d×%d\n",
+                    static_cast<double>(band.x), static_cast<double>(band.y),
+                    static_cast<double>(band.width), static_cast<double>(band.height),
+                    InkingDesignWidth(), InkingDesignHeight());
+        Check(band.x == 0.0f && band.y == 0.0f
+                  && std::fabs(band.width - static_cast<float>(InkingDesignWidth())) < 0.5f,
+              "T-01：天空带横铺满整张画布（x = y = 0、宽 = designWidth）");
+        Check(std::fabs(band.height - 0.30f * static_cast<float>(InkingDesignHeight())) < 0.5f,
+              "T-01：天空带高 = ratio × **运行期** designHeight（比例不含像素）");
+        const float pinned = bandField->Projection().farD;
+        Check(std::fabs(pinned - InkingFieldEffectiveFarD(live)) < 1e-2f,
+              "T-01：Projection().farD 是反解后被定住的那个值（不藏，编辑器才显示得出来）");
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    if (renderer == nullptr) {
+        std::printf("         [skip] 没有渲染器：贴图像素那几条跳过\n");
+        return;
+    }
+    if (InkingAssetLoad("walk.png").empty()) {
+        std::printf("         [skip] 读不到 assets/walk.png\n");
+        return;
+    }
+    inking_detail::ReleaseTextCache();
+    inking_detail::SetTextureBudget(0);
+    const InkingTextureHandle handle = InkingLoadTexture("walk.png");
+    int texW = 0;
+    int texH = 0;
+    if (!handle.Valid() || !InkingTextureSize(handle, &texW, &texH) || texW <= 0 || texH <= 0) {
+        std::printf("         [skip] 纹理句柄载入失败\n");
+        return;
+    }
+
+    InkingScene skyScene("field_sky_texture");
+    auto* skyField = static_cast<InkingField*>(
+        skyScene.AddChild(std::make_unique<InkingField>(&skyScene, "field")));
+    skyScene.SetField(skyField);
+    InkingFieldProjection live = base;
+    live.horizonRatio = 0.30f;
+    live.designWidth = static_cast<float>(InkingDesignWidth());
+    live.designHeight = static_cast<float>(InkingDesignHeight());
+    skyField->SetProjection(live);
+    skyField->SetSkyColor(0xFFFF0000u);     // 红：有贴图时**不该出现**
+    skyField->SetGroundColor(0xFF0000FFu);  // 蓝
+    skyField->SetSkyTexture(handle);
+    skyScene.TickFrame(1.0f / 60.0f);
+    InkingSceneLibrary::SetActiveScene(&skyScene);
+
+    const auto frameSky = [&]() {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+        return ReadPixelRegion(renderer, SDL_Rect{0, 0, 640, 360});
+    };
+
+    // ---- ⑦ Cover：一个四边形铺满天空带、纯色一点不掺 ----
+    const std::vector<std::uint32_t> textured = frameSky();
+    const InkingField::Stats coverStats = skyField->GetStats();
+    const std::vector<std::uint32_t> groundPixel =
+        ReadPixelRegion(renderer, SDL_Rect{320, 350, 1, 1});
+    skyField->SetSkyColor(0xFF00FF00u);  // 绿
+    const std::vector<std::uint32_t> texturedGreen = frameSky();
+    std::printf("         Cover：天空四边形 %u 个\n",
+                static_cast<unsigned>(coverStats.skyQuads));
+    Check(coverStats.skyQuads == 1,
+          "T-03：Cover 只提交 1 个四边形（等比放大 + 裁剪，不是整张原图硬塞）");
+    Check(!textured.empty() && textured == texturedGreen,
+          "T-03：有贴图就不画纯色（换天空色逐像素不变——两者不混用）");
+    Check(!groundPixel.empty() && (groundPixel[0] & 0xFFu) > 0xC0u
+              && ((groundPixel[0] >> 16) & 0xFFu) < 0x40u,
+          "T-03：地面带不受影响（屏幕底部仍是地面色，贴图没盖下去）");
+
+    // 贴图**真的画了**：把贴图摘掉（退回纯色）必须与有贴图那一帧有大量差异。
+    // 没有这条，"两帧都没画东西"也能让上面那条相等断言平凡通过。
+    skyField->SetSkyTexture(InkingTextureHandle{});
+    const std::vector<std::uint32_t> solid = frameSky();
+    std::size_t diff = 0;
+    if (textured.size() == solid.size()) {
+        for (std::size_t i = 0; i < textured.size(); ++i) {
+            if (textured[i] != solid[i]) {
+                ++diff;
+            }
+        }
+    }
+    std::printf("         有贴图 / 纯色：%zu 个像素不同（共 %zu）\n", diff, textured.size());
+    Check(diff > 500, "T-03：贴图与纯色帧有大量像素差异（贴图真的提交了）");
+
+    // ---- ⑧ Tile：块数 = ⌈带宽/贴图宽⌉ × ⌈带高/贴图高⌉（含边缘半块）----
+    {
+        skyField->SetSkyTexture(handle);
+        InkingFieldProjection tiled = live;
+        tiled.skyFit = InkingSkyFit::Tile;
+        skyField->SetProjection(tiled);
+        (void)frameSky();
+        const InkingShapeBounds band = skyField->GetSkyBand();
+        const int cols = static_cast<int>(std::ceil(band.width / static_cast<float>(texW)));
+        const int rows = static_cast<int>(std::ceil(band.height / static_cast<float>(texH)));
+        const unsigned quads = skyField->GetStats().skyQuads;
+        std::printf("         Tile：%d×%d = %d 块（贴图 %d×%d、带 %.0f×%.0f），实测 %u\n",
+                    cols, rows, cols * rows, texW, texH, static_cast<double>(band.width),
+                    static_cast<double>(band.height), quads);
+        Check(quads == static_cast<unsigned>(cols * rows),
+              "T-03：Tile 按原始像素 1:1 平铺，块数对上（右/下边缘的半块也算，不是丢掉）");
+        skyField->SetProjection(live);
+    }
+
+    // ---- ⑨ 每帧换句柄不重新加载（句柄所有权在调用方）----
+    {
+        const InkingTextureStats before = InkingTextureStatsSnapshot();
+        for (int i = 0; i < 1000; ++i) {
+            skyField->SetSkyTexture(handle);
+        }
+        const InkingTextureStats after = InkingTextureStatsSnapshot();
+        Check(after.loads == before.loads && after.loads > 0,
+              "T-03：1000 次 SetSkyTexture 零次重新加载（库不加载、不缓存路径）");
+    }
+    InkingSceneLibrary::SetActiveScene(nullptr);
+
+    // ---- ⑩ Grid 模式：天空带高度 0 ⇒ 贴图不出现，**一条 WARN**（不静默）----
+    {
+        InkingScene gridScene("field_sky_grid");
+        auto* gridField = static_cast<InkingField*>(
+            gridScene.AddChild(std::make_unique<InkingField>(&gridScene, "field")));
+        gridScene.SetField(gridField);
+        InkingFieldProjection grid;
+        grid.mode = InkingFieldMode::Grid;
+        grid.grid = InkingFieldGrid{64.0f, 64.0f};
+        grid.designWidth = static_cast<float>(InkingDesignWidth());
+        grid.designHeight = static_cast<float>(InkingDesignHeight());
+        gridField->SetProjection(grid);
+        Check(gridField->GetSkyBand().height == 0.0f,
+              "T-03：Grid 模式天空带高度为 0（本来就没有天空）");
+
+        InkLog::ResetStats();
+        gridField->SetSkyTexture(handle);
+        // 设的时候**不喊**：默认投影也是 Grid，"先设贴图、后设投影"是正常写法，
+        // 那一步喊就是给还没配置完的对象报错。喊在渲染时——投影已定稿。
+        const int warnsAtSet = InkLog::CountOf(InkingLogLevel::Warn);
+        gridScene.TickFrame(1.0f / 60.0f);
+        InkingSceneLibrary::SetActiveScene(&gridScene);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+        const int warnsAfterFrames = InkLog::CountOf(InkingLogLevel::Warn);
+        std::printf("         Grid：设的时候 %d 条 WARN，渲染两帧后 %d 条，天空四边形 %u 个\n",
+                    warnsAtSet, warnsAfterFrames,
+                    static_cast<unsigned>(gridField->GetStats().skyQuads));
+        Check(warnsAtSet == 0,
+              "§7：Grid 模式下「先设贴图、后设投影」不误报（设的时候 0 条）");
+        Check(warnsAfterFrames == 1, "§7：渲染时喊 1 条，且两帧只喊一次（每帧重复等于没喊）");
+        Check(gridField->GetStats().skyQuads == 0,
+              "§7：Grid 模式贴图一个四边形都不提交（不是画到屏幕外）");
+        NoteSilentFailure("field_sky_texture_inert");
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+}
+
+void CheckFieldHit(SDL_Renderer* renderer) {
+    std::printf("\n-- 场地：命中与回调（1.2-b T-03） --\n");
+    if (renderer == nullptr) {
+        std::printf("         [skip] 没有渲染器\n");
+        return;
+    }
+    if (InkingAssetLoad("walk.png").empty()) {
+        std::printf("         [skip] 读不到 assets/walk.png\n");
+        return;
+    }
+    inking_detail::ReleaseTextCache();
+    inking_detail::SetTextureBudget(0);
+    const InkingTextureHandle handle = InkingLoadTexture("walk.png");
+    if (!handle.Valid()) {
+        std::printf("         [skip] 纹理句柄载入失败\n");
+        return;
+    }
+
+    InkingScene scene("field_hit");
+    auto* field = static_cast<FieldProbe*>(
+        scene.AddChild(std::make_unique<FieldProbe>(&scene, "field")));
+    Check(scene.SetField(field), "SetField 接受场地（命中用例场景）");
+
+    InkingFieldProjection grid;
+    grid.mode = InkingFieldMode::Grid;
+    grid.grid = InkingFieldGrid{64.0f, 64.0f};
+    grid.camera = InkingFieldCamera{0.0f, 0.0f, 1.0f};
+    grid.designWidth = static_cast<float>(InkingDesignWidth());
+    grid.designHeight = static_cast<float>(InkingDesignHeight());
+    field->SetProjection(grid);
+
+    // 100 个物体，互不重叠：横 120、纵 60，而物体只有 48×48。
+    std::vector<FieldEnemy> enemies(100);
+    for (std::size_t k = 0; k < enemies.size(); ++k) {
+        InkingFieldObject& object = enemies[k].base;
+        object.x = static_cast<float>(static_cast<int>(k % 10) * 120 + 10);
+        object.d = static_cast<float>(static_cast<int>(k / 10) * 60 + 10);
+        object.width = 48.0f;
+        object.depth = 24.0f;
+        object.height = 48.0f;
+        object.texture = handle;
+        enemies[k].hp = 1000 + static_cast<int>(k);
+    }
+    field->SetObjects(enemies.data(), enemies.size());
+
+    scene.TickFrame(1.0f / 60.0f);
+    InkingSceneLibrary::SetActiveScene(&scene);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
+    InkingSceneLibrary::RenderScene(renderer);
+
+    // ---- 100 个采样点：点中包围矩形里的一点，必须回到**同一个**物体 ----
+    int matched = 0;
+    int identityOk = 0;
+    for (std::size_t k = 0; k < enemies.size(); ++k) {
+        const InkingFieldObject& object = enemies[k].base;
+        // 格子模式：`sx = cx + x`、`sy = H − d − height`（脚底在 `H − d`）。
+        const float centerX = 640.0f + object.x + object.width * 0.5f;
+        const float centerY = 720.0f - object.d - object.height * 0.5f;
+        const InkingFieldObject* hit = nullptr;
+        if (!field->HitObject(centerX, centerY, &hit) || hit == nullptr) {
+            continue;
+        }
+        if (hit == &enemies[k].base) {
+            ++matched;
+        }
+        // 指针指回调用方内存 ⇒ 能拿回业务字段（首成员约定）。
+        const FieldEnemy* back = reinterpret_cast<const FieldEnemy*>(hit);
+        if (back == &enemies[k] && back->hp == 1000 + static_cast<int>(k)) {
+            ++identityOk;
+        }
+    }
+    std::printf("         命中 %d / 100，指针还原 %d / 100\n", matched, identityOk);
+    Check(matched == 100, "T-03：100 个采样点全部命中到该物体（命中与绘制同源）");
+    Check(identityOk == 100,
+          "T-03：回调指针能 reinterpret_cast 回业务实体（hp 对得上，不是副本）");
+
+    // ---- 点击回调：拿到调用方内存 + 脚下那一格 ----
+    {
+        const InkingFieldObject& first = enemies[0].base;
+        const float centerX = 640.0f + first.x + first.width * 0.5f;
+        const float centerY = 720.0f - first.d - first.height * 0.5f;
+        const bool clicked = field->ClickAt(centerX, centerY);
+        Check(clicked && field->clicks == 1,
+              "T-03：ClickAt 命中物体并回调一次");
+        Check(field->lastObject == &enemies[0].base,
+              "T-03：回调参数指向**调用方那份内存**（指针相等）");
+        Check(field->lastCell.i == 0 && field->lastCell.j == 0,
+              "T-03：回调给出脚下那一格（第 0 列第 0 行）");
+    }
+
+    // ---- 地面命中：闭式反解 ----
+    {
+        InkingFieldCell cell;
+        Check(field->HitCell(640.0f, 719.0f, &cell), "T-03：屏幕下沿反解到地面");
+        Check(cell.i == 0 && cell.j == 0, "T-03：下沿中点 = 第 0 格（闭式反解，不是逼近）");
+        Check(!field->HitCell(640.0f, 730.0f, &cell),
+              "T-03：屏幕外（y > 设计高度）没有地面点");
+    }
+
+    // ---- ① 重叠时取最上面：主键 `d` 真的生效 ----
+    //
+    // 现有那条 100/100 的用例刻意不重叠，所以"逆序扫写反了 / 排序方向反了"
+    // 它一条都测不出来。这里让两个物体在纵向上叠 44 px。
+    {
+        InkingScene overlapScene("field_overlap");
+        auto* overlapField = static_cast<InkingField*>(
+            overlapScene.AddChild(std::make_unique<InkingField>(&overlapScene, "field")));
+        InkingFieldProjection flat;  // 默认 = Grid / 64×64 / camera{0,0,1}
+        flat.designWidth = static_cast<float>(InkingDesignWidth());
+        flat.designHeight = static_cast<float>(InkingDesignHeight());
+        overlapField->SetProjection(flat);
+
+        FieldEnemy pair[2];
+        pair[0].base.x = 100.0f;   // A 远：屏幕 y 536..600
+        pair[0].base.d = 120.0f;
+        pair[0].base.width = 64.0f;
+        pair[0].base.height = 64.0f;
+        pair[0].base.texture = handle;
+        pair[0].hp = -1;
+        pair[1].base.x = 100.0f;   // B 近：屏幕 y 556..620
+        pair[1].base.d = 100.0f;
+        pair[1].base.width = 64.0f;
+        pair[1].base.height = 64.0f;
+        pair[1].base.texture = handle;
+        pair[1].hp = -2;
+        overlapField->SetObjects(pair, 2);
+
+        const InkingFieldObject* hit = nullptr;
+        const bool got = overlapField->HitObject(772.0f, 578.0f, &hit);
+        Check(got && hit == &pair[1].base,
+              "① 重叠带内取**近的**（d 小的在上：排序方向 + 逆序扫都对才过）");
+        // 反向确认：重叠带之外只剩 A，说明"取近的"不是"总是取最后一个"。
+        const bool onlyFar = overlapField->HitObject(772.0f, 540.0f, &hit)
+                          && hit == &pair[0].base;
+        Check(onlyFar, "① 不重叠处仍取到远处那个（没有把整个列表反过来）");
+    }
+
+    // ---- ② rotation 参与命中（逆旋转的符号）----
+    {
+        InkingScene spinScene("field_rotation");
+        auto* spinField = static_cast<InkingField*>(
+            spinScene.AddChild(std::make_unique<InkingField>(&spinScene, "field")));
+        InkingFieldProjection flat;
+        flat.designWidth = static_cast<float>(InkingDesignWidth());
+        flat.designHeight = static_cast<float>(InkingDesignHeight());
+        spinField->SetProjection(flat);
+
+        FieldEnemy spinner;
+        spinner.base.x = 100.0f;
+        spinner.base.d = 100.0f;
+        spinner.base.width = 64.0f;
+        spinner.base.height = 32.0f;
+        spinner.base.texture = handle;
+        spinner.base.rotation = 90.0f;  // 未转矩形 740..804 × 588..620，中心 (772,604)
+        spinField->SetObjects(&spinner, 1);
+
+        const InkingFieldObject* hit = nullptr;
+        Check(spinField->HitObject(772.0f, 580.0f, &hit) && hit == &spinner.base,
+              "② 旋转后的区域**外**（原矩形内）能命中：rotation 真的用上了");
+        Check(!spinField->HitObject(750.0f, 604.0f, &hit),
+              "② 原矩形**内**、旋转后区域外不能命中：不是「完全没转」");
+
+        // 90° 是个坏角度：±90 对 64×32 的矩形给出**同一个**包围盒，符号反了也看不
+        // 出来。30° 才能分开——这个点对 +30 在框内、对 −30 在框外。
+        spinner.base.rotation = 30.0f;
+        // **改完字段必须重新 SetObjects**：库拿的是只读视图，不会替你发现
+        // 数组内容变了（那份数据每帧都可能变，逐帧比对哈希不值当）。
+        // 第一版这条忘了重设，于是测的还是 90° 那份缓存——当场红。
+        spinField->SetObjects(&spinner, 1);
+        Check(spinField->HitObject(800.0f, 615.0f, &hit),
+              "② +30°：点 (800,615) 在框内");
+        spinner.base.rotation = -30.0f;
+        spinField->SetObjects(&spinner, 1);
+        Check(!spinField->HitObject(800.0f, 615.0f, &hit),
+              "② −30°：同一点在框外（逆旋转的**符号**真的对）");
+    }
+
+    // ---- ③ followPerspective = false 在倾斜模式真的生效 ----
+    //
+    // skew = 0 + depthScaleFar = 0.5 + farD = 640 ⇒ d = 640 处 s = 0.5、脚底 sy = 400。
+    // 跟透视的物体高 64 → 32 px；不跟的仍是 64 px。两者都不与对方重叠，
+    // 所以排序落到末键也不影响结论（用户提醒的那条：别让断言依赖数组顺序）。
+    {
+        InkingScene depthScene("field_depth");
+        auto* depthField = static_cast<InkingField*>(
+            depthScene.AddChild(std::make_unique<InkingField>(&depthScene, "field")));
+        InkingFieldProjection perspective;
+        perspective.mode = InkingFieldMode::Oblique;
+        perspective.skew = 0.0f;
+        perspective.depthScaleFar = 0.5f;
+        perspective.farD = 640.0f;
+        perspective.camera = InkingFieldCamera{0.0f, 0.0f, 1.0f};
+        perspective.designWidth = static_cast<float>(InkingDesignWidth());
+        perspective.designHeight = static_cast<float>(InkingDesignHeight());
+        perspective.cols = 40;
+        perspective.rows = 30;
+        const char* why = nullptr;
+        Check(InkingFieldValidate(perspective, &why), "③ 这组参数本身合法");
+        depthField->SetProjection(perspective);
+
+        FieldEnemy depthPair[2];
+        depthPair[0].base.x = 0.0f;      // A：跟透视 → 32×32，屏幕 640..672 × 368..400
+        depthPair[0].base.d = 640.0f;
+        depthPair[0].base.height = 64.0f;
+        depthPair[0].base.width = 64.0f;
+        depthPair[0].base.followPerspective = true;
+        depthPair[0].base.texture = handle;
+        depthPair[0].hp = 1;
+        depthPair[1].base.x = 200.0f;    // B：不跟 → 64×64，屏幕 840..904 × 336..400
+        depthPair[1].base.d = 640.0f;
+        depthPair[1].base.height = 64.0f;
+        depthPair[1].base.width = 64.0f;
+        depthPair[1].base.followPerspective = false;
+        depthPair[1].base.texture = handle;
+        depthPair[1].hp = 2;
+        depthField->SetObjects(depthPair, 2);
+
+        const InkingFieldObject* hit = nullptr;
+        Check(depthField->HitObject(650.0f, 380.0f, &hit) && hit == &depthPair[0].base,
+              "③ 跟透视的那个：s = 0.5 的矩形（y 368..400）能命中");
+        // B 的**屏幕矩形是 x 740..804**（不是 840..904）：`sx` 里的 `(x − camera.x)`
+        // 同样要乘 `zoom·s`，所以 x = 200 在 d = 640 处只走一半（200 × 0.5）。
+        // 这是透视该有的样子——纵深越大，所有位置都朝画布中心收。
+        Check(depthField->HitObject(750.0f, 350.0f, &hit) && hit == &depthPair[1].base,
+              "③ 不跟透视的那个：高度仍是 64（y 336..400）能命中");
+        Check(!depthField->HitObject(850.0f, 350.0f, &hit),
+              "③ 而且位置照样随纵深压缩（x 740 不是 840）：不跟透视只免掉**尺寸**");
+        // 反向确认"分支真的分开了"：A 的顶边在 368。若它偷偷按 s = 1 算，
+        // 矩形会变成 336..400，(650,350) 就会被命中。
+        Check(!depthField->HitObject(650.0f, 350.0f, &hit),
+              "③ A 的高度就是 32（没有偷偷用 s = 1 的 64 高）");
+    }
+
+    // ---- UI 优先：场地铺满全屏，按钮照样点得到 ----
+    {
+        InkingScene uiScene("field_ui");
+        auto* uiField = static_cast<InkingField*>(
+            uiScene.AddChild(std::make_unique<InkingField>(&uiScene, "field")));
+        uiField->SetProjection(grid);
+        Check(uiScene.SetField(uiField), "SetField 接受铺满全屏的场地");
+
+        InkingButtonData data;
+        data.name = "field_ui_button";
+        data.width = 200;
+        data.height = 60;
+        data.normal = InkingButtonAppearance(InkingAppearanceType::Color, 0xFF3F7FD6u);
+        data.selfAnchor = InkingChangeAnchor::Center;
+        data.label = "ui";
+        data.text.fontSize = 20.0f;
+        data.Normalize();
+        auto* button = static_cast<InkingStaticButton*>(
+            uiScene.AddChild(std::make_unique<InkingStaticButton>(&uiScene, data)));
+
+        uiScene.TickFrame(1.0f / 60.0f);
+        const InkingHitResult hit = uiScene.QueryHit(button->GetAbsX() + 10.0f,
+                                                    button->GetAbsY() + 10.0f);
+        Check(hit.IsHit() && hit.target == button,
+              "T-03：UI 优先 —— 场地铺满全屏时按钮仍可点（场地不进命中表）");
+
+        // ⑤ 层序：场地被 `SetField` 压到 `INT_MIN`，所以它必须是**绘制列表第一项**。
+        //
+        // 背景板与它不冲突：`SetBackdrop` 是**窗口层的绘制 pass**（`drawFrame` 里
+        // `paintBackdrop` → `RenderScene` 的顺序），根本不是场景里的兄弟节点，
+        // 所以"场地被背景板盖住"这件事不可能发生。这条断言钉的是场景内那一半。
+        const std::vector<InkingScene::DrawItem>& drawList = uiScene.BuildDrawList();
+        const bool fieldFirst =
+            !drawList.empty() && drawList.front().node == uiField;
+        Check(fieldFirst, "⑤ 场地是绘制列表的**第一项**（层序由 SetField 保证，不靠文档）");
+        Check(drawList.size() >= 2 && drawList.back().node == button,
+              "⑤ 按钮排在场地之后（UI 在场地之上）");
+    }
+
+    // ---- 场地挂到带平移的父节点：SetField 拒 + 整块不提交（§7）----
+    {
+        InkingScene parentScene("field_parent");
+        auto* shifted = static_cast<OffsetContainer*>(
+            parentScene.AddChild(std::make_unique<OffsetContainer>(&parentScene, "shifted")));
+        auto* nested = static_cast<InkingField*>(
+            shifted->AddChild(std::make_unique<InkingField>(shifted, "nested_field")));
+        nested->SetProjection(grid);
+        nested->SetObjects(enemies.data(), enemies.size());
+
+        Check(!parentScene.SetField(nested),
+              "§7：场地挂在带平移的父节点下 ⇒ SetField 拒绝（WARN + 不生效）");
+        Check(parentScene.GetField() == nullptr, "§7：被拒时槽位不占（不生效）");
+        NoteSilentFailure("field_parent_transform_drifts");
+
+        parentScene.TickFrame(1.0f / 60.0f);
+        InkingSceneLibrary::SetActiveScene(&parentScene);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        InkingSceneLibrary::RenderScene(renderer);
+        const InkingField::Stats blocked = nested->GetStats();
+        Check(blocked.transformBlocked == 1,
+              "§7：绕过 SetField 直接渲染，场地自己发现祖先带变换 ⇒ 整块不画");
+        InkingSceneLibrary::SetActiveScene(nullptr);
+    }
+
+    InkingSceneLibrary::SetActiveScene(nullptr);
+}
+
+// ---------------------------------------------------------------------------
 // T-07（dev010）：图层与树节点混排的顺序 / 批次边界
 // ---------------------------------------------------------------------------
 //
@@ -11007,6 +12428,28 @@ void CheckTooltip() {
     }
     Check(!tip.IsShowing(), "T-05：② `Hide()` 之后跑 10 帧也不弹（计时真的清零了）");
 
+    // ---- A12（1.3.0 T-06）：长文本在 `maxWidth` 里换行，面板变高而不是变宽 ----
+    //
+    // 这是"悬停看全"能成立的前提：不换行的话，提示本身照样溢出，等于没做。
+    std::string longText;
+    for (int i = 0; i < 60; ++i) {
+        longText += "路径";  // 120 个汉字：无论有没有字体都远宽于 320
+    }
+    inking_prefab::TooltipData wrapData = inking_prefab::TooltipData::MakeDefault();
+    wrapData.delay = 0.0f;
+    wrapData.maxWidth = 320.0f;
+    inking_prefab::Tooltip wrapTip(&scene, wrapData);
+    const int singleLineHeight =
+        static_cast<int>(wrapData.fontSize * wrapData.lineSpacing)
+        + static_cast<int>(wrapData.paddingY * 2.0f);
+    Check(wrapTip.ShowFor(anchor, longText), "A12：长文本也接上了锚点");
+    std::printf("         120 汉字 / maxWidth 320 ⇒ 面板 %d×%d（单行高约 %d）\n",
+                wrapTip.GetWidth(), wrapTip.GetHeight(), singleLineHeight);
+    Check(wrapTip.GetWidth() <= 320 + static_cast<int>(wrapData.paddingX * 2.0f) + 1
+              && wrapTip.GetHeight() > singleLineHeight,
+          "A12：宽度不超 `maxWidth` + 内边距，高度大于单行（真的换行了）");
+    wrapTip.Hide();
+
     InkingSceneLibrary::SetActiveScene(nullptr);
 }
 
@@ -11652,6 +13095,9 @@ int main() {
     // ---- 文字按框高裁行：`Clip` 的默认语义真的生效（0.8.3 T-01） ----
     CheckTextClipByHeight();
 
+    // ---- 按钮文字的横向溢出：截断 / 省略号 / 悬停看全（1.3.0 T-01 ~ T-05） ----
+    CheckButtonTextOverflow();
+
     // ---- 字形图集满：不再逐帧重烘 + 首次发声（0.8.3 T-02 / T-03） ----
     CheckGlyphAtlasFullNoRetry(rnd);
 
@@ -11821,6 +13267,12 @@ int main() {
 
     // ---- 批量四边形图层：一次提交 / 顺序 / 失效句柄（dev010 T-02）----
     CheckGeometryLayer(rnd);
+
+    // ---- 场地层（1.2）：投影纯函数 / 地形与物体提交 / 命中与回调 ----
+    CheckFieldProjection();
+    CheckFieldSubmit(rnd);
+    CheckFieldSky(rnd);
+    CheckFieldHit(rnd);
 
     // ---- 混排：图片 / 图层 / 文字三种提交叠在一起（dev010 T-07）----
     CheckMixedOrder(rnd);

@@ -131,7 +131,9 @@ const InkingTextLayoutResult& InkingLabelLike::LayoutForWidth(float available,
     InkingTextLayoutRequest request;
     request.text = resolved;
     request.style = _data.style;
-    request.maxWidth = available > 0.0f ? available : 0.0f;
+    // 横向上限：自己管滚动的组件关掉它（见 `SetHorizontalClip`）——那时行区间
+    // 必须覆盖整串，否则光标偏移映射与"点到的字"会错位。
+    request.maxWidth = (_horizontalClip && available > 0.0f) ? available : 0.0f;
     // 框高就是上限（T-01，0.8.3）：`Clip` 是默认值却一直没人实现，于是 300×40
     // 的标签会把 7 行全画到框外。传 0 = 不限高（`MeasureLayout` 那条撑高的路
     // 必须传 0，否则"框多大"永远等于"一行高"）。

@@ -2777,6 +2777,32 @@ private:
                           "text.alignV 只认 top / middle / bottom，给的是 \""
                               + child.text + "\"");
                 }
+            } else if (key == "overflow") {
+                // 横向溢出策略（1.3.0 T-01）：默认 clip（不画超出部分）。
+                if (!child.IsString()) {
+                    Error(child,
+                          "text.overflow 必须是字符串：clip / ellipsis");
+                } else if (child.text == "clip") {
+                    _config.data.text.overflow = InkingTextOverflow::Clip;
+                } else if (child.text == "ellipsis") {
+                    _config.data.text.overflow = InkingTextOverflow::Ellipsis;
+                } else {
+                    Error(child, "text.overflow 只认 clip / ellipsis，给的是 \""
+                                     + child.text + "\"");
+                }
+            } else if (key == "rightSpace") {
+                // 右侧内缩：0 = 跟随 leftSpace（左右对称，既有配置行为不变）。
+                _config.data.text.rightSpace
+                    = static_cast<float>(ReadNumber(child, "text.rightSpace"));
+            } else if (key == "tooltipWhenTruncated") {
+                // 被截断时悬停弹提示显示全文（默认关）。
+                if (!child.IsBool()) {
+                    Error(child, std::string("text.tooltipWhenTruncated 必须是 "
+                                             "true / false（不要加引号），这里是")
+                                     + child.KindName());
+                } else {
+                    _config.data.text.tooltipWhenTruncated = child.boolean;
+                }
             }
         }
     }

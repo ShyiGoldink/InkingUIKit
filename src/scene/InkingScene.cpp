@@ -7,6 +7,7 @@
 // `inking_detail::AncestorClipInDevice`（裁剪链换算）与动态档那个 `Tick` 入口：
 // 前者是跨类几何工具，后者只有"几何会自己变"的那一档才有。
 #include <detail/InkingGeometry.h>
+#include <field/InkingField.h>
 #include <widget/InkingDynamicWidget.h>
 
 // 异步预加载的底座：任务队列 + 它的任务模型。
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <any>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 
@@ -83,6 +85,12 @@ InkingScene::~InkingScene() {
     // 场景是渲染树的根，子树里的每个节点都记着"我属于这个场景"（_scene）。
     // 场景先走（比如两个场景互相独立、析构顺序不由场景决定）时，那些指针
     // 就成了野指针，而节点析构时还会拿着它去反注册——先摘干净再拆自己。
+    //
+    // **拖拽会话必须排在它之前**（1.4）：`_drag` 是本类的成员，比基类先析构，
+    // 而幽灵是本类的**子节点**——现在摘掉它，走的是"场景还活着"的正常路径
+    // （`RemoveChild` → `RemoveDrawNode`）；留到基类去拆就会在拖拽对象已经
+    // 没了之后回头碰它。
+    _drag.shutdown(*this);
     DetachSceneFromNodes();
 }
 
@@ -670,6 +678,50 @@ bool InkingScene::IsPointerDirty() const noexcept {
     return _pointerDirty;
 }
 
+// ---------------------------------------------------------------------------
+// 场地槽位（1.2）
+// ---------------------------------------------------------------------------
+
+bool InkingScene::SetField(InkingField* field) {
+    if (field == _field) {
+        return field != nullptr;  // 幂等：重复声明同一个场地不算失败
+    }
+    if (field == nullptr) {
+        _field = nullptr;
+        return true;
+    }
+
+    // 要求 ①：**直接挂在场景下**。场地提交的是绝对设计坐标，挂到任何容器下
+    // 都会被容器的仿射再叠一次——整块错位，而且不报错。
+    if (field->GetParent() != this) {
+        INK_LOG_WARN(kModuleName,
+                     "SetField 被拒：场地必须是场景的**直接子节点**"
+                     "（提交坐标是绝对设计坐标，祖先的平移/缩放会再叠一次）");
+        return false;
+    }
+
+    // 要求 ②：父链上没有任何变换。父节点是场景时这条恒成立，但仍然按同一条
+    // 判据走——判据只有一份，别处（例如场景被塞进某个容器）改了也不会漏。
+    for (InkingWidget* node = field->GetParent(); node != nullptr;
+         node = node->GetParent()) {
+        if (!node->GetSubtreeTransform().IsIdentity()) {
+            INK_LOG_WARN(kModuleName,
+                         "SetField 被拒：场地的祖先链上有变换，整块会错位"
+                         "（见 AGENTS.md §7 field_parent_transform_drifts）");
+            return false;
+        }
+    }
+
+    // 层序**由构造保证**：压到兄弟里最低的 z。不靠"记得先 AddChild 它"。
+    field->ChangeZIndex(std::numeric_limits<int>::min());
+    _field = field;
+    return true;
+}
+
+InkingField* InkingScene::GetField() const noexcept {
+    return _field;
+}
+
 void InkingScene::AddDrawNode(InkingWidget* node) noexcept {
     if (node == nullptr) {
         return;
@@ -720,6 +772,10 @@ void InkingScene::RemoveDrawNode(InkingWidget* node) noexcept {
     if (_keyboardFocus == node) {
         _keyboardFocus = nullptr;
     }
+    // 场地槽位（1.2）：与上面四个同一批纪律——节点正在析构，槽里不能留它的地址。
+    if (_field == node) {
+        _field = nullptr;
+    }
     // 第五个槽：这一帧的滚轮归属（0.9.1 T-01）。它和上面那几个不同——只活一帧，
     // 但"这一帧"里对象完全可能析构（回调里删节点），所以同样必须清。
     // 漏了这一格就是野指针：动态档在 `onAnimationTick` 里调
@@ -727,6 +783,10 @@ void InkingScene::RemoveDrawNode(InkingWidget* node) noexcept {
     if (_wheelTarget == node) {
         _wheelTarget = nullptr;
     }
+    // 第六个槽：拖拽会话（1.4）。源被移除 = 整场拖拽作废（任务书 A6），落点被
+    // 移除只清高亮。**必须排在下面 `remove_if` 之前**：收尾会摘幽灵，那又是一次
+    // `RemoveDrawNode`，正握着迭代器去做就是自找的悬垂。
+    _drag.onNodeRemoved(*this, node);
 
     // 只比指针、不解引用：调用方（节点析构）可能已经在销毁中途了。
     const auto it = std::remove_if(_drawList.begin(), _drawList.end(),
@@ -1030,6 +1090,62 @@ InkingWidget* InkingScene::GetHoveredNode() const noexcept {
     return _hoveredNode;
 }
 
+// ---------------------------------------------------------------------------
+// 控件拖拽（1.4）：门面 + 两条"由场景负责"的收尾
+// ---------------------------------------------------------------------------
+//
+// 手势本身（阈值 / 落点 / 幽灵）在 `drag/InkingDragSession.cpp`。留在这里的
+// 只有三件**只有场景能做**的事：把按下 / 松手 / 每帧喂给会话、Esc 的归属、
+// 以及"取消时顺手放掉主键捕获"（捕获槽在本类）。
+
+bool InkingScene::IsDragging() const noexcept {
+    return _drag.IsDragging();
+}
+
+InkingWidget* InkingScene::GetDragSourceNode() const noexcept {
+    return _drag.GetSource();
+}
+
+InkingWidget* InkingScene::GetDragTargetNode() const noexcept {
+    return _drag.GetTarget();
+}
+
+InkingWidget* InkingScene::GetDragGhostNode() const noexcept {
+    return _drag.GetGhost();
+}
+
+const InkingDragSession& InkingScene::GetDragSession() const noexcept {
+    return _drag;
+}
+
+bool InkingScene::BeginDrag(InkingWidget* source) {
+    // 停放 / 关闭的场景不接受任何交互（与 `DispatchPointer` 同一条护栏）：
+    // 它们连渲染都不参与，起一场拖拽只会留下一个画不出来的幽灵。
+    if (_rejected || _closed) {
+        return false;
+    }
+    return _drag.begin(*this, source);
+}
+
+bool InkingScene::CancelDrag() {
+    if (!_drag.HasSession()) {
+        return false;
+    }
+    // **先收尾、再放捕获**：`cancel()` 会去清落点高亮、摘幽灵，那些指针必须在
+    // 它们还可能被 `press(false)` 的回调删掉**之前**用完。
+    const bool cancelled = _drag.cancel(*this);
+
+    std::size_t index = InkingToIndex(InkingPointerButton::Primary);
+    if (InkingWidget* pressed = _pressedNode[index]) {
+        _pressedNode[index] = nullptr;
+        // 动态档收不到 `PushPointerPress`（它自己拉状态），这条路对它是空操作。
+        if (!pressed->IsDynamic()) {
+            pressed->PushPointerPress(InkingPointerButton::Primary, false);
+        }
+    }
+    return cancelled;
+}
+
 void InkingScene::DispatchFilesDropped(const std::vector<std::string>& paths) {
     if (paths.empty()) {
         return;  // 空列表不派发：那会让订阅者收到一条"什么都没有"的事件
@@ -1109,6 +1225,27 @@ void InkingScene::DispatchKeyboard() {
         _keyboardTyping = typing;
     }
 
+    // ---- 拖拽会话是**模态**的：Esc 先归它（1.4）----
+    //
+    // 排在"焦点节点"之前，是因为拖拽不属于任何控件——它是一次跨组件的交互，
+    // 而 Esc 在拖拽期间的唯一含义就是"我不要了"（任务书 §3 规则 4 的第一条路）。
+    // 交给焦点节点去解释，就会出现"按 Esc 取消拖拽，顺手也把输入框的编辑清了"。
+    //
+    // 只吃掉**那一条** Esc（`skipIndex`），本帧其它按键照常派发；没有拖拽时
+    // 一条都不动——Esc 是别人的。
+    std::size_t skipIndex = _keyboardEvents.size();
+    if (_drag.HasSession()) {
+        for (std::size_t i = 0; i < _keyboardEvents.size(); ++i) {
+            const InkingKeyInputEvent& event = _keyboardEvents[i];
+            if (event.kind == InkingKeyInputEvent::Kind::Down
+                && event.key.key == SDLK_ESCAPE && !event.key.repeat) {
+                CancelDrag();
+                skipIndex = i;
+                break;
+            }
+        }
+    }
+
     if (_keyboardFocus == nullptr) {
         return;
     }
@@ -1117,7 +1254,15 @@ void InkingScene::DispatchKeyboard() {
     // 控件"）——那没关系：本帧剩下的按键仍按原定焦点派发，下一帧的 `topmost`
     // 与焦点会在 `DispatchPointer` 之后重新算。这种情况很罕见（一帧里多个按键
     // 事件），不值得为它把事件缓存起来重放。
-    for (const InkingKeyInputEvent& event : _keyboardEvents) {
+    //
+    // 每轮重查 `_keyboardFocus` 并挡一下 nullptr：回调（含上面 `CancelDrag()`
+    // 放捕获时的那次 `press(false)`）里可能把焦点节点删掉，而 `RemoveDrawNode`
+    // 会把焦点清成 nullptr——照着旧指针推下一条就是野指针。
+    for (std::size_t i = 0; i < _keyboardEvents.size(); ++i) {
+        if (i == skipIndex || _keyboardFocus == nullptr) {
+            continue;
+        }
+        const InkingKeyInputEvent& event = _keyboardEvents[i];
         switch (event.kind) {
             case InkingKeyInputEvent::Kind::Down:
                 _keyboardFocus->PushKeyDown(event.key);
@@ -1620,6 +1765,11 @@ void InkingScene::DispatchPointer() {
                 _lastDragX = _pointerX;
                 _lastDragY = _pointerY;
 
+                // 拖拽会话的候选（1.4）：按下那一刻记一笔，还没起拖。
+                // 只有主键能起拖——拖拽是"按住搬东西"的手势，右键没有这个语义
+                // （右键的语义是"另开一桌"，见 `InkingPointerButton.h`）。
+                _drag.notePress(*this, topmost, _pointerX, _pointerY);
+
                 // 键盘焦点规则 1 / 2：**点击获得、点别处就换**（见
                 // `SetKeyboardFocus`）。只有"想要焦点"的节点拿得到；不想要
                 // （或点了空白）就是清空——于是"点空白 = 失焦"是同一条规则的
@@ -1642,6 +1792,16 @@ void InkingScene::DispatchPointer() {
 
         if (justReleased || captureAborted) {
             InkingWidget* pressed = dispatchTarget(slot);
+            // 拖拽会话的终点（1.4）：松手（落靶 / 落空）或者指针离开窗口。
+            //
+            // **必须排在"算不算一次点击"之前**：会话一旦成立，这次松手就属于
+            // 拖拽，不再派发 click（规则 2：拖拽期间源收不到 click）。它内部
+            // 先把幽灵删掉、状态清零，再调 `onDrop`——所以下面那些"还算不算点击"
+            // 的判断读到的是已经收尾的状态，不会踩到半个会话。
+            const bool dragOwned =
+                (button == InkingPointerButton::Primary)
+                && _drag.finishOnRelease(*this, justReleased, _pointerInside,
+                                         _pointerX, _pointerY);
             // 只有"抬起时指针还在它身上"才算点击：按下去再滑开松开是取消，
             // 这是用户唯一能表达"我反悔了"的方式。捕获作废（指针出了窗口）
             // 同理不算点击。
@@ -1652,7 +1812,7 @@ void InkingScene::DispatchPointer() {
             slot = nullptr;
             if (pressed != nullptr) {
                 pressed->PushPointerPress(button, false);
-                if (stillOnIt) {
+                if (stillOnIt && !dragOwned) {
                     // 坐标是**按下点**，不是此刻的指针（不变量 7）。
                     pressed->PushPointerClick(button, origin.x, origin.y);
                 }
@@ -1665,6 +1825,18 @@ void InkingScene::DispatchPointer() {
         }
     }
     _pointerWasDown = effective;
+
+    // ---- 2b. 拖拽会话（1.4）：逾阈值起拖 / 幽灵跟手 / 落点高亮 ----
+    //
+    // 排在"捕获更新之后、悬停之前"，位置是有意的：
+    //   - 在捕获之后：`notePress` 记的是这次按下命中的节点，而捕获槽刚刚才定下来；
+    //   - 在悬停之前：起拖会把指针下的落点算出来并置高亮，那一趟用到的命中答案
+    //     就是本帧的（借 `QueryHit`，与点击同一个）。
+    //
+    // 只喂 `effective.primary`（主键）：右键不起拖，也不影响已经在拖的那一场
+    // ——否则"拖着拖着点了右键"会把幽灵弄丢半帧。松手那一帧这里已经是收尾之后
+    // 的状态（`finishOnRelease` 在上面那段里先跑），所以是空操作。
+    _drag.update(*this, _pointerInside, _pointerX, _pointerY, effective.primary);
 
     // ---- 2.5 存活校准：回调里可能把**这次命中的节点**析构掉 ----
     //

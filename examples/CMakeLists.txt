@@ -2,6 +2,8 @@
 add_subdirectory(demo)
 add_subdirectory(showcase)
 add_subdirectory(probe_template)
+add_subdirectory(probe_drag)
 add_subdirectory(pet)
 add_subdirectory(sharp)
 add_subdirectory(atlas_frames)
+add_subdirectory(sandbox)

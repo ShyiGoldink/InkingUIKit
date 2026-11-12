@@ -158,7 +158,9 @@ inline constexpr const char* const kKnownWindowFields[] = {
 
 /// Button 的 `text` 段。
 inline constexpr const char* const kKnownTextFields[] = {
-    "fontSize", "leftSpace", "topSpace", "path", "content", "align", "alignV",
+    "fontSize",   "leftSpace",  "topSpace",           "path",
+    "content",    "align",      "alignV",             "overflow",
+    "rightSpace", "tooltipWhenTruncated",
 };
 
 /// Label 的 `text` 段（与 Button 的 `text` **同名不同义**：这里是整块排版）。

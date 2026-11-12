@@ -1268,9 +1268,18 @@ json"不再一眼可见，排查时看注释就知道该动父文件还是子文
     "alignV": "middle",   // 可选：top（默认）/ middle / bottom —— 垂直摆法
     "path": "",           // 字体绝对路径；空则用机器默认字体
                           // **也可以写成数组**：["首选.ttc", "备选.ttf"] = 回退链
+    "overflow": "clip",   // 可选（1.3.0）：clip（默认，截掉）/ ellipsis（回退 + …）
+    "rightSpace": 12,     // 可选：右侧内缩；**0 = 跟随 leftSpace**（左右对称）
+    "tooltipWhenTruncated": true,  // 可选：被截时悬停弹提示显示全文（默认 false）
     "content": { "normal": "确定", "hover": "确定", "onClicked": "确定" }
 }
 ```
+
+`overflow` / `rightSpace` / `tooltipWhenTruncated` 是 **1.3.0** 加的横向溢出策略：
+文字超出可用宽（`width - leftSpace - 右边距`）时，`clip` 直接截掉、`ellipsis` 先回退
+到"加上 `…` 也不溢出"的位置再补省略号；开了 `tooltipWhenTruncated` 的按钮会在
+**真的被截**时悬停弹提示显示全文（提示框自己会换行）。回退算法只有一份
+（`InkingCutTextToWidth`，[`include/dataStruct/InkingTextLayout.h`](../include/dataStruct/InkingTextLayout.h)）。
 
 `align` / `alignV` 是**对齐**（不是"再挪几个像素"）：写了 `center` / `middle` 之后，
 框架会**先量一遍文字块的真实尺寸**（`InkingMeasureText`，比例字体也准）再算位置，
@@ -1444,6 +1453,9 @@ InkingWindow::Instance().Show();
 | Button | text | `content` |  |
 | Button | text | `align` |  |
 | Button | text | `alignV` |  |
+| Button | text | `overflow` |  |
+| Button | text | `rightSpace` |  |
+| Button | text | `tooltipWhenTruncated` |  |
 | Panel | （顶层） | `$comment` | 容器级：两态外观 + 开合 / 裁剪 / 滚动 |
 | Panel | （顶层） | `name` |  |
 | Panel | （顶层） | `width` |  |

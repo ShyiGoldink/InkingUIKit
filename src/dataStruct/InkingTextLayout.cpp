@@ -146,6 +146,10 @@ void TrimSpaces(std::string_view text, std::size_t& begin, std::size_t& end) {
 }
 
 /// 硬切：把 `[begin,end)` 里"放得下的最长前缀"切出来（`Anywhere` 与超宽词用）。
+///
+/// 回退算法**不在这里**：T-02 之后它是公开的 `InkingCutTextToWidth`，这里只是
+/// 把"切到哪儿"翻译成"至少放下了一个码点没有"（排版层用它判"整词超宽"要不要
+/// 退化硬切）。第二份 while 循环就是第二份真相。
 struct HardCut {
     std::size_t end = 0;   ///< 真的放得下的终点
     bool fits = false;     ///< 至少放下了一个码点
@@ -156,22 +160,49 @@ HardCut CutToWidth(const InkingTextMeasureFn& measure, std::string_view text,
                    const InkingTextStyle& style) {
     HardCut cut;
     cut.end = begin;
-    std::size_t pos = begin;
-    while (pos < end) {
-        const Utf8Step step = DecodeUtf8(text, pos);
-        const std::size_t stop = std::min(pos + step.size, end);
-        const float width = MeasureWidth(measure, text, begin, stop, style);
-        if (maxWidth > 0.0f && width > maxWidth && cut.fits) {
-            break;  // 再加一个就超了：停在能放下的地方
-        }
-        cut.end = stop;
-        cut.fits = stop > begin;
-        pos = stop;
+    if (maxWidth <= 0.0f) {
+        // 宽度不限：整段都算放得下（与旧实现同义——旧代码里 `maxWidth > 0` 那一半
+        // 判断就是"没约束就不裁"）。
+        cut.end = end;
+        cut.fits = end > begin;
+        return cut;
     }
+    cut.end = InkingCutTextToWidth(std::string(text), begin, end, maxWidth, style,
+                                   measure);
+    cut.fits = cut.end > begin;
     return cut;
 }
 
 }  // namespace
+
+std::size_t InkingCutTextToWidth(const std::string& text, std::size_t begin,
+                                 std::size_t end, float available,
+                                 const InkingTextStyle& style,
+                                 const InkingTextMeasureFn& measure) {
+    // 三条短路都在循环之前：`available <= 0` 时逐字节试是白费（而且容易写成
+    // "至少塞一个"的死循环），`begin >= end` 时没有可裁的东西。
+    if (available <= 0.0f || begin >= end) {
+        return begin;
+    }
+    const std::string_view view(text);
+    if (end > view.size()) {
+        end = view.size();  // 越界调用的兜底：按串尾算，不读越界内存
+    }
+    std::size_t cut = begin;
+    std::size_t pos = begin;
+    while (pos < end) {
+        const Utf8Step step = DecodeUtf8(view, pos);
+        const std::size_t stop = std::min(pos + step.size, end);
+        // 逐码点量"从头到这个码点"的整段：宽度的可加性在字距 / 连字下不成立，
+        // 所以每加一个码点就重新量一次，而不是把逐字宽相加。
+        if (MeasureWidth(measure, view, begin, stop, style) > available) {
+            break;  // 再加这一个就超了：停在能放下的地方
+        }
+        cut = stop;
+        pos = stop;
+    }
+    return cut;
+}
 
 float InkingLineOffsetX(float lineWidth, float availableWidth, InkingTextAlignH align) {
     switch (align) {
@@ -354,42 +385,48 @@ InkingTextLayoutResult InkingLayoutText(const InkingTextLayoutRequest& request,
     bool lastLineEllipsis = false;
     const bool lastLineTooWide =
         !raw.empty() && available > 0.0f && raw.back().width > available;
-    if (request.overflow == InkingTextOverflow::Ellipsis
-        && !raw.empty()
-        && (overLines || lastLineTooWide)) {
-        RawLine& last = raw.back();
-        const std::size_t originalEnd = last.end;
-        const float hintWidth = measure(std::string(InkingTextEllipsis), style).width;
-        if (available > 0.0f) {
-            // 从末尾回退，直到"这一行 + …"放得下（把省略号自己的宽度算进去）。
-            std::size_t begin = last.begin;
-            std::size_t end = last.end;
-            while (end > begin) {
-                const float width =
-                    MeasureWidth(measure, text, begin, end, style) + hintWidth;
-                if (width <= available) {
-                    break;
+    if (!raw.empty() && (overLines || lastLineTooWide)) {
+        if (request.overflow == InkingTextOverflow::Ellipsis) {
+            RawLine& last = raw.back();
+            const std::size_t originalEnd = last.end;
+            const float hintWidth = measure(std::string(InkingTextEllipsis), style).width;
+            if (available > 0.0f) {
+                // "加完省略号也不溢出" = 前缀的预算是 `available - 省略号宽`。
+                // 回退算法本身只有一份（T-02 的 `InkingCutTextToWidth`）：这里以前
+                // 自带一段 while，按钮那条路再写一段就又是两份真相了。
+                const std::size_t end = InkingCutTextToWidth(
+                    request.text, last.begin, last.end, available - hintWidth, style,
+                    measure);
+                last.end = end;
+                last.width = MeasureWidth(measure, text, last.begin, end, style)
+                           + hintWidth;
+                lastLineEllipsis = true;
+                if (end < originalEnd) {
+                    truncated = true;
                 }
-                std::size_t back = end - 1;
-                while (back > begin
-                       && (static_cast<unsigned char>(text[back]) & 0xC0u)
-                              == 0x80u) {
-                    --back;
-                }
-                end = back;
-            }
-            last.end = end;
-            last.width = MeasureWidth(measure, text, begin, end, style)
-                       + hintWidth;
-            lastLineEllipsis = true;
-            if (end < originalEnd) {
-                truncated = true;
+            } else {
+                // 没有宽度约束（`maxWidth == 0`）时只剩行数限制：直接补个省略号，
+                // 表示"后面的没画"。
+                last.width += hintWidth;
+                lastLineEllipsis = true;
             }
         } else {
-            // 没有宽度约束（`maxWidth == 0`）时只剩行数限制：直接补个省略号，
-            // 表示"后面的没画"。
-            last.width += hintWidth;
-            lastLineEllipsis = true;
+            // `Clip`（默认值）：回退到放得下为止，**不补 `…`**（T-03）。
+            //
+            // 在此之前这条分支是空的——`Clip` 只实现了"多余的行不画"（0.8.3 的
+            // `maxHeight`），横向一律照排，于是"框 200px 宽、文字 400px"会把字画到
+            // 框外。`InkingTextLayout.h` 里那句"`Clip` 就直接丢掉"当时是句空话。
+            RawLine& last = raw.back();
+            if (available > 0.0f && last.width > available) {
+                const std::size_t end = InkingCutTextToWidth(
+                    request.text, last.begin, last.end, available, style, measure);
+                if (end < last.end) {
+                    last.end = end;
+                    last.width = MeasureWidth(measure, text, last.begin, last.end,
+                                              style);
+                    truncated = true;
+                }
+            }
         }
     }
 

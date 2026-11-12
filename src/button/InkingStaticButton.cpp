@@ -5,7 +5,10 @@
 #include <button/ButtonLibrary.h>
 #include <detail/InkLog.h>
 #include <detail/InkingHit.h>
+#include <prefab/Tooltip.h>
+#include <scene/InkingScene.h>
 
+#include <memory>
 #include <string>
 
 
@@ -61,9 +64,12 @@ InkingStaticButton::InkingStaticButton(InkingWidget* parent,
     finishConstruction(/*foundInLibrary=*/registered != nullptr);
 }
 
+InkingStaticButton::~InkingStaticButton() = default;
+
 int InkingStaticButton::UnknownNameCount() noexcept {
     return unknownNameCount();
 }
+
 
 void InkingStaticButton::finishConstruction(bool /*foundInLibrary*/) {
     // 尺寸为 0 的按钮画不出来也点不到，这几乎总是配置漏了 width/height。
@@ -234,6 +240,13 @@ void InkingStaticButton::onAnimationTick(float deltaSeconds) {
     // 推进与"这一帧变了什么"都在契约基类里；本类只在它报出来后标脏
     // （见下面两个钩子）。稳态（没有过渡在跑）时基类一个分支就返回。
     AdvanceButtonLook(deltaSeconds);
+
+    // 文字变短了 / 按钮被藏了 / 策略被改了：把已经弹出来的提示收回去。
+    // 幂等，没有提示对象时一次指针判断就返回。放在帧通道而不是每次绘制里：
+    // 绘制是 const，而且"收起"不是画面问题，是行为问题。
+    if (_tooltip && _tooltip->IsVisible() && !GetTooltipWhenTruncated()) {
+        _tooltip->Hide();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +303,8 @@ void InkingStaticButton::onButtonDisplayAdvanced(bool repaintDirty,
 
 void InkingStaticButton::onPointerHover(bool hover) {
     MouseHover(hover);
+    // 截断提示（1.3.0 T-05）：与三态外观用的是**同一处**通知，不新增判定。
+    SyncTruncationTooltip(hover);
 }
 
 void InkingStaticButton::onPointerPress(InkingPointerButton button, bool press) {
@@ -331,6 +346,82 @@ void InkingStaticButton::onRender(float pixelX, float pixelY) const {
 
 void InkingStaticButton::renderText(float pixelX, float pixelY) const {
     inking_detail::PaintButtonText(*this, _data, GetDisplayTransform(), pixelX,
-                            pixelY);
+                            pixelY, &_textCut);
+}
+
+// ---------------------------------------------------------------------------
+// 截断提示（1.3.0 T-05）
+// ---------------------------------------------------------------------------
+//
+// 复用 `inking_prefab::Tooltip`（穿透命中 / 延时 / 越界翻面都是现成的），本类只做
+// "自动挂接"：开关开 + 这次绘制确实被截 ⇒ 悬停弹提示。
+//
+// 三条边界：
+//   1. **判据只有一份**：直接用 `ResolveButtonTextCut` 的结果（与绘制共用缓存），
+//      不另写"文字是否超宽"的算术——两处单独判，迟早出现"截了却不弹"；
+//   2. **懒创建**：第一次真的要被截时才建对象并挂到场景上。没开开关、或文字都
+//      放得下的工程，一行多余的内存 / 节点都没有；
+//   3. **不在 `tick` 里建**（库的规矩）：创建发生在悬停通知里，那是输入时机。
+
+inking_prefab::Tooltip* InkingStaticButton::EnsureTooltip() {
+    if (_tooltip) {
+        return _tooltip.get();
+    }
+    InkingScene* scene = GetScene();
+    if (scene == nullptr) {
+        return nullptr;  // 还没挂进场景：下一次悬停再试（不猜父节点）
+    }
+
+    inking_prefab::TooltipData data = inking_prefab::TooltipData::MakeDefault();
+    // 字号跟按钮自己的字号走（提示框是"这段文字的另一处渲染"，字忽大忽小最刺眼）。
+    if (_data.text.fontSize > 0.0f) {
+        data.fontSize = _data.text.fontSize;
+    }
+    data.fontPath = _data.text.path;
+    _tooltip = std::make_unique<inking_prefab::Tooltip>(scene, data);
+    return _tooltip.get();
+}
+
+void InkingStaticButton::SyncTruncationTooltip(bool hover) {
+    if (!GetTooltipWhenTruncated()) {
+        // 开关关着：如果曾经开过又关掉，把残留的那一个收回去（不析构节点，
+        // 免得在指针派发中途改结构；它不可见就一次性开销）。
+        if (_tooltip) {
+            _tooltip->Hide();
+        }
+        return;
+    }
+    if (!hover) {
+        if (_tooltip) {
+            _tooltip->Hide();
+        }
+        return;
+    }
+
+    // 这一帧真的被截了吗——与绘制同一个判据、同一份缓存。
+    const inking_detail::InkingButtonTextCut cut =
+        inking_detail::ResolveButtonTextCut(*this, _data, &_textCut);
+    if (!cut.truncated) {
+        if (_tooltip) {
+            _tooltip->Hide();  // 开关开着但放得下：没东西可看
+        }
+        return;
+    }
+    if (inking_prefab::Tooltip* tip = EnsureTooltip()) {
+        tip->ShowFor(this, _data.label);  // 全文（不是截断后那串）
+    }
+}
+
+bool InkingStaticButton::IsTooltipShowing() const noexcept {
+    return _tooltip != nullptr && _tooltip->IsShowing();
+}
+
+void InkingStaticButton::SetTooltipWhenTruncated(bool enabled) {    if (_data.text.tooltipWhenTruncated == enabled) {
+        return;
+    }
+    _data.text.tooltipWhenTruncated = enabled;
+    if (!enabled && _tooltip) {
+        _tooltip->Hide();
+    }
 }
 

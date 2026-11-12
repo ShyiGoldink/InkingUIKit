@@ -1,12 +1,17 @@
 #include <button/ButtonPaint.h>
 
+// 回退算法（`InkingCutTextToWidth`）与文字溢出策略都在这份头里——按钮只是它
+// 的一个调用方，不是第二份实现。
+#include <dataStruct/InkingTextLayout.h>
 #include <render/InkingDraw.h>
 #include <render/InkingText.h>
 #include <theme/InkingTheme.h>
 
 #include <SDL3/SDL.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace inking_detail {
 
@@ -35,6 +40,43 @@ float Magnify(const InkingAnchor& node) {
 /// 文字占位块的颜色兜底：文字色纯透明时看不到，给个不透明的白。
 std::uint32_t VisibleTextColor(std::uint32_t color) {
     return InkingColorAlpha(color) == 0u ? 0xFFFFFFFFu : color;
+}
+
+// ---------------------------------------------------------------------------
+// 文字溢出（1.3.0 T-04）的三个小件
+// ---------------------------------------------------------------------------
+
+/// 右侧内缩：`0` = 跟随 `leftSpace`（左右对称）。
+float ButtonTextRightSpace(const InkingButtonData& data) {
+    return data.text.rightSpace > 0.0f ? data.text.rightSpace : data.text.leftSpace;
+}
+
+/// 文字可用的水平宽度（设计坐标）。内缩先扣干净，纯文字宽交给回退算法。
+float ButtonTextAvailableWidth(const InkingAnchor& node, const InkingButtonData& data) {
+    return static_cast<float>(node.GetWidth()) - data.text.leftSpace
+         - ButtonTextRightSpace(data);
+}
+
+/// 配置的文字段 → 排版层要的样式（回退算法只用字号 / 字体）。
+InkingTextStyle ButtonTextStyle(const InkingButtonData& data) {
+    InkingTextStyle style;
+    style.fontSize =
+        data.text.fontSize > 0.0f ? data.text.fontSize : kDefaultFontSize;
+    style.fontPath = data.text.path;
+    style.fontPaths = data.text.paths;
+    return style;
+}
+
+/// 真测量：把文字层包成排版层要的回调。
+InkingTextExtent MeasureButtonText(const std::string& text,
+                                   const InkingTextStyle& style) {
+    InkingTextRequest request;
+    request.text = text;
+    request.fontSize = style.fontSize > 0.0f ? style.fontSize : kDefaultFontSize;
+    request.fontPath = style.fontPath;
+    request.fontPaths = style.fontPaths;
+    const InkingTextMetrics metrics = InkingMeasureText(request);
+    return InkingTextExtent{metrics.width, metrics.height};
 }
 
 }  // namespace
@@ -232,24 +274,104 @@ InkingShapeBounds ButtonHitEnvelope(const InkingButtonData& data, const InkingSh
     return merged;
 }
 
+InkingButtonTextCut ResolveButtonTextCut(const InkingAnchor& node,
+                                         const InkingButtonData& data,
+                                         InkingButtonTextCutCache* cache) {
+    InkingButtonTextCut cut;
+    if (data.label.empty()) {
+        return cut;  // 没配文字：连测量都不用做
+    }
+
+    const InkingTextStyle style = ButtonTextStyle(data);
+    const float available = ButtonTextAvailableWidth(node, data);
+
+    // 缓存键：文字 / 字体 / 字号 / 可用宽 / 策略。任一变化都要重算——
+    // 少一项就是"改了宽、字还是按老宽度截"那类静默失效。
+    const bool cacheHit =
+        cache != nullptr && cache->valid && cache->label == data.label
+        && cache->fontPath == style.fontPath && cache->fontPaths == style.fontPaths
+        && cache->fontSize == style.fontSize && cache->available == available
+        && cache->overflow == data.text.overflow;
+    if (cacheHit) {
+        return cache->cut;
+    }
+
+    const auto measure = [](const std::string& text, const InkingTextStyle& s) {
+        return MeasureButtonText(text, s);
+    };
+
+    // ① 连内缩都放不下：什么都不画（画出去比不画糟得多，而且 `available <= 0`
+    //    送进回退算法本来就只能返回空）。
+    if (available <= 0.0f) {
+        cut.truncated = true;
+    } else {
+        const InkingTextExtent full = measure(data.label, style);
+        if (full.width <= available) {
+            // 放得下：**原样**画，不截也不算截断（老行为的回归基线）。
+            cut.painted = data.label;
+            cut.width = full.width;
+            cut.height = full.height;
+        } else {
+            cut.truncated = true;
+            std::size_t end = 0;
+            if (data.text.overflow == InkingTextOverflow::Ellipsis) {
+                // "先算长度、截到加省略号也不溢出、再加省略号"：预算里先减掉
+                // 省略号自己的宽。省略号自己都放不下时留空（画个溢出的 `…`
+                // 等于没截）。
+                const float hint = measure(std::string(InkingTextEllipsis), style).width;
+                if (hint < available) {
+                    end = InkingCutTextToWidth(data.label, 0, data.label.size(),
+                                               available - hint, style, measure);
+                    cut.painted.assign(data.label, 0, end);
+                    cut.painted += InkingTextEllipsis;
+                }
+            } else {
+                end = InkingCutTextToWidth(data.label, 0, data.label.size(),
+                                          available, style, measure);
+                cut.painted.assign(data.label, 0, end);
+            }
+            // 截断后的串量一次：对齐偏移与垂直居中都必须按**它**算（按原串算会
+            // 让 Center / Right 把截断后的文字整体挪位）。
+            if (!cut.painted.empty()) {
+                const InkingTextExtent shown = measure(cut.painted, style);
+                cut.width = shown.width;
+                cut.height = shown.height;
+            }
+        }
+    }
+
+    if (cache != nullptr) {
+        cache->valid = true;
+        cache->label = data.label;
+        cache->fontPath = style.fontPath;
+        cache->fontPaths = style.fontPaths;
+        cache->fontSize = style.fontSize;
+        cache->available = available;
+        cache->overflow = data.text.overflow;
+        cache->cut = cut;
+    }
+    return cut;
+}
+
 InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data) {
-    const InkingPoint2 configured{data.text.leftSpace, data.text.topSpace};
     const bool needsMeasuring = data.text.align != InkingTextAlignH::Left
                                 || data.text.alignV != InkingTextAlignV::Top;
     if (!needsMeasuring || data.label.empty()) {
-        return configured;  // 老行为（默认路径，零开销）
+        return InkingPoint2{data.text.leftSpace, data.text.topSpace};
     }
+    const InkingTextExtent full = MeasureButtonText(data.label, ButtonTextStyle(data));
+    return ButtonTextOffset(node, data, full.width, full.height);
+}
 
-    // 量一遍真实文字块。`InkingMeasureText` 不依赖渲染器：拿不到字体时给估算值，
-    // 所以"居中"在没有字体子系统时也不会变成"从中间开始画"。
-    InkingTextRequest probe;
-    probe.text = data.label;
-    probe.fontSize = data.text.fontSize > 0.0f ? data.text.fontSize
-                                               : kDefaultFontSize;
-    probe.fontPath = data.text.path;
-    probe.fontPaths = data.text.paths;
-    const InkingTextMetrics metrics = InkingMeasureText(probe);
-    if (metrics.width <= 0.0f && metrics.height <= 0.0f) {
+InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data,
+                              float textWidth, float textHeight) {
+    const InkingPoint2 configured{data.text.leftSpace, data.text.topSpace};
+    const bool needsMeasuring = data.text.align != InkingTextAlignH::Left
+                                || data.text.alignV != InkingTextAlignV::Top;
+    if (!needsMeasuring) {
+        return configured;  // 老行为（默认路径）
+    }
+    if (textWidth <= 0.0f && textHeight <= 0.0f) {
         return configured;  // 量不出来就退回配置值，别硬算出一个怪位置
     }
 
@@ -259,10 +381,10 @@ InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& 
     float x = data.text.leftSpace;
     switch (data.text.align) {
         case InkingTextAlignH::Center:
-            x = (width - metrics.width) * 0.5f;
+            x = (width - textWidth) * 0.5f;
             break;
         case InkingTextAlignH::Right:
-            x = width - metrics.width - data.text.leftSpace;
+            x = width - textWidth - ButtonTextRightSpace(data);
             break;
         case InkingTextAlignH::Left:
         default:
@@ -272,10 +394,10 @@ InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& 
     float y = data.text.topSpace;
     switch (data.text.alignV) {
         case InkingTextAlignV::Middle:
-            y = (height - metrics.height) * 0.5f;
+            y = (height - textHeight) * 0.5f;
             break;
         case InkingTextAlignV::Bottom:
-            y = height - metrics.height - data.text.topSpace;
+            y = height - textHeight - data.text.topSpace;
             break;
         case InkingTextAlignV::Top:
         default:
@@ -287,7 +409,7 @@ InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& 
 
 void PaintButtonText(const InkingAnchor& node, const InkingButtonData& data,
                      const InkingTransformSpec& transform, float pixelX,
-                     float pixelY) {
+                     float pixelY, InkingButtonTextCutCache* cache) {
     SDL_Renderer* renderer = currentRenderer();
     if (renderer == nullptr) {
         return;
@@ -296,10 +418,16 @@ void PaintButtonText(const InkingAnchor& node, const InkingButtonData& data,
         return;  // 没配文字、或者运行期被 SetText("") 清掉：什么都不画
     }
 
+    // ① 先截：这一帧到底画哪些字（超宽时回退 / 补省略号，放得下就原样）。
+    const InkingButtonTextCut cut = ResolveButtonTextCut(node, data, cache);
+    if (cut.painted.empty()) {
+        return;  // 一个字都放不下：不画（不崩、不溢出到邻居身上）
+    }
+
     // 文字走**纹理层**（include/render/InkingText.h）：它负责栅格化一次、
     // 缓存、上色、以及跟着变换走。这里只把配置翻译成一次 InkingTextRequest。
     InkingTextRequest request;
-    request.text = data.label;
+    request.text = cut.painted;
     request.fontSize =
         data.text.fontSize > 0.0f ? data.text.fontSize : kDefaultFontSize;
     request.fontPath = data.text.path;
@@ -309,12 +437,13 @@ void PaintButtonText(const InkingAnchor& node, const InkingButtonData& data,
     // 会变成深底深字（一个字都看不见，而且不报错）。
     request.color = VisibleTextColor(
         InkingResolveThemeColor(data.textColorToken, data.textColor));
-    // 位置：`align` / `alignV` 为默认值时就是配置里的 leftSpace / topSpace；
-    // 写了居中 / 右对齐 / 贴底时先量一遍文字块再算（见 `ButtonTextOffset`）。
-    const InkingPoint2 offset = ButtonTextOffset(node, data);
+    // ② 再算偏移：用的是**截断后**的尺寸（`cut.width/height` 已经量过）。
+    const InkingPoint2 offset =
+        ButtonTextOffset(node, data, cut.width, cut.height);
     request.offsetX = offset.x;
     request.offsetY = offset.y;
 
+    // ③ 最后画。
     PaintText(renderer, request, node.GetWidth(), node.GetHeight(),
               Magnify(node), pixelX, pixelY, transform);
 }

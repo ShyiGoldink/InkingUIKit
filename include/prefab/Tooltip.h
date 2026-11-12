@@ -29,9 +29,14 @@
 // 钩子，计时就永远不走（症状是"提示永远不弹"）。所以 `IsVisible()` 在计时期间
 // 为真、"真的画出来"另用 `IsShowing()` 表达——两者不是一个问题，见下面注释。
 //
-// 第一版**不做**：多行换行（超长文本会溢出面板，`maxWidth` 只夹面板宽）、
-// 跟随锚点移动（落位只做一次）、`SetPainter`（同其余新控件）。
+// 第一版**不做**：跟随锚点移动（落位只做一次）、`SetPainter`（同其余新控件）。
+//
+// 1.3.0（T-06）起**会换行**了：以前是"单行 + `maxWidth` 只夹面板"，于是
+// "完整文字"（长路径 / `项目名 · 父目录`）在提示里照样溢出，等于没提示。
+// 现在排版交给 `InkingLayoutText`（可用宽 = `maxWidth`，`Clip`，不补省略号——
+// 提示里出现 `…` 等于没给全文），面板高度 = 排出来的实际高度。
 
+#include <dataStruct/InkingTextLayout.h>
 #include <panel/InkingDynamicPanel.h>
 #include <button/ButtonData.h>
 
@@ -53,8 +58,14 @@ struct TooltipData {
 
     float paddingX = 10.0f;
     float paddingY = 6.0f;
-    /// 面板最宽（**只夹面板**，不换行）。
+    /// 文字区最宽（**换行的边界**：可用宽 = 它，超出就按 `wrap` 断行）。
     float maxWidth = 320.0f;
+    /// 文字区最高（0 = 不限）。换行之后长文本可能很高，夹一下免得提示占满屏幕。
+    float maxHeight = 0.0f;
+    /// 行距倍数，与 `InkingTextStyle::lineSpacing` 同义。
+    float lineSpacing = 1.25f;
+    /// 换行方式（T-06）：默认按词（CJK 字间可断、英文整词不切）。
+    InkingTextWrap wrap = InkingTextWrap::Word;
     float radius = 8.0f;
     /// 与锚点之间留的间距（设计像素）。
     float gap = 6.0f;
@@ -134,6 +145,11 @@ private:
 
     InkingWidget* _anchor = nullptr;
     std::string _text;
+
+    /// 上一次排版的输入串（行里的字节区间指向**它**，不是 `_text` 的某次快照）。
+    std::string _laidText;
+    /// 上一次排版的结果（`applyTextLayout` 写、`paintText` 读）。
+    InkingTextLayoutResult _laid{};
 
     bool _pending = false;
     bool _showing = false;

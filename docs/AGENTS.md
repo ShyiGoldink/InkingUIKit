@@ -402,6 +402,11 @@ Windows 下 exe 按"自身所在目录 → PATH"找 DLL，分开放会变成"程
 | 15 | 任意顶点的索引越界：不崩，画成随机碎片（比整块不画难查得多） | 自算顶点的拓扑里索引写错 / 顶点数组被截断而索引没跟着改 | T-03（dev010） | `geometry_index_overflow` |
 | 16 | 遮罩细分撞上限：边缘变粗糙，看起来像素材被压过，没人会去查密度 | 遮罩密度配得比 `InkingMaskMaxDensity` 大（或图元本身极大） | T-05（dev010） | `mask_vertex_capped` |
 | 17 | 九宫格边框之和超过目标：边框被夹细，看起来像美术配错了图 | `border` 左右（或上下）之和 > 目标那一维 | T-04（dev010） | `ninepatch_border_clamped` |
+| 18 | 格子模式里 `followPerspective` / `SetSkyColor` 设了没反应：远处照样不变小、天空色压根不出来 | 投影 `mode = Grid`（那里 `s ≡ 1`、地平线在屏幕外 ⇒ 没有天空区域） | T-02（1.2） | `field_follow_perspective_inert` |
+| 19 | 场地整块错位（而且不报错） | 场地没有直接挂在场景下，或者祖先链上有平移/缩放——它的提交坐标是**绝对设计坐标**，会被祖先仿射再叠一次 | T-02（1.2） | `field_parent_transform_drifts` |
+| 20 | 地形面整块消失、停在上一次内容 | 单批顶点超过 16384（`SetGeometry` 那档的上限）⇒ 整批拒绝，不部分提交 | T-02（1.2） | `field_terrain_batch_rejected` |
+| 21 | 远处少画物体 / 格子，没有任何提示 | 1px 规则主动剔除（亚像素继续画是几何在抖，不是"看不出"） | T-03（1.2） | `field_subpixel_culled` |
+| 22 | 设了天空贴图却一个像素都不画：天空还是纯色，只有一条 WARN | 当前没有天空带——`mode = Grid`、平行投影（`depthScaleFar >= 1`）、或地平线落在屏幕外（`horizonY <= 0`） | T-05（1.5） | `field_sky_texture_inert` |
 <!-- END SILENT FAILURE LIST -->
 
 两条纪律：
@@ -412,6 +417,15 @@ Windows 下 exe 按"自身所在目录 → PATH"找 DLL，分开放会变成"程
    那一条真正的断言。少改任何一处，元自检 `silent_failure_list_synced` 会红。
 
 > 清单只收"**不报错**的失效"。会报错的地方不需要它——那是普通 bug，红一次就修了。
+
+**命名撞车提醒（1.2 起）**：ctest 里有两条名字带 `field`，指的是两件毫不相干的事——
+
+| 测试名 | 实际含义 |
+| --- | --- |
+| `field_table_in_sync` | **CXXCSS 配置字段**表（`cmake/check-field-table.cmake`，2026-10 就有） |
+| `field_pure_headers_have_no_sdl` | **场地层**（`../field/InkingFieldProjection.h`，1.2 新增） |
+
+`grep field` 会同时捞到这两件事；看上下文再判断，别顺手改错文件。
 
 ---
 

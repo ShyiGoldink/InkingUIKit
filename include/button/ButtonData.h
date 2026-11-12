@@ -221,6 +221,44 @@ struct InkingButtonTextData {
      */
     InkingTextAlignH align = InkingTextAlignH::Left;
     InkingTextAlignV alignV = InkingTextAlignV::Top;
+
+    // -----------------------------------------------------------------------
+    // 横向溢出策略（1.3.0 T-01）
+    //
+    // 按钮文字是"贴在按钮上的一行"：多行会把按钮撑破，所以这里**只有单行的
+    // 横向策略**（`wrap` / `maxLines` 不在按钮上，那是 Label 的事）。
+    // 在此之前按钮压根没有入口——`PaintButtonText` 是"量一次 + 整串画"，
+    // 于是 200px 宽的菜单项会把"项目名 · 父目录"画到卡片外面。
+    //
+    // 默认值 `Clip` 是**刻意的**：现在溢出照画是缺陷，修完就该被截。它会让老配置
+    // 的可见行为发生变化（少画一点），所以 CHANGELOG 里单列了一条。
+    // -----------------------------------------------------------------------
+
+    /// 放不下时怎么办：`Clip` = 不画超出部分；`Ellipsis` = 先回退再补 `…`。
+    ///
+    /// 两种模式共用**同一份**回退算法（`InkingCutTextToWidth`，见
+    /// `dataStruct/InkingTextLayout.h`），只差"预算里要不要减去省略号宽"这一步。
+    InkingTextOverflow overflow = InkingTextOverflow::Clip;
+
+    /**
+     * 右侧内缩（设计坐标）。**0 = 跟随 `leftSpace`**。
+     *
+     * 为什么不用"硬用 `leftSpace`"：图标在左、文字贴右这类左右不对称的按钮会裁错边
+     * （左边扣了图标宽、右边也按那个数扣，文字被裁得比该有的短）。多一个字段比多
+     * 一次"猜"便宜。
+     *
+     * 语义与 `leftSpace` 对齐：`0` 不是"右边零内缩"，而是"对称"——这样既有配置
+     * （一个字段都没填）行为不变。
+     */
+    float rightSpace = 0.0f;
+
+    /**
+     * 被截断时，悬停是否弹出提示显示**全文**。默认关闭。
+     *
+     * 只在"这次绘制确实截了"时才弹（判据就是绘制那次的结果，不另算一遍）；
+     * 文字放得下时不弹——没东西可看。
+     */
+    bool tooltipWhenTruncated = false;
 };
 
 /**

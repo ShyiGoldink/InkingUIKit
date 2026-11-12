@@ -157,6 +157,7 @@ int main() {
 | [api/InkingLayoutSolver.md](api/InkingLayoutSolver.md) | `layout/InkingLayoutSolver.h` |
 | [§9 素材该多大](#9-素材该多大缩放规则) | `dataStruct/InkingImageScale.h`（0.7.0：素材尺寸 / σ / 干净档位） |
 | [api/InkingGameContent.md](api/InkingGameContent.md#五九宫格与平铺-datastructinkingninepatchh) | `dataStruct/InkingNinePatch.h`（1.1.0：九宫格 / 平铺展开，零依赖） |
+| [api/InkingField.md](api/InkingField.md#一投影正俯视--斜投影) | `field/InkingFieldProjection.h`（1.2：投影 / 格子 / 闭式反解，零 SDL，可脱窗口单测） |
 
 ### 3.2 节点与树
 
@@ -171,6 +172,7 @@ int main() {
 | [api/InkingPointerHandler.md](api/InkingPointerHandler.md#指针输入契约) | `input/InkingPointerHandler.h` |
 | [api/InkingKeyboardTarget.md](api/InkingKeyboardTarget.md#键盘输入契约) | `input/InkingKeyboardTarget.h` |
 | [api/InkingInput.md](api/InkingInput.md) | `input/InkingKeyboardInput.h`、`input/InkingMouseInput.h`、`input/InkingShortcut.h`、`input/InkingShortcutRegistry.h`、`input/InkingTextEditState.h` |
+| [api/InkingDrag.md](api/InkingDrag.md) | `drag/DragSpec.h`、`drag/InkingDragSession.h`（1.4：控件拖拽原语——源 / 落点 / 幽灵层） |
 
 ### 3.4 场景 / 窗口 / 渲染
 
@@ -187,6 +189,7 @@ int main() {
 | [api/InkingComponents.md](api/InkingComponents.md) | `button/*`、`panel/*`、`image/*`、`text/*`、`canvas/*`、`video/*`、`audio/*` |
 | [api/InkingFixedPopup.md](api/InkingFixedPopup.md) | `panel/InkingFixedPopup.h`（定点浮窗，0.4.1） |
 | [api/InkingGameContent.md](api/InkingGameContent.md) | **游戏内容侧**（1.1.0）：`image/InkingGeometryLayer.h`（批量四边形 / 任意顶点）、`image/InkingMask.h`（形状遮罩）、`asset/InkingTexture.h`（纹理句柄）、`SetEdgeFeather`（无羽化开关） |
+| [api/InkingField.md](api/InkingField.md) | **场地层**（1.2）：`field/InkingField.h`（地形面 / 物体面 / 地面命中 / `InkingScene::SetField`）、`field/InkingFieldProjection.h`（纯函数投影） |
 | [api/InkingPrefab.md](api/InkingPrefab.md) | `prefab/*` |
 | [api/InkingCxxcss.md](api/InkingCxxcss.md) | **没有头文件**：`CXXCSS/*.json` 编译期生成的那些组件类（`cxxcss::OptionItem` 之类）、`RegisterAllButtons()`、语言表安装、`inkgen` 命令行 |
 
@@ -330,7 +333,7 @@ INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 本机走 dire
 
 ## 8. 头文件 → 专页 全量索引
 
-**121 个**头文件（`find include -name '*.h'`，1.1.0 实测；含 `theme/` 与
+**125 个**头文件（`find include -name '*.h'`，1.4 实测；含 `theme/` 与
 `util/`——前者在组件页、后者见 §3.6），全部落在上表的某一页里。
 **生成物不在 `include/` 里**（`CXXCSS/*.json` 烘出来的 `cxxcss::*` 类落在
 `build/inkgen/` 下），见 [api/InkingCxxcss.md](api/InkingCxxcss.md)。
@@ -346,7 +349,9 @@ INKING_SELFTEST_DRIVER=windows ./bin/inking_demo_selftest.exe   # 本机走 dire
 | config | `window_config.h` | Window |
 | dataStruct | `InkingAffine.h` `InkingTransform.h` `InkingAnchorData.h` `InkingColor.h` `InkingDecoration.h` `InkingEasing.h` `InkingImageFit.h` `InkingImageScale.h` `InkingLayout.h` `InkingScroll.h` `InkingShapeSpec.h` `InkingTextLayout.h` `InkingTextRequest.h` `InkingNinePatch.h` `MessageStruct.h` `TaskStruct.h` | Anchor / InkingShapeSpec / Transform / Layout / Render / Runtime / GameContent / [§9](#9-素材该多大缩放规则) |
 | detail | `InkLog.h` `InkingGeometry.h` `InkingHit.h` `InkingMessageQueue.h` | Runtime / Widget |
+| drag | `DragSpec.h` `InkingDragSession.h` | Drag |
 | event | `InkingEvent.h` | Runtime |
+| field | `InkingField.h` `InkingFieldProjection.h` | Field |
 | image | `InkingImageData.h` `InkingSpriteData.h` `InkingSpriteGroupData.h` `InkingStaticImage.h` `InkingSprite.h` `InkingSpriteGroup.h` `InkingDynamicSpriteGroup.h` `InkingAnimateGroup.h` `InkingGeometryLayer.h` `InkingMask.h` | Components / GameContent |
 | input | `CursorShape.h` `InkingKeyboardTarget.h` `InkingPointerHandler.h` `InkingPointerButton.h` `InkingKeyboardInput.h` `InkingMouseInput.h` `InkingShortcut.h` `InkingShortcutRegistry.h` `InkingTextEditState.h` | KeyboardTarget / PointerHandler / Input |
 | layout | `InkingLayoutSolver.h` | LayoutSolver |

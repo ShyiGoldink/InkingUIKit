@@ -5,6 +5,240 @@
 
 ---
 
+## 1.5.0-preview —— 2026-11-10（天空：地平线位置可设 + 天空贴图）
+
+> 任务书：`GoldingCore/docs/TASK-SDK-SKY.md`。
+> 起因：场景的两条基础属性**没有底层支撑**——调"地平线在画面哪一行"只能靠
+> `skew / zoom / depthScaleFar / farD` 间接影响（地平线是导出量），天空只能一笔纯色
+> （`SetSkyColor`）。提出方的编辑器要把它们做成可编辑的基础属性、并由代码生成器
+> 输出成 `constexpr`，所以两条接口都是**纯标量 / 纯句柄**，没有回调、没有动画抽象。
+
+### 新增
+
+- **`InkingFieldProjection::horizonRatio`**（`float`，缺省 `-1`）：天空带高度占画布
+  高度的比例，`[0, 1)`。`-1` = 不覆盖（1.4 的行为逐位不变）；`>= 0` = 库内部**反解
+  `farD`**，使 `horizonY == ratio × designHeight`。
+  反解式：`farD = (1/depthScaleFar − 1) · (1 − ratio) · designHeight / (cos(skew) · zoom)`。
+  **不改** `skew` / `depthScaleFar` / `zoom` 的语义——只有"多远缩到最远"由这条约束定。
+  每格都按新的 `h` 重算（**包括最近一格**），不是"只裁地面带"。
+- **`InkingSkyFit`**（`Cover` / `Stretch` / `Tile`）+ `InkingFieldProjection::skyFit`。
+- **`InkingFieldEffectiveFarD()`**：这次投影实际用的 `farD`（覆盖生效时是反解值）。
+  编辑器据此显示"farD 被地平线位置定住了"；`Projection()` 里也是这个值（不藏）。
+- **`InkingField::SetSkyTexture(handle)`**：天空贴图，无效句柄 = 回到纯色。
+  绘制规则见头注释（裁剪在天空带内 / 三种铺法 / 有贴图就不画纯色 / 句柄所有权在
+  调用方 / 失效句柄退回纯色）。每帧换句柄零成本（库不加载、不缓存路径）。
+- **`InkingField::GetSkyBand()`**：当前天空带在设计坐标里的矩形（`h <= 0` 时高度 0）。
+- **`InkingField::Stats::skyQuads`**：上一帧天空贴图提交了几个四边形（`0` = 没画）。
+- 自检 `CheckFieldSky`（41 条断言）：覆盖生效 / 换 `depthScaleFar` 地平线不动 /
+  `-1` 回归门（逐位）/ 逐格压缩 76.2→73.3 且越远压得越狠 / 五条拒绝规则 /
+  天空带 / `Cover` 与 `Tile` 的块数 / 一千次换句柄零加载 / Grid 模式一条 WARN。
+- 静默失效清单第 22 条 `field_sky_texture_inert`（设了贴图却没有天空带）。
+
+### 变更
+
+- **`InkingFieldProjection` 变大**（两个字段）⇒ `sizeof` 变化，**消费方必须同版本
+  重编**（结构体按值 / const 引用跨 DLL 传递）。这是提 minor 的唯一理由。
+- `InkingField::SetProjection` 在覆盖生效时把反解出的 `farD` **写回** `Projection()`：
+  以后改回 `horizonRatio = -1` 时 `farD` 保持那个被定住的值（§5：以约束为准、
+  被改掉的 `farD` 如实反映）。要还原作者值就显式再设一次 `farD`。
+- `InkingVersion` → `1.5.0`（阶段仍是 `preview`）。
+
+### 文档
+
+- `docs/zh/api/InkingField.md` 新增「八、天空：地平线位置 + 贴图」；`Stats` 表补
+  `skyQuads`；`docs/AGENTS.md` §7 补第 22 条。
+
+### 已知限制（任务书 §6，**明确不做**）
+
+- 天空**动画 / 视差 / 多层**：留"每帧换句柄"就够，加抽象会把策略钉进库。
+- 天空贴图的 `parallax` 参数：没有消费方就没有形状（`Options.md` 第 14 条）。
+- 让调用方自带地平线公式：会出现第二份几何（"画的和点的不一样"的前科）。
+- `horizonRatio` 随设计尺寸一起覆盖：它是**比例**不是像素（T-04）。
+
+---
+
+## 1.4.0-preview —— 2026-11-08（控件拖拽原语）
+
+> 任务书：`GoldingCore/docs/TASK-SDK-DRAGGER.md`。
+> 起因：GoldingCore 的资源库要把"资源行"拖到"目录行"上完成分组，而库里
+> **没有任何通用拖拽**——只有 `MenuBar::IsDragging()`（拖窗口）与
+> `Slider::_dragging`（拖值）两个内部布尔，消费方只能各自拼一套指针状态。
+> **纯新增 API**：既有结构体布局一个字节都没动；但 `InkingWidget` 变大了
+> （见下面「变更」第一条）。
+
+### 新增
+
+- **`include/drag/DragSpec.h`**：
+  - `InkingDragSourceSpec`：`payloadType`（空 = 不可拖）/ `payload`（`void*`，
+    **生命周期归调用方**，库不 release / 不 clone / 不拥有）/ `ghostText` /
+    `ghostWidth` / `ghostHeight`（`<= 0` = 用源控件尺寸）/ `canBegin`；
+  - `InkingDropTargetSpec`：`acceptType`（与源逐字节相等才可落）/ `canDrop` /
+    `onDrop`；
+  - `InkingDragGhostZIndex = 850`（高于弹窗 400 / 菜单 260，低于光标 900）、
+    `InkingDragStartThreshold = 4`（设计像素）。
+- **`InkingWidget::SetDragSource()` / `SetDropTarget()` / `GetDragSource()` /
+  `GetDropTarget()` / `IsDragOver()` / `MarkDragOver()`**：任何控件挂两句话就能
+  被拖 / 当落点，**不需要继承任何东西**。`IsDragOver()` 只是**状态**——高亮怎么画
+  由控件自己的 `onRender` 决定（与 `MouseHover()` 同一条分工）。
+- **`include/drag/InkingDragSession.h`**：`InkingDragSession`——一个场景一份的
+  会话状态机（阈值 / 独占 / 幽灵 / 落点 / 四条取消路径共用一处收尾）。
+- **`InkingScene` 上的门面**：`IsDragging()` / `GetDragSourceNode()` /
+  `GetDragTargetNode()` / `GetDragGhostNode()` / `GetDragSession()` /
+  `BeginDrag(src)`（程序化起拖）/ `CancelDrag()`（显式取消，顺手放掉主键捕获）。
+- **幽灵层**（`src/drag/InkingDragGhost.cpp`，内部类型）：场景的直接子节点、
+  `zIndex = 850`、**恒不参与命中**；跟手、夹在设计画布内；文案居中；
+  尺寸没给时按文案量。
+- **交互五条（写死，不是配置）**：① 4px 起拖阈值，没过阈值仍是普通点击；
+  ② 拖拽是独占会话（源收不到 click、hover 不传给别的控件）；③ 幽灵挂在场景下、
+  不吃命中；④ 取消四条路（Esc / 松手无落点 / 源被移除 / `CancelDrag()`）走同一处
+  收尾；⑤ 一次只允许一个拖拽（不做多选批量拖）。
+- 探针 **`examples/probe_drag/`**（`ctest -R probe_drag`）：任务书 §5 的 A1~A8
+  逐条断言 + `canBegin` 附加一条 + 一段"幽灵真的画出来了"的像素判据。
+
+### 变更
+
+- **`InkingWidget` 变大**（多两个 spec + 一个 `bool`）⇒ **必须整体重编，不能只换
+  dll**：控件对象的布局编译在消费方自己的 TU 里，新旧混跑必崩。
+- `InkingVersion` → `1.4.0`（阶段仍是 `preview`）。
+- `InkingScene` 的析构多一步 `_drag.shutdown()`：先摘幽灵、再摘子树，走的是
+  "场景还活着"的正常路径（理由写在 `~InkingScene` 的注释里）。
+
+### 已知限制（任务书 §4，**明确不做**）
+
+- 列表边缘**自动滚动**：要把"拖拽中每帧查边缘 + 驱动滚动"接进来，等于给拖拽加
+  一个每帧循环；当前"一屏内拖"的需求用不到。
+- **跨窗口 / 跨进程**拖拽（系统级 API，与单窗口渲染取向冲突）、**多选批量拖**
+  （payload 是单值）、**排序 / 落位动画**、**payload 生命周期管理**。
+- `MenuBar` 的窗口拖动与 `Slider` 的拖值**保持原样**：它们是"控件内部状态"，
+  与"跨组件拖放"不是同一件事（收益低、回归风险高）。
+- 拖拽源在拖拽期间**没有** `IsBeingDragged()` 这类逐控件查询：要判"被拖的是不是
+  我"，问 `scene->GetDragSourceNode() == this`（一份真相，不在控件里存第二份）。
+
+### 文档
+
+- 新增 `docs/zh/api/InkingDrag.md`；`docs/zh/API.md` 的模块地图与头文件索引跟着更新。
+
+---
+
+## 1.3.0-preview —— 2026-11-07（按钮文字的溢出策略）
+
+> 任务书：`GoldingCore/docs/TASK-SDK-TEXT-OVERFLOW.md`。
+> 起因：编辑器顶栏「文件 → 最近项目」子菜单的文字（200px 宽、`项目名 · 父目录`）
+> 会画到菜单卡片外面——按钮文字**根本没有溢出入口**，它是"量一次 + 整串画"。
+> **1.3 只加不改（除两处刻意的可见修正）**，仍**不承诺 ABI 冻结**。
+
+### 新增
+
+- **`InkingButtonTextData::overflow` / `rightSpace` / `tooltipWhenTruncated`**：
+  按钮文字的横向溢出策略（`Clip` 截断 / `Ellipsis` 回退后补 `…`）、右侧内缩
+  （`0` = 跟随 `leftSpace`，既是"对称"的默认语义，也让老配置一个字都不用改）、
+  以及"被截时悬停弹提示看全文"的开关（默认关）。
+  配置键：`text.overflow`（`"clip"` / `"ellipsis"`）、`text.rightSpace`、
+  `text.tooltipWhenTruncated`（布尔）。
+- **`InkingCutTextToWidth()`**（`dataStruct/InkingTextLayout.h`）：把"按宽度回退到
+  能放下的字节终点"公开成纯函数（UTF-8 安全、不切半个字、`available <= 0` 返回
+  `begin`）。排版层的 `Clip` / `Ellipsis` 与按钮单行截断**共用这一份**。
+- **`inking_detail::ResolveButtonTextCut()` + `InkingButtonTextCutCache`**：先截再量
+  再算偏移再画；缓存键 = 文字 / 字号 / 字体 / 可用宽 / 策略，稳态每帧 0 次测量。
+- **`InkingStaticButton::SetTooltipWhenTruncated()` / `IsTooltipShowing()`**：
+  截断提示的开关与观测口。提示框懒创建（第一次真的要被截时才建），判据与绘制
+  共用同一份截断结果。
+- **`TooltipData::wrap` / `maxHeight` / `lineSpacing`**：提示框会换行了
+  （`InkingLayoutText`，可用宽 = `maxWidth`，`Clip`——提示里不该再出现 `…`）。
+- 自检 **A1 ~ A12**：纯函数四条边界、排版三种情形、按钮落笔像素（框右 0 亮像素）、
+  省略号在末尾、放得下时原样画、悬停 0.4s 弹提示、提示框换行。
+
+### 变更（**两处可见行为变化，升级前请看**）
+
+- **按钮文字超宽不再画到控件外**：默认 `overflow = Clip`。老配置（一个字段都没填）
+  的按钮，只要文字原本就溢出，现在会被**截断**——这是修正，不是不兼容，但画面上
+  确实"少画一点"。
+- **排版层横向 `Clip` 从空操作改为真截断**：`InkingLayoutText` 的 `Clip` 以前只实现
+  了"多余的行不画"（0.8.3 的 `maxHeight`），横向一律照排——头文件那句"`Clip` 就
+  直接丢掉"当时是句空话。现在超宽会回退到放得下为止并置 `truncated`。
+  受影响：所有走排版的组件（标签、动态标签、输入框、将来的多行文本）。
+- **输入框显式关掉横向裁**（`InkingLabelLike::SetHorizontalClip(false)`）：它的单行
+  超宽文字是"左移显示"（`TextScrollX`），排版必须保留完整行区间，否则光标偏移映射
+  会错位（自检 `input_scroll_mapping` 当场红）。
+- **`InkingButtonData` 变大**（多 12 字节，对齐后）⇒ **必须整体重编，不能只换 dll**。
+  `InkingButtonData` 是按值跨 dll 传的，新旧混跑必崩。
+- `InkingVersion` → `1.3.0`（阶段仍是 `preview`）。
+
+### 文档
+
+- `CXXCSS/CXXCSS.md` §9 字段表按 `inkgen --dump-fields` 重生成（Button 的 `text`
+  段 +3 个字段）。
+
+### 已知限制
+
+- 按钮文字仍是**单行**（`wrap` / `maxLines` 不在按钮上，多行会把按钮撑破）。
+- 悬停不滚动、不放大字号——`…` + 提示框是这一版给出的全部手段。
+- 字体缺失时 `InkingMeasureText` 给估算法，截断位置因此会有偏差（居中的老偏差
+  同样存在）；这条写进注释，不做特殊处理。
+- 提示框几何只夹宽 / 高，不跟随锚点移动。
+
+---
+
+## 1.2.1-preview —— 2026-11-05（场地层 `field/`）
+
+> 任务书与定稿：[`plans/2026-11-05-field-layer-tasks.md`](plans/2026-11-05-field-layer-tasks.md)。
+> `1.2.0` **没有打包发布**（只在本机验证过），首份交付包直接是 `1.2.1`，
+> 因此 `1.2.1` 除了场地层本身，还含第二轮复核的七条补丁（见任务书 §10）。
+> **1.2 只加不改**：既有组件的绘制路径、命中表、层序逐像素不变。
+> 仍**不承诺 ABI 冻结**（2.0 才冻结，之后只修 bug）。
+
+### 新增
+
+- **场地层**（`field/InkingField.h`）：一块带深度的地面空间 + 站在上面的图元。
+  地形面（天空 / 地面底色 / 瓦片，自由顶点）与物体面（矩形 + 旋转，按
+  `(d, lift, 提交序号)` 排序）分两笔提交；命中复用每帧的投影结果，**绝不重投影**。
+  入口：`SetProjection` / `SetObjects` / `SetTiles` / `SetSkyColor` / `SetGroundColor`
+  / `HitObject` / `HitCell` / `ClickAt` / `OnFieldClick`。观测口 `GetStats()`
+  （`objectsDrawn` / `terrainBatches` / `rejectedBatchesTotal` / `culledSubPixel` /
+  `truncatedTiles` / `transformBlocked`）。**除 `rejectedBatchesTotal` 是累计外，
+  其余都是"上一帧"的账**。
+- **投影纯函数层**（`field/InkingFieldProjection.h`）：**零 SDL、零全局状态**，
+  可脱窗口单测（引擎 core 进程只需要它就能做"点击 → 格坐标"）。正俯视 + 斜投影：
+  `s = 1/(1+h·ld)`（Möbius 形式，只有它保直线）、`skew` 与 `depthScaleFar` 正交、
+  `InkingFieldGroundHit` 闭式反解、`InkingFieldVisibleCells` 可见格枚举、
+  `InkingFieldDepthLimitForPixel` 1px 判据。批量投影用
+  `InkingFieldPrecompute` + `InkingFieldProjectPrecomputed`（5000 个物体省约 0.3 ms，
+  公式仍只有一份）。
+- **场景场地槽位**（`InkingScene::SetField` / `GetField`）：一个场景最多一个场地，
+  层序由构造保证（z 压到最低）。直接子节点 + 父链无变换两条硬要求，违反时
+  WARN + 不生效。
+- **派生实体的官方姿势**：`InkingFieldObject` 是 POD，业务侧
+  `struct MyEnemy { InkingFieldObject base; int hp; };` 即可；`SetObjects` 的模板
+  重载自动按 `sizeof(MyEnemy)` 传跨距（当成基类型数组索引会逐元素错位）。
+- 静默失效清单 **17 → 21 条**：`field_follow_perspective_inert` /
+  `field_parent_transform_drifts` / `field_terrain_batch_rejected` /
+  `field_subpixel_culled`。每条都有一条自检真的跑它。
+- 新 ctest：`field_pure_headers_have_no_sdl`（头里只许 `cstdint` / `cstddef` /
+  `cmath`；这一层一旦拖进 SDL，"无窗口测试"就静默失效）。
+
+### 变更
+
+- `InkingVersion` → `1.2.1`（阶段仍是 `preview`）。
+- **`Stats` 的时间口径写死在名字里**：`rejectedBatches` → `rejectedBatchesTotal`
+  （累计）；其余字段统一为"上一帧"的账，`culledSubPixel` 改为"上一帧重建投影时
+  剔掉几个"（没重建的帧是 0）。
+- `InkingFieldProjection::InkingFieldVisibleCells` 的上界改成半开区间的
+  `ceil(maxX/cw) − 1`：以前在 `maxX` 正好落在格边界时会多算一整列 / 一行。
+
+### 文档
+
+- 新页 [`api/InkingField.md`](api/InkingField.md)：投影公式、格子、物体字段的坑、
+  层序与分批、命中三条路、观测口。
+- `docs/AGENTS.md` §7 与 `API.md` 索引同步（头文件 121 → 123）。
+
+### 已知限制
+
+- 场地**必须直接挂在场景下**，祖先带平移/缩放时整块不画（只 WARN 一次）。
+- 格子模式下 `followPerspective` / `SetSkyColor` 不生效（那里 `s ≡ 1`、没有天空）。
+- `depth` 不参与视觉，只用于占位；贴地且要遮挡的东西必须当物体，不能当瓦片。
+
+---
+
 ## 1.1.0-preview —— 2026-11-05（游戏引擎能力：批量提交 / 遮罩 / 九宫格）
 
 > 需求来源：`D:/GoldingCore/probe-perspective/REQUIREMENTS-InkingUIKit.md`

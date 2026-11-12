@@ -396,6 +396,21 @@ if(INK_BUILD_TESTS)
 endif()
 
 # ---------------------------------------------------------------------------
+# 场地纯函数层零 SDL 依赖（1.2 T-01）
+#
+# 为什么是一条**机械**检查："场地能被无窗口测试"全靠这一层不拖 SDL，而头文件
+# 里多一行 `#include <SDL3/SDL.h>` 不会有任何编译错误——只是从此 headless 的
+# core 进程用不了它。判据与取舍写在脚本里。
+# ---------------------------------------------------------------------------
+if(INK_BUILD_TESTS)
+    add_test(NAME field_pure_headers_have_no_sdl
+             COMMAND ${CMAKE_COMMAND}
+                     -DHEADER=${CMAKE_CURRENT_SOURCE_DIR}/include/field/InkingFieldProjection.h
+                     -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/field/InkingFieldProjection.cpp
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check-field-pure-headers.cmake)
+endif()
+
+# ---------------------------------------------------------------------------
 # 严格告警门（0.8.5 T-05）：**同一批源、另一套 flags**，有告警即编不过
 #
 # 为什么是独立目标而不是给主目标加 flags：

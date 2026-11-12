@@ -83,6 +83,10 @@ InkingTextInput::InkingTextInput(InkingWidget* parent, const InkingTextInputData
     // 这一条显式写：指望默认值就会得到一个"点不动的输入框"。
     SetHitPassThrough(false);
 
+    // 单行文字超宽时是"左移显示"（`TextScrollX`），不是截断：排版必须保留完整
+    // 行区间（1.3.0 T-03 让 `Clip` 真的裁了，输入框这条路要显式关掉横向裁）。
+    SetHorizontalClip(false);
+
     // 初始文本必须同时写进**编辑状态**：基类只拿它做显示，`GetEditText()` 读的是
     // `_edit`。不同步的话，一个预填了 "12" 的输入框会"看着有字、读出来是空"，
     // 调用方 std::atoi("") 得 0，参数静默变成 0（2026-10-18 修复）。

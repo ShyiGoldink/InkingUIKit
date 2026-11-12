@@ -34,6 +34,18 @@ InkingPanelData MakePanelData(const TooltipData& data) {
     return panel;
 }
 
+/// 真测量：把文字层包成排版层要的回调（与标签那份同构，只是字体来源不同）。
+InkingTextExtent MeasureWithTextLayer(const std::string& text,
+                                     const InkingTextStyle& style) {
+    InkingTextRequest request;
+    request.text = text;
+    request.fontSize = style.fontSize > 0.0f ? style.fontSize : 14.0f;
+    request.fontPath = style.fontPath;
+    request.fontPaths = style.fontPaths;
+    const InkingTextMetrics metrics = InkingMeasureText(request);
+    return InkingTextExtent{metrics.width, metrics.height};
+}
+
 }  // namespace
 
 TooltipData TooltipData::MakeDefault() {
@@ -82,20 +94,32 @@ void Tooltip::Hide() {
 }
 
 void Tooltip::applyTextLayout() {
-    // ① 量文字（`InkingMeasureText` 不依赖渲染器：拿不到字体时给估算值，
-    //    于是"没放字体"不会让提示变成 0 尺寸）。
-    InkingTextRequest request;
-    request.text = _text;
-    request.fontSize = _data.fontSize;
-    request.fontPath = _data.fontPath.empty() ? theme::DefaultFontPath() : _data.fontPath;
-    const InkingTextMetrics metrics = InkingMeasureText(request);
+    // ① 排版（T-06）：可用宽 = `maxWidth`，按 `wrap` 断行，`Clip`——提示里
+    //    **不该再出现省略号**（那不是"全文"了）。行数不限，高度可以夹。
+    InkingTextStyle style;
+    style.fontSize = _data.fontSize;
+    style.lineSpacing = _data.lineSpacing;
+    style.fontPath = _data.fontPath.empty() ? theme::DefaultFontPath() : _data.fontPath;
+    style.align = InkingTextAlignH::Left;
+    style.alignV = InkingTextAlignV::Top;
 
-    // ② 面板 = 文字 + 内边距；`maxWidth` **只夹面板**（这一版不换行）。
-    const float maxPanelWidth = _data.maxWidth > 0.0f
-                                    ? _data.maxWidth + _data.paddingX * 2.0f
-                                    : metrics.width + _data.paddingX * 2.0f;
-    const float width = std::min(metrics.width + _data.paddingX * 2.0f, maxPanelWidth);
-    const float height = metrics.height + _data.paddingY * 2.0f;
+    InkingTextLayoutRequest request;
+    request.text = _text;
+    request.style = style;
+    request.maxWidth = _data.maxWidth > 0.0f ? _data.maxWidth : 0.0f;
+    request.maxHeight = _data.maxHeight > 0.0f ? _data.maxHeight : 0.0f;
+    request.wrap = _data.wrap;
+    request.overflow = InkingTextOverflow::Clip;
+    _laid = InkingLayoutText(request, MeasureWithTextLayer);
+    _laidText = _text;
+
+    // ② 面板 = 文字块 + 内边距。内容宽取"实际排出来最宽的那行"（短文本因此
+    //    仍然缩到文字那么大，不会一律撑到 `maxWidth`——这是与改动前一致的基线）。
+    const float contentWidth =
+        _data.maxWidth > 0.0f ? std::min(_laid.contentWidth, _data.maxWidth)
+                              : _laid.contentWidth;
+    const float width = contentWidth + _data.paddingX * 2.0f;
+    const float height = _laid.contentHeight + _data.paddingY * 2.0f;
     Resize(std::max(1, static_cast<int>(std::lround(width))),
            std::max(1, static_cast<int>(std::lround(height))));
 
@@ -160,23 +184,31 @@ void Tooltip::onAnimationTick(float deltaSeconds) {
 
 void Tooltip::paintText(float pixelX, float pixelY) const {
     SDL_Renderer* renderer = inking_detail::currentRenderer();
-    if (renderer == nullptr || _text.empty()) {
+    if (renderer == nullptr || _laidText.empty()) {
         return;
     }
     const float magnification =
         GetMagnification() > 0.0f ? GetMagnification() : 1.0f;
 
-    InkingTextRequest request;
-    request.text = _text;
-    request.fontSize = _data.fontSize;
-    request.fontPath = _data.fontPath.empty() ? theme::DefaultFontPath() : _data.fontPath;
-    request.color = _data.textColor;
-    // 文字块位置 = 内边距（设计坐标，相对组件左上角）。
-    request.offsetX = _data.paddingX;
-    request.offsetY = _data.paddingY;
+    // 逐行画（T-06）：行里的字节区间指向 `_laidText`，位置由排版给。
+    for (const InkingTextLine& line : _laid.lines) {
+        if (line.begin >= line.end || line.end > _laidText.size()) {
+            continue;  // 空行（显式换行留下的）不画
+        }
+        InkingTextRequest request;
+        request.text = _laidText.substr(line.begin, line.end - line.begin);
+        request.fontSize = _data.fontSize;
+        request.fontPath = _data.fontPath.empty() ? theme::DefaultFontPath()
+                                                  : _data.fontPath;
+        request.color = _data.textColor;
+        // 文字块位置 = 内边距 + 这一行在文字块里的位置（设计坐标，相对组件左上角）。
+        request.offsetX = _data.paddingX + line.x;
+        request.offsetY = _data.paddingY + line.y;
 
-    inking_detail::PaintText(renderer, request, GetWidth(), GetHeight(), magnification,
-                             pixelX, pixelY, GetDisplayTransform());
+        inking_detail::PaintText(renderer, request, GetWidth(), GetHeight(),
+                                 magnification, pixelX, pixelY,
+                                 GetDisplayTransform());
+    }
 }
 
 void Tooltip::onRender(float pixelX, float pixelY) const {
