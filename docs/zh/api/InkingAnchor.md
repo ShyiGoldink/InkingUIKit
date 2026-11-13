@@ -34,16 +34,16 @@ InkingAnchorData混杂了部分Widget的内容。这是因为InkingAnchor我们�
 
 ```C++
 struct InkingAnchorData {
-    InkingAnchorPoint selfAnchor{};  ///< 自身锚点
-    InkingAnchorPoint traceAnchor{}; ///< 上级锚点（追踪的父级锚点）
-    float offsetX = 0.0f;      ///< 对齐之后再挪一点，设计坐标
-    float offsetY = 0.0f;
-    int width = 0;   ///< 自身尺寸，设计坐标
-    int height = 0;
+    InkingAnchorPoint selfAnchor{};  // 自身锚点
+    InkingAnchorPoint traceAnchor{}; // 上级锚点（追踪的父级锚点）
+    float offsetX = 0.0f;// 对齐之后的微调，但其实相当于传统的x/y移动
+    float offsetY = 0.0f;// 对齐之后的微调，但其实相当于传统的x/y移动
+    int width = 0;  // 自身尺寸，设计坐标
+    int height = 0; // 自身尺寸，设计坐标
 
-    int zIndex = 0;   ///< 越大越靠上，**只在兄弟之间**比较（局部层级）
-    bool visible = true;  ///< 可见性；不可见连命中都不必问
-    std::uint32_t color = 0xFF569CD6u;  ///< 占位填充色 0xAARRGGBB（样式层接手）
+    int zIndex = 0;   // 越大越靠上，**只在兄弟之间**比较（局部层级）
+    bool visible = true;  // 可见性；不可见连命中都不必问
+    std::uint32_t color = 0xFF569CD6u;  // 占位填充色 0xAARRGGBB
     InkingLayoutSpec layout{};
     InkingLayoutItem layoutItem{};
 };
@@ -237,6 +237,3 @@ InkingAnchor* GetAnchorParent() const noexcept;
 业务侧要的父子关系是 `InkingWidget::GetParent()`（返回 `InkingWidget*`，那一份带树语义）。
 根节点（窗口 / 场景）返回 `nullptr`。
 
----
-
-> 本文档对应版本：**1.0.0（预览版）**。
