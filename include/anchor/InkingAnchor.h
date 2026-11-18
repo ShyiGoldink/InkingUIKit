@@ -1,18 +1,18 @@
 #pragma once
 
 /*
- InkingAnchor是整个项目的基类 
+ InkingAnchor是整个项目的基类
  它的作用是作为一个数据结构，来为整个项目提供定位的能力
- */
+*/
 
 #include <dataStruct/InkingAnchorData.h>
 
 #include <cstdint>
 
-/**
- * InkingAnchor作为一个底层的数据类，不支持实例化
- * 高级的内容移交给InkingStaticWidget和InkingDynamicWidget
- */
+/*
+ InkingAnchor作为一个底层的数据类，不支持实例化
+ 高级的内容移交给InkingStaticWidget和InkingDynamicWidget
+*/
 class InkingAnchor {
 public:
     // 虚析构：本类要被继承。
@@ -31,7 +31,7 @@ public:
     const InkingAnchorPoint& GetTraceAnchor() const noexcept { return _traceAnchor; }
 
     // 对齐之后可以移动，为了可以微调位置，同时也是为了支持动态类
-    
+
     //获取横轴位移
     float GetOffsetX() const noexcept { return _offsetX; }
     //获取纵轴位移
@@ -113,4 +113,3 @@ protected:
 
     InkingAnchor* _parent = nullptr;//父级组件
 };
-

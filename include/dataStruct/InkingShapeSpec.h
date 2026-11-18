@@ -298,14 +298,14 @@ inline float ShapeBoxDistance(float px, float py, float cx, float cy,
     先求出qx和qy中大的那一个，如果大的那一个小于0，说明双方都小于0
     只有小于0的情况下，inside才会为负数
     这是情况B
-    */ 
+    */
     const float nearer = qx > qy ? qx : qy;
     const float inside = nearer < 0.0f ? nearer : 0.0f;
 
     /*
      情况A和情况B天然互斥，其中一方满足条件，另一方就为0
-     所以返回的值就是满足条件情况的那个值 
-     */
+     所以返回的值就是满足条件情况的那个值
+    */
     return outside + inside;
 }
 // SDF几何辅助函数：用于确定点px，py到由点bx，by和ax，ay组成的线段的距离
@@ -333,7 +333,7 @@ inline float ShapeSegmentDistance(float px, float py, float ax, float ay,float b
     }
     /*
     最后基于各种值，算出dx和dy，再算出长度
-     */
+    */
     const float dx = px - (ax + ex * t);
     const float dy = py - (ay + ey * t);
     return std::sqrt(dx * dx + dy * dy);
@@ -491,11 +491,8 @@ inline float ShapePolygonSdf(int count, VertexAt vertexAt, float x, float y) {
 
 }  // namespace inking_detail
 
-/**
- * @brief 点的带符号距离，单位是设计坐标。
- * @param x,y 相对组件左上角的坐标
- * @return f < 0 在内部、f = 0 在边界、f > 0 在外部
- */
+
+ //SDF距离场函数：判断相对于组件左上角的坐标点(x,y)与形状shape的关系，返回值f < 0 在内部、f = 0 在边界、f > 0 在外部
 inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y, int width,
                             int height) {
     const float w = static_cast<float>(width);
@@ -503,22 +500,19 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
 
     switch (shape.kind) {
         case InkingShapeKind::RoundedRect: {
-            // 半径先夹取（形状自己的数学要求），再按"内缩矩形 + 到角心的距离"算。
-            //
-            // 关键在最后减的那一项：
-            //   - 边上（内缩矩形之外、但只有一个方向越界）到的是**边线**，
-            //     已经是真距离，不用再减半径；
-            //   - 角上到的是**角心**，要减掉半径才是到圆弧的距离。
-            // 所以减的是 `min(max(qx,qy), 0)`：只有"角上"这个分量才非零。
-            // 直接在结果上减 r 会把四条直边也算短 r——圆角矩形的中心到上边
-            // 就是 h/2，不是 h/2 - r。
+            // 半径先夹取，再按内缩矩形和角心距离计算。
+            /*
+             只有角部需要从角心距离中减去半径；沿直边的距离已经是准确值。
+             因此只在 qx、qy 都为正时减半径，避免把四条直边也缩短 r。
+             例如，圆角矩形中心到上边的距离是 h/2，而不是 h/2 - r。
+            */
             const float r = shape.EffectiveRadius(width, height);
             const float halfW = w * 0.5f;
             const float halfH = h * 0.5f;
             const float innerW = halfW - r;
             const float innerH = halfH - r;
 
-            // 把点搬到"内缩矩形的角"为原点的象限里，取绝对值即可复用一份公式。
+            // 将点映射到内缩矩形角部对应的象限，通过绝对值复用同一套公式。
             const float qx = std::fabs(x - halfW) - innerW;
             const float qy = std::fabs(y - halfH) - innerH;
 
@@ -527,11 +521,11 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
             const float outside =
                 std::sqrt(outsideX * outsideX + outsideY * outsideY);
 
-            // 内部时 max(qx,qy) 为负，就是到最近边线的距离。
+            // 点在内侧时，max(qx, qy) 为负值，表示到最近边线的距离。
             const float nearer = qx > qy ? qx : qy;
             const float inside = nearer < 0.0f ? nearer : 0.0f;
 
-            // 只有"两个方向都越界"（真在角上）时才还要减半径。
+            // 只有两个方向都越过内缩矩形边界，也就是位于圆角区域时，才减去半径。
             return outside + inside - (nearer < 0.0f ? 0.0f : r);
         }
 
@@ -544,18 +538,19 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
         }
 
         case InkingShapeKind::Ellipse: {
-            // 椭圆的 SDF 没有精确闭式（真值要解数值最近点），
-            // 但这里要的是符号正确的近似：内外判定精确，
-            // 距离在边缘附近也够准。
-            //
-            // 写法：在归一化空间算到单位圆的距离，再乘回最小半径——
-            // 于是内部为负、外部为正、边界为 0，`InkingShapeContains` 永远正确。
+            /*
+             椭圆的精确 SDF 需要数值求解最近点。这里使用符号准确的近似，
+             并保证边界附近的距离足够精确。
+
+             在归一化空间计算到单位圆的距离，再乘回最小半径。这样内部为负、
+             外部为正、边界为零，InkingShapeContains 的内外判定保持准确。
+            */
             const float rx = w * 0.5f;
             const float ry = h * 0.5f;
             if (rx <= 0.0f || ry <= 0.0f) {
                 const float dx = rx <= 0.0f ? std::fabs(x) : 0.0f;
                 const float dy = ry <= 0.0f ? std::fabs(y) : 0.0f;
-                return dx + dy;  // 退化成一条线 / 一个点，只有它本身算"在内"
+                return dx + dy;  // 退化成线或点，仅退化形状本身属于内部
             }
             const float k0 = std::hypot((x - rx) / rx, (y - ry) / ry);
             const float k1 = std::hypot((x - rx) / (rx * rx),
@@ -568,8 +563,10 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
         }
 
         case InkingShapeKind::Capsule: {
-            // 胶囊 = 脊椎线段 + 半径 r 的圆（r 取短边的一半，沿长轴放）。
-            // 到形态的距离就是这个圆盘的距离：到线段距离 − r。
+            /*
+             胶囊由一条脊椎线段向外扩展半径 r 形成，r 为短边的一半。
+             到胶囊的距离等于到线段的距离减去 r。
+            */
             const float radius = (w < h ? w : h) * 0.5f;
             float ax = 0.0f;
             float ay = 0.0f;
@@ -590,8 +587,10 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
         }
 
         case InkingShapeKind::Ring: {
-            // 圆环：到"中径圆"的距离再减去半个环宽——内外两侧合起来正好
-            // 就是到环带边界的距离（|d − rMid| − t/2）。
+            /*
+             圆环的距离等于到中径圆的距离减去半个环宽，
+             即 |d - rMid| - t/2。
+            */
             const float outerRadius = (w < h ? w : h) * 0.5f;
             const float thickness =
                 inking_detail::ShapeRingThickness(shape.thickness, width, height);
@@ -599,7 +598,7 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
             const float dx = x - w * 0.5f;
             const float dy = y - h * 0.5f;
             const float distance = std::sqrt(dx * dx + dy * dy);
-            // t = 0 时 |d − rOuter| >= 0：孔里孔外都在外面，只有那圈线算"在内"。
+            // 环宽为零时仅圆周本身属于内部，圆孔和圆外均属于外部。
             return std::fabs(distance - midRadius) - thickness * 0.5f;
         }
 
@@ -608,26 +607,28 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
             const float centerY = h * 0.5f;
             const float half = shape.thickness * 0.5f;
             if (shape.cap == InkingLineCap::Round) {
-                // 圆头 = 到线段距离 − 半径（两端自然长出半圆）。
+                // 圆头通过线段距离减去半径计算，两端自然延伸为半圆。
                 return inking_detail::ShapeSegmentDistance(x, y, 0.0f, centerY, w,
                                                     centerY)
                      - half;
             }
-            // 平头 / 方头都是矩形：方头只是两端各外扩 half。
+            // 平头和方头都按矩形计算；方头在两端各外扩 half。
             const float extra = shape.cap == InkingLineCap::Square ? half : 0.0f;
             return inking_detail::ShapeBoxDistance(x, y, w * 0.5f, centerY,
                                             w * 0.5f + extra, half);
         }
 
         case InkingShapeKind::Polygon: {
-            // 正多边形（凸）：先取"到各边所在直线"的最大带符号距离当符号与内部
-            // 距离（f <= 0 恰好等价于"在每条边的内侧"），外部再用"到边界折线
-            // 的距离"取精确值——两条一起就是精确 SDF。
+            /*
+             正多边形是凸形。内部距离取到各边所在直线的最大带符号距离，
+             该值不大于零等价于点位于所有边的内侧。外部距离取到边界线段的
+             最短距离，两者组合得到精确 SDF。
+            */
             const float radius = inking_detail::ShapePolygonCircumradius(width, height);
             if (radius <= 0.0f) {
                 const float dx = x - w * 0.5f;
                 const float dy = y - h * 0.5f;
-                return std::sqrt(dx * dx + dy * dy);  // 退化成中心一个点
+                return std::sqrt(dx * dx + dy * dy);  // 半径为零时退化为中心点
             }
             const int sides = inking_detail::ShapePolygonSides(shape);
             const float centerX = w * 0.5f;
@@ -641,8 +642,10 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
                 const inking_detail::ShapePoint b =
                     inking_detail::ShapePolygonVertex(shape, width, height, i + 1);
 
-                // 外法向：垂直于这条边、指向远离中心的那一侧。判定用的是
-                // "顶点相对中心的方向"，与顶点绕向无关，正多边形怎么转都对。
+                /*
+                 外法向垂直于边并背离中心。用顶点相对中心的方向确定法向，
+                 因而不依赖顶点绕向，也适用于任意旋转角度。
+                */
                 float nx = b.y - a.y;
                 float ny = -(b.x - a.x);
                 const float length = std::sqrt(nx * nx + ny * ny);
@@ -670,18 +673,22 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
         }
 
         case InkingShapeKind::ChamferRect: {
-            // 切角矩形 = 八个半平面的交（四条边 + 四条 45° 斜边）。
-            // 凸集的 SDF 就是"到各面所在平面的带符号距离取最大"——精确，不用近似。
+            /*
+             切角矩形由四条直边和四条 45 度斜边围成，是八个半平面的交集。
+             凸集的 SDF 等于到各边所在平面的带符号距离最大值。
+            */
             const float chamfer =
                 inking_detail::ShapeChamferAmount(shape.chamfer, w, h);
             const float dx = std::fabs(x - w * 0.5f);
             const float dy = std::fabs(y - h * 0.5f);
 
-            // 四条直边（半个矩形）。
+            // 四条直边对应的矩形边界。
             const float box = std::max(dx - w * 0.5f, dy - h * 0.5f);
 
-            // 四条斜边：`|x| + |y| <= 半周长 − 切角`（法向是 (1,1)/√2，
-            // 所以距离要乘 1/√2 才是真的欧氏距离）。
+            /*
+             四条斜边满足 |x| + |y| <= 半周长 - 切角。法向长度为 sqrt(2)，
+             因此乘以 1/sqrt(2) 才得到欧氏距离。
+            */
             constexpr float kInvSqrt2 = 0.70710678f;
             const float diagonal =
                 (dx + dy - (w * 0.5f + h * 0.5f - chamfer)) * kInvSqrt2;
@@ -690,9 +697,10 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
         }
 
         case InkingShapeKind::Star: {
-            // 星形非凸，没有"半平面取最大"那条捷径了。做法回到最朴素、
-            // 也最不容易错的一种：符号用射线法、距离用点到边界的最近距离
-            // （和 `PolygonPath` 共用一份实现）。
+            /*
+             星形是非凸形，不能使用凸多边形的半平面距离算法。
+             使用射线法判断内外，并计算点到边界的最短距离，和 PolygonPath 共用实现。
+            */
             const int count = inking_detail::ShapeStarPoints(shape) * 2;
             return inking_detail::ShapePolygonSdf(
                 count,
@@ -703,12 +711,13 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
         }
 
         case InkingShapeKind::PolygonPath: {
-            // 任意多边形：同一份"射线法 + 最近边"的实现。它可以非凸，
-            // 甚至可以不是星形域（U 形那种，中心落在凹口里）——命中与填充
-            // 都得照样对。
+            /*
+             任意多边形也使用射线法判断内外，并计算到最近边的距离。该算法支持
+             非凸多边形，包括中心落在凹口中的 U 形区域。
+            */
             const int count = shape.pathPointCount;
             if (count < 3 || shape.pathPoints == nullptr) {
-                return 0.0f;  // 顶点表不成立：退化成"整个框都算在内"
+                return 0.0f;  // 顶点表无效时，退化为整个组件区域均属于内部
             }
             return inking_detail::ShapePolygonSdf(
                 count, [&](int k) { return inking_detail::ShapePathVertex(shape, k); },
@@ -716,15 +725,17 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
         }
 
         case InkingShapeKind::Superellipse: {
-            // 超椭圆 |x/a|^n + |y/b|^n = 1 没有初等闭式的距离，做法与 ellipse
-            // 那条同一个精神：符号精确（归一化后的 f 与 1 比），距离在边缘
-            // 附近够准（按最小半轴缩放回来）。
+            /*
+             超椭圆 |x/a|^n + |y/b|^n = 1 没有简单的精确距离公式。
+             通过归一化函数与 1 的比较准确判断内外，再按最小半轴缩放，
+             得到边界附近较准确的距离。
+            */
             const float a = w * 0.5f;
             const float b = h * 0.5f;
             if (a <= 0.0f || b <= 0.0f) {
                 const float dx = a <= 0.0f ? std::fabs(x) : 0.0f;
                 const float dy = b <= 0.0f ? std::fabs(y) : 0.0f;
-                return dx + dy;  // 退化成一条线 / 一个点
+                return dx + dy;  // 退化成线或点
             }
             const float n = inking_detail::ShapeSuperellipseExponent(shape);
             const float u = std::fabs(x - a) / a;
@@ -735,14 +746,15 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
         }
 
         case InkingShapeKind::Arc: {
-            // 圆弧带 = 环带 ∩ 两个端头半平面。两样各是一个简单距离场，
-            // 取最大就得到交的 SDF（符号精确；在交角附近是近似，够用）：
-            //    环带：`|半径 − 中径| − 半个环宽`；
-            //    端头：径向切平，用"过端点的径向线"那个半平面表示，
-            //    距离就是点到那条线的带符号距离。
-            //
-            // 端头为什么不能写成"到端点的距离 − 半个环宽"（圆头）：那画出来的
-            // 是圆头，而渲染侧的两端是切平的——两边分家就会出现"画了没点中 /点中了没画"。
+            /*
+             圆弧带由环带与两个端头半平面的交集构成。各部分距离取最大值，
+             可得到符号准确的距离场；交界角附近是近似值。
+             环带距离为 |半径 - 中径| - 半个环宽。端头沿径向切平，
+             用经过端点的径向直线所定义的半平面距离表示。
+
+             不能用到端点的距离减去半个环宽来计算端头，否则会形成圆头。
+             渲染端采用平头，距离场也必须使用平头，才能保证绘制和命中一致。
+            */
             const float outerRadius = (w < h ? w : h) * 0.5f;
             const float thickness =
                 inking_detail::ShapeArcThickness(shape.thickness, outerRadius);
@@ -756,19 +768,21 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
             const float radial = std::fabs(radius - midRadius) - half;
             const float sweep = inking_detail::ShapeArcSweepRadians(shape);
 
-            // 扫满一圈就只剩环带了（没有端头）。
+            // 扫过整圈时形状就是完整环带，不再有端头。
             if (sweep >= 2.0f * inking_detail::shapePi - 1e-4f) {
                 return radial;
             }
             if (thickness <= 0.0f) {
-                // 退化成一条弧线：只有径向距离，端头照样要切平。
+                // 环宽为零时退化为弧线，端头仍按切平方式处理。
             }
 
             const float direction = inking_detail::ShapeArcDirection(shape);
             const float start = shape.startAngle * inking_detail::shapeDegToRad;
             const float end = start + direction * sweep;
-            // 端头半平面的内法向：角度增大的切向是 (−sin, cos)；
-            // 起点朝扫向那一侧、终点朝扫向的来向那一侧。
+            /*
+             端头半平面的内法向由切向确定。起点法向指向扫过区域，
+             终点法向指向扫过区域的反方向。
+            */
             const float startNormalX = -std::sin(start) * direction;
             const float startNormalY = std::cos(start) * direction;
             const float endNormalX = std::sin(end) * direction;
@@ -778,7 +792,7 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
             const float endX = cx + std::cos(end) * midRadius;
             const float endY = cy + std::sin(end) * midRadius;
 
-            // 半平面的带符号距离：内部为负（`−投影`）。
+            // 半平面的带符号距离为投影的相反数，内部为负。
             const float startPlane = -((x - startX) * startNormalX
                                        + (y - startY) * startNormalY);
             const float endPlane = -((x - endX) * endNormalX
@@ -789,30 +803,20 @@ inline float InkingSignedDistance(const InkingShapeSpec& shape, float x, float y
 
         case InkingShapeKind::Rect:
         default: {
-            // 直角矩形：把点按两条中轴线折叠到右下象限再算（见 ShapeBoxDistance）。
+            // 直角矩形：按两条中轴线将点映射到右下象限，再调用 ShapeBoxDistance。
             return inking_detail::ShapeBoxDistance(x, y, w * 0.5f, h * 0.5f, w * 0.5f,
                                             h * 0.5f);
         }
     }
 }
 
-/**
- * @brief 这个点在不在形状里（命中判定）。
- *
- * 与 `InkingSignedDistance` 同源：判据就是 `f <= 0`，和裁剪保留的区域完全一致，
- * 不会出现"画的是圆角、点到的是直角"。
- */
+//命中判定函数：判定组件坐标(x,y)是否在图形shape中
 inline bool InkingShapeContains(const InkingShapeSpec& shape, float x, float y, int width,
                           int height) {
     return InkingSignedDistance(shape, x, y, width, height) <= 0.0f;
 }
 
-/**
- * @brief 形状的包围盒（AABB），相对组件左上角。
- *
- * 将来命中表按格子索引时就问这个：半径不同、形状不同，包围盒也可能不同
- * （circle 只占中间一块），所以不能一律拿 width × height 顶上。
- */
+//形状的包围盒AABB，相对于组件左上角
 struct InkingShapeBounds {
     float x = 0.0f;
     float y = 0.0f;
@@ -820,6 +824,7 @@ struct InkingShapeBounds {
     float height = 0.0f;
 };
 
+//包围盒函数，相对组件左上角、轴向固定的保守或紧致矩形范围，用于快速排除、命中索引和可见性判断，并不等同于组件矩形，也不等同于形状本身。
 inline InkingShapeBounds InkingGetShapeBounds(const InkingShapeSpec& shape, int width,
                                   int height) {
     const float w = static_cast<float>(width);
@@ -839,9 +844,11 @@ inline InkingShapeBounds InkingGetShapeBounds(const InkingShapeSpec& shape, int 
                                diameter, diameter};
         }
         case InkingShapeKind::Line: {
-            // 线是水平的：纵向是 thickness 那一条，横向按端点形状外扩。
-            // 别让包围盒只用"线段本身"（高度是 0）——命中表按它登记格子，
-            // 登记不全就是漏命中（TaskGuide T-1 的坑）。
+            /*
+             线段水平放置，包围盒高度为线宽，宽度根据端点形状向外扩展。
+             必须包含线宽和端点外扩范围，否则命中索引登记的区域不完整，
+             可能导致漏命中。
+            */
             const float thickness = shape.thickness > 0.0f ? shape.thickness : 0.0f;
             const float extra = shape.cap == InkingLineCap::Butt ? 0.0f
                                                         : thickness * 0.5f;
@@ -849,7 +856,7 @@ inline InkingShapeBounds InkingGetShapeBounds(const InkingShapeSpec& shape, int 
                                thickness};
         }
         case InkingShapeKind::Polygon: {
-            // 正多边形的包围盒随边数与起始角变，按顶点实算（sides 很小，不亏）。
+            // 正多边形的包围盒随边数和起始角变化，按顶点计算。
             const float radius = inking_detail::ShapePolygonCircumradius(width, height);
             if (radius <= 0.0f) {
                 return InkingShapeBounds{w * 0.5f, h * 0.5f, 0.0f, 0.0f};
@@ -872,22 +879,28 @@ inline InkingShapeBounds InkingGetShapeBounds(const InkingShapeSpec& shape, int 
             return InkingShapeBounds{minX, minY, maxX - minX, maxY - minY};
         }
         case InkingShapeKind::Star: {
-            // 星形的顶点都在外接圆上 → 包围盒就是那个外接正方形的内切圆框
-            // （和 circle 同一个约定：居中、直径 min(w,h)）。
+            /*
+             星形顶点位于外接圆上，因此包围盒取外接圆的正方形范围。
+             该范围居中，直径为 min(w, h)。
+            */
             const float diameter = w < h ? w : h;
             return InkingShapeBounds{(w - diameter) * 0.5f, (h - diameter) * 0.5f,
                                diameter, diameter};
         }
         case InkingShapeKind::Arc: {
-            // 圆弧带整个落在外径圆里 —— 保守但一定装得下（命中表还按它登记格子）。
-            // 按实际角度范围算更紧，但那段代码只为了省几个格子，不值当。
+            /*
+             圆弧带完全位于外径圆内，因此使用外径圆的范围作为保守包围盒。
+             按实际角度计算虽可缩小包围盒，但会增加计算复杂度。
+            */
             const float diameter = w < h ? w : h;
             return InkingShapeBounds{(w - diameter) * 0.5f, (h - diameter) * 0.5f,
                                diameter, diameter};
         }
         case InkingShapeKind::PolygonPath: {
-            // 任意多边形的包围盒按顶点表实算（点数不多，不亏）。它可能只占
-            // 框里的一小块，甚至是偏的——登记时用整框会白白多占格子。
+            /*
+             任意多边形的包围盒按顶点表计算。多边形可能只占组件区域的一部分，
+             也可能偏向一侧，使用顶点范围可以避免索引登记过大的区域。
+            */
             const int count = shape.pathPointCount;
             if (count < 3 || shape.pathPoints == nullptr) {
                 return InkingShapeBounds{0.0f, 0.0f, w, h};
@@ -913,10 +926,11 @@ inline InkingShapeBounds InkingGetShapeBounds(const InkingShapeSpec& shape, int 
         case InkingShapeKind::Ellipse:
         case InkingShapeKind::Rect:
         default: {
-            // 这几种都用满整个矩形：圆角只是把四角磨掉、切角只是把角切掉、
-            // 胶囊两端就是矩形边界、超椭圆在 (±a,0)/(0,±b) 处顶到边——都不影响包围盒。
+            /*
+             这些形状都延伸到组件矩形的边界：圆角矩形和切角矩形只裁去角部，
+             胶囊端点与矩形边界相切，超椭圆在横纵轴端点处抵达边界。
+            */
             return InkingShapeBounds{0.0f, 0.0f, w, h};
         }
     }
 }
-

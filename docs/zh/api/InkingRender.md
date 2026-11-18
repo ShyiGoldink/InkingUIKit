@@ -186,6 +186,12 @@ struct InkingTextMetrics { float width = 0.0f; float height = 0.0f; };
 返回**估算值**（按字号的方块：宽 = 字号 × 码点数，高 = 字号），与绘制的退化画法一致。
 不依赖渲染器，可以单独调。
 
+`fontPath` / `fontPaths` 都为空时使用机器默认字体。默认候选优先中文系统字体
+（Windows 微软雅黑、Linux Noto CJK / 文泉驿、macOS 苹方），并通过
+`TTF_FontHasGlyph` 检查代表性汉字；只有拉丁字体时仍可作为兜底，但会报一条
+“中文会显示为方框”的 WARN。要固定品牌字体或保证跨机器一致，仍应在配置里显式写
+`text.path`。
+
 >**InkingMeasureText / PaintText**
 
 ```C++

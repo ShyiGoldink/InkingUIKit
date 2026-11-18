@@ -387,10 +387,21 @@ float currentRasterRatio(SDL_Renderer* renderer) {
 
 /// 找不到字体时按顺序试这几份。优先 CJK（本项目是中文项目，没有汉字的字体
 /// 测不出真正关心的东西——和源项目 tests/test_ttf.cpp 用同一张表，该套件未搬入）。
+///
+/// Linux 的中文系统字体路径在不同发行版上并不统一；Noto CJK 和文泉驿覆盖了
+/// 常见安装位置。DejaVu Sans 放在最后：它是很多发行版一定会有的通用字体，
+/// 但基本不含中文字形，只能作为“至少让拉丁字可读”的兜底。
 const char* const kFontCandidates[] = {
     "C:/Windows/Fonts/msyh.ttc",      // 微软雅黑（含 CJK）
     "C:/Windows/Fonts/msyhbd.ttc",
     "C:/Windows/Fonts/simhei.ttf",    // 黑体
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/System/Library/Fonts/PingFang.ttc",
     "C:/Windows/Fonts/arial.ttf",     // 兜底：只有拉丁字符
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/System/Library/Fonts/Helvetica.ttc",
@@ -442,23 +453,50 @@ void CloseFontRaw(void*) {}
 
 #endif
 
-/// 机器默认字体：按候选表找一份（只找一次），空串 = 这台机器没有。
+#if defined(INK_HAS_SDL3_TTF)
+bool FontHasGlyphRaw(void* font, std::uint32_t glyph) {
+    return font != nullptr
+        && TTF_FontHasGlyph(static_cast<TTF_Font*>(font), glyph);
+}
+#endif
+
+/// 机器默认字体：按候选表找一份**能画中文**的字体（只找一次），空串 = 没有。
 ///
 /// **只处理"一条字体都没写"这一条**（T-13 之后配置来的路径一律走链解析，见
-/// `ResolveFontChain`）。它只问"文件在不在"，能不能打开由链解析试开确认——
-/// 那一步漏了的话，"文件在、TTF 打不开"会静默变成占位方块。
+/// `ResolveFontChain`）。候选不能只按"文件在不在"选：Linux 上的 DejaVu Sans
+/// 存在且能打开，却没有中文字形；一旦选中它，整屏汉字都会变成方框。这里在
+/// 文件存在的基础上再试开候选，优先选含代表性中文字形的那一份。
 std::string MachineDefaultFontPath() {
     TextLayer& state = layer();
     if (state.defaultFontResolved) {
         return state.defaultFontPath;
     }
     state.defaultFontResolved = true;
+    bool cjkCapable = false;
 #if defined(INK_HAS_SDL3_TTF)
-    for (const char* candidate : kFontCandidates) {
-        if (SDL_GetPathInfo(candidate, nullptr)) {
-            state.defaultFontPath = candidate;
-            break;
+    std::string latinFallback;
+    if (EnsureTtf()) {
+        for (const char* candidate : kFontCandidates) {
+            if (!SDL_GetPathInfo(candidate, nullptr)) {
+                continue;
+            }
+            if (latinFallback.empty()) {
+                latinFallback = candidate;
+            }
+            void* probe = OpenFontRaw(candidate, 18.0f);
+            const bool hasCjk = FontHasGlyphRaw(probe, 0x4E2Du);  // U+4E2D「中」
+            if (probe != nullptr) {
+                CloseFontRaw(probe);
+            }
+            if (hasCjk) {
+                state.defaultFontPath = candidate;
+                cjkCapable = true;
+                break;
+            }
         }
+    }
+    if (state.defaultFontPath.empty() && !latinFallback.empty()) {
+        state.defaultFontPath = latinFallback;
     }
 #endif
     if (state.defaultFontPath.empty()) {
@@ -469,6 +507,12 @@ std::string MachineDefaultFontPath() {
                      "没找到任何机器默认字体（候选表全部落空，或未编译进 "
                      "SDL3_ttf）：文字将退化为占位方块。请在 CXXCSS 里显式写 "
                      "fontPath / text.path");
+    } else if (!cjkCapable) {
+        // 有字但没汉字：英文能看，中文会是 tofu 方框。不能让它继续静默。
+        INK_LOG_WARN("InkingText",
+                     "机器默认字体没有中文字形（选中了 " + state.defaultFontPath
+                         + "）：中文会显示为方框。请安装 Noto CJK / 文泉驿，"
+                           "或在 CXXCSS 的 text.path 里显式指定中文字体");
     }
     return state.defaultFontPath;
 }
@@ -1988,4 +2032,3 @@ void UnpinTexture(const InkingImageBytes& image) noexcept {
 }
 
 }  // namespace inking_detail
-

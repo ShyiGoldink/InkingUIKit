@@ -43,6 +43,14 @@
   被改掉的 `farD` 如实反映）。要还原作者值就显式再设一次 `farD`。
 - `InkingVersion` → `1.5.0`（阶段仍是 `preview`）。
 
+### 修复
+
+- **Linux / macOS 机器默认字体优先选 CJK 字体**：此前候选表先命中 Linux 常见的
+  DejaVu Sans；它能正常打开，但基本不含中文字形，于是未显式配置 `text.path` 的
+  中文界面整屏显示为方框。现在候选按 Noto CJK / 文泉驿 / PingFang 优先，并在
+  选前用 `TTF_FontHasGlyph` 检查代表性汉字；仍只有拉丁字体时会报一条 WARN，
+  不再静默显示 tofu。
+
 ### 文档
 
 - `docs/zh/api/InkingField.md` 新增「八、天空：地平线位置 + 贴图」；`Stats` 表补

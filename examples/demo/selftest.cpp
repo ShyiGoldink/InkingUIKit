@@ -595,6 +595,16 @@ std::string FindUsableFont() {
     candidates.emplace_back("C:/Windows/Fonts/msyh.ttc");
     candidates.emplace_back("C:/Windows/Fonts/simhei.ttf");
     candidates.emplace_back("C:/Windows/Fonts/arial.ttf");
+    candidates.emplace_back(
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc");
+    candidates.emplace_back(
+        "/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf");
+    candidates.emplace_back("/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc");
+    candidates.emplace_back(
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc");
+    candidates.emplace_back("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc");
+    candidates.emplace_back("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc");
+    candidates.emplace_back("/System/Library/Fonts/PingFang.ttc");
 
     for (const std::string& path : candidates) {
         InkingTextRequest probe;
