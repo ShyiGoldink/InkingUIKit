@@ -46,8 +46,8 @@ private:
         data.style.alignV = InkingTextAlignV::Middle;
         data.color = 0xFF33303Cu;
         // 父级中心对自身中心 ⇒ 水平居中；offsetY 只负责纵向排布。
-        data.selfAnchor = InkingChangeAnchor::Center;
-        data.traceAnchor = InkingChangeAnchor::Center;
+        data.selfAnchor = PreAnchors::Center;
+        data.traceAnchor = PreAnchors::Center;
         data.offsetY = -90.0f;
         return data;
     }
@@ -69,8 +69,8 @@ private:
         data.onclickedInheritsNormal = false;
         data.label = "退出";
         data.text.fontSize = 26.0f;
-        data.selfAnchor = InkingChangeAnchor::Center;
-        data.traceAnchor = InkingChangeAnchor::Center;
+        data.selfAnchor = PreAnchors::Center;
+        data.traceAnchor = PreAnchors::Center;
         data.shape = InkingShapeSpec::RoundedRect(16.0f);
         data.offsetY = 40.0f;
         return data;

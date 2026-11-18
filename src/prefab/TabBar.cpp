@@ -135,8 +135,8 @@ TabBar::TabBar(InkingWidget* parent, const TabBarData& data)
             InkingPanelData panel =
                 MakePanelData(data, rects, data.content, ".content");
             // 内容区贴在"整框减标签条"的那块上：左上空 + 偏移。
-            panel.traceAnchor = InkingChangeAnchor::LeftTop;
-            panel.selfAnchor = InkingChangeAnchor::LeftTop;
+            panel.traceAnchor = PreAnchors::LeftTop;
+            panel.selfAnchor = PreAnchors::LeftTop;
             panel.offsetX = rects.content.x;
             panel.offsetY = rects.content.y;
             // 页比内容区大时别画到标签条上（裁剪是容器的一层属性，子孙一个字不用改）。
@@ -175,8 +175,8 @@ int TabBar::AddPage(const std::string& title, std::unique_ptr<InkingWidget> page
     const InkingShapeBounds rect = tabRect(index);
     look.width = std::max(1, static_cast<int>(std::lround(rect.width)));
     look.height = std::max(1, static_cast<int>(std::lround(rect.height)));
-    look.traceAnchor = InkingChangeAnchor::LeftTop;
-    look.selfAnchor = InkingChangeAnchor::LeftTop;
+    look.traceAnchor = PreAnchors::LeftTop;
+    look.selfAnchor = PreAnchors::LeftTop;
     look.offsetX = rect.x;
     look.offsetY = rect.y;
     look.label = title;

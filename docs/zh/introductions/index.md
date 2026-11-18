@@ -8,3 +8,6 @@
 
 - **[InkingAnchor：锚点定位](InkingAnchor.md)**
   项目里每个内容的定位都建立在两个百分比上。这篇说清 `InkingAnchorPoint` 的语义、为什么用百分比而不是手算像素，以及为什么锚点在 LetterBox 体系下尤其可靠。
+
+- **[InkingShapeSpec：形状](InkingShapeSpec.md)**
+  一个组件的轮廓只有一份定义，却要同时喂给渲染、命中、包围盒。这篇说清为什么用"假反射"结构体 + SDF、为什么三个派生量必须同源、以及"夹取还是断言"这两类校验的分界在哪。

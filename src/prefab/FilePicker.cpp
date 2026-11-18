@@ -248,8 +248,8 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
           InkingTextInputData data = style.pathInput;
           data.width = style.panel.width;
           data.height = static_cast<int>(style.pathInputHeight + 0.5f);
-          data.traceAnchor = InkingChangeAnchor::LeftTop;
-          data.selfAnchor = InkingChangeAnchor::LeftTop;
+          data.traceAnchor = PreAnchors::LeftTop;
+          data.selfAnchor = PreAnchors::LeftTop;
           data.offsetX = 0.0f;
           data.offsetY = ComputeBlockLayout(style).pathInputY;
           return data;
@@ -258,8 +258,8 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
           OptionBarStyle options = style.shortcuts;
           options.panel.width = style.panel.width;
           options.panel.height = static_cast<int>(style.shortcutHeight + 0.5f);
-          options.panel.traceAnchor = InkingChangeAnchor::LeftTop;
-          options.panel.selfAnchor = InkingChangeAnchor::LeftTop;
+          options.panel.traceAnchor = PreAnchors::LeftTop;
+          options.panel.selfAnchor = PreAnchors::LeftTop;
           options.panel.offsetX = 0.0f;
           options.panel.offsetY = ComputeBlockLayout(style).shortcutsY;
           return options;
@@ -273,8 +273,8 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
               ShouldShowDrives(style)
                   ? static_cast<int>(style.driveBarHeight + 0.5f)
                   : 0;
-          options.panel.traceAnchor = InkingChangeAnchor::LeftTop;
-          options.panel.selfAnchor = InkingChangeAnchor::LeftTop;
+          options.panel.traceAnchor = PreAnchors::LeftTop;
+          options.panel.selfAnchor = PreAnchors::LeftTop;
           options.panel.offsetX = 0.0f;
           options.panel.offsetY = ComputeBlockLayout(style).drivesY;
           return options;
@@ -283,8 +283,8 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
           ListViewStyle list = style.list;
           list.panel.width = style.panel.width;
           list.panel.height = static_cast<int>(style.listHeight + 0.5f);
-          list.panel.traceAnchor = InkingChangeAnchor::LeftTop;
-          list.panel.selfAnchor = InkingChangeAnchor::LeftTop;
+          list.panel.traceAnchor = PreAnchors::LeftTop;
+          list.panel.selfAnchor = PreAnchors::LeftTop;
           list.panel.offsetX = 0.0f;
           list.panel.offsetY = ComputeBlockLayout(style).listY;
           list.selection = style.multiSelect ? ListSelectionMode::Multiple
@@ -295,8 +295,8 @@ FilePicker::FilePicker(InkingWidget* parent, const FilePickerStyle& style)
           InkingPanelData bar = style.buttonBar;
           bar.width = style.panel.width;
           bar.height = static_cast<int>(style.buttonBarHeight + 0.5f);
-          bar.traceAnchor = InkingChangeAnchor::LeftTop;
-          bar.selfAnchor = InkingChangeAnchor::LeftTop;
+          bar.traceAnchor = PreAnchors::LeftTop;
+          bar.selfAnchor = PreAnchors::LeftTop;
           bar.offsetX = 0.0f;
           bar.offsetY = ComputeBlockLayout(style).buttonsY;
           return bar;

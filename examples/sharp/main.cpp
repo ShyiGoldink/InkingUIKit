@@ -210,8 +210,8 @@ private:
         data.normal.type = InkingAppearanceType::Image;
         data.normal.imageFit = _fit;
         data.normal.source = _assetName;
-        data.selfAnchor = InkingChangeAnchor::LeftTop;
-        data.traceAnchor = InkingChangeAnchor::LeftTop;
+        data.selfAnchor = PreAnchors::LeftTop;
+        data.traceAnchor = PreAnchors::LeftTop;
         data.offsetX = 0.0f;
         data.offsetY = 0.0f;
         // 铺满整块画布、不参与命中：它只是"被看的那张图"。

@@ -100,8 +100,8 @@ InkingButtonData MakeButton(const std::string& name, int width, int height,
 
     // 锚点都由父级中心算：`traceAnchor` 是"落在父级的哪个百分比点"，
     // `selfAnchor` 是"自己的哪个点对上它"。两个都取 Center 就是正中对齐。
-    d.selfAnchor = InkingChangeAnchor::Center;
-    d.traceAnchor = InkingChangeAnchor::Center;
+    d.selfAnchor = PreAnchors::Center;
+    d.traceAnchor = PreAnchors::Center;
 
     d.shape = InkingShapeSpec::RoundedRect(radius);
     return d;
@@ -120,8 +120,8 @@ InkingLabelData MakeLabel(const std::string& name, int width, int height,
     d.style.align = InkingTextAlignH::Center;
     d.style.alignV = InkingTextAlignV::Middle;
     d.color = color;
-    d.selfAnchor = InkingChangeAnchor::Center;
-    d.traceAnchor = InkingChangeAnchor::Center;
+    d.selfAnchor = PreAnchors::Center;
+    d.traceAnchor = PreAnchors::Center;
     return d;
 }
 
@@ -227,8 +227,8 @@ private:
         backdrop.normal.type = InkingAppearanceType::Image;
         backdrop.normal.source = "design.svg";
         backdrop.normal.imageFit = InkingImageFit::Fill;
-        backdrop.selfAnchor = InkingChangeAnchor::LeftTop;
-        backdrop.traceAnchor = InkingChangeAnchor::LeftTop;
+        backdrop.selfAnchor = PreAnchors::LeftTop;
+        backdrop.traceAnchor = PreAnchors::LeftTop;
         backdrop.offsetX = 0.0f;
         backdrop.offsetY = 0.0f;
         backdrop.zIndex = InkingZIndex::background;
@@ -414,8 +414,8 @@ private:
             // **LeftTop 锚点**：滚动量是按"子节点矩形相对容器左上角"量的
             // （`UpdateScrollRange`），用 Center 锚点量出来的内容高度会随
             // 容器高度漂——那正是"列表末尾永远滚不到"的经典成因。
-            item.selfAnchor = InkingChangeAnchor::LeftTop;
-            item.traceAnchor = InkingChangeAnchor::LeftTop;
+            item.selfAnchor = PreAnchors::LeftTop;
+            item.traceAnchor = PreAnchors::LeftTop;
             item.offsetX = 12.0f;
             item.offsetY = 12.0f + static_cast<float>(i) * 64.0f;
             card->AddChild(std::make_unique<InkingStaticButton>(card, item));
@@ -439,8 +439,8 @@ private:
         data.fps = 12.0;
         data.loop = true;
         data.autoplay = true;
-        data.selfAnchor = InkingChangeAnchor::Center;
-        data.traceAnchor = InkingChangeAnchor::Center;
+        data.selfAnchor = PreAnchors::Center;
+        data.traceAnchor = PreAnchors::Center;
         data.offsetX = -520.0f;
         data.offsetY = -250.0f;
         for (std::size_t i = 0; i < frames.size(); ++i) {
@@ -480,8 +480,8 @@ private:
         // 第 0 / 2 帧是"脚落地"的两帧——帧事件由**帧号变化**驱动，
         // 掉帧也不会少算（这一点和"按时间到点触发"是两回事）。
         data.events = {{0, "step"}, {2, "step"}};
-        data.selfAnchor = InkingChangeAnchor::Center;
-        data.traceAnchor = InkingChangeAnchor::Center;
+        data.selfAnchor = PreAnchors::Center;
+        data.traceAnchor = PreAnchors::Center;
         data.offsetX = -520.0f;
         data.offsetY = 40.0f;
         auto* walker = static_cast<InkingSprite*>(
@@ -523,8 +523,8 @@ private:
             data.sheet.columns = 4;
             data.sheet.rows = 1;
             data.fps = fps;
-            data.selfAnchor = InkingChangeAnchor::Center;
-            data.traceAnchor = InkingChangeAnchor::Center;
+            data.selfAnchor = PreAnchors::Center;
+            data.traceAnchor = PreAnchors::Center;
             data.offsetX = -300.0f;
             data.offsetY = 180.0f;
             return data;
@@ -574,8 +574,8 @@ private:
         group.columns = 4;
         group.rows = 1;
         // 静态档**几何构造即定型**（没有公开的几何写入口），所以位置只能配在这里。
-        group.selfAnchor = InkingChangeAnchor::Center;
-        group.traceAnchor = InkingChangeAnchor::Center;
+        group.selfAnchor = PreAnchors::Center;
+        group.traceAnchor = PreAnchors::Center;
         group.offsetX = -520.0f;
         group.offsetY = 260.0f;
 

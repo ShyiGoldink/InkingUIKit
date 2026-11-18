@@ -90,8 +90,8 @@ MenuBarStyle MenuBarStyle::MakeDefault() {
     style.panel.closed.color = theme::kSurface;
     style.panel.open.color = theme::kSurface;
     style.panel.openInheritsClosed = false;
-    style.panel.traceAnchor = InkingChangeAnchor::LeftTop;
-    style.panel.selfAnchor = InkingChangeAnchor::LeftTop;
+    style.panel.traceAnchor = PreAnchors::LeftTop;
+    style.panel.selfAnchor = PreAnchors::LeftTop;
     style.panel.offsetX = 0.0f;
     style.panel.offsetY = 0.0f;
     style.panel.layout.kind = InkingLayoutKind::Stack;

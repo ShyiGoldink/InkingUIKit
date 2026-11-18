@@ -381,8 +381,8 @@ public:
         b.onclicked = InkingButtonAppearance(InkingAppearanceType::Color, 0xFF2F63AAu);
         b.hoverInheritsNormal = false;      // 不关这两条，hover/按下会被拉回 normal
         b.onclickedInheritsNormal = false;
-        b.selfAnchor = InkingChangeAnchor::Center;
-        b.traceAnchor = InkingChangeAnchor::Center;
+        b.selfAnchor = PreAnchors::Center;
+        b.traceAnchor = PreAnchors::Center;
         b.shape = InkingShapeSpec::RoundedRect(12.0f);
         AddChild(std::make_unique<InkingStaticButton>(this, b));
     }

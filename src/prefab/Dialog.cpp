@@ -45,8 +45,8 @@ InkingPanelData MakeBoxData(const DialogData& data) {
     box.closed.color = data.panel.color;
     box.open.color = data.panel.color;
     box.openInheritsClosed = false;
-    box.selfAnchor = InkingChangeAnchor::Center;
-    box.traceAnchor = InkingChangeAnchor::Center;
+    box.selfAnchor = PreAnchors::Center;
+    box.traceAnchor = PreAnchors::Center;
     return box;
 }
 

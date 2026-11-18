@@ -1,37 +1,6 @@
 #pragma once
 
-// 形状层：SDF（带符号距离场）。
-//
-// 符号用通用约定，即：
-//   f < 0 在内部、f = 0 在边界、f > 0 在外部；
-//   裁剪 = 保留 f <= 0 的区域。
-// 这样公开的 SDF 参考实现可以照着抄，不用逐个翻符号；抗锯齿也是标准写法
-// `smoothstep(-aa, aa, d)`；`abs(d)` 天然就是"到边界的距离"。
-//
-// ---------------------------------------------------------------------------
-// 一条硬约定：**形状同时决定渲染 / 命中 / AABB，三者从这一份定义派生**
-//
-// 各写一遍就会出"画的是圆角、点到的是直角"——两边单独看都对，合起来才错，
-// 而且极难排查（CXXCSS.md §3）。所以本文件只提供三个派生量，且都从这里算：
-//   InkingSignedDistance   → 渲染（填充 / 描边 / 裁剪，形状层接手后）
-//   InkingShapeContains    → 命中（这个点在不在形状里，现在就能用）
-//   InkingGetShapeBounds   → AABB（将来塞进命中表的哪个格子）
-//
-// ---------------------------------------------------------------------------
-// 坐标系与形状语义（都以组件左上角为原点、单位是设计坐标）
-//
-//   rect         用满 width × height
-//   roundedRect  用满 width × height，四角半径 radius（夹到 min(w,h)/2）
-//   circle       正圆，直径取 min(w,h)，**居中**
-//   ellipse      椭圆，用满 width × height
-//   capsule      用满 width × height，两端是半径 min(w,h)/2 的半圆（沿长轴）
-//   ring         圆环，外径取 min(w,h)、**居中**，环宽 thickness（往里长）
-//   line         水平线段，纵向居中；线宽 thickness，端点形状 cap
-//   polygon      正多边形，外接圆直径取 min(w,h)、**居中**；sides 条边、
-//                rotation 是起始角
-//
-// 注意 circle 是居中的：一个 100×60 的组件画圆，得到的是居中、直径 60 的圆，
-// 而不是一个 100×60 的"椭圆"。要椭圆就写 ellipse。
+//InkingShapeSpec是InkingUIKit的形状层，它基于的是SDF这种几何表示法，是UI常见的表示方式
 
 #include <algorithm>
 #include <cassert>
@@ -39,8 +8,7 @@
 #include <cmath>
 #include <limits>
 
-// 形状的种类。放一个显式的整数而不是直接塞 variant：
-// 生成器是按 `type` 查表展开的，运行期只需要"这一个是哪一种"。
+//形状种类枚举
 enum class InkingShapeKind : std::uint8_t {
     Rect = 0,//矩形
     RoundedRect,//圆角矩形
@@ -50,139 +18,105 @@ enum class InkingShapeKind : std::uint8_t {
     Ring,//圆环
     Line,//线
     Polygon,//多边形
-    ChamferRect,    // 切角矩形：四条边照旧，四个角用 45° 直线切掉
-    Star,           // 星形：外/内半径交替的正星形（非凸）
-    Superellipse,   // 超椭圆：`n` 控制"从椭圆到方"的过渡（n < 1 是凹的星形角）
-    Arc,            // 圆弧：圆环的一段（带环宽），两端径向切平
-    PolygonPath,    // 顶点表给出来的任意多边形（可以非凸，甚至可以不是星形域）
+    ChamferRect,  // 切角矩形
+    Star, // 星形
+    Superellipse, // 超椭圆
+    Arc, // 圆弧
+    PolygonPath,  // 顶点表给出来的任意多边形
 };
 
-/**
- * @brief 线段的端点形状（只对 `line` 有意义）。
- *
- * 名字与 CXXCSS 里的字符串一一对应（`butt` / `round` / `square`），
- * 语义照 CSS 的 `stroke-linecap`：平头、圆头、方头。
- */
+//线段种类枚举
 enum class InkingLineCap : std::uint8_t {
-    Butt = 0,  // 平头：到端点就断（默认）
-    Round,     // 圆头：两端各一个半径 thickness/2 的半圆
-    Square,    // 方头：两端各外扩 thickness/2
+    Butt = 0,  // 平头
+    Round,     // 圆头
+    Square,    // 方头
 };
 
-//`InkingLineCap` 的配置写法；坏值不该走到这里（生成期就拦下了）。
-inline const char* InkingLineCapName(InkingLineCap cap) {
-    switch (cap) {
-        case InkingLineCap::Round:
-            return "round";
-        case InkingLineCap::Square:
-            return "square";
-        case InkingLineCap::Butt:
-        default:
-            return "butt";
-    }
-}
 
-/**
- * @brief 一个形状的定义：种类 + 只属于它的那几个参数。
- *
- * 需要明确调用type查形状表做参数校验，所以强调使用key。
- * `{"type":"roundedRect","radius":10}`，生成器在编译期把它展开成本结构。
- * 该结构体是形状的说明书，将全部形状整合到一起，方便调用
- *
- * 用工厂函数造，别手动填字段：夹取和校验都在工厂里做了。
- */
+//形状的结构体，这是一种假反射。对于有域的属性，会进行夹取来避免不合理的属性
 struct InkingShapeSpec {
-    InkingShapeKind kind = InkingShapeKind::Rect;
+    InkingShapeKind kind = InkingShapeKind::Rect;//形状种类
+    float radius = 0.0f;//圆角弧度，只对圆角矩形RoundedRect有用
+    float thickness = 0.0f;//线宽，对于圆环Ring和线Line有用
+    InkingLineCap cap = InkingLineCap::Butt;//线头，对于线Line有用
+    int sides = 0;//边数，只对多边形Polygon有用
+    float rotation = 0.0f;//起始角，对多边形Polygon和星形Star有用。0表示第一个顶点落在 +x（正右方），其余顶点按 360/sides 顺时针排。
+    int points = 3;//角的数量，只对星形Star有用。
+    float innerRatio = 0.5f;//内半径和外半径的比例，越小角越尖，只对星形Star有用
+    float chamfer = 0.0f;//切角沿边的长度，只对切角矩形ChamferRect有用
+    float exponent = 2.0f;// 指数 n，n = 2 是椭圆，越大越接近矩形，只对Superellipse超椭圆有用
+    float startAngle = 0.0f;//起始角，只对圆弧Arc有用。0=正右方
+    float sweepAngle = 360.0f;//扫过的角度，只对圆弧Arc有意义。
+    // 借用的顶点数据；手动构造时，调用方须保证其生命周期覆盖所有使用者。
+    const float* pathPoints = nullptr; // 顶点表（x0,y0,…)；仅任意多边形 PolygonPath有用
+    int pathPointCount = 0;// 顶点数
 
-    // 只对 RoundedRect 有意义；一律已夹到 [0, min(w,h)/2]。
-    float radius = 0.0f;
-
-    // Ring 的环宽 / Line 的线宽（设计坐标，> 0）。
-    float thickness = 0.0f;
-
-    // 只对 Line 有意义。
-    InkingLineCap cap = InkingLineCap::Butt;
-
-    // 只对 Polygon 有意义：边数（>= 3）。
-    int sides = 0;
-
-    /**
-     * 只对 Polygon 有意义
-     * 起始角
-     * 单位是度，跟 `InkingTransformSpec::rotate` 统一（`InkingTransform.h` 定过
-     * 这条：配置里写 15 比写 0.2618 直观）；屏幕坐标 y 向下，所以顺时针为正。
-     * `0` 表示第一个顶点落在 +x（正右方），其余顶点按 360/sides 顺时针排。
-     *
-     * Star 也用它（第一个外角的方向）。
-     */
-    float rotation = 0.0f;
-
-    // 只对 ChamferRect 有意义：切角沿边的长度（> 0）。
-    float chamfer = 0.0f;
-
-    // 只对 Star 有意义：角数（>= 3）。
-    int points = 0;
-
-    // 只对 Star 有意义：内半径 / 外半径（0~1，越小越尖）。
-    float innerRatio = 0.5f;
-
-    // 只对 Superellipse 有意义：指数 n（n = 2 是椭圆，越大越接近矩形）。
-    float exponent = 2.0f;
-
-    // 只对 Arc 有意义：**起始角**（度，0 = 正右方，顺时针为正，同 `rotation`）。
-    float startAngle = 0.0f;
-
-    // 只对 Arc 有意义：**扫过的角度**（度，正 = 顺时针，> 0；夹到 ≤ 360）。
-    float sweepAngle = 360.0f;
-
-    /**
-     * 只对 `PolygonPath` 有意义：**顶点表**（`x0,y0,x1,y1,…`，设计坐标，
-     * 相对组件左上角）。
-     *
-     * 这里**不拥有**数据，只借一个视图——和 `InkingButtonAppearance::imageBytes`
-     * 同一个约定：生成器烘的是**文件作用域的静态数组**，生命周期是整个进程，
-     * 比任何组件都长。手写 `InkingShapeSpec` 时要自己保证这块内存活得够久
-     * （拷了 `InkingShapeSpec` 的组件会一直拿着这个指针）。
-     */
-    const float* pathPoints = nullptr;
-    int pathPointCount = 0;
-
-    // 直角矩形（= 不写 shape），尺寸完全来自 width / height。
+    /*
+    直角矩形Rect
+    宽，采用组件的width，影响矩形的宽度，结构体中无域
+    高，采用组件的height，影响矩形的高度，结构体中无域
+    夹取规则：无
+    */
     static constexpr InkingShapeSpec Rect() { return InkingShapeSpec{}; }
 
-    // 圆角矩形。radius < 0 是配置错误，这里断言挡住；过大则夹到上限。
+    /*
+    圆角矩形RoundedRect
+    半径，采用入参radius，影响四个角的圆角半径，结构体中域为 radius
+    宽，采用组件的width，影响矩形的宽度与半径上限，结构体中无域
+    高，采用组件的height，影响矩形的高度与半径上限，结构体中无域
+    夹取规则：负半径断言拦截（配置错误，不自动修正）；超过 min(width,height)/2 夹到上限（形状自身的数学要求）
+    */
     static InkingShapeSpec RoundedRect(float radius) {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::RoundedRect;
-        // 负半径没有意义，而且会让四个角"翻出去"长成另一个形状——
-        // 为了保证形状的准确性，必须在编译期将报错截下来
         assert(radius >= 0.0f && "shape:radius 不能为负");
         spec.radius = radius < 0.0f ? 0.0f : radius;
         return spec;
     }
 
-    // 正圆：直径取 min(width,height)，居中。
+    /*
+    正圆Circle
+    宽，采用组件的width，影响直径取值（直径 = min(width,height)），结构体中无域
+    高，采用组件的height，影响直径取值（直径 = min(width,height)），结构体中无域
+    夹取规则：无（宽高不等时按短边定直径，另一方向居中留白）
+    */
     static constexpr InkingShapeSpec Circle() {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::Circle;
         return spec;
     }
 
-    // 椭圆：用满 width × height。
+    /*
+    椭圆Ellipse
+    宽，采用组件的width，影响横向半轴（= width/2），结构体中无域
+    高，采用组件的height，影响纵向半轴（= height/2），结构体中无域
+    夹取规则：无（宽或高为 0 时自然退化成线或点）
+    */
     static constexpr InkingShapeSpec Ellipse() {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::Ellipse;
         return spec;
     }
 
-    // 胶囊：用满 width × height，两端是半径 min(w,h)/2 的半圆（沿长轴）。
+    /*
+    胶囊Capsule
+    宽，采用组件的width，影响胶囊沿水平方向的长度与两端半径 min(width,height)/2，结构体中无域
+    高，采用组件的height，影响胶囊沿垂直方向的长度与两端半径 min(width,height)/2，结构体中无域
+    夹取规则：无（用满 width × height，两端半圆半径由短边决定）
+    */
     static constexpr InkingShapeSpec Capsule() {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::Capsule;
         return spec;
     }
 
-    // 圆环：外径取 min(w,h)、居中，环宽 thickness（往里长）。
+    /*
+    圆环Ring
+    环宽，采用入参thickness，影响环带的厚度（从外径往里长），结构体中域为 thickness
+    宽，采用组件的width，影响外径取值（外径 = min(width,height)），结构体中无域
+    高，采用组件的height，影响外径取值（外径 = min(width,height)），结构体中无域
+    夹取规则：环宽须大于 0，否则断言拦截（配置错误）；超过外半径则夹到外半径（再厚就没有孔了，退化成实心圆）
+    */
     static InkingShapeSpec Ring(float thickness) {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::Ring;
@@ -192,7 +126,14 @@ struct InkingShapeSpec {
         return spec;
     }
 
-    // 水平线段：纵向居中，线宽 thickness，端点形状 cap。
+    /*
+    水平线段Line
+    线宽，采用入参thickness，影响线段的粗细（纵向），结构体中域为 thickness
+    线头，采用入参cap，影响两端端头的形状（平头/圆头/方头），结构体中域为 cap
+    宽，采用组件的width，影响线段的长度，结构体中无域
+    高，采用组件的height，影响线段的纵向居中位置，结构体中无域
+    夹取规则：线宽须大于 0，否则断言拦截（配置错误）；无自动夹取
+    */
     static InkingShapeSpec Line(float thickness, InkingLineCap cap = InkingLineCap::Butt) {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::Line;
@@ -202,18 +143,30 @@ struct InkingShapeSpec {
         return spec;
     }
 
-    // 正多边形：外接圆直径取 min(w,h)、居中，sides 条边，rotation 是起始角（度）。
+    /*
+    正多边形Polygon
+    边数，采用入参sides，影响边的条数，结构体中域为 sides
+    起始角，采用入参rotation（度），影响第一个顶点的方向（0 = +x 正右方，其余顶点按 360/sides 顺时针排），结构体中域为 rotation
+    宽，采用组件的width，影响外接圆半径（= min(width,height)/2），结构体中无域
+    高，采用组件的height，影响外接圆半径（= min(width,height)/2），结构体中无域
+    夹取规则：边数小于 3 断言拦截（配置错误）；无自动夹取
+    */
     static InkingShapeSpec Polygon(int sides, float rotation = 0.0f) {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::Polygon;
-        // 少于三条边没有"内"可言
         assert(sides >= 3 && "shape:sides 必须 >= 3");
         spec.sides = sides >= 3 ? sides : 3;
         spec.rotation = rotation;
         return spec;
     }
 
-    // 切角矩形：用满 width × height，四个角各切掉 chamfer 长的一条 45° 斜边。
+    /*
+    切角矩形ChamferRect
+    切角，采用入参chamfer，影响四个角各切掉的 45° 斜边长度，结构体中域为 chamfer
+    宽，采用组件的width，影响矩形的宽度与切角上限，结构体中无域
+    高，采用组件的height，影响矩形的高度与切角上限，结构体中无域
+    夹取规则：负切角断言拦截（配置错误）；超过短边的一半则夹到短边的一半（再长就没有直边了）
+    */
     static InkingShapeSpec ChamferRect(float chamfer) {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::ChamferRect;
@@ -222,22 +175,33 @@ struct InkingShapeSpec {
         return spec;
     }
 
-    // 星形：外接圆直径取 min(w,h)、居中，points 个角，innerRatio 是内/外半径之比。
+    /*
+    星形Star
+    角数，采用入参points，影响角的数量，结构体中域为 points
+    内外比，采用入参innerRatio，影响内半径与外半径之比（越小角越尖），结构体中域为 innerRatio
+    起始角，采用入参rotation（度），影响第一个外角的方向，结构体中域为 rotation
+    宽，采用组件的width，影响外接圆半径（= min(width,height)/2），结构体中无域
+    高，采用组件的height，影响外接圆半径（= min(width,height)/2），结构体中无域
+    夹取规则：角数小于 3 断言拦截（配置错误）；内外比夹到 [0,1]（0 = 内半径为 0 的尖角，1 = 退化成圆，都合法，超出就不是星形了）
+    */
     static InkingShapeSpec Star(int points, float innerRatio = 0.5f,
                           float rotation = 0.0f) {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::Star;
         assert(points >= 3 && "shape:points 必须 >= 3");
         spec.points = points >= 3 ? points : 3;
-        // 比例夹到 [0, 1]：0 是内半径为零的尖角（合法，画出来是放射线），
-        // 1 是退化成圆（也合法）。超出去就不是星形了，夹住而不是报错——
-        // 和半径那一条同样属于形状自己的数学要求。
         spec.innerRatio = std::clamp(innerRatio, 0.0f, 1.0f);
         spec.rotation = rotation;
         return spec;
     }
 
-    // 超椭圆：用满 width × height，指数 exponent（> 0）。2 = 椭圆，越大越方。
+    /*
+    超椭圆Superellipse
+    指数，采用入参exponent，影响形状的方度（2 = 椭圆，越大越接近矩形），结构体中域为 exponent
+    宽，采用组件的width，影响横向半轴（= width/2），结构体中无域
+    高，采用组件的height，影响纵向半轴（= height/2），结构体中无域
+    夹取规则：指数须大于 0，否则断言拦截（配置错误）；夹到 [0.05,16]（太小退化成十字线，太大 pow 在远离中心处溢出）
+    */
     static InkingShapeSpec Superellipse(float exponent) {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::Superellipse;
@@ -246,13 +210,16 @@ struct InkingShapeSpec {
         return spec;
     }
 
-    /**
-     * 圆弧：外径取 min(w,h)、居中，环宽 thickness（往里长）；
-     * 从 startAngle 起、顺时针扫 sweepAngle 度，两端径向切平。
-     *
-     * `sweepAngle` 到 360（或更多）就退化成整圈的 `ring`——这是形状本身的
-     * 数学要求，夹住而不是报错。
-     */
+    /*
+    圆弧Arc
+    环宽，采用入参thickness，影响弧带的厚度（从外径往里长），结构体中域为 thickness
+    起始角，采用入参startAngle（度），影响弧的起点方向（0 = +x 正右方），结构体中域为 startAngle
+    扫角，采用入参sweepAngle（度），影响从起点顺时针扫过的角度（负值表示逆时针），结构体中域为 sweepAngle
+    宽，采用组件的width，影响外径取值（外径 = min(width,height)），结构体中无域
+    高，采用组件的height，影响外径取值（外径 = min(width,height)），结构体中无域
+    夹取规则：环宽须大于 0，否则断言拦截（配置错误）；环宽超过外半径则夹到外半径；扫角取绝对值后夹到 [0,360]，
+    到 360 就退化成整圈圆环（数学要求，夹住而不报错）；两端径向切平，不做圆头
+    */
     static InkingShapeSpec Arc(float thickness, float startAngle, float sweepAngle) {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::Arc;
@@ -263,16 +230,14 @@ struct InkingShapeSpec {
         return spec;
     }
 
-    /**
-     * 任意多边形：`points` 是 `x0,y0,x1,y1,…` 的设计坐标顶点表，
-     * `count` 是点数*不是浮点数个数），至少 3。
-     *
-     * 与 `Polygon`（正多边形）的区别：这个什么形状都能表达——包括非凸、
-     * 甚至"关于中心不是星形域"的（U 形那种，中心落在凹口里）。
-     * 填充走ear clipping 三角化，所以凹口不会被填实。
-     *
-     * @param points 顶点表；不拷贝，生命周期要覆盖用它的组件。
-     */
+    /*
+    任意多边形PolygonPath
+    顶点表，采用入参points（x0,y0,x1,y1,… 的设计坐标），影响多边形轮廓，结构体中域为 pathPoints（不拷贝，生命周期须覆盖使用者）
+    顶点数，采用入参count，影响读取的顶点个数（是点数、不是浮点数个数，至少 3），结构体中域为 pathPointCount
+    宽，不参与几何计算（顶点已是设计坐标），结构体中无域
+    高，不参与几何计算（顶点已是设计坐标），结构体中无域
+    夹取规则：顶点表为空或顶点数小于 3 断言拦截（配置错误）；非法输入时顶点数落 0，填充与命中退化成整框
+    */
     static InkingShapeSpec PolygonPath(const float* points, int count) {
         InkingShapeSpec spec;
         spec.kind = InkingShapeKind::PolygonPath;
@@ -282,12 +247,7 @@ struct InkingShapeSpec {
         return spec;
     }
 
-    /**
-     * 半径的夹取：上限是 min(width,height)/2。
-     *
-     * 这是形状本身的数学要求（超过一半就画不成圆角矩形了），
-     * 允许自动修正的那一类——不是配置错误，所以夹取而不是报错。
-     */
+    //静态辅助函数，夹取半径，满足形状上的数学要求
     static float ClampRadius(float radius, int width, int height) {
         const float shorter =
             static_cast<float>(width < height ? width : height);
@@ -298,60 +258,88 @@ struct InkingShapeSpec {
         return radius > limit ? limit : radius;
     }
 
-    /** 夹取之后真正生效的半径（宽或高有一边是 0 时就是 0）。 */
+    //实例辅助函数，夹取半径，满足形状上的数学要求
     float EffectiveRadius(int width, int height) const {
         return ClampRadius(radius, width, height);
     }
 };
 
-// 内部小工具
-//
-// 名字统一带 `Shape` / `shape` 前缀
+// 内部小工具。名字统一带 Shape/shape前缀
 namespace inking_detail {
 
-constexpr float shapePi = 3.14159265358979323846f;
-constexpr float shapeDegToRad = shapePi / 180.0f;
+constexpr float shapePi = 3.14159265358979323846f;//圆周率
+constexpr float shapeDegToRad = shapePi / 180.0f;//弧度
 
-/// 一个点（相对组件左上角）。只为形状内部算几何用，不进公开接口。
+// 相对于组件左上角的一个点。只为形状内部算几何用，不进公开接口。
 struct ShapePoint {
     float x = 0.0f;
     float y = 0.0f;
 };
 
-/// 圆角矩形 / 线段用到的**圆角矩形 SDF**（中心 + 两个半轴，直角版本）。
+//SDF几何辅助函数：用于确定点px，py和矩形的关系
 inline float ShapeBoxDistance(float px, float py, float cx, float cy,
                               float halfW, float halfH) {
+    //先将点px，py处理，将全部象限的情况统一成一个象限的内容
     const float qx = std::fabs(px - cx) - halfW;
     const float qy = std::fabs(py - cy) - halfH;
 
-    // 角上：到角顶点的距离（两个都为正）。
+    /*
+    使用0来截取qx和qy。
+    因为qx和qy还需要在下方继续使用，所以使用outsideX和outsideY来代替计算
+    如果qx或者qy其中一方大于零，那么求得的outside就会大于零。否则outside就为0。
+    这是情况A
+    */
     const float outsideX = qx > 0.0f ? qx : 0.0f;
     const float outsideY = qy > 0.0f ? qy : 0.0f;
     const float outside = std::sqrt(outsideX * outsideX + outsideY * outsideY);
 
-    // 内部：两个都是负数，取**较大**的那个（离边界更近）当负距离。
+    /*
+    使用0来截取qx和qy
+    先求出qx和qy中大的那一个，如果大的那一个小于0，说明双方都小于0
+    只有小于0的情况下，inside才会为负数
+    这是情况B
+    */ 
     const float nearer = qx > qy ? qx : qy;
     const float inside = nearer < 0.0f ? nearer : 0.0f;
+
+    /*
+     情况A和情况B天然互斥，其中一方满足条件，另一方就为0
+     所以返回的值就是满足条件情况的那个值 
+     */
     return outside + inside;
 }
-
-/// 点到线段（含两端）的距离。胶囊 / 圆头线段 / 多边形外包都用它。
-inline float ShapeSegmentDistance(float px, float py, float ax, float ay,
-                                  float bx, float by) {
+// SDF几何辅助函数：用于确定点px，py到由点bx，by和ax，ay组成的线段的距离
+inline float ShapeSegmentDistance(float px, float py, float ax, float ay,float bx, float by) {
+    /*
+    先使用向量法求出线段的长度
+    */
     const float ex = bx - ax;
     const float ey = by - ay;
     const float lengthSquared = ex * ex + ey * ey;
+
+    /*
+    根据三角函数的相关知识，推导出t
+    t是线段ab上，做p到ab的垂线，垂点p‘，ap’/p‘b的比值
+    算法是很简单的推导，根据三点组成三角形的边长关系推导出cosPAB
+    再根据cosPAC求得t
+    由于点和线段有多种关系，如果点在线段的延长线上，那么要取的距离是最近的那个线段
+    如果点不在线段的延长线上，那么要取的是垂线的长度
+    clamp就是做了这个选择
+    */
     float t = 0.0f;
     if (lengthSquared > 0.0f) {
         t = ((px - ax) * ex + (py - ay) * ey) / lengthSquared;
         t = std::clamp(t, 0.0f, 1.0f);
     }
+    /*
+    最后基于各种值，算出dx和dy，再算出长度
+     */
     const float dx = px - (ax + ex * t);
     const float dy = py - (ay + ey * t);
     return std::sqrt(dx * dx + dy * dy);
 }
 
-/// 圆环真正生效的环宽：顶到外半径就停（再厚就没有孔了，退化成实心圆）。
+//SDF夹取辅助函数：让thickness半价夹取到0到min(width,height)/2之中
 inline float ShapeRingThickness(float thickness, int width, int height) {
     const float shorter = static_cast<float>(width < height ? width : height);
     const float outerRadius = shorter * 0.5f;
@@ -361,18 +349,18 @@ inline float ShapeRingThickness(float thickness, int width, int height) {
     return thickness > outerRadius ? outerRadius : thickness;
 }
 
-/// 正多边形的边数（< 3 的值不该漏到这里，工厂已经挡过；这里只做兜底）。
+// SDF夹取辅助函数：确保多边形的边数至少为3
 inline int ShapePolygonSides(const InkingShapeSpec& shape) {
     return shape.sides >= 3 ? shape.sides : 3;
 }
 
-/// 正多边形的**外接圆**半径：和 circle 同一个约定（居中、直径取 min(w,h)）。
+// SDF夹取辅助函数：让多边形的外接圆半价夹取到0到min(width,height)/2之中
 inline float ShapePolygonCircumradius(int width, int height) {
     const float shorter = static_cast<float>(width < height ? width : height);
     return shorter * 0.5f;
 }
 
-/// 正多边形的第 k 个顶点（k 会对边数取模），相对组件左上角。
+// SDF几何辅助函数：获取到正多边形第n个顶点的位置，相对于(0,0)
 inline ShapePoint ShapePolygonVertex(const InkingShapeSpec& shape, int width,
                                      int height, int k) {
     const int sides = ShapePolygonSides(shape);
@@ -386,27 +374,24 @@ inline ShapePoint ShapePolygonVertex(const InkingShapeSpec& shape, int width,
                           + std::sin(angle) * radius};
 }
 
-/// 星形的角数（< 3 的值不该漏到这里，工厂已经挡过；这里只做兜底）。
+//SDF夹取辅助函数：将星形的角数夹取到>=3
 inline int ShapeStarPoints(const InkingShapeSpec& shape) {
     return shape.points >= 3 ? shape.points : 3;
 }
 
-/// 星形的**外接圆**半径：和 circle / polygon 同一个约定（居中、直径取 min(w,h)）。
+// SDF夹取辅助函数：让星形的外接圆半价夹取到0到min(width,height)/2之中
 inline float ShapeStarOuterRadius(int width, int height) {
     const float shorter = static_cast<float>(width < height ? width : height);
     return shorter * 0.5f;
 }
 
-/// 星形的**内**半径：外半径 × innerRatio（比例已夹到 [0,1]）。
+//SDF夹取辅助函数：让星形的内接圆比例夹取到[0,1]
 inline float ShapeStarInnerRadius(const InkingShapeSpec& shape, int width, int height) {
     const float ratio = std::clamp(shape.innerRatio, 0.0f, 1.0f);
     return ShapeStarOuterRadius(width, height) * ratio;
 }
 
-/**
- * 星形的第 k 个顶点（对 2×points 取模）：**偶数下标在外半径、奇数在内半径**，
- * 一圈走完正好 points 个角。`rotation` 是第一个外角的方向（度，顺时针为正）。
- */
+//SDF几何辅助函数：获取到星形第k个定点的位置，相对于(0,0)
 inline ShapePoint ShapeStarVertex(const InkingShapeSpec& shape, int width, int height,
                                   int k) {
     const int points = ShapeStarPoints(shape);
@@ -426,7 +411,7 @@ inline ShapePoint ShapeStarVertex(const InkingShapeSpec& shape, int width, int h
                           + std::sin(angle) * radius};
 }
 
-// 切角矩形真正生效的切角长度：上限是短边的一半（再长就没有直边了）。
+// SDF夹取辅助函数：将切角矩形被切去的等腰三角形的纵边/横边夹取到下限0和上限为矩形较短那边的一半
 inline float ShapeChamferAmount(float chamfer, float w, float h) {
     const float shorter = w < h ? w : h;
     const float limit = shorter * 0.5f;
@@ -436,15 +421,12 @@ inline float ShapeChamferAmount(float chamfer, float w, float h) {
     return chamfer > limit ? limit : chamfer;
 }
 
-/**
- * 超椭圆的指数，夹在一个浮点安全的范围里：太小会退化成十字线，
- * 太大 `pow` 会在远离中心的点上溢出（`u^n` 直接冲上 inf）。
- */
+//SDF夹取辅助函数：将超椭圆的比值夹取到一个合理的范围内
 inline float ShapeSuperellipseExponent(const InkingShapeSpec& shape) {
     return std::clamp(shape.exponent, 0.05f, 16.0f);
 }
 
-// 圆弧真正生效的环宽：和 `ring` 同一个语义（顶到外半径就停）。
+// SDF夹取辅助函数：将圆弧的thickness和outerRadius夹取到能够不退化的范围
 inline float ShapeArcThickness(float thickness, float outerRadius) {
     if (thickness <= 0.0f) {
         return 0.0f;
@@ -452,18 +434,18 @@ inline float ShapeArcThickness(float thickness, float outerRadius) {
     return thickness > outerRadius ? outerRadius : thickness;
 }
 
-// 圆弧真正生效的扫角（弧度，> 0，≤ 2π）：`|sweepAngle|` 夹到 (0, 360] 度。
+//SDF夹取辅助函数：把圆弧扫角的幅值夹到 0..360 度，再转成弧度
 inline float ShapeArcSweepRadians(const InkingShapeSpec& shape) {
     const float degrees = std::clamp(std::fabs(shape.sweepAngle), 0.0f, 360.0f);
     return degrees * shapeDegToRad;
 }
 
-// 圆弧的扫向：屏幕 y 向下，角度增大就是顺时针——正扫角 = +1、负 = -1。
+//SDF几何辅助函数：给出圆弧的扫向符号，+1 顺时针、-1 逆时针
 inline float ShapeArcDirection(const InkingShapeSpec& shape) {
     return shape.sweepAngle < 0.0f ? -1.0f : 1.0f;
 }
 
-// `PolygonPath` 的第 k 个顶点（对点数取模），相对组件左上角。
+//SDF几何辅助函数：取出顶点表第 k 个顶点，设计坐标、相对组件左上角、对点数取模
 inline ShapePoint ShapePathVertex(const InkingShapeSpec& shape, int k) {
     const int count = shape.pathPointCount;
     if (count <= 0 || shape.pathPoints == nullptr) {
@@ -477,20 +459,16 @@ inline ShapePoint ShapePathVertex(const InkingShapeSpec& shape, int k) {
                       shape.pathPoints[index * 2 + 1]};
 }
 
-/**
- * 任意多边形的带符号距离——非凸也成立：符号用射线法（crossing number），
- * 距离用"到各边的最近距离"。
- *
- * 参数是"点数 + 取点函数"而不是某个具体形状：`Star`（顶点由公式算）与
- * `PolygonPath`（顶点来自表）共用这一份实现。两处各写一遍的话，迟早有一处
- * 忘了处理凹口——那种错只在特定角度上露头，很难查。
- */
 template <typename VertexAt>
+//SDF几何辅助函数，计算点(x,y)到多边形边界的最短距离，并用符号表示是否在边界内部，为星形和多边形服务
 inline float ShapePolygonSdf(int count, VertexAt vertexAt, float x, float y) {
     if (count < 3) {
+        // 顶点不足以构成多边形，无法定义有效的带符号距离。
         return 0.0f;
     }
+    // 射线与边的交点采用奇偶规则判定内外，因此也适用于凹多边形。
     bool inside = false;
+    // 保存点到所有边的最小距离，作为结果的绝对值。
     float nearest = std::numeric_limits<float>::max();
     for (int i = 0; i < count; ++i) {
         const ShapePoint a = vertexAt(i);
@@ -507,6 +485,7 @@ inline float ShapePolygonSdf(int count, VertexAt vertexAt, float x, float y) {
             }
         }
     }
+    // SDF符号约定：内部为负，外部为正。
     return inside ? -nearest : nearest;
 }
 

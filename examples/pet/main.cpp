@@ -121,8 +121,8 @@ InkingSpriteData MakePetData(const std::vector<std::filesystem::path>& frames,
     data.name = "pet";
     data.width = width;
     data.height = height;
-    data.selfAnchor = InkingChangeAnchor::LeftTop;
-    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.selfAnchor = PreAnchors::LeftTop;
+    data.traceAnchor = PreAnchors::LeftTop;
     data.offsetX = 0.0f;
     data.offsetY = 0.0f;
     data.fps = fps;

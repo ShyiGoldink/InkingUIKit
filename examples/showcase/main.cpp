@@ -165,8 +165,8 @@ InkingLabelData MakeLabel(const std::string& name, int width, int height,
     }
     d.color = color;
     d.colorToken = ThemeToken(color);  // 有 token 才会跟着主题重查
-    d.selfAnchor = InkingChangeAnchor::LeftTop;
-    d.traceAnchor = InkingChangeAnchor::LeftTop;
+    d.selfAnchor = PreAnchors::LeftTop;
+    d.traceAnchor = PreAnchors::LeftTop;
     return d;
 }
 
@@ -205,8 +205,8 @@ InkingButtonData MakeButton(const std::string& name, int width, int height,
     if (textColor == kGhostText) {
         d.textColorToken = "textMuted";
     }
-    d.selfAnchor = InkingChangeAnchor::LeftTop;
-    d.traceAnchor = InkingChangeAnchor::LeftTop;
+    d.selfAnchor = PreAnchors::LeftTop;
+    d.traceAnchor = PreAnchors::LeftTop;
     d.shape = InkingShapeSpec::RoundedRect(radius);
     return d;
 }
@@ -368,8 +368,8 @@ private:
         input.style.padding.left = 12.0f;
         input.color = theme::kTextPrimary;
         input.colorToken = "textPrimary";  // 手工构造不走 MakeLabel，token 要自己给
-        input.selfAnchor = InkingChangeAnchor::LeftTop;
-        input.traceAnchor = InkingChangeAnchor::LeftTop;
+        input.selfAnchor = PreAnchors::LeftTop;
+        input.traceAnchor = PreAnchors::LeftTop;
         auto* field = static_cast<InkingTextInput*>(
             card->AddChild(std::make_unique<InkingTextInput>(card, input)));
         field->submitted.Subscribe(
@@ -579,8 +579,8 @@ private:
         data.height = 556;
         data.offsetX = 16.0f;
         data.offsetY = 16.0f;
-        data.selfAnchor = InkingChangeAnchor::LeftTop;
-        data.traceAnchor = InkingChangeAnchor::LeftTop;
+        data.selfAnchor = PreAnchors::LeftTop;
+        data.traceAnchor = PreAnchors::LeftTop;
         data.tabLength = 108.0f;
         data.background.themeColor = "card";
         // 标签**按钮**也铺在标签条上（长度 108×3 几乎盖满），它们的底色不挂
@@ -632,8 +632,8 @@ private:
             input.style.padding.left = 12.0f;
             input.color = theme::kTextPrimary;
             input.colorToken = "textPrimary";
-            input.selfAnchor = InkingChangeAnchor::LeftTop;
-            input.traceAnchor = InkingChangeAnchor::LeftTop;
+            input.selfAnchor = PreAnchors::LeftTop;
+            input.traceAnchor = PreAnchors::LeftTop;
             p->AddChild(std::make_unique<InkingTextInput>(p, input));
 
             AddButton(p, "btn_save_page", 24, 116, 140, 40, "保存", kAccent,
@@ -718,8 +718,8 @@ private:
                 chip.height = 64;
                 chip.offsetX = static_cast<float>(24 + i * 76);
                 chip.offsetY = 96.0f;
-                chip.selfAnchor = InkingChangeAnchor::LeftTop;
-                chip.traceAnchor = InkingChangeAnchor::LeftTop;
+                chip.selfAnchor = PreAnchors::LeftTop;
+                chip.traceAnchor = PreAnchors::LeftTop;
                 chip.shape = InkingShapeSpec::RoundedRect(14.0f);
                 chip.normal =
                     InkingButtonAppearance(InkingAppearanceType::Color, chips[i].fill);

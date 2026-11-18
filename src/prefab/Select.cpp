@@ -159,8 +159,8 @@ Select::Select(InkingWidget* parent, const SelectStyle& style)
           // 收起按钮是 Select 的**子节点**：它自己的偏移与锚点清零（相对父级左上角），
           // 那份"放到场景哪里"的锚点/偏移已经被 Select 自己用掉了（见 MakePanelData）。
           InkingButtonData look = style.closedLook;
-          look.traceAnchor = InkingChangeAnchor::LeftTop;
-          look.selfAnchor = InkingChangeAnchor::LeftTop;
+          look.traceAnchor = PreAnchors::LeftTop;
+          look.selfAnchor = PreAnchors::LeftTop;
           look.offsetX = 0.0f;
           look.offsetY = 0.0f;
           return look;
@@ -176,8 +176,8 @@ Select::Select(InkingWidget* parent, const SelectStyle& style)
               options.panel.height = static_cast<int>(style.expandHeight + 0.5f);
           }
           // 展开容器的位置：挂在收起按钮外面（下 / 上，带过滤框时再让开一格）。
-          options.panel.traceAnchor = InkingChangeAnchor::LeftTop;
-          options.panel.selfAnchor = InkingChangeAnchor::LeftTop;
+          options.panel.traceAnchor = PreAnchors::LeftTop;
+          options.panel.selfAnchor = PreAnchors::LeftTop;
           options.panel.offsetX = 0.0f;
           options.panel.offsetY = OptionsOffsetY(style);
           return options;
@@ -190,8 +190,8 @@ Select::Select(InkingWidget* parent, const SelectStyle& style)
           if (data.height <= 0) {
               data.height = static_cast<int>(style.filterHeight + 0.5f);
           }
-          data.traceAnchor = InkingChangeAnchor::LeftTop;
-          data.selfAnchor = InkingChangeAnchor::LeftTop;
+          data.traceAnchor = PreAnchors::LeftTop;
+          data.selfAnchor = PreAnchors::LeftTop;
           data.offsetX = 0.0f;
           data.offsetY = FilterOffsetY(style);
           return data;

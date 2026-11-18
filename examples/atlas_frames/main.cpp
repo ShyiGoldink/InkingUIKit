@@ -125,8 +125,8 @@ InkingSpriteData MakeAtlasData(const std::string& atlasPath, double fps) {
     // 显示尺寸 = 单帧尺寸：1:1 出像素，缩放交给窗口层。
     data.width = kFrameWidth;
     data.height = kFrameHeight;
-    data.selfAnchor = InkingChangeAnchor::LeftTop;
-    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.selfAnchor = PreAnchors::LeftTop;
+    data.traceAnchor = PreAnchors::LeftTop;
     data.offsetX = 0.0f;
     data.offsetY = 0.0f;
 

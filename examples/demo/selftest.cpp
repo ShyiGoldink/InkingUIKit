@@ -152,8 +152,8 @@ struct TestScene : public InkingScene {
                                              0xFF3F7FD6u);
         bd.label = "probe";
         bd.text.fontSize = 20.0f;
-        bd.selfAnchor = InkingChangeAnchor::Center;
-        bd.traceAnchor = InkingChangeAnchor::Center;
+        bd.selfAnchor = PreAnchors::Center;
+        bd.traceAnchor = PreAnchors::Center;
 
         button = static_cast<InkingStaticButton*>(
             AddChild(std::make_unique<InkingStaticButton>(this, bd)));
@@ -1158,8 +1158,8 @@ void CheckTextClipByHeight() {
     data.style.fontSize = 20.0f;
     data.style.fontPath = font;
     data.text = longText;
-    data.selfAnchor = InkingChangeAnchor::LeftTop;
-    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.selfAnchor = PreAnchors::LeftTop;
+    data.traceAnchor = PreAnchors::LeftTop;
     data.offsetX = 100.0f;
     data.offsetY = 100.0f;
     auto* label = static_cast<InkingStaticLabel*>(
@@ -1557,8 +1557,8 @@ void CheckGlyphAtlasFullNoRetry(SDL_Renderer* renderer) {
     data.style.fontSize = 20.0f;
     data.style.fontPath = font;
     data.text = "abc中文测试";
-    data.selfAnchor = InkingChangeAnchor::LeftTop;
-    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.selfAnchor = PreAnchors::LeftTop;
+    data.traceAnchor = PreAnchors::LeftTop;
     data.offsetX = 40.0f;
     data.offsetY = 40.0f;
     scene.AddChild(std::make_unique<InkingStaticLabel>(&scene, data));
@@ -1647,8 +1647,8 @@ void CheckTextureBudgetEviction(SDL_Renderer* renderer) {
     data.style.fontSize = 20.0f;
     data.style.fontPath = font;
     data.wrap = InkingTextWrap::NoWrap;  // 单行：一张纹理就是这一串
-    data.selfAnchor = InkingChangeAnchor::LeftTop;
-    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.selfAnchor = PreAnchors::LeftTop;
+    data.traceAnchor = PreAnchors::LeftTop;
     auto* label = static_cast<InkingStaticLabel*>(
         scene.AddChild(std::make_unique<InkingStaticLabel>(&scene, data)));
     InkingSceneLibrary::SetActiveScene(&scene);
@@ -2165,8 +2165,8 @@ void CheckLayerOrder(SDL_Renderer* renderer) {
         data.zIndex = z;
         data.offsetX = offsetX;
         data.offsetY = offsetY;
-        data.selfAnchor = InkingChangeAnchor::Center;
-        data.traceAnchor = InkingChangeAnchor::Center;
+        data.selfAnchor = PreAnchors::Center;
+        data.traceAnchor = PreAnchors::Center;
         data.closed.color = color;
         data.open.color = color;
         return data;
@@ -2329,8 +2329,8 @@ void CheckPanelDecoration(SDL_Renderer* renderer) {
     a.name = "deco_parent";
     a.width = 200;
     a.height = 200;
-    a.selfAnchor = InkingChangeAnchor::Center;
-    a.traceAnchor = InkingChangeAnchor::Center;
+    a.selfAnchor = PreAnchors::Center;
+    a.traceAnchor = PreAnchors::Center;
     a.closed.color = kDark;
     a.open.color = kDark;
     a.closed.stroke = InkingStrokeSpec{6.0f, kEdge};  // 6 设计像素 = 3 设备像素
@@ -2342,8 +2342,8 @@ void CheckPanelDecoration(SDL_Renderer* renderer) {
     c.name = "deco_child";
     c.width = 200;
     c.height = 200;  // 和父**完全重合**：描边只能靠装饰遍才活下来
-    c.selfAnchor = InkingChangeAnchor::Center;
-    c.traceAnchor = InkingChangeAnchor::Center;
+    c.selfAnchor = PreAnchors::Center;
+    c.traceAnchor = PreAnchors::Center;
     c.closed.color = kChild;
     c.open.color = kChild;
     parent->AddChild(
@@ -2354,8 +2354,8 @@ void CheckPanelDecoration(SDL_Renderer* renderer) {
     b.name = "deco_sibling";
     b.width = 70;
     b.height = 60;
-    b.selfAnchor = InkingChangeAnchor::Center;
-    b.traceAnchor = InkingChangeAnchor::Center;
+    b.selfAnchor = PreAnchors::Center;
+    b.traceAnchor = PreAnchors::Center;
     b.offsetX = -75.0f;
     b.offsetY = -70.0f;
     b.closed.color = kSibling;
@@ -2367,8 +2367,8 @@ void CheckPanelDecoration(SDL_Renderer* renderer) {
     d.name = "deco_shadow";
     d.width = 120;
     d.height = 120;
-    d.selfAnchor = InkingChangeAnchor::Center;
-    d.traceAnchor = InkingChangeAnchor::Center;
+    d.selfAnchor = PreAnchors::Center;
+    d.traceAnchor = PreAnchors::Center;
     d.offsetX = -300.0f;
     d.offsetY = 150.0f;
     d.closed.color = kFill;
@@ -2433,8 +2433,8 @@ void CheckPanelDecoration(SDL_Renderer* renderer) {
     p.name = "deco_anim";
     p.width = 100;
     p.height = 100;
-    p.selfAnchor = InkingChangeAnchor::Center;
-    p.traceAnchor = InkingChangeAnchor::Center;
+    p.selfAnchor = PreAnchors::Center;
+    p.traceAnchor = PreAnchors::Center;
     p.closed.color = kDark;
     p.closed.stroke = InkingStrokeSpec{};  // 关着：没描边
     p.open.color = kDark;
@@ -2493,8 +2493,8 @@ void CheckButtonPaintOrder(SDL_Renderer* renderer) {
     data.name = "paint_button";
     data.width = 200;
     data.height = 60;
-    data.selfAnchor = InkingChangeAnchor::Center;
-    data.traceAnchor = InkingChangeAnchor::Center;
+    data.selfAnchor = PreAnchors::Center;
+    data.traceAnchor = PreAnchors::Center;
     data.normal = InkingButtonAppearance(InkingAppearanceType::Color, kFill);
     data.hover = data.normal;
     data.onclicked = data.normal;
@@ -2562,8 +2562,8 @@ void CheckButtonStateEvent() {
     InkingButtonData base;
     base.width = 160;
     base.height = 60;
-    base.selfAnchor = InkingChangeAnchor::Center;
-    base.traceAnchor = InkingChangeAnchor::Center;
+    base.selfAnchor = PreAnchors::Center;
+    base.traceAnchor = PreAnchors::Center;
     base.normal = InkingButtonAppearance(InkingAppearanceType::Color, 0xFF3070C0u);
 
     InkingButtonData staticData = base;
@@ -3637,8 +3637,8 @@ void CheckInputScroll() {
     data.name = "scroll_input";
     data.width = 120;
     data.height = 32;
-    data.selfAnchor = InkingChangeAnchor::Center;
-    data.traceAnchor = InkingChangeAnchor::Center;
+    data.selfAnchor = PreAnchors::Center;
+    data.traceAnchor = PreAnchors::Center;
     data.style.fontSize = 16.0f;
     data.style.fontPath = "";  // 机器默认字体：无头环境也能量到宽度
 
@@ -4464,8 +4464,8 @@ void CheckRuntimeTheme(SDL_Renderer* renderer) {
     data.name = "theme_probe";
     data.width = 200;
     data.height = 160;
-    data.selfAnchor = InkingChangeAnchor::Center;
-    data.traceAnchor = InkingChangeAnchor::Center;
+    data.selfAnchor = PreAnchors::Center;
+    data.traceAnchor = PreAnchors::Center;
     data.closed.color = 0xFF0000FFu;      // 烘好的字面量（蓝）
     data.closed.themeColor = "surface";   // 但它其实是语义色
     InkingWidget* panel = scene.AddChild(
@@ -4659,8 +4659,8 @@ InkingStaticImage* AddSvgImage(InkingScene& scene,
     data.height = height;
     data.normal.source = name;
     data.hitPassThrough = hitPassThrough;
-    data.selfAnchor = InkingChangeAnchor::LeftTop;
-    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.selfAnchor = PreAnchors::LeftTop;
+    data.traceAnchor = PreAnchors::LeftTop;
     data.offsetX = offsetX;
     data.offsetY = offsetY;
     return static_cast<InkingStaticImage*>(
@@ -4907,8 +4907,8 @@ void CheckSvgBackgroundPassthrough() {
         data.height = 60;
         data.normal = InkingButtonAppearance(InkingAppearanceType::Color,
                                               0xFF3F7FD6u);
-        data.selfAnchor = InkingChangeAnchor::LeftTop;
-        data.traceAnchor = InkingChangeAnchor::LeftTop;
+        data.selfAnchor = PreAnchors::LeftTop;
+        data.traceAnchor = PreAnchors::LeftTop;
         data.offsetX = 540.0f;
         data.offsetY = 330.0f;
         auto* button = static_cast<InkingStaticButton*>(
@@ -5281,8 +5281,8 @@ InkingSpriteData InkingMakeSpriteData(const char* name, int frameCount, double f
     data.fps = fps;
     data.loop = loop;
     data.autoplay = true;
-    data.selfAnchor = InkingChangeAnchor::LeftTop;
-    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.selfAnchor = PreAnchors::LeftTop;
+    data.traceAnchor = PreAnchors::LeftTop;
     data.offsetX = 20.0f;
     data.offsetY = 20.0f;
     for (int i = 0; i < frameCount; ++i) {
@@ -6134,8 +6134,8 @@ void CheckImageFitSrcRect(SDL_Renderer* renderer) {
         data.normal.source = imageName;
         data.normal.imageBytes = bytes.data();
         data.normal.imageSize = bytes.size();
-        data.selfAnchor = InkingChangeAnchor::LeftTop;
-        data.traceAnchor = InkingChangeAnchor::LeftTop;
+        data.selfAnchor = PreAnchors::LeftTop;
+        data.traceAnchor = PreAnchors::LeftTop;
         data.offsetX = 20.0f;
         data.offsetY = 20.0f;
 
@@ -6200,8 +6200,8 @@ void CheckImageFitSrcRect(SDL_Renderer* renderer) {
             data.normal.source = "sheet_atlas_tex";
             data.normal.imageBytes = atlas.data();
             data.normal.imageSize = atlas.size();
-            data.selfAnchor = InkingChangeAnchor::LeftTop;
-            data.traceAnchor = InkingChangeAnchor::LeftTop;
+            data.selfAnchor = PreAnchors::LeftTop;
+            data.traceAnchor = PreAnchors::LeftTop;
             data.offsetX = 20.0f;
             data.offsetY = 20.0f;
 
@@ -6282,8 +6282,8 @@ void CheckSpriteSheet(SDL_Renderer* renderer) {
         data.fps = 12.0;
         data.loop = true;
         data.autoplay = autoplay;
-        data.selfAnchor = InkingChangeAnchor::LeftTop;
-        data.traceAnchor = InkingChangeAnchor::LeftTop;
+        data.selfAnchor = PreAnchors::LeftTop;
+        data.traceAnchor = PreAnchors::LeftTop;
         data.offsetX = 20.0f;
         data.offsetY = 20.0f;
         data.normal.type = InkingAppearanceType::Image;
@@ -6395,8 +6395,8 @@ void CheckSpriteSheet(SDL_Renderer* renderer) {
             imageData.normal.source = "cell1_alone";
             imageData.normal.imageBytes = single.data();
             imageData.normal.imageSize = single.size();
-            imageData.selfAnchor = InkingChangeAnchor::LeftTop;
-            imageData.traceAnchor = InkingChangeAnchor::LeftTop;
+            imageData.selfAnchor = PreAnchors::LeftTop;
+            imageData.traceAnchor = PreAnchors::LeftTop;
             imageData.offsetX = 20.0f;
             imageData.offsetY = 20.0f;
             singleScene.AddChild(std::make_unique<InkingStaticImage>(
@@ -6499,8 +6499,8 @@ void CheckSpriteSheetFirstFrame(SDL_Renderer* renderer) {
         data.height = 40;
         data.fps = 12.0;
         data.autoplay = false;
-        data.selfAnchor = InkingChangeAnchor::LeftTop;
-        data.traceAnchor = InkingChangeAnchor::LeftTop;
+        data.selfAnchor = PreAnchors::LeftTop;
+        data.traceAnchor = PreAnchors::LeftTop;
         data.offsetX = 20.0f;
         data.offsetY = 20.0f;
         data.normal.type = InkingAppearanceType::Image;
@@ -6678,8 +6678,8 @@ void CheckImageSampling(SDL_Renderer* renderer) {
     data.normal.source = "sampling_checker";
     data.normal.imageBytes = checker.data();
     data.normal.imageSize = checker.size();
-    data.selfAnchor = InkingChangeAnchor::LeftTop;
-    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.selfAnchor = PreAnchors::LeftTop;
+    data.traceAnchor = PreAnchors::LeftTop;
     data.offsetX = 20.0f;
     data.offsetY = 20.0f;
     scene.AddChild(std::make_unique<InkingStaticImage>(&scene, data));
@@ -8052,7 +8052,7 @@ void CheckFieldHit(SDL_Renderer* renderer) {
         data.width = 200;
         data.height = 60;
         data.normal = InkingButtonAppearance(InkingAppearanceType::Color, 0xFF3F7FD6u);
-        data.selfAnchor = InkingChangeAnchor::Center;
+        data.selfAnchor = PreAnchors::Center;
         data.label = "ui";
         data.text.fontSize = 20.0f;
         data.Normalize();
@@ -8150,8 +8150,8 @@ void CheckMixedOrder(SDL_Renderer* renderer) {
     imageData.name = "mixed_image";
     imageData.width = 64;
     imageData.height = 64;
-    imageData.selfAnchor = InkingChangeAnchor::LeftTop;
-    imageData.traceAnchor = InkingChangeAnchor::LeftTop;
+    imageData.selfAnchor = PreAnchors::LeftTop;
+    imageData.traceAnchor = PreAnchors::LeftTop;
     auto* image = static_cast<InkingStaticImage*>(
         scene.AddChild(std::make_unique<InkingStaticImage>(&scene, imageData)));
     image->SetImageBytes(png.data(), png.size(), "walk");
@@ -8171,8 +8171,8 @@ void CheckMixedOrder(SDL_Renderer* renderer) {
     labelData.height = 24;
     labelData.text = "ORDER";
     labelData.style.fontSize = 20.0f;
-    labelData.selfAnchor = InkingChangeAnchor::LeftTop;
-    labelData.traceAnchor = InkingChangeAnchor::LeftTop;
+    labelData.selfAnchor = PreAnchors::LeftTop;
+    labelData.traceAnchor = PreAnchors::LeftTop;
     labelData.offsetY = 0.0f;
     scene.AddChild(std::make_unique<InkingStaticLabel>(&scene, labelData));
 
@@ -8564,8 +8564,8 @@ void CheckEdgeFeather(SDL_Renderer* renderer) {
     data.name = "feather_image";
     data.width = 32;
     data.height = 32;
-    data.selfAnchor = InkingChangeAnchor::LeftTop;
-    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.selfAnchor = PreAnchors::LeftTop;
+    data.traceAnchor = PreAnchors::LeftTop;
     data.offsetX = 20.0f;
     data.offsetY = 20.0f;
     auto* image = static_cast<InkingStaticImage*>(
@@ -8645,8 +8645,8 @@ void CheckImageFastPath(SDL_Renderer* renderer) {
     data.name = "fastpath_image";
     data.width = 96;   // 非 2 的幂、非整倍率：逼着走真实缩放的采样路径
     data.height = 40;
-    data.selfAnchor = InkingChangeAnchor::LeftTop;
-    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.selfAnchor = PreAnchors::LeftTop;
+    data.traceAnchor = PreAnchors::LeftTop;
     data.offsetX = 20.0f;
     data.offsetY = 20.0f;
     auto* image = static_cast<InkingStaticImage*>(
@@ -8752,8 +8752,8 @@ void CheckTextureBytes(SDL_Renderer* renderer) {
         data.normal.source = name;
         data.normal.imageBytes = bmp.data();
         data.normal.imageSize = bmp.size();
-        data.selfAnchor = InkingChangeAnchor::LeftTop;
-        data.traceAnchor = InkingChangeAnchor::LeftTop;
+        data.selfAnchor = PreAnchors::LeftTop;
+        data.traceAnchor = PreAnchors::LeftTop;
         scene.AddChild(std::make_unique<InkingStaticImage>(&scene, data));
         scene.TickFrame(1.0f / 60.0f);
         RenderSvgFrame(renderer, scene);
@@ -8827,8 +8827,8 @@ void CheckSpriteRuntimeSwap(SDL_Renderer* renderer) {
         data.height = 64;
         data.fps = 12.0;
         data.autoplay = true;
-        data.selfAnchor = InkingChangeAnchor::LeftTop;
-        data.traceAnchor = InkingChangeAnchor::LeftTop;
+        data.selfAnchor = PreAnchors::LeftTop;
+        data.traceAnchor = PreAnchors::LeftTop;
         data.offsetX = 20.0f;
         data.offsetY = 20.0f;
         data.normal.type = InkingAppearanceType::Image;
@@ -8995,8 +8995,8 @@ void CheckSpriteUnevenFrames(SDL_Renderer* renderer) {
     data.height = 56;
     data.fps = 12.0;
     data.autoplay = false;
-    data.selfAnchor = InkingChangeAnchor::LeftTop;
-    data.traceAnchor = InkingChangeAnchor::LeftTop;
+    data.selfAnchor = PreAnchors::LeftTop;
+    data.traceAnchor = PreAnchors::LeftTop;
     data.offsetX = 20.0f;
     data.offsetY = 20.0f;
     data.normal.type = InkingAppearanceType::Image;
@@ -9132,8 +9132,8 @@ void CheckSpriteUnevenFrames(SDL_Renderer* renderer) {
         imageData.normal.source = imageData.name;
         imageData.normal.imageBytes = cell.data();
         imageData.normal.imageSize = cell.size();
-        imageData.selfAnchor = InkingChangeAnchor::LeftTop;
-        imageData.traceAnchor = InkingChangeAnchor::LeftTop;
+        imageData.selfAnchor = PreAnchors::LeftTop;
+        imageData.traceAnchor = PreAnchors::LeftTop;
         imageData.offsetX = 20.0f;
         imageData.offsetY = 20.0f;
         singleScene.AddChild(
@@ -9299,8 +9299,8 @@ void CheckAtlasData(SDL_Renderer* renderer) {
         InkingSpriteData sheetData = InkingMakeSpriteData(
             pixelAtlas, 0, bytes.data(), bytes.size());
         sheetData.autoplay = false;
-        sheetData.selfAnchor = InkingChangeAnchor::LeftTop;
-        sheetData.traceAnchor = InkingChangeAnchor::LeftTop;
+        sheetData.selfAnchor = PreAnchors::LeftTop;
+        sheetData.traceAnchor = PreAnchors::LeftTop;
         sheetData.offsetX = 20.0f;
         sheetData.offsetY = 20.0f;
         Check(sheetData.width == 40 && sheetData.height == 40,
@@ -9333,8 +9333,8 @@ void CheckAtlasData(SDL_Renderer* renderer) {
         imageData.normal.source = imageData.name;
         imageData.normal.imageBytes = cell.data();
         imageData.normal.imageSize = cell.size();
-        imageData.selfAnchor = InkingChangeAnchor::LeftTop;
-        imageData.traceAnchor = InkingChangeAnchor::LeftTop;
+        imageData.selfAnchor = PreAnchors::LeftTop;
+        imageData.traceAnchor = PreAnchors::LeftTop;
         imageData.offsetX = 20.0f;
         imageData.offsetY = 20.0f;
         singleScene.AddChild(
@@ -9524,8 +9524,8 @@ void CheckDynamicSprite(SDL_Renderer* renderer) {
             data.fps = 12.0;
             data.loop = true;
             data.autoplay = false;  // 只验切格：不播，帧号由 `SeekToFrame` 指定
-            data.selfAnchor = InkingChangeAnchor::LeftTop;
-            data.traceAnchor = InkingChangeAnchor::LeftTop;
+            data.selfAnchor = PreAnchors::LeftTop;
+            data.traceAnchor = PreAnchors::LeftTop;
             data.offsetX = 200.0f;
             data.offsetY = 100.0f;
             data.normal.type = InkingAppearanceType::Image;
@@ -9613,8 +9613,8 @@ void CheckDynamicSprite(SDL_Renderer* renderer) {
             data.height = 40;
             data.fps = 12.0;
             data.autoplay = false;
-            data.selfAnchor = InkingChangeAnchor::LeftTop;
-            data.traceAnchor = InkingChangeAnchor::LeftTop;
+            data.selfAnchor = PreAnchors::LeftTop;
+            data.traceAnchor = PreAnchors::LeftTop;
             data.offsetX = 200.0f;
             data.offsetY = 100.0f;
             data.normal.type = InkingAppearanceType::Image;
@@ -9726,8 +9726,8 @@ void CheckDynamicLabel() {
         data.height = 0;    // 内容驱动：高度由自测量补
         data.offsetX = 40.0f;
         data.offsetY = 80.0f;
-        data.selfAnchor = InkingChangeAnchor::LeftTop;
-        data.traceAnchor = InkingChangeAnchor::LeftTop;
+        data.selfAnchor = PreAnchors::LeftTop;
+        data.traceAnchor = PreAnchors::LeftTop;
         data.text = "短";
         data.style.fontSize = 20.0f;
 
@@ -10451,8 +10451,8 @@ void CheckDynamicSpriteGroup(SDL_Renderer* renderer) {
         group.rows = 1;
         // 显式写左上角：自检的读回区域是从 (0,0) 起的 40×40（默认值也是它，
         // 但读回区域不该依赖"默认值正好合适"）。
-        group.selfAnchor = InkingChangeAnchor::LeftTop;
-        group.traceAnchor = InkingChangeAnchor::LeftTop;
+        group.selfAnchor = PreAnchors::LeftTop;
+        group.traceAnchor = PreAnchors::LeftTop;
 
         InkingSpriteGroupAnimation idle;
         idle.name = "idle";
@@ -10585,8 +10585,8 @@ void CheckSpriteGroup(SDL_Renderer* renderer) {
         group.rows = 1;
         // 显式写左上角：自检的读回区域是从 (0,0) 起的 40×40（默认值也是它，
         // 但读回区域不该依赖"默认值正好合适"）。
-        group.selfAnchor = InkingChangeAnchor::LeftTop;
-        group.traceAnchor = InkingChangeAnchor::LeftTop;
+        group.selfAnchor = PreAnchors::LeftTop;
+        group.traceAnchor = PreAnchors::LeftTop;
 
         InkingSpriteGroupAnimation idle;
         idle.name = "idle";
@@ -11002,8 +11002,8 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
             data.height = 40;
             data.fps = 12.0;
             data.autoplay = false;  // 停在第 0 格：像素才可比
-            data.selfAnchor = InkingChangeAnchor::LeftTop;
-            data.traceAnchor = InkingChangeAnchor::LeftTop;
+            data.selfAnchor = PreAnchors::LeftTop;
+            data.traceAnchor = PreAnchors::LeftTop;
             // 10×5 的网格，格距 44 设计像素。
             data.offsetX = 20.0f + static_cast<float>(i % 10) * 44.0f;
             data.offsetY = 20.0f + static_cast<float>(i / 10) * 44.0f;
@@ -11183,8 +11183,8 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
             data.normal.source = std::string(sceneName) + "_bytes";
             data.normal.imageBytes = solid.data();
             data.normal.imageSize = solid.size();
-            data.selfAnchor = InkingChangeAnchor::LeftTop;
-            data.traceAnchor = InkingChangeAnchor::LeftTop;
+            data.selfAnchor = PreAnchors::LeftTop;
+            data.traceAnchor = PreAnchors::LeftTop;
             data.offsetX = 20.0f;
             data.offsetY = 20.0f;
             scene->AddChild(
@@ -11235,8 +11235,8 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
             data.normal.source = std::string(sceneName) + "_svg";
             data.normal.imageBytes = SvgBytes(kHalfTransparent);
             data.normal.imageSize = std::strlen(kHalfTransparent);
-            data.selfAnchor = InkingChangeAnchor::LeftTop;
-            data.traceAnchor = InkingChangeAnchor::LeftTop;
+            data.selfAnchor = PreAnchors::LeftTop;
+            data.traceAnchor = PreAnchors::LeftTop;
             data.offsetX = 20.0f;
             data.offsetY = 20.0f;
             scene->AddChild(
@@ -11287,8 +11287,8 @@ void CheckSpriteBatching(SDL_Renderer* renderer) {
             data.normal.imageBytes = wide.data();
             data.normal.imageSize = wide.size();
             data.normal.transform.rotate = 90.0f;  // 度，顺时针
-            data.selfAnchor = InkingChangeAnchor::LeftTop;
-            data.traceAnchor = InkingChangeAnchor::LeftTop;
+            data.selfAnchor = PreAnchors::LeftTop;
+            data.traceAnchor = PreAnchors::LeftTop;
             data.offsetX = 100.0f;
             data.offsetY = 100.0f;
             scene->AddChild(std::make_unique<InkingStaticImage>(

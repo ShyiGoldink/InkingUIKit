@@ -16,7 +16,7 @@
 class InkingAnchor {
 public:
     // 虚析构：本类要被继承。
-    virtual ~InkingAnchor();
+    virtual ~InkingAnchor() = default;
 
     // 禁拷贝 / 移动：持有父指针，复制出的第二份关系会让两条链各指一个对象。
     InkingAnchor(const InkingAnchor&) = delete;

@@ -284,8 +284,8 @@ InkingImageData MakeNinaData() {
     data.normal.source = "nina/nina.png";   // 相对 exe 旁的 assets/
     data.normal.imageFit = InkingImageFit::Cover;
 
-    data.selfAnchor = InkingChangeAnchor::Center;
-    data.traceAnchor = InkingChangeAnchor::Center;
+    data.selfAnchor = PreAnchors::Center;
+    data.traceAnchor = PreAnchors::Center;
     data.shape = InkingShapeSpec::RoundedRect(12.0f);
     return data;
 }
