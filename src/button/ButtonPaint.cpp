@@ -232,7 +232,7 @@ InkingShapeBounds ButtonHitEnvelope(const InkingButtonData& data, const InkingSh
         float maxX = 0.0f;
         float maxY = 0.0f;
         for (int i = 0; i < 4; ++i) {
-            const InkingPoint2 point = InkingApplyTransform(transform, xs[i], ys[i],
+            const InkingVec2 point = InkingApplyTransform(transform, xs[i], ys[i],
                                                 centerX, centerY);
             if (i == 0) {
                 minX = maxX = point.x;
@@ -353,19 +353,19 @@ InkingButtonTextCut ResolveButtonTextCut(const InkingAnchor& node,
     return cut;
 }
 
-InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data) {
+InkingVec2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data) {
     const bool needsMeasuring = data.text.align != InkingTextAlignH::Left
                                 || data.text.alignV != InkingTextAlignV::Top;
     if (!needsMeasuring || data.label.empty()) {
-        return InkingPoint2{data.text.leftSpace, data.text.topSpace};
+        return InkingVec2{data.text.leftSpace, data.text.topSpace};
     }
     const InkingTextExtent full = MeasureButtonText(data.label, ButtonTextStyle(data));
     return ButtonTextOffset(node, data, full.width, full.height);
 }
 
-InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data,
+InkingVec2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data,
                               float textWidth, float textHeight) {
-    const InkingPoint2 configured{data.text.leftSpace, data.text.topSpace};
+    const InkingVec2 configured{data.text.leftSpace, data.text.topSpace};
     const bool needsMeasuring = data.text.align != InkingTextAlignH::Left
                                 || data.text.alignV != InkingTextAlignV::Top;
     if (!needsMeasuring) {
@@ -404,7 +404,7 @@ InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& 
             break;  // 保持 topSpace
     }
 
-    return InkingPoint2{x, y};
+    return InkingVec2{x, y};
 }
 
 void PaintButtonText(const InkingAnchor& node, const InkingButtonData& data,
@@ -438,7 +438,7 @@ void PaintButtonText(const InkingAnchor& node, const InkingButtonData& data,
     request.color = VisibleTextColor(
         InkingResolveThemeColor(data.textColorToken, data.textColor));
     // ② 再算偏移：用的是**截断后**的尺寸（`cut.width/height` 已经量过）。
-    const InkingPoint2 offset =
+    const InkingVec2 offset =
         ButtonTextOffset(node, data, cut.width, cut.height);
     request.offsetX = offset.x;
     request.offsetY = offset.y;

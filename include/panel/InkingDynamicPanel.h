@@ -316,7 +316,7 @@ private:
     void paintScrollBars(float pixelX, float pixelY) const;
 
     /// 世界（设计）坐标 → 本地面：与 `inking_detail::HitTestShape` 的三步同源。
-    InkingPoint2 localFromWorld(float worldX, float worldY) const noexcept;
+    InkingVec2 localFromWorld(float worldX, float worldY) const noexcept;
 
     /**
      * 两条入口共用的**唯一一份**滚轮算术（换算 + 夹紧 + 幂等）。

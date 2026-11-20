@@ -339,10 +339,10 @@ InkingScrollBarMetrics InkingDynamicPanel::GetBarMetrics(bool vertical) const no
                             rawRange, _data.scroll);
 }
 
-InkingPoint2 InkingDynamicPanel::localFromWorld(float worldX, float worldY) const noexcept {
+InkingVec2 InkingDynamicPanel::localFromWorld(float worldX, float worldY) const noexcept {
     // 与 `inking_detail::HitTestShape` 的前三步同源（缺一步就是"点在这儿、滚的是别处"）：
     // 撤祖先仿射 → 减绝对位置 → 过自身显示变换的逆（中心同绘制）。
-    InkingPoint2 world{worldX, worldY};
+    InkingVec2 world{worldX, worldY};
     const InkingAffine ancestor = inking_detail::AncestorAffine(*this);
     if (!ancestor.IsIdentity()) {
         world = InkingApplyAffine(InkingInvertAffine(ancestor), worldX, worldY);
@@ -358,7 +358,7 @@ void InkingDynamicPanel::PressScrollAt(float designX, float designY) {
     if (!_data.scroll.enabled) {
         return;
     }
-    const InkingPoint2 local = localFromWorld(designX, designY);
+    const InkingVec2 local = localFromWorld(designX, designY);
 
     // 竖直优先：两条都可见时它们在右下角重叠，竖直条画在外面（更常用）。
     const InkingScrollBarMetrics bars[2] = {GetBarMetrics(true), GetBarMetrics(false)};
@@ -400,7 +400,7 @@ void InkingDynamicPanel::DragScrollTo(float designX, float designY) {
     if (!bar.visible) {
         return;
     }
-    const InkingPoint2 local = localFromWorld(designX, designY);
+    const InkingVec2 local = localFromWorld(designX, designY);
     const float range = vertical ? GetScrollRangeY() : GetScrollRangeX();
     // 拖动与"点轨道跳过去"是**同一套算术**（滑块中心对到指针上）——所以拖动
     // 天然跟手、也和点击一致。

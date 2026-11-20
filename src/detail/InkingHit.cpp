@@ -19,7 +19,7 @@ bool HitTestShape(const InkingWidget& node, const InkingShapeSpec& shape,
     // ① 撤掉祖先子树变换：容器动过之后，世界上那个点要回到"未经变换的布局
     //    空间"里才能和自己的绝对位置相减。绘制那边在提交层过的是正变换
     //    （`SubmitToRenderer` 里的 `AncestorAffine`），两边同源。
-    InkingPoint2 world{worldX, worldY};
+    InkingVec2 world{worldX, worldY};
     const InkingAffine ancestor = AncestorAffine(node);
     if (!ancestor.IsIdentity()) {
         world = InkingApplyAffine(InkingInvertAffine(ancestor), worldX, worldY);
@@ -29,7 +29,7 @@ bool HitTestShape(const InkingWidget& node, const InkingShapeSpec& shape,
 
     // ② 变换通道：过一次**逆**变换（绘制过正变换，见 `fillShape`）。
     //    中心取组件中心，和绘制用的是同一个原点。
-    const InkingPoint2 local = InkingInverseTransform(
+    const InkingVec2 local = InkingInverseTransform(
         transform, localX, localY,
         static_cast<float>(node.GetWidth()) * 0.5f,
         static_cast<float>(node.GetHeight()) * 0.5f);
@@ -48,7 +48,7 @@ bool HitTestLocalRect(const InkingWidget& node, const InkingShapeBounds& bounds,
 
     // 前三步与 `HitTestShape` 完全一样（同一份变换链，见那里的注释）——
     // 两份实现各自演化就会出现"形状剪对了、裁剪区剪错了"这种只在角落露头的错。
-    InkingPoint2 world{worldX, worldY};
+    InkingVec2 world{worldX, worldY};
     const InkingAffine ancestor = AncestorAffine(node);
     if (!ancestor.IsIdentity()) {
         world = InkingApplyAffine(InkingInvertAffine(ancestor), worldX, worldY);
@@ -56,7 +56,7 @@ bool HitTestLocalRect(const InkingWidget& node, const InkingShapeBounds& bounds,
     const float localX = world.x - node.GetAbsX();
     const float localY = world.y - node.GetAbsY();
 
-    const InkingPoint2 local = InkingInverseTransform(
+    const InkingVec2 local = InkingInverseTransform(
         transform, localX, localY,
         static_cast<float>(node.GetWidth()) * 0.5f,
         static_cast<float>(node.GetHeight()) * 0.5f);

@@ -741,7 +741,7 @@ void DrawTextureTransformed(SDL_Renderer* renderer, SDL_Texture* texture,
     if (!ancestor.IsIdentity()) {
         const float factor =
             std::sqrt(ancestor.a * ancestor.a + ancestor.b * ancestor.b);
-        const InkingPoint2 moved = InkingApplyAffine(
+        const InkingVec2 moved = InkingApplyAffine(
             ancestor, destination.x + destination.w * 0.5f,
             destination.y + destination.h * 0.5f);
         destination.w *= factor;

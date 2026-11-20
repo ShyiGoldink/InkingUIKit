@@ -31,7 +31,7 @@ InkingShapeBounds LocalRectToDevice(float lx, float ly, float lw, float lh,
                            pixelY + ly * magnification, lw * magnification,
                            lh * magnification};
     const InkingAffine ancestor = currentAncestorAffine();
-    const InkingPoint2 corners[4] = {
+    const InkingVec2 corners[4] = {
         InkingApplyAffine(ancestor, rect.x, rect.y),
         InkingApplyAffine(ancestor, rect.x + rect.width, rect.y),
         InkingApplyAffine(ancestor, rect.x, rect.y + rect.height),

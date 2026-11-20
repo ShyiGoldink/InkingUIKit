@@ -1,42 +1,24 @@
 #pragma once
-
-// 仿射变换（平移 / 旋转 / 缩放）这是变换通道，不是布局通道。
-//
-//  本项目的变换通道和布局通道是不一样的。
-//  把两者分得很清楚，这份文件只描述前者：
-//   变换通道（translate / scale / rotate）不改命中表。
-// 表按"本地几何"烘， 查询时把点**反变换**回本地空间。于是静态组件也能有它，命中表照样有效，
-//   只是每帧多一次反变换（几个乘加）。
-//   布局通道（width / height / 会引发兄弟重排的定位）：必须重烘受影响的子树，
-//   那是每态一份表或动态档的事，不在本文件的范围里。
-//   不碰本地几何（形状、尺寸、锚点一个字节都不动），
-//   允许变换，因为变换不改表，静态档"进命中表"的前提没被破坏。
-// 两个容易写错的地方，先在这里定死
-//
-// 1. 原点取组件中心（等价 CSS 的 `transform-origin: 50% 50%`）。形状都是按
-//    左上角定义的，绕左上角转起来不是直觉里的样子：一个 200×100 的按钮转 90°
-//    会整个跑到左边去。
-// 2. rotate 的单位是度，顺时针为正（屏幕坐标 y 向下，所以数学上的正角看起来就是顺时针）。
-// 理由与 CSS 一致：配置里写 `15` 比写 `0.2618` 直观。
-// 变换的正向用于绘制（本地 → 屏幕），反向用于命中（屏幕 → 本地）。
-// 两者必须严格互逆，否则就会回到"画的是一个、点的是另一个"那条老路，
-// 所以它们挨着写在这里，而不是各写各的。
+/*
+InkingTransform为图形的位置变换，包括平移，旋转，缩放提供了通道
+InkingTransform不持有任何几何状态，只提供变换的模式
+*/
 
 #include <cmath>
 #include <cstdint>
 
-// 设计坐标系里的一个点。
-struct InkingPoint2 {
+// 设计坐标系里的一个点（也当二维偏移用，所以叫 Vec 而不是 Point）
+struct InkingVec2 {
     float x = 0.0f;
     float y = 0.0f;
 };
-
-// 一个状态的目标变换。缺省（全零 + scale 1）是单位变换。
+ 
+//InkingTransformSpec记录了状态变换的目标，缺省（scale为1，其余为0）则意味着不做变换
 struct InkingTransformSpec {
     float translateX = 0.0f;  // 设计坐标
     float translateY = 0.0f;  // 设计坐标
     float rotate = 0.0f;      // 度，顺时针为正
-    float scale = 1.0f;       // 均匀缩放；负值等于镜像（允许，但很少用）
+    float scale = 1.0f;       // 均匀缩放；负值等于镜像
 
     constexpr bool IsIdentity() const noexcept {
         return translateX == 0.0f && translateY == 0.0f && rotate == 0.0f
@@ -52,9 +34,7 @@ constexpr bool InkingSameTransform(const InkingTransformSpec& a,
 }
 
 namespace inking_detail {
-// 名字带 transform 前缀是必须的：`inking_detail::kPi` 这种通用名字
-// 框架里已经有别的实现在用（例如 InkingDraw.cpp 的形状填充），
-// 重名不会报"重复定义"，只会在使用处报"引用不明确"，更难查。
+// 名字带 transform 前缀来和其它可能相同的名称进行区分
 constexpr float kTransformPi = 3.14159265358979323846f;
 constexpr float kTransformDegToRad = kTransformPi / 180.0f;
 }  // namespace inking_detail
@@ -65,7 +45,7 @@ constexpr float kTransformDegToRad = kTransformPi / 180.0f;
  * 顺序是 CSS 的 `translate(...) rotate(...) scale(...)`：
  * 先绕中心缩放、再旋转、最后平移。绘制用。
  */
-inline InkingPoint2 InkingApplyTransform(const InkingTransformSpec& transform, float x, float y,
+inline InkingVec2 InkingApplyTransform(const InkingTransformSpec& transform, float x, float y,
                              float cx, float cy) {
     const float radians = transform.rotate * inking_detail::kTransformDegToRad;
     const float cosA = std::cos(radians);
@@ -74,7 +54,7 @@ inline InkingPoint2 InkingApplyTransform(const InkingTransformSpec& transform, f
     const float dx = (x - cx) * transform.scale;
     const float dy = (y - cy) * transform.scale;
 
-    return InkingPoint2{cx + dx * cosA - dy * sinA + transform.translateX,
+    return InkingVec2{cx + dx * cosA - dy * sinA + transform.translateX,
                   cy + dx * sinA + dy * cosA + transform.translateY};
 }
 
@@ -85,7 +65,7 @@ inline InkingPoint2 InkingApplyTransform(const InkingTransformSpec& transform, f
  * `scale == 0` 时没有逆（形状被压成一个点），这里退回按 1 处理——
  * 那是配置错误（生成期就会拦），但宁可不命中，也不要除零得到 inf 之后到处乱命中。
  */
-inline InkingPoint2 InkingInverseTransform(const InkingTransformSpec& transform, float x, float y,
+inline InkingVec2 InkingInverseTransform(const InkingTransformSpec& transform, float x, float y,
                                float cx, float cy) {
     const float radians = transform.rotate * inking_detail::kTransformDegToRad;
     const float cosA = std::cos(radians);
@@ -100,7 +80,7 @@ inline InkingPoint2 InkingInverseTransform(const InkingTransformSpec& transform,
     const float ry = -dx * sinA + dy * cosA;
     const float scale = transform.scale != 0.0f ? transform.scale : 1.0f;
 
-    return InkingPoint2{cx + rx / scale, cy + ry / scale};
+    return InkingVec2{cx + rx / scale, cy + ry / scale};
 }
 
 /**

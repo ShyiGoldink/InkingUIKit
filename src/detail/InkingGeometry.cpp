@@ -105,7 +105,7 @@ InkingShapeBounds ClipBoundsInDevice(const InkingWidget& node,
     if (!chainRaw.IsIdentity() || chainRaw.tx != 0.0f || chainRaw.ty != 0.0f) {
         const InkingAffine chain{chainRaw.a, chainRaw.b, chainRaw.tx * scale,
                            chainRaw.ty * scale};
-        const InkingPoint2 corners[4] = {
+        const InkingVec2 corners[4] = {
             InkingApplyAffine(chain, rect.x, rect.y),
             InkingApplyAffine(chain, rect.x + rect.width, rect.y),
             InkingApplyAffine(chain, rect.x, rect.y + rect.height),

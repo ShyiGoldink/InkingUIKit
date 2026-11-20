@@ -177,7 +177,7 @@ bool BuildShapeMesh(const InkingShapeSpec& scaled, float w, float h, float mag,
     // 在形状内部，靠逐顶点 alpha 表达不出来（那会变成"整块半透明"）。留白由
     // `fillShapeTextured` 里的**裁剪矩形**负责（形状 ∩ 图区域）。
     const auto makeVertex = [&](float rawX, float rawY, const SDL_FColor& c) {
-        const InkingPoint2 point = transformPoint(rawX, rawY);
+        const InkingVec2 point = transformPoint(rawX, rawY);
         SDL_Vertex vertex = MakeVertex(point.x, point.y, c);
         if (uv != nullptr) {
             uv->UvAt(rawX, rawY, vertex.tex_coord.x, vertex.tex_coord.y);
@@ -575,7 +575,7 @@ void strokeShape(SDL_Renderer* renderer, const InkingShapeSpec& shape, int width
         }
         const SDL_FColor ringColor = VertexColor(color, rings[ring].alpha);
         for (const OutlinePoint& point : contour) {
-            const InkingPoint2 placed = transformPoint(point.x, point.y);
+            const InkingVec2 placed = transformPoint(point.x, point.y);
             // **本地**坐标：平移交给提交层（与填充同一条约定）。
             vertices.push_back(MakeVertex(placed.x, placed.y, ringColor));
         }
@@ -688,7 +688,7 @@ void fillShapeTextured(SDL_Renderer* renderer, const InkingShapeSpec& shape, int
         const float xs[4] = {0.0f, w, 0.0f, w};
         const float ys[4] = {0.0f, 0.0f, h, h};
         for (int i = 0; i < 4; ++i) {
-            const InkingPoint2 point = InkingApplyTransform(
+            const InkingVec2 point = InkingApplyTransform(
                 deviceTransform, xs[i], ys[i], centerX, centerY);
             verts[i].position = SDL_FPoint{point.x, point.y};
             verts[i].color = VertexColor(tintColor, solidAlpha);

@@ -109,7 +109,7 @@ inline InkingShapeBounds TransformBounds(const InkingShapeBounds& local,
     if (transform.IsIdentity()) {
         return local;  // 没变换：原样返回（绝大多数组件的路径，零开销）
     }
-    const InkingPoint2 corners[4] = {
+    const InkingVec2 corners[4] = {
         InkingApplyTransform(transform, local.x, local.y, cx, cy),
         InkingApplyTransform(transform, local.x + local.width, local.y, cx, cy),
         InkingApplyTransform(transform, local.x, local.y + local.height, cx, cy),

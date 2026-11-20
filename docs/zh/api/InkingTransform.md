@@ -35,12 +35,12 @@
 
 ## 用到的数据结构
 
->**InkingPoint2**
+>**InkingVec2**
 
 设计坐标系里的一个点。变换的进出参都用它。
 
 ```C++
-struct InkingPoint2 {
+struct InkingVec2 {
     float x = 0.0f;
     float y = 0.0f;
 };
@@ -116,7 +116,7 @@ constexpr bool InkingSameTransform(const InkingTransformSpec& a,
 原名:
 
 ```C++
-inline InkingPoint2 InkingApplyTransform(const InkingTransformSpec& transform, float x, float y,
+inline InkingVec2 InkingApplyTransform(const InkingTransformSpec& transform, float x, float y,
                              float cx, float cy);
 ```
 
@@ -138,7 +138,7 @@ y' = cy + dx·sin(radians) + dy·cos(radians) + translateY
 原名:
 
 ```C++
-inline InkingPoint2 InkingInverseTransform(const InkingTransformSpec& transform, float x, float y,
+inline InkingVec2 InkingInverseTransform(const InkingTransformSpec& transform, float x, float y,
                                float cx, float cy);
 ```
 

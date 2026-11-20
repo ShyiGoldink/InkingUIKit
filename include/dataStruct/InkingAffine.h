@@ -33,8 +33,8 @@ inline bool InkingSameAffine(const InkingAffine& x, const InkingAffine& y) noexc
 }
 
 /// 把一个点过一遍仿射。
-inline InkingPoint2 InkingApplyAffine(const InkingAffine& m, float x, float y) noexcept {
-    return InkingPoint2{m.a * x - m.b * y + m.tx, m.a * y + m.b * x + m.ty};
+inline InkingVec2 InkingApplyAffine(const InkingAffine& m, float x, float y) noexcept {
+    return InkingVec2{m.a * x - m.b * y + m.tx, m.a * y + m.b * x + m.ty};
 }
 
 /// `outer ∘ inner`：先 inner 再 outer（读起来就是"外层套内层"）。

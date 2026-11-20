@@ -199,9 +199,9 @@ void PaintButtonText(const InkingAnchor& node, const InkingButtonData& data,
  * 四参数的那个重载收**已经量好的文字尺寸**：绘制路径必须先截断再算偏移，
  * 用原始串的宽度去居中会让截断后的文字整体左移（T-04）。
  */
-InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data);
+InkingVec2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data);
 
-InkingPoint2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data,
+InkingVec2 ButtonTextOffset(const InkingAnchor& node, const InkingButtonData& data,
                               float textWidth, float textHeight);
 
 }  // namespace inking_detail
