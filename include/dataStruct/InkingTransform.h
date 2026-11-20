@@ -39,56 +39,43 @@ constexpr float kTransformPi = 3.14159265358979323846f;
 constexpr float kTransformDegToRad = kTransformPi / 180.0f;
 }  // namespace inking_detail
 
-/**
- * @brief 正向：本地坐标 → 变换后的坐标（绕 `(cx, cy)`）。
- *
- * 顺序是 CSS 的 `translate(...) rotate(...) scale(...)`：
- * 先绕中心缩放、再旋转、最后平移。绘制用。
- */
+// 正向变换函数：将本地坐标 (x, y) 绕旋转中心 (cx, cy)，按照 transform 的变换方向，返回变换后的坐标
 inline InkingVec2 InkingApplyTransform(const InkingTransformSpec& transform, float x, float y,
                              float cx, float cy) {
+    // 以旋转中心为原点，计算缩放后的相对坐标。
+    const float dx = (x - cx) * transform.scale;
+    const float dy = (y - cy) * transform.scale;
+
+    // 旋转相对坐标，再加回旋转中心；最后应用平移。
     const float radians = transform.rotate * inking_detail::kTransformDegToRad;
     const float cosA = std::cos(radians);
     const float sinA = std::sin(radians);
-
-    const float dx = (x - cx) * transform.scale;
-    const float dy = (y - cy) * transform.scale;
 
     return InkingVec2{cx + dx * cosA - dy * sinA + transform.translateX,
                   cy + dx * sinA + dy * cosA + transform.translateY};
 }
 
-/**
- * @brief 反向：变换后的坐标 → 本地坐标。命中用。
- *
- * 它必须与 `InkingApplyTransform` 严格互逆（顺序反过来、角度取负、缩放取倒数）。
- * `scale == 0` 时没有逆（形状被压成一个点），这里退回按 1 处理——
- * 那是配置错误（生成期就会拦），但宁可不命中，也不要除零得到 inf 之后到处乱命中。
- */
+// 反向变换函数：将变换后的坐标 (x, y) 绕旋转中心 (cx, cy)，按照 transform 的反向变换，返回本地坐标，用于判断命中
 inline InkingVec2 InkingInverseTransform(const InkingTransformSpec& transform, float x, float y,
                                float cx, float cy) {
-    const float radians = transform.rotate * inking_detail::kTransformDegToRad;
-    const float cosA = std::cos(radians);
-    const float sinA = std::sin(radians);
-
-    // 先把平移和中心一起减掉
+    // 先撤销平移，并以旋转中心为原点计算相对坐标。
     const float dx = x - transform.translateX - cx;
     const float dy = y - transform.translateY - cy;
 
-    // 反向旋转（转置），再反向缩放
+    // 撤销旋转（角度取负），再撤销缩放。
+    const float radians = transform.rotate * inking_detail::kTransformDegToRad;
+    const float cosA = std::cos(radians);
+    const float sinA = std::sin(radians);
     const float rx = dx * cosA + dy * sinA;
     const float ry = -dx * sinA + dy * cosA;
+
+    // scale 为 0 时不存在逆变换；这里按 1 处理，避免除零。
     const float scale = transform.scale != 0.0f ? transform.scale : 1.0f;
 
     return InkingVec2{cx + rx / scale, cy + ry / scale};
 }
 
-/**
- * @brief 两个变换之间线性插值。
- *
- * 角度也是直接线性插
- * 一方面是相对方便差值，一方面是为了尊重用户意图
- */
+//两个变换之间线形插值
 inline InkingTransformSpec InkingLerpTransform(const InkingTransformSpec& from,
                                    const InkingTransformSpec& to, float t) {
     return InkingTransformSpec{
