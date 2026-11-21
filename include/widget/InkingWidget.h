@@ -1,35 +1,5 @@
 #pragma once
 
-// Widget 层：一个能进渲染树的节点。
-//
-// 它是 `InkingAnchor`（定位）之上的生态位——定位层只回答"我在哪儿"，这里回答
-// 剩下的全部问题：我在哪棵树里、谁是我父级、我属于哪个场景、谁在我上面、
-// 我要不要重画、谁点得到我、我收到什么输入、我怎么排我的孩子、我画成什么样。
-//
-// 分层约定（`InkingAnchor` 的头上写着那三条边界）：
-//   - 定位（锚点公式、父链上溯、可见性）在基类；
-//   - 树与场景（子表、所有权、场景登记、层级 z、两种脏、渲染提交、命中、布局、变换、输入、动画）在这里；
-//   - 档位静态 / 动态）在最下面两个类：`InkingStaticWidget`（无几何写入口）与 `InkingDynamicWidget`（有四个几何写入口）。
-//
-// 设计方向：
-//   - 每个 ui 和窗口都以此为基类；除窗口外，其余组件创建时都要传 parent
-//   - 只给 parent + 名字的构造走 CXXCSS 配置；给完整数据结构的构造走静态初始化
-//   - 不同组件怎么读 CXXCSS 由子类自行实现，基类只负责数据结构与变化联动
-//   - onclick 这类回调由接口挂上去
-//
-// 三条硬约定：
-//   1. 写入口不可重写（不加 virtual），标脏由写入口内部统一完成；
-//      要挂附加逻辑就重写 onXxxChanged 钩子，钩子不标脏、也不拦截写入口
-//   2. 会标脏的只有几何、可见性、层级、鼠标移动这四件事；颜色、不影响命中的装饰、以及展示倍率都不标脏
-//   3. 位置不存，由锚点推导（这一条现在由基类实现）
-//
-// 渲染侧的约定（骨架变化才重建顺序）
-//   - 每个节点记住自己属于哪个场景（沿父链找最近的 `InkingScene`），构造时建立；
-//   - 骨架变化——构造、析构、`SetParent`、`ChangeZIndex`、`SetVisible`都只调 `NotifySceneStructureChanged()` 把场景标脏，不在这里排序；
-//     真正的排序推迟到帧末，由场景惰性做一次，避免一帧里连改十个 zindex就重建十次；
-//   - 绘制列表是索引不是真相源：父子关系才是真相，列表只是它的派生视图，结构一变就重建。
-//     两份真相不同步是野指针和"画的是一个、点的是另一个" 这类问题的来源。
-//
 // 实现见 src/widget/InkingWidget.cpp。
 
 #include <dataStruct/InkingAnchorData.h>
@@ -49,32 +19,21 @@
 
 struct SDL_Renderer;
 
-// 先声明两个前向类型
-//下面detail里的 FillDefaultRect 与 layout::ArrangeSubtree 都按引用/形参用到 InkingWidget。
-// 这两个声明必须排在那两个 detail 块之前，否则它们会在自己前面找不到这个名字。
+//先声明两个前向类型
 class InkingScene;
 
 class InkingWidget;
 
 namespace inking_detail {
-// 顶点缓存槽：定义在 InkingBatch.h 里。公开头只前向声明。 那个类型含 SDL_Vertex，不能拖进公开头。
+// 顶点缓存槽
 struct VertexCacheSlot;
 
-/**
- * 第 0 层渲染：一块实心矩形，颜色取节点的 color。
- *
- * 放在 detail里而不是两档各写一份
- * 静态档与动态档是兄弟（都直接继承`InkingWidget`）
- * 静态版不是动态版的基类、借不到对方的实现。拆成两个实现文件之后，匿名namespace 不再共享。
- *
- * 它走的是同一套形状填充，矩形在这里就是InkingShapeSpec::Rect()，变换是单位变换
- * 基类没有变换这个概念，变换属于组件自己的内容
- * 于是填充只有一份实现，抗锯齿、展示倍率换算这些事也不会出现"按钮走一条路、默认矩形走另一条路"。
- */
+//统一的默认渲染：一块实心矩形，颜色取节点的 color。
 void FillDefaultRect(const InkingWidget& node, float pixelX, float pixelY);
 }  // namespace inking_detail
 
 namespace inking_detail {
+    //TODO:之后要移除Layout，把Layout做成单独的组件
 namespace layout {
 /**
  * 对一个容器跑一次排布：读它的InkingLayoutSpec与每个孩子的MeasureLayout，解出矩形，逐个写回孩子，再递归进"本身也是容器"的孩子。
@@ -84,17 +43,7 @@ void ArrangeSubtree(InkingWidget& container);
 }  // namespace layout
 }  // namespace inking_detail
 
-/**
- * @brief 节点：能进渲染树的东西。
- *
- * 三条继承线各管一件事（输入是能力，不是第二套继承）：
- *   - `InkingAnchor`：定位（锚点公式、父链、可见性、倍率）；
- *   - `InkingPointerHandler`：指针契约（5 个钩子+Push+滚轮归属声明）；
- *   - `InkingKeyboardTarget`：键盘契约（5 个钩子+Push+焦点意愿）。
- *
- * 别拿这两个接口做dynamic_cast来发现能力：场景是Push推事件的，
- * 类型查询会把之前拆掉的"场景认具体类型"重新装回来。
- */
+//组件节点，在场景中以树的形式存在
 class InkingWidget : public InkingAnchor,
                      public InkingPointerHandler,
                      public InkingKeyboardTarget {
@@ -108,246 +57,79 @@ public:
     InkingWidget& operator=(InkingWidget&&) = delete;
 
     //只读查询：身份与父子
-    // 锚点与位置（`GetX/Y` / `GetSelfAnchor` / `IsVisibleInTree` / `GetMagnification`）的只读查询在基类 `InkingAnchor` 上，不在这里重复。
-
     const std::string& GetName() const noexcept;
 
-    /**
-     * 改名字（B2）。
-     *
-     * 以前名字只有构造时那一份，于是 `CXXCSS`/代码里给静态组件起的名字
-     * 动态组件拿不到——`findByName` 走不到它，自检只能按"子节点索引"定位
-     * （索引一变断言全错）。
-     *
-     * **不标脏**：名字不进几何、不进绘制顺序，改它不影响画面也不影响命中。
-     * @return 真的改了才返回 true（传同一个名字返回 false）。
-     */
-    bool SetName(const std::string& name);
-
-    // 父节点（非拥有）
-    //
-    // 它隐藏基类的 `GetAnchorParent()`：那一条是定位链（`InkingAnchor*`），这一条是树语义（`InkingWidget*`）。
-    //两者同源（同一条 `_parent`）、类型不同，实现就是那一次定型转换，一份存储、两个视图，所以不存在"两个父指针要同步"的问题。
-    // 反过来说：树不进定位层。InkingAnchor里的 _parent 只是位置推导的输入，"谁是孩子、谁拥有谁、在哪个场景"全在本层。
+    //父节点
     InkingWidget* GetParent() const noexcept;
 
-    /**
-     * 直接子节点（**非拥有**的裸指针，和 `GetParent()` 一样只是引用关系）。
-     *
-     * T-7 加上的：在这之前锚点只有"父链"（`GetParent`），没有"父 → 子列表"，
-     * 所以"整块在动"那一档（抽屉 / Toast / 下拉 / 弹窗）没法做——容器的变换
-     * 要作用到整棵子树，就得先知道子树是谁。
-     *
-     * 维护时机只有三处：构造（登记进父级）、`SetParent`（从旧父级摘、往新父级挂）、
-     * 析构（从父级摘）。**顺序按注册先后**（同 z 时"后构造的在上"这条约定
-     * 与绘制列表同源），遍历子树要"从上往下"时自己反着走。
-     *
-     * 它是**视图**：运行期 `AddChild` 挂上来的（拥有型）节点同样在这里露面。
-     * "谁拥有谁"看 `GetOwnedChildCount()` / `RemoveChild()`（A10）。
-     *
-     * 注意它**不负责生命周期**：子节点先销毁时自己会摘掉；父节点销毁时子节点
-     * 的 `_parent` 会指向一个已经没了的对象（和之前的父链行为一致，见
-     * `InputDesign.md` §8「生命周期成对处理」）。
-     */
+    //直接子节点，本节点不负责子节点的生命周期
     const std::vector<InkingWidget*>& GetChildren() const noexcept;
 
-    // ---------------- 只读查询：尺寸（供绘制与命中） ----------------
-
-    /**
-     * 自身尺寸，设计坐标——**画出来 / 判命中的那一份**。
-     *
-     * 基类（`InkingAnchor`）已经给了默认实现（返回推导位置用的 `_width`），这里
-     * 重写只是给"每态尺寸"那一档（T-5：静态按钮三态各一份尺寸）留一个明确的落点：
-     * 那时它就是插值出来的显示尺寸，而绘制与命中都问这个 getter，于是两边天然
-     * 同一个答案。
-     *
-     * **重写时写 `override`**：漏了就变成"隐藏"而不是"重写"，通过基类指针调用会
-     * 静默拿到基类那份推导尺寸——不报错、只是画的和算的不一样。
-     */
+    //只读：设计宽度
     int GetWidth() const noexcept override;
+    //只读：设计高度
     int GetHeight() const noexcept override;
 
-    /**
-     * 相对**根**的绝对位置（设计坐标），O(深度)。
-     *
-     * 绘制、命中、包络、裁剪四处都问它——它们是"我画在哪儿"这**一个**答案的
-     * 共同来源，所以必须与提交给渲染器的左上角（`SubmitToRenderer`）同源。
-     *
-     * 为什么在 Widget 层而不是定位层：它累加的是"父级的绝对位置 + 自己相对
-     * 父级的位置"，而递归要沿**树语义**的父指针走（`GetParent()`）。定位层那条
-     * `_parent` 只是位置推导的输入、不认识"树"，也不该认识——所以整条链的定型
-     * 视图在本层，这两个 getter 跟着在本层。
-     *
-     * 绘制、命中、包络、裁剪四处都问它，四处是同一个答案。
-     */
+    //相对于根的绝对横轴设计坐标，统一绘制、命中、包络、裁剪四处
     float GetAbsX() const noexcept;
+    //相对于根的绝对纵轴设计坐标，统一绘制、命中、包络、裁剪四处
     float GetAbsY() const noexcept;
 
-    /**
-     * 这个节点的**尺寸会随状态变**吗（T-5 的布局通道）。
-     *
-     * 它只影响一件事：位置 / 尺寸快照还准不准。基类返回 false（尺寸构造即定型）；
-     * 静态 Button 在有"每态尺寸"时返回 true——那时场景知道要按当前值问，
-     * 而不是用建表时冻住的那个数。
-     *
-     * 注意它**不是**"动态档"：动态档是"有几何写入口、可任意时刻改、进出命中表"，
-     * 这里仍然是构造期烘好的有限集合（三态各一份）+ 状态机切换。
-     */
+    //尺寸会随着状态改变吗？用于确定静态组件如果存在变换（如button的三态变换）。true为会变换
     virtual bool HasLayoutAnimation() const noexcept { return false; }
 
-    // ---------------- 只读查询：层级与展示 ----------------
-
-    /// 本节点在**兄弟之间**的层级（局部层级，不是全局）。见 `IsAbove`。
+    //本节点在兄弟之间的层级
     int GetZIndex() const noexcept;
-    int GetRegisterOrder() const noexcept;  ///< 只在 z 相同时决定先后
+    //兄弟之间层级相同时决定先后
+    int GetRegisterOrder() const noexcept; 
 
-    /// 本节点的占位填充色，0xAARRGGBB。颜色不标脏（docs/API.md「标脏」）。
+    //本节点的占位填充色，0xAARRGGBB。颜色不标命中脏。
     std::uint32_t GetColor() const noexcept;
 
-    /// 设计单位 → 设备像素（窗口缩放 × 系统 DPI）。letterbox 下 XY 同倍率。
+    //设计单位向设备像素的倍率，包括窗口缩放和系统DPI，letterbox模式下，横轴/纵轴上倍率相同
     float GetDeviceWidth() const noexcept;
+    //设计单位向设备像素的倍率，包括窗口缩放和系统DPI，letterbox模式下，横轴/纵轴上倍率相同
     float GetDeviceHeight() const noexcept;
 
-    // ---------------- 只读查询：子树变换与裁剪 ----------------
-
-    /**
-     * 这个节点对**整棵子树**施加的变换（T-7）。基类不施加（单位变换）。
-     *
-     * 它和"组件自己那一笔的变换"是同一份数据（按钮就是 `displayTransform`），
-     * 区别只在作用范围：以前变换**只作用于组件自己**（那条已知限制写在
-     * `UsageReport` §7.4），T-7 之后它同时作用于子节点——抽屉 / Toast / 下拉 /
-     * 弹窗那一档要的正是这个。
-     *
-     * 语义（和自渲染同源）：绕**本节点的中心**、与该节点自己那一笔用同一个原点。
-     */
+    //节点对整棵子树施加变换
     virtual InkingTransformSpec GetSubtreeTransform() const noexcept {
         return InkingTransformSpec{};
     }
 
-    /**
-     * 这个节点**自己负责整棵子树**的命中吗（T-7）？
-     *
-     * true 的节点：它的子节点**不进全局命中表**（子节点的绝对包络会随容器变换
-     * 过期——那正是"要重烘"的来源），改由本节点的 `HitTest` 递归解答；
-     * 相应地 `GetHitEnvelope()` 必须盖住整棵子树。
-     * 基类 false（普通节点按老规矩逐个登记）。
-     */
+    //回答这个节点是否负责整棵子树的命中，如果负责（true），那么子节点将不进入命中表
     virtual bool OwnsSubtreeHit() const noexcept { return false; }
-
-    /**
-     * 这个节点要不要把**子孙**超出裁剪区的部分剪掉（A5）？基类不剪。
-     *
-     * 裁剪是**容器的一层属性**，只作用于子孙——容器自己那一笔不剪（它自己就是
-     * 那个边界）。这样"下拉 / 滚动 / 抽屉"只需要声明一次，**子节点一个字都不用
-     * 改**：它们照旧画自己、照旧答自己的 `HitTest`，被剪掉这件事由父级负责。
-     *
-     * 绘制与命中**必须同源**（否则就是"看着被剪了、点还是点得到"）：
-     *   - 绘制：提交层按 `GetSubtreeClipBounds()` 设置裁剪矩形（见
-     *     `InkingScene::Render` 与 `inking_detail::AncestorClipInDevice`）；
-     *   - 命中：容器的 `HitTest` 递归之前先问"这个点在不在我的裁剪区里"，
-     *     不在就整棵子树都不命中（`inking_detail::HitTestLocalRect`）。
-     *
-     * 裁剪区**随容器自己的绘制一起变换**（含它自己的 show 变换与全部祖先变换），
-     * 但**不随子孙的变换**——"抽屉里的内容滑出外层"要被外层剪掉，靠的正是这一条。
-     */
+    //这个节点是否要把子孙超出裁减区的部分裁掉？
     virtual bool HasSubtreeClip() const noexcept { return false; }
-
-    /**
-     * 裁剪区：本节点**布局空间**里的矩形，相对本节点左上角（设计坐标）。
-     * 只在 `HasSubtreeClip()` 为 true 时有意义；默认是本体的整块矩形。
-     */
+    //裁剪区：本节点布局空间里的矩形，相对本节点左上角（设计坐标）。如果决定要裁减才起效。默认是本体的整块矩形。
     virtual InkingShapeBounds GetSubtreeClipBounds() const noexcept;
-
-    /**
-     * @brief 裁剪区跟着**哪一份变换**走（默认 = `GetSubtreeTransform()`）。
-     *
-     * 存在的理由很具体（B12 踩的坑）：**滚动容器**把滚动位移放进了
-     * `GetSubtreeTransform()`（内容要跟着滚），而裁剪区也读那一份 ⇒ 裁剪窗口
-     * 跟着内容一起跑了：已经在框外的内容**永远看不见**、框内的内容**滚出去还可见**。
-     * 正确的分工是——**内容**用 `GetSubtreeTransform()`、**裁剪窗口**用这一份
-     * （容器本体，不含滚动）；祖先链上更外层的容器照旧用它们各自的子树变换
-     * （祖先滚了，这个容器连同它的裁剪窗口一起动，那是对的）。
-     */
+    //裁减区的跟随变换
     virtual InkingTransformSpec GetClipTransform() const noexcept;
 
-    // ---------------- 标脏 ----------------
-
-    /**
-     * **命中脏**：上一次"会影响命中"的改动还没被消费。
-     *
-     * 触发源（`docs/InputDesign.md` §4）：几何、可见性、层级、父子。
-     * 消费点在**帧首**（渲染之前）——用之前保证新鲜；命中表的重建挂在
-     * `sortDrawList()` 上，而它只在**结构脏**时才发生。
-     */
+    //命中脏，上一次会影响命中的改动还没有被消费，在渲染之前消费
     bool IsDirty() const noexcept;
-
-    /**
-     * 清掉命中脏。
-     *
-     * 一般不用手工调：帧末的统一消费（`ConsumeDirtyFrame`）会在连续
-     * `kHitQuietFrames` 帧没有新脏时自己清。手工调只有一种正当用途——
-     * "这个组件构造完了，几何到此定型"（静态按钮构造末尾就是这么做的）。
-     */
+    //清理命中脏，通常帧末统一消费
     void ClearDirty() noexcept;
-
-    /**
-     * **重绘脏**：画面变了（颜色 / 文字 / 变换 / 几何），但命中表**不需要**重烘。
-     *
-     * 这是 T-3 补的那条"额外的标脏方式"，它和命中脏**不是一回事**：
-     *
-     * | | 命中脏 | 重绘脏 |
-     * | --- | --- | --- |
-     * | 谁触发 | 几何 / 可见性 / 层级 / 父子 | 颜色 / 文字 / 变换 / 几何 |
-     * | 消费点 | 帧首（重建绘制列表，还要重烘表） | 帧末（记账 + 计时清零） |
-     * | 不处理的后果 | 点到的地方和画的地方对不上 | 画面停在上一帧的样子 |
-     *
-     * **动画每帧改颜色时如果错标成命中脏，就会每帧白重建一次绘制列表**
-     * （排序 + 重算所有静态节点的坐标快照）——这条分开就是为了不付那个代价。
-     */
+    //重绘脏，如果非脏的情况下，跳过一些不必要的重建绘制列表
     bool IsRepaintDirty() const noexcept;
+    //清理重绘脏，同样帧末统一消费
     void ClearRepaintDirty() noexcept;
-
-    /// 重绘脏要连续安静多少帧才算"画面稳了"（T-3 定的口径：5 帧）。
+    //重绘脏要连续安静多少帧才算画面稳了
     static constexpr int kRepaintQuietFrames = 5;
-
-    /// 命中脏要连续安静多少帧（`InputDesign.md` §5：2~3 即可，取 3）。
+    //命中脏要连续安静多少帧
     static constexpr int kHitQuietFrames = 3;
-
-    /**
-     * 帧末统一消费里的一步：推进这个节点自己的安静帧计数，够数就清脏。
-     *
-     * 由场景在 `InkingScene::ConsumeFrameDirty()` 里对本场景每个节点调一次——
-     * **同一帧里标了多少次脏，都只走这一回**。这正是"标脏"存在的意义：
-     * 把一帧里的多次改动（连着 Resize 三次、ChangeZIndex 两次）合并成一次处理，
-     * 而不是每改一次就重烘一次表。
-     */
+    //帧末统一消费里的一步：推进这个节点自己的安静帧计数，够数就清脏，避免多个组件每次标脏都重建
     void ConsumeDirtyFrame() noexcept;
 
-    /// 自己就是某棵渲染树的根（场景 / 窗口），没有场景祖先可登记。
+    //回答自己就是某棵渲染树的根，没有场景祖先可登记。
     bool IsSceneRoot() const noexcept;
 
-    /// 是动态组件吗（几何会自己变、每帧收到 Tick）。
-    ///
-    /// 判据在**构造时就定死**（静态 / 动态是两个类型），所以这不是运行期
-    /// 猜出来的，而是登记那一刻就明确的——渲染时靠它决定"绝对坐标能不能
-    /// 用建表时的快照"。
+    //回答自己是否是动态组件
     bool IsDynamic() const noexcept;
 
-    /// 沿父链找到最近的场景祖先；自己是场景、或不在任何场景下时返回 nullptr。
+    //沿父链找到最近的场景祖先；自己是场景、或不在任何场景下时返回 nullptr。
     InkingScene* GetSceneAncestor() noexcept;
 
-    /**
-     * 我的子树里有没有**静态**节点（T-19）。
-     *
-     * 这是"移动时能不能走快路"的**唯一判据**：静态节点的绝对坐标是建命中表时
-     * 冻住的快照（`DrawItem::absX`），所以只要子树里有一个静态节点，动一下就得
-     * 全量重建；全是动态节点（或干脆是叶子）时，动的只有自己的**洞**。
-     *
-     * 递归早退：碰到的第一个静态子节点就返回，叶子 O(1)。**不缓存**——缓存要在
-     * 子树增删时维护（`AddChild` / `RemoveChild` / `SetParent` 三条路），一处漏了
-     * 症状就是"移动中的组件点不到"，而那份账本就省一次 `O(子树)` 的早退遍历，
-     * 不值得。
-     */
+    //回答我的子树中是否有静态节点，如果有那么需要全量重建
     bool HasStaticInSubtree() const noexcept;
 
     // ---------------- 运行期增删子节点（A10）：所有权只有一个地方 ----------------
