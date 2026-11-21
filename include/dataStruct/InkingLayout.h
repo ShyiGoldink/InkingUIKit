@@ -15,7 +15,9 @@
 //      于是绘制 / 命中 / AABB / 子树变换全都不知道"有布局这回事"。
 //
 // 单位全是设计坐标（和 `InkingAnchorData::width` / `offsetX` 同一套）。
-
+/*
+    InkingLayout是
+*/
 #include <cstdint>
 
 // 布局种类。`None` = 不布局（老行为：锚点自己定位）。
